@@ -1,0 +1,125 @@
+import { motion, AnimatePresence } from 'framer-motion';
+import { PhoneCall, Headphones, MessageSquare, Radio, Phone } from 'lucide-react';
+import type { CallInfo } from '../types';
+
+interface ActiveCallsPanelProps {
+  calls: Record<string, CallInfo>;
+  onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
+}
+
+export function ActiveCallsPanel({ calls, onSupervisorAction }: ActiveCallsPanelProps) {
+  const callList = Object.values(calls).sort((a, b) => 
+    a.extension.localeCompare(b.extension, undefined, { numeric: true })
+  );
+
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <h2 className="panel-title">
+          <PhoneCall size={18} className="panel-title-icon" />
+          Active Calls ({callList.length})
+        </h2>
+      </div>
+      <div className="panel-content" style={{ padding: 0 }}>
+        {callList.length === 0 ? (
+          <div className="empty-state">
+            <Phone size={48} className="empty-state-icon" />
+            <p className="empty-state-text">No active calls</p>
+          </div>
+        ) : (
+          <table className="calls-table">
+            <thead>
+              <tr>
+                <th>Extension</th>
+                <th>State</th>
+                <th>Talking To</th>
+                <th>Duration</th>
+                <th>Talk Time</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <AnimatePresence>
+                {callList.map((call) => (
+                  <CallRow
+                    key={call.extension}
+                    call={call}
+                    onSupervisorAction={onSupervisorAction}
+                  />
+                ))}
+              </AnimatePresence>
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface CallRowProps {
+  call: CallInfo;
+  onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
+}
+
+function CallRow({ call, onSupervisorAction }: CallRowProps) {
+  const stateClass = call.state.toLowerCase().replace(/\s+/g, '_');
+  
+  return (
+    <motion.tr
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 10 }}
+      transition={{ duration: 0.2 }}
+    >
+      <td>
+        <span className="call-ext">{call.extension}</span>
+      </td>
+      <td>
+        <span className={`call-state ${stateClass}`}>
+          {call.state}
+        </span>
+      </td>
+      <td>
+        <span className="call-talking-to">
+          {call.talking_to || '—'}
+        </span>
+      </td>
+      <td>
+        <span className="call-duration">
+          {call.duration || '—'}
+        </span>
+      </td>
+      <td>
+        <span className="call-duration">
+          {call.talk_time || '—'}
+        </span>
+      </td>
+      <td>
+        <div className="call-actions">
+          <button 
+            className="btn btn-icon btn-listen"
+            onClick={() => onSupervisorAction('listen', call.extension)}
+            title="Listen (Silent)"
+          >
+            <Headphones size={18} />
+          </button>
+          <button 
+            className="btn btn-icon btn-whisper"
+            onClick={() => onSupervisorAction('whisper', call.extension)}
+            title="Whisper to Agent"
+          >
+            <MessageSquare size={18} />
+          </button>
+          <button 
+            className="btn btn-icon btn-barge"
+            onClick={() => onSupervisorAction('barge', call.extension)}
+            title="Barge In"
+          >
+            <Radio size={18} />
+          </button>
+        </div>
+      </td>
+    </motion.tr>
+  );
+}
+
