@@ -22,23 +22,64 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 
 ## Prerequisites
 
-- Python 3.8+
-- Node.js 18+
+- Linux system (Debian/Ubuntu, CentOS/RHEL/Fedora, or Arch Linux)
+- Issabel or FreePBX system installed
 - Asterisk PBX with AMI enabled
 - MySQL/MariaDB (for FreePBX extension list)
+- sudo access (for installing system packages)
+
+**Note:** The installation script will automatically install:
+- Python 3.8+ and pip
+- Node.js 24+ (via nvm)
+- Required system packages (git, wget, curl)
 
 ## Installation
 
-### Backend
+### Automated Installation (Recommended)
+
+Use the provided installation script for a complete automated setup:
+
+**One-liner (download and run):**
+```bash
+wget -O install.sh https://raw.githubusercontent.com/Ibrahimgamal99/AOP/main/install.sh && chmod +x install.sh && ./install.sh
+```
+
+**Or if you already have the repository:**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+The script will:
+1. Detect your OS and install prerequisites (git, wget, curl)
+2. Clone the repository (if not already present)
+3. Install nvm (Node Version Manager) and Node.js 24
+4. Install Python 3 and pip
+5. Detect Issabel or FreePBX installation
+6. Prompt for database and AMI configuration
+7. Create `backend/.env` file with your settings
+8. Add AMI user to `/etc/asterisk/manager.conf`
+9. Install Python dependencies
+10. Install Node.js dependencies
+
+**Note:** The script will prompt you for:
+- Database credentials (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)
+- AMI configuration (AMI_HOST, AMI_PORT, AMI_SECRET)
+
+### Manual Installation
+
+If you prefer manual installation:
+
+#### Backend
 
 1. Install Python dependencies (system-wide, no virtual environment required):
 
 ```bash
 cd backend
-pip install -r requirements.txt
+pip3 install --break-system-packages -r requirements.txt
 ```
 
-**Note:** This project does not use a virtual environment. Dependencies are installed directly to your Python environment.
+**Note:** This project does not use a virtual environment. Dependencies are installed directly to your Python environment. The `--break-system-packages` flag is required for newer pip versions when installing system-wide.
 
 2. Configure environment variables in `backend/.env`:
 
@@ -46,9 +87,8 @@ pip install -r requirements.txt
 # AMI Configuration
 AMI_HOST=127.0.0.1
 AMI_PORT=5038
-AMI_USERNAME=admin
+AMI_USERNAME=AOP
 AMI_SECRET=your_ami_secret
-AMI_CONTEXT=ext-local
 
 # Database Configuration (for extensions list)
 DB_HOST=localhost
@@ -58,9 +98,19 @@ DB_PASSWORD=your_db_password
 DB_NAME=asterisk
 ```
 
-### Frontend
+#### Frontend
 
-1. Install Node.js dependencies:
+1. Install Node.js 24 (if not already installed):
+
+```bash
+# Install nvm
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+source ~/.nvm/nvm.sh
+nvm install 24
+nvm use 24
+```
+
+2. Install Node.js dependencies:
 
 ```bash
 cd frontend
@@ -71,13 +121,13 @@ npm install
 
 ### Quick Start (Recommended)
 
-Use the provided start script to run both backend and frontend:
+After running the installation script (`./install.sh`), start the application:
 
 ```bash
 ./start.sh
 ```
 
-This will start both services with logging. Press `Ctrl+C` to stop.
+This will start both backend and frontend services with logging. Press `Ctrl+C` to stop.
 
 ### Development Mode
 
