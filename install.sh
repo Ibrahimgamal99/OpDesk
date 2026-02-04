@@ -147,9 +147,9 @@ if [ "$SYSTEM_TYPE" == "Unknown" ]; then
     exit 0
 fi
 
-# Read existing config file
+# Read existing config file (read-only, no modifications)
 echo ""
-echo "Step 7: Reading configuration from $CONFIG_FILE..."
+echo "Step 7: Reading configuration from $CONFIG_FILE (read-only)..."
 if [ ! -f "$CONFIG_FILE" ]; then
     if [ -n "$BACKUP_CONFIG_FILE" ] && [ -f "$BACKUP_CONFIG_FILE" ]; then
         echo "Primary config file $CONFIG_FILE not found. Using backup: $BACKUP_CONFIG_FILE"
@@ -166,9 +166,9 @@ fi
 
 cat "$CONFIG_FILE"
 
-# Extract database configuration from config file
+# Extract database configuration from config file (read-only)
 echo ""
-echo "Step 8: Extracting database configuration from $CONFIG_FILE..."
+echo "Step 8: Extracting database configuration from $CONFIG_FILE (read-only)..."
 
 # Function to extract PHP config value (for FreePBX)
 extract_php_config() {
@@ -305,7 +305,7 @@ if [ ! -f "$MANAGER_CONF" ]; then
 fi
 
 echo ""
-echo "Step 10: Adding AMI configuration to $MANAGER_CONF..."
+echo "Step 10: Adding AMI configuration to $MANAGER_CONF (writing)..."
 
 # Create backup
 sudo cp "$MANAGER_CONF" "${MANAGER_CONF}.backup.$(date +%Y%m%d_%H%M%S)"
