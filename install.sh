@@ -120,35 +120,54 @@ echo "Step 5: Installing Python..."
 PYTHON_NEEDS_UPGRADE=false
 PYTHON313_PATH=""
 
-if command_exists python3; then
-    PYTHON_VERSION_STR=$(python3 --version 2>&1)
-    echo "Python is already installed: $PYTHON_VERSION_STR"
-    
-    # Extract version number (e.g., "Python 3.10.5" -> "3.10")
-    PYTHON_VERSION=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+' | head -1)
-    
-    # Compare version to 3.11 (minimum required version)
-    if [ -n "$PYTHON_VERSION" ]; then
-        # Properly compare version numbers by splitting major.minor
-        PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
-        PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
-        REQUIRED_MAJOR=3
-        REQUIRED_MINOR=11
+# First, check if Python 3.11+ is already installed
+PYTHON_11_PLUS_FOUND=false
+PYTHON_11_PLUS_VERSION=""
+for PYTHON_VER in "3.13" "3.12" "3.11"; do
+    if command_exists python${PYTHON_VER}; then
+        PYTHON_11_PLUS_FOUND=true
+        PYTHON_11_PLUS_VERSION=$PYTHON_VER
+        PYTHON313_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
+        PYTHON_VERSION_STR=$(python${PYTHON_VER} --version 2>&1)
+        echo "Python $PYTHON_VER is already installed: $PYTHON_VERSION_STR"
+        break
+    fi
+done
+
+if [ "$PYTHON_11_PLUS_FOUND" == "false" ]; then
+    # Check default python3 if no 3.11+ found
+    if command_exists python3; then
+        PYTHON_VERSION_STR=$(python3 --version 2>&1)
+        echo "Python is already installed: $PYTHON_VERSION_STR"
         
-        # Compare major version first, then minor
-        if [ "$PYTHON_MAJOR" -lt "$REQUIRED_MAJOR" ] || ([ "$PYTHON_MAJOR" -eq "$REQUIRED_MAJOR" ] && [ "$PYTHON_MINOR" -lt "$REQUIRED_MINOR" ]); then
-            echo "Python version $PYTHON_VERSION is less than 3.11. Will install Python 3.11 or newer..."
-            PYTHON_NEEDS_UPGRADE=true
+        # Extract version number (e.g., "Python 3.10.5" -> "3.10")
+        PYTHON_VERSION=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        
+        # Compare version to 3.11 (minimum required version)
+        if [ -n "$PYTHON_VERSION" ]; then
+            # Properly compare version numbers by splitting major.minor
+            PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+            PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+            REQUIRED_MAJOR=3
+            REQUIRED_MINOR=11
+            
+            # Compare major version first, then minor
+            if [ "$PYTHON_MAJOR" -lt "$REQUIRED_MAJOR" ] || ([ "$PYTHON_MAJOR" -eq "$REQUIRED_MAJOR" ] && [ "$PYTHON_MINOR" -lt "$REQUIRED_MINOR" ]); then
+                echo "Python version $PYTHON_VERSION is less than 3.11. Will install Python 3.11 or newer..."
+                PYTHON_NEEDS_UPGRADE=true
+            else
+                echo "Python version $PYTHON_VERSION is >= 3.11. No upgrade needed."
+            fi
         else
-            echo "Python version $PYTHON_VERSION is >= 3.11. No upgrade needed."
+            echo "Warning: Could not parse Python version. Will attempt to install Python 3.11 or newer..."
+            PYTHON_NEEDS_UPGRADE=true
         fi
     else
-        echo "Warning: Could not parse Python version. Will attempt to install a newer Python version..."
+        echo "Python3 not found. Will install Python 3.11 or newer..."
         PYTHON_NEEDS_UPGRADE=true
     fi
 else
-    echo "Python3 not found. Will install Python..."
-    PYTHON_NEEDS_UPGRADE=true
+    echo "Python 3.11+ already available. No upgrade needed."
 fi
 
 # Install newer Python version if needed
