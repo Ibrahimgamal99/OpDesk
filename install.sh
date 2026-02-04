@@ -128,13 +128,16 @@ echo ""
 echo "Step 6: Detecting Issabel/FreePBX installation..."
 if [ -d /usr/share/issabel ]; then
     SYSTEM_TYPE="Issabel"
-    CONFIG_FILE="/etc/issabel.conf"
+    CONFIG_FILE="/etc/amportal.conf"
+    BACKUP_CONFIG_FILE="/etc/issabel.conf"
 elif [ -f /etc/freepbx.conf ]; then
     SYSTEM_TYPE="FreePBX"
     CONFIG_FILE="/etc/freepbx.conf"
+    BACKUP_CONFIG_FILE=""
 else
     SYSTEM_TYPE="Unknown"
     CONFIG_FILE=""
+    BACKUP_CONFIG_FILE=""
 fi
 
 echo "Detected system: $SYSTEM_TYPE"
@@ -148,8 +151,17 @@ fi
 echo ""
 echo "Step 7: Reading configuration from $CONFIG_FILE..."
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Error: Configuration file $CONFIG_FILE not found!"
-    exit 1
+    if [ -n "$BACKUP_CONFIG_FILE" ] && [ -f "$BACKUP_CONFIG_FILE" ]; then
+        echo "Primary config file $CONFIG_FILE not found. Using backup: $BACKUP_CONFIG_FILE"
+        CONFIG_FILE="$BACKUP_CONFIG_FILE"
+        BACKUP_CONFIG_FILE=""
+    else
+        echo "Error: Configuration file $CONFIG_FILE not found!"
+        if [ -n "$BACKUP_CONFIG_FILE" ]; then
+            echo "Backup file $BACKUP_CONFIG_FILE also not found!"
+        fi
+        exit 1
+    fi
 fi
 
 cat "$CONFIG_FILE"
@@ -178,8 +190,9 @@ extract_php_config() {
 extract_simple_config() {
     local key=$1
     local config_file=$2
-    # Extract value from simple format: key=value
-    grep "^${key}=" "$config_file" 2>/dev/null | cut -d'=' -f2- | head -1
+    # Extract value from simple format: key=value (handles whitespace around =)
+    # Matches: key=value, key = value, key= value, key =value
+    grep "^[[:space:]]*${key}[[:space:]]*=" "$config_file" 2>/dev/null | sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\(.*\)/\1/p" | head -1 | sed 's/[[:space:]]*$//'
 }
 
 if [ "$SYSTEM_TYPE" == "FreePBX" ]; then
@@ -209,18 +222,42 @@ if [ "$SYSTEM_TYPE" == "FreePBX" ]; then
     fi
 elif [ "$SYSTEM_TYPE" == "Issabel" ]; then
     # Extract from Issabel config format: key=value (simple format)
-    # Try to extract MySQL root password from issabel.conf
-    MYSQL_ROOT_PWD=$(extract_simple_config "mysqlrootpwd" "$CONFIG_FILE")
+    # Primary config is /etc/amportal.conf, backup is /etc/issabel.conf
+    BACKUP_CONFIG="/etc/issabel.conf"
     
-    # Get database credentials from /etc/amportal.conf (uses simple key=value format)
-    AMPORTAL_CONF="/etc/amportal.conf"
-    if [ -f "$AMPORTAL_CONF" ]; then
-        # Extract from amportal.conf which uses simple key=value format
-        DB_USER=$(extract_simple_config "AMPDBUSER" "$AMPORTAL_CONF")
-        DB_PASSWORD=$(extract_simple_config "AMPDBPASS" "$AMPORTAL_CONF")
-        DB_HOST=$(extract_simple_config "AMPDBHOST" "$AMPORTAL_CONF")
-        DB_PORT=$(extract_simple_config "AMPDBPORT" "$AMPORTAL_CONF")
-        DB_NAME=$(extract_simple_config "AMPDBNAME" "$AMPORTAL_CONF")
+    # Extract database credentials from primary config file
+    DB_USER=$(extract_simple_config "AMPDBUSER" "$CONFIG_FILE")
+    DB_PASSWORD=$(extract_simple_config "AMPDBPASS" "$CONFIG_FILE")
+    DB_HOST=$(extract_simple_config "AMPDBHOST" "$CONFIG_FILE")
+    DB_PORT=$(extract_simple_config "AMPDBPORT" "$CONFIG_FILE")
+    DB_NAME=$(extract_simple_config "AMPDBNAME" "$CONFIG_FILE")
+    
+    # If values are missing and backup config exists, try extracting from backup
+    if [ -f "$BACKUP_CONFIG" ]; then
+        if [ -z "$DB_USER" ]; then
+            DB_USER=$(extract_simple_config "AMPDBUSER" "$BACKUP_CONFIG")
+        fi
+        if [ -z "$DB_PASSWORD" ]; then
+            DB_PASSWORD=$(extract_simple_config "AMPDBPASS" "$BACKUP_CONFIG")
+        fi
+        if [ -z "$DB_HOST" ]; then
+            DB_HOST=$(extract_simple_config "AMPDBHOST" "$BACKUP_CONFIG")
+        fi
+        if [ -z "$DB_PORT" ]; then
+            DB_PORT=$(extract_simple_config "AMPDBPORT" "$BACKUP_CONFIG")
+        fi
+        if [ -z "$DB_NAME" ]; then
+            DB_NAME=$(extract_simple_config "AMPDBNAME" "$BACKUP_CONFIG")
+        fi
+        
+        # Try to extract MySQL root password from backup config if password still not found
+        if [ -z "$DB_PASSWORD" ]; then
+            MYSQL_ROOT_PWD=$(extract_simple_config "mysqlrootpwd" "$BACKUP_CONFIG")
+            if [ -n "$MYSQL_ROOT_PWD" ]; then
+                DB_PASSWORD="$MYSQL_ROOT_PWD"
+                DB_USER="root"
+            fi
+        fi
     fi
     
     # Set defaults if extraction failed
@@ -228,12 +265,6 @@ elif [ "$SYSTEM_TYPE" == "Issabel" ]; then
     DB_PORT=${DB_PORT:-3306}
     DB_USER=${DB_USER:-root}
     DB_NAME=${DB_NAME:-asterisk}
-    
-    # If password not found, use mysqlrootpwd from issabel.conf
-    if [ -z "$DB_PASSWORD" ] && [ -n "$MYSQL_ROOT_PWD" ]; then
-        DB_PASSWORD="$MYSQL_ROOT_PWD"
-        DB_USER="root"
-    fi
     
     echo "Extracted database configuration:"
     echo "  DB_HOST: $DB_HOST"
@@ -265,43 +296,6 @@ read -p "AMI_SECRET: " AMI_SECRET
 
 AMI_USERNAME="AOP"
 
-# Add database configuration to config file
-echo ""
-echo "Step 10: Adding database configuration to $CONFIG_FILE..."
-
-# Create backup of config file
-sudo cp "$CONFIG_FILE" "${CONFIG_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
-
-# Function to update or add config variable
-update_config_var() {
-    local var_name=$1
-    local var_value=$2
-    local config_file=$3
-    
-    if sudo grep -q "^${var_name}=" "$config_file"; then
-        # Update existing variable
-        sudo sed -i "s|^${var_name}=.*|${var_name}=${var_value}|" "$config_file"
-    else
-        # Add new variable at the end
-        echo "${var_name}=${var_value}" | sudo tee -a "$config_file" > /dev/null
-    fi
-}
-
-# Update or add DB configuration variables
-update_config_var "DB_HOST" "$DB_HOST" "$CONFIG_FILE"
-update_config_var "DB_PORT" "$DB_PORT" "$CONFIG_FILE"
-update_config_var "DB_USER" "$DB_USER" "$CONFIG_FILE"
-update_config_var "DB_PASSWORD" "$DB_PASSWORD" "$CONFIG_FILE"
-update_config_var "DB_NAME" "$DB_NAME" "$CONFIG_FILE"
-
-# Update or add AMI configuration variables
-update_config_var "AMI_HOST" "$AMI_HOST" "$CONFIG_FILE"
-update_config_var "AMI_PORT" "$AMI_PORT" "$CONFIG_FILE"
-update_config_var "AMI_USERNAME" "$AMI_USERNAME" "$CONFIG_FILE"
-update_config_var "AMI_SECRET" "$AMI_SECRET" "$CONFIG_FILE"
-
-echo "Database and AMI configuration added to $CONFIG_FILE"
-
 # Add configuration to manager.conf
 MANAGER_CONF="/etc/asterisk/manager.conf"
 if [ ! -f "$MANAGER_CONF" ]; then
@@ -311,7 +305,7 @@ if [ ! -f "$MANAGER_CONF" ]; then
 fi
 
 echo ""
-echo "Step 11: Adding AMI configuration to $MANAGER_CONF..."
+echo "Step 10: Adding AMI configuration to $MANAGER_CONF..."
 
 # Create backup
 sudo cp "$MANAGER_CONF" "${MANAGER_CONF}.backup.$(date +%Y%m%d_%H%M%S)"
@@ -326,6 +320,19 @@ if ! sudo grep -q "^\[$AMI_USERNAME\]" "$MANAGER_CONF"; then
     echo "read = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan" | sudo tee -a "$MANAGER_CONF" > /dev/null
     echo "write = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan" | sudo tee -a "$MANAGER_CONF" > /dev/null
     echo "AMI configuration added to $MANAGER_CONF"
+    
+    # Reload Asterisk manager module to apply changes
+    echo "Reloading Asterisk manager module..."
+    if command_exists asterisk; then
+        sudo asterisk -rx "manager reload" 2>/dev/null || echo "Warning: Could not reload Asterisk manager module. Please reload manually."
+    else
+        # Try common paths
+        if [ -f /usr/sbin/asterisk ]; then
+            sudo /usr/sbin/asterisk -rx "manager reload" 2>/dev/null || echo "Warning: Could not reload Asterisk manager module. Please reload manually."
+        else
+            echo "Warning: Asterisk command not found. Please reload Asterisk manually: asterisk -rx 'manager reload'"
+        fi
+    fi
 else
     echo "AMI user $AMI_USERNAME already exists in $MANAGER_CONF"
 fi
@@ -341,7 +348,7 @@ if [ ! -d "$BACKEND_DIR" ]; then
 fi
 
 echo ""
-echo "Step 12: Creating environment file at $ENV_FILE..."
+echo "Step 11: Creating environment file at $ENV_FILE..."
 cat > "$ENV_FILE" << EOF
 # Database Configuration
 DB_HOST=$DB_HOST
@@ -361,7 +368,7 @@ echo "Configuration saved to $ENV_FILE"
 
 # Install Python dependencies
 echo ""
-echo "Step 13: Installing Python dependencies..."
+echo "Step 12: Installing Python dependencies..."
 cd "$BACKEND_DIR"
 if [ -f "requirements.txt" ]; then
     # Use pip3 if available, otherwise use python3 -m pip
@@ -377,7 +384,7 @@ fi
 
 # Install Node.js dependencies
 echo ""
-echo "Step 14: Installing Node.js dependencies..."
+echo "Step 13: Installing Node.js dependencies..."
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 if [ -d "$FRONTEND_DIR" ]; then
     cd "$FRONTEND_DIR"
