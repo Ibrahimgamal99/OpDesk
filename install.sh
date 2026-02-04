@@ -39,14 +39,6 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to check if running as root
-check_root() {
-    if [ "$EUID" -eq 0 ]; then
-        log_error "This script should NOT be run as root. Please run as a regular user with sudo privileges."
-        exit 1
-    fi
-}
-
 # Function to verify sudo access
 verify_sudo() {
     if ! sudo -n true 2>/dev/null; then
@@ -809,7 +801,6 @@ install_nodejs_dependencies() {
 # ============================================================================
 main() {
     # Pre-flight checks
-    check_root
     verify_sudo
     
     # Installation steps
