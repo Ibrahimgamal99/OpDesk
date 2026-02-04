@@ -181,6 +181,7 @@ if [ "$SYSTEM_TYPE" == "FreePBX" ]; then
     echo "  DB_HOST: $DB_HOST"
     echo "  DB_PORT: $DB_PORT"
     echo "  DB_USER: $DB_USER"
+    echo "  DB_PASSWORD: $DB_PASSWORD"
     echo "  DB_NAME: $DB_NAME"
     
     if [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_NAME" ]; then
@@ -221,6 +222,7 @@ elif [ "$SYSTEM_TYPE" == "Issabel" ]; then
     echo "  DB_HOST: $DB_HOST"
     echo "  DB_PORT: $DB_PORT"
     echo "  DB_USER: $DB_USER"
+    echo "  DB_PASSWORD: $DB_PASSWORD"
     echo "  DB_NAME: $DB_NAME"
     
     if [ -z "$DB_PASSWORD" ] || [ -z "$DB_NAME" ]; then
