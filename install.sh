@@ -29,7 +29,7 @@ else
         echo "Installing git, wget and curl using apt-get..."
         sudo apt-get update
         sudo apt-get install -y git wget curl
-    elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
+    elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "rocky" ] || [ "$OS" == "fedora" ]; then
         echo "Installing git, wget and curl using yum/dnf..."
         if command_exists dnf; then
             sudo dnf install -y git wget curl
@@ -127,100 +127,159 @@ if command_exists python3; then
     # Extract version number (e.g., "Python 3.10.5" -> "3.10")
     PYTHON_VERSION=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+' | head -1)
     
-    # Compare version to 3.11
+    # Compare version to 3.11 (minimum required version)
     if [ -n "$PYTHON_VERSION" ]; then
         # Use awk for version comparison
         VERSION_CHECK=$(echo "$PYTHON_VERSION 3.11" | awk '{if ($1 < $2) print "less"; else print "greater_or_equal"}')
         if [ "$VERSION_CHECK" == "less" ]; then
-            echo "Python version $PYTHON_VERSION is less than 3.11. Will install Python 3.13..."
+            echo "Python version $PYTHON_VERSION is less than 3.11. Will install Python 3.11 or newer..."
             PYTHON_NEEDS_UPGRADE=true
         else
             echo "Python version $PYTHON_VERSION is >= 3.11. No upgrade needed."
         fi
     else
-        echo "Warning: Could not parse Python version. Will attempt to install Python 3.13..."
+        echo "Warning: Could not parse Python version. Will attempt to install a newer Python version..."
         PYTHON_NEEDS_UPGRADE=true
     fi
 else
-    echo "Python3 not found. Will install Python 3.13..."
+    echo "Python3 not found. Will install Python..."
     PYTHON_NEEDS_UPGRADE=true
 fi
 
-# Install Python 3.13 if needed
+# Install newer Python version if needed
 if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
-    echo "Installing Python 3.13..."
+    PYTHON_INSTALLED=false
+    PYTHON_NEW_PATH=""
     
     if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
         # For Debian/Ubuntu, use deadsnakes PPA
-        echo "Adding deadsnakes PPA for Python 3.13..."
+        echo "Adding deadsnakes PPA for Python..."
         sudo apt-get update
         sudo apt-get install -y software-properties-common
         sudo add-apt-repository -y ppa:deadsnakes/ppa
         sudo apt-get update
-        sudo apt-get install -y python3.13 python3.13-venv python3.13-dev
         
-        # Find python3.13 path
-        PYTHON313_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
+        # Try Python versions in order: 3.13, 3.12, 3.11 (minimum required: 3.11)
+        for PYTHON_VER in "3.13" "3.12" "3.11"; do
+            echo "Attempting to install Python $PYTHON_VER..."
+            if sudo apt-get install -y python${PYTHON_VER} python${PYTHON_VER}-venv python${PYTHON_VER}-dev 2>/dev/null; then
+                PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
+                if [ -n "$PYTHON_NEW_PATH" ]; then
+                    PYTHON_INSTALLED=true
+                    PYTHON313_PATH="$PYTHON_NEW_PATH"
+                    echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
+                    # Install pip
+                    sudo apt-get install -y python${PYTHON_VER}-pip 2>/dev/null || python${PYTHON_VER} -m ensurepip --upgrade 2>/dev/null || true
+                    break
+                fi
+            fi
+        done
         
-    elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
-        # For Fedora/RHEL/CentOS, use dnf/yum
+    elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "rocky" ] || [ "$OS" == "fedora" ]; then
+        # For Fedora/RHEL/CentOS/Rocky Linux
         if command_exists dnf; then
-            sudo dnf install -y python3.13 python3.13-pip python3.13-devel
+            # Enable EPEL for additional packages (especially for RHEL/Rocky Linux)
+            if [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "rocky" ]; then
+                echo "Enabling EPEL repository..."
+                sudo dnf install -y epel-release 2>/dev/null || true
+            fi
+            
+            # Try Python versions in order: 3.13, 3.12, 3.11 (minimum required: 3.11)
+            # Note: RHEL 8/Rocky 8 may need EPEL or additional repositories for Python 3.11+
+            for PYTHON_VER in "3.13" "3.12" "3.11"; do
+                echo "Attempting to install Python $PYTHON_VER..."
+                if sudo dnf install -y python${PYTHON_VER} python${PYTHON_VER}-pip python${PYTHON_VER}-devel 2>/dev/null; then
+                    PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
+                    if [ -n "$PYTHON_NEW_PATH" ]; then
+                        PYTHON_INSTALLED=true
+                        PYTHON313_PATH="$PYTHON_NEW_PATH"
+                        echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
+                        break
+                    fi
+                fi
+            done
+            
+            # If still not installed, try enabling Python 3.11 module stream (for RHEL 8/Rocky 8)
+            if [ "$PYTHON_INSTALLED" == "false" ] && ([ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "rocky" ]); then
+                echo "Trying to enable Python 3.11 module stream (if available on RHEL 8/Rocky 8)..."
+                if sudo dnf module reset -y python36 2>/dev/null && sudo dnf module enable -y python311 2>/dev/null && sudo dnf install -y python3.11 python3.11-pip python3.11-devel 2>/dev/null; then
+                    PYTHON_NEW_PATH=$(which python3.11 2>/dev/null || command -v python3.11)
+                    if [ -n "$PYTHON_NEW_PATH" ]; then
+                        PYTHON_INSTALLED=true
+                        PYTHON313_PATH="$PYTHON_NEW_PATH"
+                        echo "Python 3.11 installed successfully at: $PYTHON_NEW_PATH"
+                    fi
+                fi
+            fi
         else
-            # For older CentOS/RHEL, may need to compile from source or use EPEL
-            echo "Installing build dependencies for Python 3.13..."
-            sudo yum groupinstall -y "Development Tools"
-            sudo yum install -y openssl-devel bzip2-devel libffi-devel zlib-devel readline-devel sqlite-devel
-            echo "Note: For CentOS/RHEL, Python 3.13 may need to be compiled from source."
-            echo "Attempting to install via dnf/yum..."
-            sudo yum install -y python3.13 python3.13-pip python3.13-devel 2>/dev/null || {
-                echo "Python 3.13 not available in default repositories. Please install manually."
-                exit 1
-            }
+            # For older CentOS/RHEL with yum
+            echo "Installing build dependencies..."
+            sudo yum groupinstall -y "Development Tools" 2>/dev/null || true
+            sudo yum install -y openssl-devel bzip2-devel libffi-devel zlib-devel readline-devel sqlite-devel 2>/dev/null || true
+            
+            # Try Python 3.11+ versions (minimum required: 3.11)
+            for PYTHON_VER in "3.13" "3.12" "3.11"; do
+                echo "Attempting to install Python $PYTHON_VER..."
+                if sudo yum install -y python${PYTHON_VER} python${PYTHON_VER}-pip python${PYTHON_VER}-devel 2>/dev/null; then
+                    PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
+                    if [ -n "$PYTHON_NEW_PATH" ]; then
+                        PYTHON_INSTALLED=true
+                        PYTHON313_PATH="$PYTHON_NEW_PATH"
+                        echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
+                        break
+                    fi
+                fi
+            done
         fi
-        
-        # Find python3.13 path
-        PYTHON313_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
         
     elif [ "$OS" == "arch" ]; then
-        # For Arch Linux
-        sudo pacman -S --noconfirm python313
-        PYTHON313_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
+        # For Arch Linux, try versions in order (minimum required: 3.11)
+        for PYTHON_VER in "313" "312" "311"; do
+            echo "Attempting to install Python $PYTHON_VER..."
+            if sudo pacman -S --noconfirm python${PYTHON_VER} 2>/dev/null; then
+                PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
+                if [ -n "$PYTHON_NEW_PATH" ]; then
+                    PYTHON_INSTALLED=true
+                    PYTHON313_PATH="$PYTHON_NEW_PATH"
+                    echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
+                    break
+                fi
+            fi
+        done
     else
-        echo "Warning: Unknown OS. Please install Python 3.13 manually."
+        echo "Warning: Unknown OS. Please install Python 3.11+ manually."
         exit 1
     fi
     
-    if [ -z "$PYTHON313_PATH" ]; then
-        echo "Error: Python 3.13 installation failed or python3.13 not found in PATH."
+    if [ "$PYTHON_INSTALLED" == "false" ]; then
+        echo "Error: Could not install a compatible Python version (3.11+)."
+        echo "Please install Python 3.11 or newer manually."
         exit 1
-    fi
-    
-    echo "Python 3.13 installed successfully at: $PYTHON313_PATH"
-    
-    # Install pip for Python 3.13
-    echo "Installing pip for Python 3.13..."
-    if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-        sudo apt-get install -y python3.13-pip python3.13-venv
-    elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
-        if command_exists dnf; then
-            sudo dnf install -y python3.13-pip
-        else
-            sudo yum install -y python3.13-pip
-        fi
     fi
 fi
 
 # Determine which Python to use for symlink
 if [ -n "$PYTHON313_PATH" ]; then
     FINAL_PYTHON_PATH="$PYTHON313_PATH"
-    FINAL_PYTHON_VERSION="3.13"
+    FINAL_PYTHON_VERSION=$(basename "$PYTHON313_PATH" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "3.x")
 elif command_exists python3.13; then
     FINAL_PYTHON_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
     FINAL_PYTHON_VERSION="3.13"
+elif command_exists python3.12; then
+    FINAL_PYTHON_PATH=$(which python3.12 2>/dev/null || command -v python3.12)
+    FINAL_PYTHON_VERSION="3.12"
+elif command_exists python3.11; then
+    FINAL_PYTHON_PATH=$(which python3.11 2>/dev/null || command -v python3.11)
+    FINAL_PYTHON_VERSION="3.11"
 elif command_exists python3; then
     FINAL_PYTHON_PATH=$(which python3 2>/dev/null || command -v python3)
     FINAL_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    # Verify version is >= 3.11
+    VERSION_CHECK=$(echo "$FINAL_PYTHON_VERSION 3.11" | awk '{if ($1 < $2) print "less"; else print "greater_or_equal"}')
+    if [ "$VERSION_CHECK" == "less" ]; then
+        echo "Error: Python $FINAL_PYTHON_VERSION is installed but version 3.11+ is required."
+        exit 1
+    fi
 else
     echo "Error: No Python installation found."
     exit 1
@@ -233,16 +292,25 @@ echo "✓ 'python' command now available (points to $FINAL_PYTHON_VERSION)"
 
 # Verify pip is available and create symlink
 PIP_COMMAND=""
-if [ -n "$PYTHON313_PATH" ] || command_exists python3.13; then
-    # Try python3.13 -m pip first
-    if python3.13 -m pip --version >/dev/null 2>&1; then
-        PIP_COMMAND="python3.13 -m pip"
+# Try to find pip for the selected Python version
+if [ -n "$PYTHON313_PATH" ]; then
+    PYTHON_BASE=$(basename "$PYTHON313_PATH")
+    if $PYTHON313_PATH -m pip --version >/dev/null 2>&1; then
+        PIP_COMMAND="$PYTHON313_PATH -m pip"
         PIP_PATH="$FINAL_PYTHON_PATH -m pip"
-    elif command_exists pip3.13; then
-        PIP_PATH=$(which pip3.13 2>/dev/null || command -v pip3.13)
+    elif command_exists pip${PYTHON_BASE#python}; then
+        PIP_PATH=$(which pip${PYTHON_BASE#python} 2>/dev/null || command -v pip${PYTHON_BASE#python})
     fi
-elif command_exists pip3; then
-    PIP_PATH=$(which pip3 2>/dev/null || command -v pip3)
+fi
+
+# Fallback: try common pip versions (matching Python 3.11+ requirement)
+if [ -z "$PIP_PATH" ]; then
+    for PIP_VER in "pip3.13" "pip3.12" "pip3.11" "pip3"; do
+        if command_exists $PIP_VER; then
+            PIP_PATH=$(which $PIP_VER 2>/dev/null || command -v $PIP_VER)
+            break
+        fi
+    done
 fi
 
 if [ -n "$PIP_PATH" ]; then
