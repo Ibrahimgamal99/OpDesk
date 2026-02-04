@@ -148,11 +148,15 @@ if [ "$SYSTEM_TYPE" == "Unknown" ]; then
 fi
 
 # Read existing config file (read-only, no modifications)
-echo ""
-echo "Step 7: Reading configuration from $CONFIG_FILE (read-only)..."
+if [ "$SYSTEM_TYPE" != "Issabel" ]; then
+    echo ""
+    echo "Step 7: Reading configuration from $CONFIG_FILE (read-only)..."
+fi
 if [ ! -f "$CONFIG_FILE" ]; then
     if [ -n "$BACKUP_CONFIG_FILE" ] && [ -f "$BACKUP_CONFIG_FILE" ]; then
-        echo "Primary config file $CONFIG_FILE not found. Using backup: $BACKUP_CONFIG_FILE"
+        if [ "$SYSTEM_TYPE" != "Issabel" ]; then
+            echo "Primary config file $CONFIG_FILE not found. Using backup: $BACKUP_CONFIG_FILE"
+        fi
         CONFIG_FILE="$BACKUP_CONFIG_FILE"
         BACKUP_CONFIG_FILE=""
     else
@@ -167,8 +171,10 @@ fi
 # Skip printing config file - only read database configuration silently
 
 # Extract database configuration from config file (read-only)
-echo ""
-echo "Step 8: Extracting database configuration from $CONFIG_FILE (read-only)..."
+if [ "$SYSTEM_TYPE" != "Issabel" ]; then
+    echo ""
+    echo "Step 8: Extracting database configuration from $CONFIG_FILE (read-only)..."
+fi
 
 # Function to extract PHP config value (for FreePBX)
 extract_php_config() {
