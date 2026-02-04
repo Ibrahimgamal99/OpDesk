@@ -315,7 +315,11 @@ fi
 # Create system-wide symlink for 'python' command (not 'python3')
 echo "Creating system-wide symlink: /usr/local/bin/python -> $FINAL_PYTHON_PATH"
 sudo ln -sf "$FINAL_PYTHON_PATH" /usr/local/bin/python
-echo "✓ 'python' command now available (points to $FINAL_PYTHON_VERSION)"
+if [ -n "$FINAL_PYTHON_VERSION" ]; then
+    echo "✓ 'python' command now available (symlinked to Python $FINAL_PYTHON_VERSION)"
+else
+    echo "✓ 'python' command now available (symlinked to $FINAL_PYTHON_PATH)"
+fi
 
 # Verify pip is available and create symlink
 PIP_COMMAND=""
@@ -355,7 +359,12 @@ PIP_WRAPPER
     else
         echo "Creating system-wide symlink: /usr/local/bin/pip -> $PIP_PATH"
         sudo ln -sf "$PIP_PATH" /usr/local/bin/pip
-        echo "✓ 'pip' command now available (points to pip3.13 or pip3)"
+        PIP_VERSION=$(basename "$PIP_PATH" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "")
+        if [ -n "$PIP_VERSION" ]; then
+            echo "✓ 'pip' command now available (symlinked to pip$PIP_VERSION)"
+        else
+            echo "✓ 'pip' command now available (symlinked to $PIP_PATH)"
+        fi
     fi
 else
     echo "Note: pip command not available. Will use 'python -m pip' instead."
