@@ -114,20 +114,91 @@ nvm install 24
 nvm use 24
 nvm alias default 24
 
+# Function to compare version numbers
+version_lt() {
+    # Compare two version strings (e.g., "3.10.5" < "3.11.0")
+    local version1=$1
+    local version2=$2
+    local IFS=.
+    local i ver1=($version1) ver2=($version2)
+    for ((i=0; i<${#ver1[@]}; i++)); do
+        if [[ -z ${ver2[i]} ]]; then
+            ver2[i]=0
+        fi
+        if ((10#${ver1[i]} < 10#${ver2[i]})); then
+            return 0
+        fi
+        if ((10#${ver1[i]} > 10#${ver2[i]})); then
+            return 1
+        fi
+    done
+    return 1
+}
+
 # Install Python
 echo ""
 echo "Step 5: Installing Python..."
+PYTHON_NEEDS_UPGRADE=false
+PYTHON_VERSION_STR=""
+PYTHON_VERSION_NUM=""
+
 if command_exists python3; then
-    PYTHON_VERSION=$(python3 --version)
-    echo "Python is already installed: $PYTHON_VERSION"
-else
-    if command_exists apt-get; then
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip
-    elif command_exists yum; then
-        sudo yum install -y python3 python3-pip
+    PYTHON_VERSION_STR=$(python3 --version 2>&1)
+    # Extract version number (e.g., "3.10.5" from "Python 3.10.5")
+    PYTHON_VERSION_NUM=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+    echo "Python is already installed: $PYTHON_VERSION_STR"
+    
+    # Check if version is less than 3.11
+    if version_lt "$PYTHON_VERSION_NUM" "3.11"; then
+        echo "Python version $PYTHON_VERSION_NUM is less than 3.11. Installing latest Python version..."
+        PYTHON_NEEDS_UPGRADE=true
     else
-        echo "Warning: Could not detect package manager. Please install Python3 manually."
+        echo "Python version $PYTHON_VERSION_NUM meets requirement (>= 3.11)"
+    fi
+else
+    echo "Python3 not found. Installing latest Python version..."
+    PYTHON_NEEDS_UPGRADE=true
+fi
+
+# Install or upgrade Python if needed
+if [ "$PYTHON_NEEDS_UPGRADE" = true ]; then
+    if command_exists apt-get; then
+        # For Debian/Ubuntu, try to install latest Python from deadsnakes PPA
+        echo "Installing latest Python from deadsnakes PPA..."
+        sudo apt-get update
+        sudo apt-get install -y software-properties-common
+        sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || echo "PPA may already be added or unavailable"
+        sudo apt-get update
+        # Install latest available Python 3.x
+        sudo apt-get install -y python3 python3-pip python3-venv python3-dev || {
+            echo "Warning: Could not install from PPA. Trying default repository..."
+            sudo apt-get install -y python3 python3-pip
+        }
+    elif command_exists dnf; then
+        # For Fedora/RHEL 8+, use dnf
+        echo "Installing latest Python using dnf..."
+        sudo dnf install -y python3 python3-pip python3-devel
+    elif command_exists yum; then
+        # For CentOS/RHEL 7, use yum
+        echo "Installing latest Python using yum..."
+        sudo yum install -y python3 python3-pip python3-devel
+    elif command_exists pacman; then
+        # For Arch Linux
+        echo "Installing latest Python using pacman..."
+        sudo pacman -S --noconfirm python python-pip
+    else
+        echo "Warning: Could not detect package manager. Please install Python3 >= 3.11 manually."
+        exit 1
+    fi
+    
+    # Verify new installation
+    if command_exists python3; then
+        PYTHON_VERSION_STR=$(python3 --version 2>&1)
+        PYTHON_VERSION_NUM=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+        echo "Installed Python: $PYTHON_VERSION_STR"
+    else
+        echo "Error: Python3 installation failed!"
+        exit 1
     fi
 fi
 
@@ -153,40 +224,22 @@ fi
 if command_exists python3; then
     PYTHON3_PATH=$(which python3 2>/dev/null || command -v python3)
     
-    # Create 'python' symlink if it doesn't exist
-    if [ ! -f /usr/local/bin/python ] && [ -n "$PYTHON3_PATH" ]; then
-        echo "Creating system-wide symlink: /usr/local/bin/python -> $PYTHON3_PATH"
+    # Always update/create 'python' symlink to point to the latest python3
+    if [ -n "$PYTHON3_PATH" ]; then
+        echo "Creating/updating system-wide symlink: /usr/local/bin/python -> $PYTHON3_PATH"
         sudo ln -sf "$PYTHON3_PATH" /usr/local/bin/python
-        echo "✓ 'python' command now available (points to python3)"
-    elif [ -f /usr/local/bin/python ]; then
-        # Verify the symlink points to python3
-        LINK_TARGET=$(readlink -f /usr/local/bin/python 2>/dev/null || readlink /usr/local/bin/python 2>/dev/null)
-        if [ "$LINK_TARGET" != "$PYTHON3_PATH" ]; then
-            echo "Updating system-wide symlink: /usr/local/bin/python -> $PYTHON3_PATH"
-            sudo ln -sf "$PYTHON3_PATH" /usr/local/bin/python
-            echo "✓ 'python' command updated to point to python3"
-        else
-            echo "System-wide 'python' symlink already exists and points to python3"
-        fi
+        echo "✓ 'python' command now available (symlinked to $PYTHON3_PATH)"
+    else
+        echo "Warning: Could not find python3 binary path"
     fi
     
     # Create 'pip' symlink if pip3 exists
     if command_exists pip3; then
         PIP3_PATH=$(which pip3 2>/dev/null || command -v pip3)
-        if [ ! -f /usr/local/bin/pip ] && [ -n "$PIP3_PATH" ]; then
-            echo "Creating system-wide symlink: /usr/local/bin/pip -> $PIP3_PATH"
+        if [ -n "$PIP3_PATH" ]; then
+            echo "Creating/updating system-wide symlink: /usr/local/bin/pip -> $PIP3_PATH"
             sudo ln -sf "$PIP3_PATH" /usr/local/bin/pip
-            echo "✓ 'pip' command now available (points to pip3)"
-        elif [ -f /usr/local/bin/pip ]; then
-            # Verify the symlink points to pip3
-            LINK_TARGET=$(readlink -f /usr/local/bin/pip 2>/dev/null || readlink /usr/local/bin/pip 2>/dev/null)
-            if [ "$LINK_TARGET" != "$PIP3_PATH" ]; then
-                echo "Updating system-wide symlink: /usr/local/bin/pip -> $PIP3_PATH"
-                sudo ln -sf "$PIP3_PATH" /usr/local/bin/pip
-                echo "✓ 'pip' command updated to point to pip3"
-            else
-                echo "System-wide 'pip' symlink already exists and points to pip3"
-            fi
+            echo "✓ 'pip' command now available (symlinked to $PIP3_PATH)"
         fi
     fi
 fi
