@@ -56,6 +56,10 @@ cleanup() {
 # Trap signals for cleanup
 trap cleanup SIGINT SIGTERM EXIT
 
+# Source nvm if available (for npm/node commands)
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
 # Header
 echo -e "${CYAN}"
 echo "=============================================="
@@ -84,7 +88,12 @@ fi
 
 # Start backend with logging
 cd "$PROJECT_DIR/backend"
-python -u server.py 2>&1 | tee -a "$BACKEND_LOG" | grep --line-buffered -v "change detected" | while read line; do
+# Use python if available (symlink created by install.sh), fallback to python3
+PYTHON_CMD="python"
+if ! command -v python >/dev/null 2>&1; then
+    PYTHON_CMD="python3"
+fi
+$PYTHON_CMD -u server.py 2>&1 | tee -a "$BACKEND_LOG" | grep --line-buffered -v "change detected" | while read line; do
     echo -e "${GREEN}[BACKEND]${NC} $line"
 done &
 BACKEND_PID=$!
@@ -101,6 +110,14 @@ sleep 2
 echo -e "${YELLOW}[$(date '+%H:%M:%S')]${NC} Starting frontend dev server..."
 
 cd "$PROJECT_DIR/frontend"
+
+# Verify npm is available
+if ! command -v npm >/dev/null 2>&1; then
+    echo -e "${RED}[$(date '+%H:%M:%S')]${NC} Error: npm command not found!"
+    echo -e "${YELLOW}Please ensure nvm is properly initialized.${NC}"
+    echo -e "${YELLOW}Try running: source ~/.bashrc${NC}"
+    exit 1
+fi
 
 # Check if node_modules exists
 if [ ! -d "node_modules" ]; then
