@@ -164,19 +164,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     fi
 fi
 
-# For Issabel, print only database configuration from /etc/amportal.conf
-if [ "$SYSTEM_TYPE" == "Issabel" ]; then
-    echo "Printing database configuration from /etc/amportal.conf:"
-    echo "----------------------------------------"
-    if [ -f "/etc/amportal.conf" ]; then
-        grep -E "^[[:space:]]*(AMPDBUSER|AMPDBPASS|AMPDBHOST|AMPDBPORT|AMPDBNAME)[[:space:]]*=" "/etc/amportal.conf" || echo "No database configuration found"
-    else
-        echo "Warning: /etc/amportal.conf not found"
-    fi
-    echo "----------------------------------------"
-else
-    cat "$CONFIG_FILE"
-fi
+# Skip printing config file - only read database configuration silently
 
 # Extract database configuration from config file (read-only)
 echo ""
