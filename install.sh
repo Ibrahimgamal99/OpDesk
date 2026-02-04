@@ -21,26 +21,26 @@ else
     OS="debian"
 fi
 
-# Install git and wget based on OS
-if command_exists git && command_exists wget; then
-    echo "git and wget are already installed."
+# Install wget and curl based on OS
+if command_exists wget && command_exists curl; then
+    echo "wget and curl are already installed."
 else
     if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-        echo "Installing git and wget using apt-get..."
+        echo "Installing wget and curl using apt-get..."
         sudo apt-get update
-        sudo apt-get install -y git wget curl
+        sudo apt-get install -y wget curl
     elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
-        echo "Installing git and wget using yum/dnf..."
+        echo "Installing wget and curl using yum/dnf..."
         if command_exists dnf; then
-            sudo dnf install -y git wget curl
+            sudo dnf install -y wget curl
         else
-            sudo yum install -y git wget curl
+            sudo yum install -y wget curl
         fi
     elif [ "$OS" == "arch" ]; then
-        echo "Installing git and wget using pacman..."
-        sudo pacman -S --noconfirm git wget curl
+        echo "Installing wget and curl using pacman..."
+        sudo pacman -S --noconfirm wget curl
     else
-        echo "Warning: Unknown OS. Please install git and wget manually."
+        echo "Warning: Unknown OS. Please install wget and curl manually."
         exit 1
     fi
 fi
@@ -137,20 +137,101 @@ fi
 
 cat "$CONFIG_FILE"
 
-# Prompt for database configuration
+# Extract database configuration from config file
 echo ""
-echo "Step 8: Database Configuration"
-echo "Please enter database details:"
-read -p "DB_HOST [default: localhost]: " DB_HOST
-DB_HOST=${DB_HOST:-localhost}
+echo "Step 8: Extracting database configuration from $CONFIG_FILE..."
 
-read -p "DB_PORT [default: 3306]: " DB_PORT
-DB_PORT=${DB_PORT:-3306}
+# Function to extract PHP config value (for FreePBX)
+extract_php_config() {
+    local key=$1
+    local config_file=$2
+    # Extract value from PHP array format: $amp_conf["KEY"] = "value"; or $amp_conf['KEY'] = 'value';
+    # First find the line, then extract the value between quotes (handles both single and double quotes)
+    local result=""
+    # Try double quotes first
+    result=$(grep "\$amp_conf\[\"${key}\"\]" "$config_file" 2>/dev/null | sed -n "s/.*= *\"\([^\"]*\)\".*/\1/p" | head -1)
+    # If not found, try single quotes
+    if [ -z "$result" ]; then
+        result=$(grep "\$amp_conf\['${key}'\]" "$config_file" 2>/dev/null | sed -n "s/.*= *'\([^']*\)'.*/\1/p" | head -1)
+    fi
+    echo "$result"
+}
 
-read -p "DB_USER: " DB_USER
-read -s -p "DB_PASSWORD: " DB_PASSWORD
-echo ""
-read -p "DB_NAME: " DB_NAME
+# Function to extract simple key=value config (for Issabel)
+extract_simple_config() {
+    local key=$1
+    local config_file=$2
+    # Extract value from simple format: key=value
+    grep "^${key}=" "$config_file" 2>/dev/null | cut -d'=' -f2- | head -1
+}
+
+if [ "$SYSTEM_TYPE" == "FreePBX" ]; then
+    # Extract from FreePBX config format: $amp_conf["AMPDBUSER"] = "value";
+    DB_USER=$(extract_php_config "AMPDBUSER" "$CONFIG_FILE")
+    DB_PASSWORD=$(extract_php_config "AMPDBPASS" "$CONFIG_FILE")
+    DB_HOST=$(extract_php_config "AMPDBHOST" "$CONFIG_FILE")
+    DB_PORT=$(extract_php_config "AMPDBPORT" "$CONFIG_FILE")
+    DB_NAME=$(extract_php_config "AMPDBNAME" "$CONFIG_FILE")
+    
+    # Set defaults if extraction failed
+    DB_HOST=${DB_HOST:-localhost}
+    DB_PORT=${DB_PORT:-3306}
+    
+    echo "Extracted database configuration:"
+    echo "  DB_HOST: $DB_HOST"
+    echo "  DB_PORT: $DB_PORT"
+    echo "  DB_USER: $DB_USER"
+    echo "  DB_NAME: $DB_NAME"
+    
+    if [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_NAME" ]; then
+        echo "Warning: Could not extract all database credentials. Please enter manually:"
+        [ -z "$DB_USER" ] && read -p "DB_USER: " DB_USER
+        [ -z "$DB_PASSWORD" ] && read -s -p "DB_PASSWORD: " DB_PASSWORD && echo ""
+        [ -z "$DB_NAME" ] && read -p "DB_NAME: " DB_NAME
+    fi
+elif [ "$SYSTEM_TYPE" == "Issabel" ]; then
+    # Extract from Issabel config format: key=value (simple format)
+    # Try to extract MySQL root password from issabel.conf
+    MYSQL_ROOT_PWD=$(extract_simple_config "mysqlrootpwd" "$CONFIG_FILE")
+    
+    # Get database credentials from /etc/amportal.conf (uses simple key=value format)
+    AMPORTAL_CONF="/etc/amportal.conf"
+    if [ -f "$AMPORTAL_CONF" ]; then
+        # Extract from amportal.conf which uses simple key=value format
+        DB_USER=$(extract_simple_config "AMPDBUSER" "$AMPORTAL_CONF")
+        DB_PASSWORD=$(extract_simple_config "AMPDBPASS" "$AMPORTAL_CONF")
+        DB_HOST=$(extract_simple_config "AMPDBHOST" "$AMPORTAL_CONF")
+        DB_PORT=$(extract_simple_config "AMPDBPORT" "$AMPORTAL_CONF")
+        DB_NAME=$(extract_simple_config "AMPDBNAME" "$AMPORTAL_CONF")
+    fi
+    
+    # Set defaults if extraction failed
+    DB_HOST=${DB_HOST:-localhost}
+    DB_PORT=${DB_PORT:-3306}
+    DB_USER=${DB_USER:-root}
+    DB_NAME=${DB_NAME:-asterisk}
+    
+    # If password not found, use mysqlrootpwd from issabel.conf
+    if [ -z "$DB_PASSWORD" ] && [ -n "$MYSQL_ROOT_PWD" ]; then
+        DB_PASSWORD="$MYSQL_ROOT_PWD"
+        DB_USER="root"
+    fi
+    
+    echo "Extracted database configuration:"
+    echo "  DB_HOST: $DB_HOST"
+    echo "  DB_PORT: $DB_PORT"
+    echo "  DB_USER: $DB_USER"
+    echo "  DB_NAME: $DB_NAME"
+    
+    if [ -z "$DB_PASSWORD" ] || [ -z "$DB_NAME" ]; then
+        echo "Warning: Could not extract all database credentials. Please enter manually:"
+        [ -z "$DB_USER" ] && read -p "DB_USER [default: root]: " DB_USER
+        DB_USER=${DB_USER:-root}
+        [ -z "$DB_PASSWORD" ] && read -s -p "DB_PASSWORD: " DB_PASSWORD && echo ""
+        [ -z "$DB_NAME" ] && read -p "DB_NAME [default: asterisk]: " DB_NAME
+        DB_NAME=${DB_NAME:-asterisk}
+    fi
+fi
 
 # Prompt for AMI configuration
 echo ""
