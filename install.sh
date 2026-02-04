@@ -39,17 +39,6 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to verify sudo access
-verify_sudo() {
-    if ! sudo -n true 2>/dev/null; then
-        log_info "This script requires sudo privileges. You may be prompted for your password."
-        sudo -v || {
-            log_error "Failed to obtain sudo privileges. Exiting."
-            exit 1
-        }
-    fi
-}
-
 # ============================================================================
 # STEP 1: Detect OS and Install Prerequisites
 # ============================================================================
@@ -800,9 +789,7 @@ install_nodejs_dependencies() {
 # MAIN EXECUTION
 # ============================================================================
 main() {
-    # Pre-flight checks
-    verify_sudo
-    
+
     # Installation steps
     detect_os_and_install_prerequisites
     clone_repository
