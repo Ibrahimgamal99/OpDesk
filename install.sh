@@ -21,26 +21,26 @@ else
     OS="debian"
 fi
 
-# Install git, wget and curl based on OS
-if command_exists git && command_exists wget && command_exists curl; then
-    echo "git, wget and curl are already installed."
+# Install git based on OS
+if command_exists git; then
+    echo "git is already installed."
 else
     if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-        echo "Installing git, wget and curl using apt-get..."
+        echo "Installing git using apt-get..."
         sudo apt-get update
-        sudo apt-get install -y git wget curl
+        sudo apt-get install -y git
     elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "rocky" ] || [ "$OS" == "fedora" ]; then
-        echo "Installing git, wget and curl using yum/dnf..."
+        echo "Installing git using yum/dnf..."
         if command_exists dnf; then
-            sudo dnf install -y git wget curl
+            sudo dnf install -y git
         else
-            sudo yum install -y git wget curl
+            sudo yum install -y git
         fi
     elif [ "$OS" == "arch" ]; then
-        echo "Installing git, wget and curl using pacman..."
-        sudo pacman -S --noconfirm git wget curl
+        echo "Installing git using pacman..."
+        sudo pacman -S --noconfirm git
     else
-        echo "Warning: Unknown OS. Please install git, wget and curl manually."
+        echo "Warning: Unknown OS. Please install git manually."
         exit 1
     fi
 fi
@@ -118,7 +118,7 @@ nvm alias default 24
 echo ""
 echo "Step 5: Installing Python..."
 PYTHON_NEEDS_UPGRADE=false
-PYTHON313_PATH=""
+PYTHON_11_PLUS_PATH=""
 
 # First, check if Python 3.11+ is already installed
 PYTHON_11_PLUS_FOUND=false
@@ -127,7 +127,7 @@ for PYTHON_VER in "3.13" "3.12" "3.11"; do
     if command_exists python${PYTHON_VER}; then
         PYTHON_11_PLUS_FOUND=true
         PYTHON_11_PLUS_VERSION=$PYTHON_VER
-        PYTHON313_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
+        PYTHON_11_PLUS_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
         PYTHON_VERSION_STR=$(python${PYTHON_VER} --version 2>&1)
         echo "Python $PYTHON_VER is already installed: $PYTHON_VERSION_STR"
         break
@@ -190,7 +190,7 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
                 PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
                 if [ -n "$PYTHON_NEW_PATH" ]; then
                     PYTHON_INSTALLED=true
-                    PYTHON313_PATH="$PYTHON_NEW_PATH"
+                    PYTHON_11_PLUS_PATH="$PYTHON_NEW_PATH"
                     echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
                     # Install pip
                     sudo apt-get install -y python${PYTHON_VER}-pip 2>/dev/null || python${PYTHON_VER} -m ensurepip --upgrade 2>/dev/null || true
@@ -216,7 +216,7 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
                     PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
                     if [ -n "$PYTHON_NEW_PATH" ]; then
                         PYTHON_INSTALLED=true
-                        PYTHON313_PATH="$PYTHON_NEW_PATH"
+                        PYTHON_11_PLUS_PATH="$PYTHON_NEW_PATH"
                         echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
                         break
                     fi
@@ -230,7 +230,7 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
                     PYTHON_NEW_PATH=$(which python3.11 2>/dev/null || command -v python3.11)
                     if [ -n "$PYTHON_NEW_PATH" ]; then
                         PYTHON_INSTALLED=true
-                        PYTHON313_PATH="$PYTHON_NEW_PATH"
+                        PYTHON_11_PLUS_PATH="$PYTHON_NEW_PATH"
                         echo "Python 3.11 installed successfully at: $PYTHON_NEW_PATH"
                     fi
                 fi
@@ -248,7 +248,7 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
                     PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
                     if [ -n "$PYTHON_NEW_PATH" ]; then
                         PYTHON_INSTALLED=true
-                        PYTHON313_PATH="$PYTHON_NEW_PATH"
+                        PYTHON_11_PLUS_PATH="$PYTHON_NEW_PATH"
                         echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
                         break
                     fi
@@ -264,7 +264,7 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
                 PYTHON_NEW_PATH=$(which python${PYTHON_VER} 2>/dev/null || command -v python${PYTHON_VER})
                 if [ -n "$PYTHON_NEW_PATH" ]; then
                     PYTHON_INSTALLED=true
-                    PYTHON313_PATH="$PYTHON_NEW_PATH"
+                    PYTHON_11_PLUS_PATH="$PYTHON_NEW_PATH"
                     echo "Python $PYTHON_VER installed successfully at: $PYTHON_NEW_PATH"
                     break
                 fi
@@ -283,9 +283,9 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
 fi
 
 # Determine which Python to use for symlink
-if [ -n "$PYTHON313_PATH" ]; then
-    FINAL_PYTHON_PATH="$PYTHON313_PATH"
-    FINAL_PYTHON_VERSION=$(basename "$PYTHON313_PATH" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "3.x")
+if [ -n "$PYTHON_11_PLUS_PATH" ]; then
+    FINAL_PYTHON_PATH="$PYTHON_11_PLUS_PATH"
+    FINAL_PYTHON_VERSION=$(basename "$PYTHON_11_PLUS_PATH" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "3.x")
 elif command_exists python3.13; then
     FINAL_PYTHON_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
     FINAL_PYTHON_VERSION="3.13"
@@ -324,10 +324,10 @@ fi
 # Verify pip is available and create symlink
 PIP_COMMAND=""
 # Try to find pip for the selected Python version
-if [ -n "$PYTHON313_PATH" ]; then
-    PYTHON_BASE=$(basename "$PYTHON313_PATH")
-    if $PYTHON313_PATH -m pip --version >/dev/null 2>&1; then
-        PIP_COMMAND="$PYTHON313_PATH -m pip"
+if [ -n "$PYTHON_11_PLUS_PATH" ]; then
+    PYTHON_BASE=$(basename "$PYTHON_11_PLUS_PATH")
+    if $PYTHON_11_PLUS_PATH -m pip --version >/dev/null 2>&1; then
+        PIP_COMMAND="$PYTHON_11_PLUS_PATH -m pip"
         PIP_PATH="$FINAL_PYTHON_PATH -m pip"
     elif command_exists pip${PYTHON_BASE#python}; then
         PIP_PATH=$(which pip${PYTHON_BASE#python} 2>/dev/null || command -v pip${PYTHON_BASE#python})

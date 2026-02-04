@@ -27,11 +27,12 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 - Asterisk PBX with AMI enabled
 - MySQL/MariaDB (for FreePBX extension list)
 - sudo access (for installing system packages)
+- **curl** (required for downloading nvm during installation)
 
 **Note:** The installation script will automatically install:
-- Python 3.8+ and pip
+- Python 3.11+ and pip
 - Node.js 24+ (via nvm)
-- Required system packages (git, wget, curl)
+- git (if not already installed)
 
 ## Installation
 
@@ -51,7 +52,7 @@ chmod +x install.sh
 ```
 
 The script will:
-1. Detect your OS and install prerequisites (git, wget, curl)
+1. Detect your OS and install git (if not already installed)
 2. Clone the repository (if not already present)
 3. Install nvm (Node Version Manager) and Node.js 24
 4. Install Python 3 and pip
@@ -188,52 +189,17 @@ Access the application at `http://localhost:8765`
 
 Connect to `ws://localhost:8765/ws` for real-time updates.
 
-#### Messages from Server
-
-```json
-{
-  "type": "state_update",
-  "data": {
-    "extensions": {...},
-    "active_calls": {...},
-    "queues": {...},
-    "queue_members": {...},
-    "queue_entries": {...},
-    "stats": {...}
-  },
-  "timestamp": "2024-01-01T12:00:00"
-}
-```
-
-#### Actions to Server
-
-```json
-// Supervisor actions
-{"action": "listen", "supervisor": "200", "target": "100"}
-{"action": "whisper", "supervisor": "200", "target": "100"}
-{"action": "barge", "supervisor": "200", "target": "100"}
-
-// Queue management
-{"action": "queue_add", "queue": "support", "interface": "100"}
-{"action": "queue_remove", "queue": "support", "interface": "100"}
-{"action": "queue_pause", "queue": "support", "interface": "100", "reason": "Break"}
-{"action": "queue_unpause", "queue": "support", "interface": "100"}
-
-// Sync
-{"action": "sync_calls"}
-{"action": "sync_queues"}
-```
 
 ## Technology Stack
 
 ### Backend
-- **Python 3.8+**
+- **Python 3.11+**
 - **FastAPI** - Modern async web framework
 - **WebSockets** - Real-time communication
 - **asyncio** - Async I/O for AMI communication
 
 ### Frontend
-- **React 18** - UI framework
+- **React 24** - UI framework
 - **TypeScript** - Type safety
 - **Vite** - Build tool
 - **Framer Motion** - Animations
