@@ -129,9 +129,14 @@ if command_exists python3; then
     
     # Compare version to 3.11 (minimum required version)
     if [ -n "$PYTHON_VERSION" ]; then
-        # Use awk for version comparison
-        VERSION_CHECK=$(echo "$PYTHON_VERSION 3.11" | awk '{if ($1 < $2) print "less"; else print "greater_or_equal"}')
-        if [ "$VERSION_CHECK" == "less" ]; then
+        # Properly compare version numbers by splitting major.minor
+        PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+        PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+        REQUIRED_MAJOR=3
+        REQUIRED_MINOR=11
+        
+        # Compare major version first, then minor
+        if [ "$PYTHON_MAJOR" -lt "$REQUIRED_MAJOR" ] || ([ "$PYTHON_MAJOR" -eq "$REQUIRED_MAJOR" ] && [ "$PYTHON_MINOR" -lt "$REQUIRED_MINOR" ]); then
             echo "Python version $PYTHON_VERSION is less than 3.11. Will install Python 3.11 or newer..."
             PYTHON_NEEDS_UPGRADE=true
         else
@@ -274,9 +279,12 @@ elif command_exists python3.11; then
 elif command_exists python3; then
     FINAL_PYTHON_PATH=$(which python3 2>/dev/null || command -v python3)
     FINAL_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
-    # Verify version is >= 3.11
-    VERSION_CHECK=$(echo "$FINAL_PYTHON_VERSION 3.11" | awk '{if ($1 < $2) print "less"; else print "greater_or_equal"}')
-    if [ "$VERSION_CHECK" == "less" ]; then
+    # Verify version is >= 3.11 (proper numeric comparison)
+    PYTHON_MAJOR=$(echo "$FINAL_PYTHON_VERSION" | cut -d. -f1)
+    PYTHON_MINOR=$(echo "$FINAL_PYTHON_VERSION" | cut -d. -f2)
+    REQUIRED_MAJOR=3
+    REQUIRED_MINOR=11
+    if [ "$PYTHON_MAJOR" -lt "$REQUIRED_MAJOR" ] || ([ "$PYTHON_MAJOR" -eq "$REQUIRED_MAJOR" ] && [ "$PYTHON_MINOR" -lt "$REQUIRED_MINOR" ]); then
         echo "Error: Python $FINAL_PYTHON_VERSION is installed but version 3.11+ is required."
         exit 1
     fi
