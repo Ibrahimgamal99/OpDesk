@@ -317,8 +317,8 @@ if ! sudo grep -q "^\[$AMI_USERNAME\]" "$MANAGER_CONF"; then
     echo "secret = $AMI_SECRET" | sudo tee -a "$MANAGER_CONF" > /dev/null
     echo "deny = 0.0.0.0/0.0.0.0" | sudo tee -a "$MANAGER_CONF" > /dev/null
     echo "permit = 127.0.0.1/255.255.255.255" | sudo tee -a "$MANAGER_CONF" > /dev/null
-    echo "read = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan" | sudo tee -a "$MANAGER_CONF" > /dev/null
-    echo "write = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan" | sudo tee -a "$MANAGER_CONF" > /dev/null
+    echo "read = all" | sudo tee -a "$MANAGER_CONF" > /dev/null
+    echo "write = all" | sudo tee -a "$MANAGER_CONF" > /dev/null
     echo "AMI configuration added to $MANAGER_CONF"
     
     # Reload Asterisk manager module to apply changes
