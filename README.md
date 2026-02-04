@@ -41,7 +41,7 @@ Use the provided installation script for a complete automated setup:
 
 **One-liner (download and run):**
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/Ibrahimgamal99/AOP/main/install.sh && chmod +x install.sh && ./install.sh
+curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/AOP/main/install.sh && chmod +x install.sh && ./install.sh
 ```
 
 **Or if you already have the repository:**

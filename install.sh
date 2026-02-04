@@ -105,6 +105,24 @@ else
     fi
 fi
 
+# Verify pip3 is available, if not try to install it or use python3 -m pip
+if ! command_exists pip3; then
+    echo "pip3 command not found. Attempting to install pip3..."
+    if command_exists apt-get; then
+        sudo apt-get update
+        sudo apt-get install -y python3-pip
+    elif command_exists yum; then
+        sudo yum install -y python3-pip
+    elif command_exists dnf; then
+        sudo dnf install -y python3-pip
+    fi
+    
+    # If still not found, we'll use python3 -m pip as fallback
+    if ! command_exists pip3; then
+        echo "Note: pip3 command not available. Will use 'python3 -m pip' instead."
+    fi
+fi
+
 # Check for Issabel or FreePBX
 echo ""
 echo "Step 6: Detecting Issabel/FreePBX installation..."
@@ -346,7 +364,12 @@ echo ""
 echo "Step 13: Installing Python dependencies..."
 cd "$BACKEND_DIR"
 if [ -f "requirements.txt" ]; then
-    pip3 install --break-system-packages -r requirements.txt
+    # Use pip3 if available, otherwise use python3 -m pip
+    if command_exists pip3; then
+        pip3 install --break-system-packages -r requirements.txt
+    else
+        python3 -m pip install --break-system-packages -r requirements.txt
+    fi
     echo "Python dependencies installed successfully"
 else
     echo "Warning: requirements.txt not found in backend directory"
