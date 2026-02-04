@@ -114,134 +114,156 @@ nvm install 24
 nvm use 24
 nvm alias default 24
 
-# Function to compare version numbers
-version_lt() {
-    # Compare two version strings (e.g., "3.10.5" < "3.11.0")
-    local version1=$1
-    local version2=$2
-    local IFS=.
-    local i ver1=($version1) ver2=($version2)
-    for ((i=0; i<${#ver1[@]}; i++)); do
-        if [[ -z ${ver2[i]} ]]; then
-            ver2[i]=0
-        fi
-        if ((10#${ver1[i]} < 10#${ver2[i]})); then
-            return 0
-        fi
-        if ((10#${ver1[i]} > 10#${ver2[i]})); then
-            return 1
-        fi
-    done
-    return 1
-}
-
 # Install Python
 echo ""
 echo "Step 5: Installing Python..."
 PYTHON_NEEDS_UPGRADE=false
-PYTHON_VERSION_STR=""
-PYTHON_VERSION_NUM=""
+PYTHON313_PATH=""
 
 if command_exists python3; then
     PYTHON_VERSION_STR=$(python3 --version 2>&1)
-    # Extract version number (e.g., "3.10.5" from "Python 3.10.5")
-    PYTHON_VERSION_NUM=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
     echo "Python is already installed: $PYTHON_VERSION_STR"
     
-    # Check if version is less than 3.11
-    if version_lt "$PYTHON_VERSION_NUM" "3.11"; then
-        echo "Python version $PYTHON_VERSION_NUM is less than 3.11. Installing latest Python version..."
-        PYTHON_NEEDS_UPGRADE=true
+    # Extract version number (e.g., "Python 3.10.5" -> "3.10")
+    PYTHON_VERSION=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    
+    # Compare version to 3.11
+    if [ -n "$PYTHON_VERSION" ]; then
+        # Use awk for version comparison
+        VERSION_CHECK=$(echo "$PYTHON_VERSION 3.11" | awk '{if ($1 < $2) print "less"; else print "greater_or_equal"}')
+        if [ "$VERSION_CHECK" == "less" ]; then
+            echo "Python version $PYTHON_VERSION is less than 3.11. Will install Python 3.13..."
+            PYTHON_NEEDS_UPGRADE=true
+        else
+            echo "Python version $PYTHON_VERSION is >= 3.11. No upgrade needed."
+        fi
     else
-        echo "Python version $PYTHON_VERSION_NUM meets requirement (>= 3.11)"
+        echo "Warning: Could not parse Python version. Will attempt to install Python 3.13..."
+        PYTHON_NEEDS_UPGRADE=true
     fi
 else
-    echo "Python3 not found. Installing latest Python version..."
+    echo "Python3 not found. Will install Python 3.13..."
     PYTHON_NEEDS_UPGRADE=true
 fi
 
-# Install or upgrade Python if needed
-if [ "$PYTHON_NEEDS_UPGRADE" = true ]; then
-    if command_exists apt-get; then
-        # For Debian/Ubuntu, try to install latest Python from deadsnakes PPA
-        echo "Installing latest Python from deadsnakes PPA..."
+# Install Python 3.13 if needed
+if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
+    echo "Installing Python 3.13..."
+    
+    if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
+        # For Debian/Ubuntu, use deadsnakes PPA
+        echo "Adding deadsnakes PPA for Python 3.13..."
         sudo apt-get update
         sudo apt-get install -y software-properties-common
-        sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || echo "PPA may already be added or unavailable"
+        sudo add-apt-repository -y ppa:deadsnakes/ppa
         sudo apt-get update
-        # Install latest available Python 3.x
-        sudo apt-get install -y python3 python3-pip python3-venv python3-dev || {
-            echo "Warning: Could not install from PPA. Trying default repository..."
-            sudo apt-get install -y python3 python3-pip
-        }
-    elif command_exists dnf; then
-        # For Fedora/RHEL 8+, use dnf
-        echo "Installing latest Python using dnf..."
-        sudo dnf install -y python3 python3-pip python3-devel
-    elif command_exists yum; then
-        # For CentOS/RHEL 7, use yum
-        echo "Installing latest Python using yum..."
-        sudo yum install -y python3 python3-pip python3-devel
-    elif command_exists pacman; then
+        sudo apt-get install -y python3.13 python3.13-venv python3.13-dev
+        
+        # Find python3.13 path
+        PYTHON313_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
+        
+    elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
+        # For Fedora/RHEL/CentOS, use dnf/yum
+        if command_exists dnf; then
+            sudo dnf install -y python3.13 python3.13-pip python3.13-devel
+        else
+            # For older CentOS/RHEL, may need to compile from source or use EPEL
+            echo "Installing build dependencies for Python 3.13..."
+            sudo yum groupinstall -y "Development Tools"
+            sudo yum install -y openssl-devel bzip2-devel libffi-devel zlib-devel readline-devel sqlite-devel
+            echo "Note: For CentOS/RHEL, Python 3.13 may need to be compiled from source."
+            echo "Attempting to install via dnf/yum..."
+            sudo yum install -y python3.13 python3.13-pip python3.13-devel 2>/dev/null || {
+                echo "Python 3.13 not available in default repositories. Please install manually."
+                exit 1
+            }
+        fi
+        
+        # Find python3.13 path
+        PYTHON313_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
+        
+    elif [ "$OS" == "arch" ]; then
         # For Arch Linux
-        echo "Installing latest Python using pacman..."
-        sudo pacman -S --noconfirm python python-pip
+        sudo pacman -S --noconfirm python313
+        PYTHON313_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
     else
-        echo "Warning: Could not detect package manager. Please install Python3 >= 3.11 manually."
+        echo "Warning: Unknown OS. Please install Python 3.13 manually."
         exit 1
     fi
     
-    # Verify new installation
-    if command_exists python3; then
-        PYTHON_VERSION_STR=$(python3 --version 2>&1)
-        PYTHON_VERSION_NUM=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-        echo "Installed Python: $PYTHON_VERSION_STR"
-    else
-        echo "Error: Python3 installation failed!"
+    if [ -z "$PYTHON313_PATH" ]; then
+        echo "Error: Python 3.13 installation failed or python3.13 not found in PATH."
         exit 1
     fi
-fi
-
-# Verify pip3 is available, if not try to install it or use python3 -m pip
-if ! command_exists pip3; then
-    echo "pip3 command not found. Attempting to install pip3..."
-    if command_exists apt-get; then
-        sudo apt-get update
-        sudo apt-get install -y python3-pip
-    elif command_exists yum; then
-        sudo yum install -y python3-pip
-    elif command_exists dnf; then
-        sudo dnf install -y python3-pip
-    fi
     
-    # If still not found, we'll use python3 -m pip as fallback
-    if ! command_exists pip3; then
-        echo "Note: pip3 command not available. Will use 'python3 -m pip' instead."
-    fi
-fi
-
-# Create system-wide symlinks for 'python' and 'pip' commands
-if command_exists python3; then
-    PYTHON3_PATH=$(which python3 2>/dev/null || command -v python3)
+    echo "Python 3.13 installed successfully at: $PYTHON313_PATH"
     
-    # Always update/create 'python' symlink to point to the latest python3
-    if [ -n "$PYTHON3_PATH" ]; then
-        echo "Creating/updating system-wide symlink: /usr/local/bin/python -> $PYTHON3_PATH"
-        sudo ln -sf "$PYTHON3_PATH" /usr/local/bin/python
-        echo "✓ 'python' command now available (symlinked to $PYTHON3_PATH)"
-    else
-        echo "Warning: Could not find python3 binary path"
-    fi
-    
-    # Create 'pip' symlink if pip3 exists
-    if command_exists pip3; then
-        PIP3_PATH=$(which pip3 2>/dev/null || command -v pip3)
-        if [ -n "$PIP3_PATH" ]; then
-            echo "Creating/updating system-wide symlink: /usr/local/bin/pip -> $PIP3_PATH"
-            sudo ln -sf "$PIP3_PATH" /usr/local/bin/pip
-            echo "✓ 'pip' command now available (symlinked to $PIP3_PATH)"
+    # Install pip for Python 3.13
+    echo "Installing pip for Python 3.13..."
+    if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
+        sudo apt-get install -y python3.13-pip python3.13-venv
+    elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
+        if command_exists dnf; then
+            sudo dnf install -y python3.13-pip
+        else
+            sudo yum install -y python3.13-pip
         fi
     fi
+fi
+
+# Determine which Python to use for symlink
+if [ -n "$PYTHON313_PATH" ]; then
+    FINAL_PYTHON_PATH="$PYTHON313_PATH"
+    FINAL_PYTHON_VERSION="3.13"
+elif command_exists python3.13; then
+    FINAL_PYTHON_PATH=$(which python3.13 2>/dev/null || command -v python3.13)
+    FINAL_PYTHON_VERSION="3.13"
+elif command_exists python3; then
+    FINAL_PYTHON_PATH=$(which python3 2>/dev/null || command -v python3)
+    FINAL_PYTHON_VERSION=$(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+else
+    echo "Error: No Python installation found."
+    exit 1
+fi
+
+# Create system-wide symlink for 'python' command (not 'python3')
+echo "Creating system-wide symlink: /usr/local/bin/python -> $FINAL_PYTHON_PATH"
+sudo ln -sf "$FINAL_PYTHON_PATH" /usr/local/bin/python
+echo "✓ 'python' command now available (points to $FINAL_PYTHON_VERSION)"
+
+# Verify pip is available and create symlink
+PIP_COMMAND=""
+if [ -n "$PYTHON313_PATH" ] || command_exists python3.13; then
+    # Try python3.13 -m pip first
+    if python3.13 -m pip --version >/dev/null 2>&1; then
+        PIP_COMMAND="python3.13 -m pip"
+        PIP_PATH="$FINAL_PYTHON_PATH -m pip"
+    elif command_exists pip3.13; then
+        PIP_PATH=$(which pip3.13 2>/dev/null || command -v pip3.13)
+    fi
+elif command_exists pip3; then
+    PIP_PATH=$(which pip3 2>/dev/null || command -v pip3)
+fi
+
+if [ -n "$PIP_PATH" ]; then
+    # Extract just the pip executable path if it's a full command
+    if [[ "$PIP_PATH" == *"-m pip"* ]]; then
+        # For python3.13 -m pip, we'll create a wrapper or use the python symlink
+        echo "Creating system-wide symlink: /usr/local/bin/pip -> $FINAL_PYTHON_PATH (using -m pip)"
+        # Create a wrapper script for pip
+        sudo tee /usr/local/bin/pip > /dev/null << 'PIP_WRAPPER'
+#!/bin/bash
+exec python -m pip "$@"
+PIP_WRAPPER
+        sudo chmod +x /usr/local/bin/pip
+        echo "✓ 'pip' command now available (wrapper for python -m pip)"
+    else
+        echo "Creating system-wide symlink: /usr/local/bin/pip -> $PIP_PATH"
+        sudo ln -sf "$PIP_PATH" /usr/local/bin/pip
+        echo "✓ 'pip' command now available (points to pip3.13 or pip3)"
+    fi
+else
+    echo "Note: pip command not available. Will use 'python -m pip' instead."
 fi
 
 # Check for Issabel or FreePBX
