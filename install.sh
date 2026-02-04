@@ -21,41 +21,52 @@ else
     OS="debian"
 fi
 
-# Install wget and curl based on OS
-if command_exists wget && command_exists curl; then
-    echo "wget and curl are already installed."
+# Install git, wget and curl based on OS
+if command_exists git && command_exists wget && command_exists curl; then
+    echo "git, wget and curl are already installed."
 else
     if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-        echo "Installing wget and curl using apt-get..."
+        echo "Installing git, wget and curl using apt-get..."
         sudo apt-get update
-        sudo apt-get install -y wget curl
+        sudo apt-get install -y git wget curl
     elif [ "$OS" == "centos" ] || [ "$OS" == "rhel" ] || [ "$OS" == "fedora" ]; then
-        echo "Installing wget and curl using yum/dnf..."
+        echo "Installing git, wget and curl using yum/dnf..."
         if command_exists dnf; then
-            sudo dnf install -y wget curl
+            sudo dnf install -y git wget curl
         else
-            sudo yum install -y wget curl
+            sudo yum install -y git wget curl
         fi
     elif [ "$OS" == "arch" ]; then
-        echo "Installing wget and curl using pacman..."
-        sudo pacman -S --noconfirm wget curl
+        echo "Installing git, wget and curl using pacman..."
+        sudo pacman -S --noconfirm git wget curl
     else
-        echo "Warning: Unknown OS. Please install wget and curl manually."
+        echo "Warning: Unknown OS. Please install git, wget and curl manually."
         exit 1
     fi
 fi
 
-# Set project root to /opt/AOP
+# Clone repository to /opt/AOP
 echo ""
-echo "Step 2: Setting project directory..."
+echo "Step 2: Cloning AOP repository..."
 PROJECT_ROOT="/opt/AOP"
-echo "Using project directory: $PROJECT_ROOT"
-if [ ! -d "$PROJECT_ROOT" ]; then
-    echo "Directory $PROJECT_ROOT does not exist. Creating it..."
-    sudo mkdir -p "$PROJECT_ROOT"
-    sudo chown "$USER:$USER" "$PROJECT_ROOT"
+REPO_URL="https://github.com/Ibrahimgamal99/AOP.git"
+
+if [ -d "$PROJECT_ROOT/.git" ]; then
+    echo "Repository already exists at $PROJECT_ROOT. Updating..."
+    cd "$PROJECT_ROOT"
+    git pull || echo "Warning: Could not update repository. Continuing with existing code..."
+else
+    if [ -d "$PROJECT_ROOT" ]; then
+        echo "Directory $PROJECT_ROOT exists but is not a git repository."
+        echo "Removing existing directory..."
+        sudo rm -rf "$PROJECT_ROOT"
+    fi
+    echo "Cloning repository to $PROJECT_ROOT..."
+    sudo mkdir -p "$(dirname "$PROJECT_ROOT")"
+    sudo git clone "$REPO_URL" "$PROJECT_ROOT"
+    sudo chown -R "$USER:$USER" "$PROJECT_ROOT"
+    cd "$PROJECT_ROOT"
 fi
-cd "$PROJECT_ROOT"
 
 # Download and install nvm
 echo ""
