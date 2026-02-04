@@ -164,7 +164,15 @@ if [ ! -f "$CONFIG_FILE" ]; then
     fi
 fi
 
-cat "$CONFIG_FILE"
+# For Issabel, print the entire /etc/amportal.conf file
+if [ "$SYSTEM_TYPE" == "Issabel" ]; then
+    echo "Printing entire /etc/amportal.conf:"
+    echo "----------------------------------------"
+    cat "/etc/amportal.conf"
+    echo "----------------------------------------"
+else
+    cat "$CONFIG_FILE"
+fi
 
 # Extract database configuration from config file (read-only)
 echo ""
