@@ -45,29 +45,17 @@ else
     fi
 fi
 
-# Clone repository if not already in AOP directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_URL="https://github.com/Ibrahimgamal99/AOP.git"
-
-if [ -d "$SCRIPT_DIR/.git" ]; then
-    echo "Already in AOP repository directory: $SCRIPT_DIR"
-    cd "$SCRIPT_DIR"
-    PROJECT_ROOT="$SCRIPT_DIR"
-else
-    echo ""
-    echo "Step 2: Cloning AOP repository..."
-    CLONE_DIR="$HOME/AOP"
-    if [ -d "$CLONE_DIR" ]; then
-        echo "Directory $CLONE_DIR already exists. Updating repository..."
-        cd "$CLONE_DIR"
-        git pull || echo "Warning: Could not update repository. Continuing with existing code..."
-    else
-        echo "Cloning repository to $CLONE_DIR..."
-        git clone "$REPO_URL" "$CLONE_DIR"
-        cd "$CLONE_DIR"
-    fi
-    PROJECT_ROOT="$CLONE_DIR"
+# Set project root to /opt/AOP
+echo ""
+echo "Step 2: Setting project directory..."
+PROJECT_ROOT="/opt/AOP"
+echo "Using project directory: $PROJECT_ROOT"
+if [ ! -d "$PROJECT_ROOT" ]; then
+    echo "Directory $PROJECT_ROOT does not exist. Creating it..."
+    sudo mkdir -p "$PROJECT_ROOT"
+    sudo chown "$USER:$USER" "$PROJECT_ROOT"
 fi
+cd "$PROJECT_ROOT"
 
 # Download and install nvm
 echo ""
