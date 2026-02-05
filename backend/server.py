@@ -15,6 +15,7 @@ import os
 from datetime import datetime
 from typing import Dict, Set, Optional
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +25,17 @@ import uvicorn
 
 from ami import AMIExtensionsMonitor, _format_duration, _meaningful, DIALPLAN_CTX, normalize_interface
 from db_manager import get_extensions_from_db
+
+# Load environment variables
+load_dotenv()
+
+# Import CRM connector
+try:
+    from crm import CRMConnector, create_crm_connector, AuthType
+except ImportError:
+    CRMConnector = None
+    create_crm_connector = None
+    AuthType = None
 
 # Filter to suppress "change detected" messages
 class SuppressChangeDetectedFilter(logging.Filter):
@@ -347,11 +359,135 @@ class AMIEventBridge:
 
 
 # ---------------------------------------------------------------------------
+# CRM Configuration Helper
+# ---------------------------------------------------------------------------
+def init_crm_connector() -> Optional[CRMConnector]:
+    """
+    Initialize CRM connector from environment variables.
+    
+    Environment variables:
+        CRM_ENABLED: Set to 'true' or '1' to enable CRM (default: disabled)
+        CRM_SERVER_URL: CRM server URL (required if enabled)
+        CRM_AUTH_TYPE: Authentication type - 'api_key', 'basic_auth', 'bearer_token', or 'oauth2' (required if enabled)
+        
+        For API_KEY auth:
+            CRM_API_KEY: API key
+            CRM_API_KEY_HEADER: API key header name (optional, default: 'X-API-Key')
+        
+        For BASIC_AUTH:
+            CRM_USERNAME: Username
+            CRM_PASSWORD: Password
+        
+        For BEARER_TOKEN:
+            CRM_BEARER_TOKEN: Bearer token
+        
+        For OAUTH2:
+            CRM_OAUTH2_CLIENT_ID: OAuth2 client ID
+            CRM_OAUTH2_CLIENT_SECRET: OAuth2 client secret
+            CRM_OAUTH2_TOKEN_URL: OAuth2 token endpoint URL
+            CRM_OAUTH2_SCOPE: OAuth2 scope (optional)
+        
+        Optional:
+            CRM_ENDPOINT_PATH: API endpoint path (default: '/api/calls')
+            CRM_TIMEOUT: Request timeout in seconds (default: 30)
+            CRM_VERIFY_SSL: Verify SSL certificates (default: 'true')
+    
+    Returns:
+        CRMConnector instance if configured, None otherwise
+    """
+    if CRMConnector is None:
+        log.warning("CRM connector not available - CRM functionality disabled")
+        return None
+    
+    # Check if CRM is enabled
+    crm_enabled = os.getenv('CRM_ENABLED', '').lower() in ('true', '1', 'yes')
+    if not crm_enabled:
+        log.info("CRM is disabled (set CRM_ENABLED=true to enable)")
+        return None
+    
+    # Get required configuration
+    server_url = os.getenv('CRM_SERVER_URL', '').strip()
+    auth_type_str = os.getenv('CRM_AUTH_TYPE', '').strip().lower()
+    
+    if not server_url:
+        log.warning("CRM_ENABLED is true but CRM_SERVER_URL is not set - CRM disabled")
+        return None
+    
+    if not auth_type_str:
+        log.warning("CRM_ENABLED is true but CRM_AUTH_TYPE is not set - CRM disabled")
+        return None
+    
+    # Build configuration dictionary
+    config = {
+        "server_url": server_url,
+        "auth_type": auth_type_str,
+        "endpoint_path": os.getenv('CRM_ENDPOINT_PATH', '/api/calls'),
+        "timeout": int(os.getenv('CRM_TIMEOUT', '30')),
+        "verify_ssl": os.getenv('CRM_VERIFY_SSL', 'true').lower() in ('true', '1', 'yes')
+    }
+    
+    # Add auth-specific configuration
+    if auth_type_str == 'api_key':
+        api_key = os.getenv('CRM_API_KEY', '').strip()
+        if not api_key:
+            log.warning("CRM_AUTH_TYPE is 'api_key' but CRM_API_KEY is not set - CRM disabled")
+            return None
+        config["api_key"] = api_key
+        api_key_header = os.getenv('CRM_API_KEY_HEADER', '').strip()
+        if api_key_header:
+            config["api_key_header"] = api_key_header
+    
+    elif auth_type_str == 'basic_auth':
+        username = os.getenv('CRM_USERNAME', '').strip()
+        password = os.getenv('CRM_PASSWORD', '').strip()
+        if not username or not password:
+            log.warning("CRM_AUTH_TYPE is 'basic_auth' but CRM_USERNAME or CRM_PASSWORD is not set - CRM disabled")
+            return None
+        config["username"] = username
+        config["password"] = password
+    
+    elif auth_type_str == 'bearer_token':
+        bearer_token = os.getenv('CRM_BEARER_TOKEN', '').strip()
+        if not bearer_token:
+            log.warning("CRM_AUTH_TYPE is 'bearer_token' but CRM_BEARER_TOKEN is not set - CRM disabled")
+            return None
+        config["bearer_token"] = bearer_token
+    
+    elif auth_type_str == 'oauth2':
+        client_id = os.getenv('CRM_OAUTH2_CLIENT_ID', '').strip()
+        client_secret = os.getenv('CRM_OAUTH2_CLIENT_SECRET', '').strip()
+        token_url = os.getenv('CRM_OAUTH2_TOKEN_URL', '').strip()
+        if not client_id or not client_secret:
+            log.warning("CRM_AUTH_TYPE is 'oauth2' but CRM_OAUTH2_CLIENT_ID or CRM_OAUTH2_CLIENT_SECRET is not set - CRM disabled")
+            return None
+        config["oauth2_client_id"] = client_id
+        config["oauth2_client_secret"] = client_secret
+        if token_url:
+            config["oauth2_token_url"] = token_url
+        oauth2_scope = os.getenv('CRM_OAUTH2_SCOPE', '').strip()
+        if oauth2_scope:
+            config["oauth2_scope"] = oauth2_scope
+    else:
+        log.warning(f"Invalid CRM_AUTH_TYPE: {auth_type_str}. Must be one of: api_key, basic_auth, bearer_token, oauth2")
+        return None
+    
+    # Create and return CRM connector
+    try:
+        crm_connector = create_crm_connector(config)
+        log.info(f"✅ CRM connector initialized: {server_url} (auth: {auth_type_str})")
+        return crm_connector
+    except Exception as e:
+        log.error(f"Failed to initialize CRM connector: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Global instances
 # ---------------------------------------------------------------------------
 manager = ConnectionManager()
 monitor: Optional[AMIExtensionsMonitor] = None
 bridge: Optional[AMIEventBridge] = None
+crm_connector: Optional[CRMConnector] = None
 
 
 # ---------------------------------------------------------------------------
@@ -360,12 +496,16 @@ bridge: Optional[AMIEventBridge] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - setup and teardown."""
-    global monitor, bridge
+    global monitor, bridge, crm_connector
     
     # Startup
     log.info("Starting Asterisk Operator Panel Server...")
     
-    monitor = AMIExtensionsMonitor()
+    # Initialize CRM connector if configured
+    crm_connector = init_crm_connector()
+    
+    # Create AMI monitor with CRM connector
+    monitor = AMIExtensionsMonitor(crm_connector=crm_connector)
     
     if await monitor.connect():
         log.info("Connected to AMI")
@@ -406,6 +546,9 @@ async def lifespan(app: FastAPI):
         await bridge.stop()
     if monitor:
         await monitor.disconnect()
+    if crm_connector:
+        await crm_connector.close()
+        log.info("CRM connector closed")
 
 
 app = FastAPI(
@@ -689,6 +832,129 @@ async def get_status():
         "active_calls": len(monitor.active_calls) if monitor else 0,
         "websocket_clients": len(manager.active_connections)
     }
+
+
+@app.get("/api/crm/config")
+async def get_crm_config():
+    """Get current CRM configuration from environment variables."""
+    # Build config from environment variables
+    config = {
+        "enabled": os.getenv('CRM_ENABLED', '').lower() in ('true', '1', 'yes'),
+        "server_url": os.getenv('CRM_SERVER_URL', ''),
+        "auth_type": os.getenv('CRM_AUTH_TYPE', 'api_key').lower(),
+        "endpoint_path": os.getenv('CRM_ENDPOINT_PATH', '/api/calls'),
+        "timeout": int(os.getenv('CRM_TIMEOUT', '30')),
+        "verify_ssl": os.getenv('CRM_VERIFY_SSL', 'true').lower() in ('true', '1', 'yes'),
+    }
+    
+    auth_type = config["auth_type"]
+    
+    # Add auth-specific fields (masked for security)
+    if auth_type == 'api_key':
+        config["api_key"] = "***" if os.getenv('CRM_API_KEY') else ""
+        config["api_key_header"] = os.getenv('CRM_API_KEY_HEADER', '')
+    elif auth_type == 'basic_auth':
+        config["username"] = os.getenv('CRM_USERNAME', '')
+        config["password"] = "***" if os.getenv('CRM_PASSWORD') else ""
+    elif auth_type == 'bearer_token':
+        config["bearer_token"] = "***" if os.getenv('CRM_BEARER_TOKEN') else ""
+    elif auth_type == 'oauth2':
+        config["oauth2_client_id"] = os.getenv('CRM_OAUTH2_CLIENT_ID', '')
+        config["oauth2_client_secret"] = "***" if os.getenv('CRM_OAUTH2_CLIENT_SECRET') else ""
+        config["oauth2_token_url"] = os.getenv('CRM_OAUTH2_TOKEN_URL', '')
+        config["oauth2_scope"] = os.getenv('CRM_OAUTH2_SCOPE', '')
+    
+    return config
+
+
+@app.post("/api/crm/config")
+async def save_crm_config(config_data: dict):
+    """
+    Save CRM configuration to .env file.
+    Note: This requires server restart to take effect.
+    """
+    try:
+        import re
+        from pathlib import Path
+        
+        # Get .env file path
+        env_file = Path(__file__).parent / '.env'
+        
+        # Read existing .env file
+        env_content = ""
+        if env_file.exists():
+            env_content = env_file.read_text()
+        
+        # Prepare new CRM config entries
+        crm_vars = {
+            'CRM_ENABLED': 'true' if config_data.get('enabled') else 'false',
+            'CRM_SERVER_URL': config_data.get('server_url', ''),
+            'CRM_AUTH_TYPE': config_data.get('auth_type', 'api_key'),
+            'CRM_ENDPOINT_PATH': config_data.get('endpoint_path', '/api/calls'),
+            'CRM_TIMEOUT': str(config_data.get('timeout', 30)),
+            'CRM_VERIFY_SSL': 'true' if config_data.get('verify_ssl', True) else 'false',
+        }
+        
+        # Add auth-specific variables
+        auth_type = config_data.get('auth_type', 'api_key')
+        if auth_type == 'api_key':
+            if config_data.get('api_key'):
+                crm_vars['CRM_API_KEY'] = config_data.get('api_key', '')
+            if config_data.get('api_key_header'):
+                crm_vars['CRM_API_KEY_HEADER'] = config_data.get('api_key_header', '')
+        elif auth_type == 'basic_auth':
+            if config_data.get('username'):
+                crm_vars['CRM_USERNAME'] = config_data.get('username', '')
+            if config_data.get('password'):
+                crm_vars['CRM_PASSWORD'] = config_data.get('password', '')
+        elif auth_type == 'bearer_token':
+            if config_data.get('bearer_token'):
+                crm_vars['CRM_BEARER_TOKEN'] = config_data.get('bearer_token', '')
+        elif auth_type == 'oauth2':
+            if config_data.get('oauth2_client_id'):
+                crm_vars['CRM_OAUTH2_CLIENT_ID'] = config_data.get('oauth2_client_id', '')
+            if config_data.get('oauth2_client_secret'):
+                crm_vars['CRM_OAUTH2_CLIENT_SECRET'] = config_data.get('oauth2_client_secret', '')
+            if config_data.get('oauth2_token_url'):
+                crm_vars['CRM_OAUTH2_TOKEN_URL'] = config_data.get('oauth2_token_url', '')
+            if config_data.get('oauth2_scope'):
+                crm_vars['CRM_OAUTH2_SCOPE'] = config_data.get('oauth2_scope', '')
+        
+        # Remove old CRM variables from env_content
+        lines = env_content.split('\n')
+        filtered_lines = []
+        crm_var_prefixes = ['CRM_ENABLED', 'CRM_SERVER_URL', 'CRM_AUTH_TYPE', 'CRM_API_KEY', 
+                           'CRM_API_KEY_HEADER', 'CRM_USERNAME', 'CRM_PASSWORD', 'CRM_BEARER_TOKEN',
+                           'CRM_OAUTH2_CLIENT_ID', 'CRM_OAUTH2_CLIENT_SECRET', 'CRM_OAUTH2_TOKEN_URL',
+                           'CRM_OAUTH2_SCOPE', 'CRM_ENDPOINT_PATH', 'CRM_TIMEOUT', 'CRM_VERIFY_SSL']
+        
+        for line in lines:
+            # Skip lines that start with CRM_ variables (we'll add them fresh)
+            if any(line.strip().startswith(prefix + '=') for prefix in crm_var_prefixes):
+                continue
+            filtered_lines.append(line)
+        
+        # Add new CRM configuration
+        if filtered_lines and filtered_lines[-1].strip():
+            filtered_lines.append('')
+        filtered_lines.append('# CRM Configuration')
+        for key, value in crm_vars.items():
+            if value:  # Only add non-empty values
+                filtered_lines.append(f"{key}={value}")
+        
+        # Write back to .env file
+        env_file.write_text('\n'.join(filtered_lines))
+        
+        log.info("CRM configuration saved to .env file")
+        
+        return {
+            "success": True,
+            "message": "CRM configuration saved. Server restart required to apply changes."
+        }
+    
+    except Exception as e:
+        log.error(f"Failed to save CRM config: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save CRM configuration: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
