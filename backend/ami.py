@@ -15,6 +15,16 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from enum import IntEnum
 
+# Import CRM connector
+try:
+    from .crm import CRMConnector
+except ImportError:
+    # Fallback for direct execution
+    try:
+        from crm import CRMConnector
+    except ImportError:
+        CRMConnector = None
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -140,12 +150,15 @@ class AMIExtensionsMonitor:
     Real-time Asterisk extension monitor with ChanSpy supervisor features.
     """
 
-    def __init__(self, host=None, port=None, username=None, secret=None, context=None):
+    def __init__(self, host=None, port=None, username=None, secret=None, context=None, crm_connector=None):
         self.host     = host     or os.getenv('AMI_HOST','127.0.0.1')
         self.port     = port     or int(os.getenv('AMI_PORT','5038'))
         self.username = username or os.getenv('AMI_USERNAME','')
         self.secret   = secret   or os.getenv('AMI_SECRET','')
         self.context  = context  or os.getenv('AMI_CONTEXT','ext-local')
+        
+        # Optional CRM connector - server will handle CRM configuration
+        self.crm_connector = crm_connector
 
         # Async socket streams
         self.reader: Optional[asyncio.StreamReader] = None
@@ -703,6 +716,151 @@ class AMIExtensionsMonitor:
                 return 'Local'
             return name
         return ''
+    
+    def map_cause_to_status(self, cause, dial_status=None):
+        """
+        Map Asterisk hangup cause code and dial status to CRM call status.
+        
+        Args:
+            cause: Hangup cause code (string)
+            dial_status: Dial status (optional, string)
+        
+        Returns:
+            CRM call status string (e.g., 'completed', 'busy', 'noanswer', etc.)
+        """
+        cause_map = {
+            '16': 'completed',
+            '17': 'busy',
+            '18': 'noanswer',
+            '19': 'noanswer',
+            '20': 'switched_off',
+            '28': 'invalid_number',
+            '34': 'invalid_number',
+            '21': 'failed',
+            '31': 'failed',
+            '127': 'noanswer',
+            '0': 'busy',
+        }
+        status = cause_map.get(cause, 'failed')
+        
+        if dial_status:
+            dial_status = dial_status.upper()
+            dial_overrides = {
+                'CANCEL': 'noanswer',
+                'BUSY': 'busy',
+                'CONGESTION': 'failed',
+                'CHANUNAVAIL': 'failed',
+                'NOANSWER': 'noanswer'
+            }
+            status = dial_overrides.get(dial_status, status)
+        
+        return status
+    
+    async def _send_crm_data(self, ext: str, call_info: Dict, hangup_event: Dict, queue: Optional[str] = None):
+        """
+        Send call data to CRM after call ends.
+        
+        Args:
+            ext: Extension number
+            call_info: Call information dictionary from active_calls
+            hangup_event: Hangup event dictionary
+            queue: Optional queue name
+        """
+        if not self.crm_connector:
+            return
+        
+        try:
+            # Extract hangup cause and dial status
+            cause = hangup_event.get('Cause', '')
+            dial_status = call_info.get('dialstatus', '')
+            
+            # Map to CRM status
+            call_status = self.map_cause_to_status(cause, dial_status)
+            
+            # Determine caller and destination
+            caller = ext
+            destination = call_info.get('original_destination') or call_info.get('destination') or call_info.get('exten') or ''
+            
+            # Check if this is an incoming call (has 'caller' field set)
+            incoming_caller = call_info.get('caller', '')
+            if incoming_caller and incoming_caller != ext:
+                # This is an incoming call - swap caller/destination
+                caller = incoming_caller
+                destination = ext
+            
+            # Skip if we don't have meaningful caller/destination
+            if not _meaningful(caller) or not _meaningful(destination):
+                return
+            
+            # Calculate duration
+            duration_seconds = 0
+            datetime_str = datetime.now().isoformat()
+            if 'start_time' in call_info:
+                start_time = call_info['start_time']
+                if isinstance(start_time, str):
+                    # Parse if it's a string
+                    try:
+                        start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    except:
+                        start_time = datetime.now()
+                duration = datetime.now() - start_time
+                duration_seconds = int(duration.total_seconds())
+                datetime_str = start_time.isoformat()
+            
+            # Determine call type
+            call_type = 'internal'
+            if incoming_caller and incoming_caller != ext:
+                # Has incoming caller field - inbound call
+                call_type = 'inbound'
+            elif destination and destination != ext:
+                # Outgoing call
+                # Check if destination is internal (3-5 digits) or external
+                if destination.isdigit() and 3 <= len(destination) <= 5:
+                    call_type = 'internal'
+                else:
+                    call_type = 'outbound'
+            
+            # Format call data for CRM
+            if CRMConnector is None:
+                log.warning("CRMConnector not available - cannot format call data")
+                return
+            
+            call_data = CRMConnector.format_call_data_for_crm(
+                caller=caller,
+                destination=destination,
+                duration=duration_seconds,
+                datetime_str=datetime_str,
+                call_status=call_status,
+                queue=queue,  # Optional queue parameter
+                call_type=call_type
+            )
+            
+            # Send to CRM (fire and forget - don't block hangup processing)
+            # Create async task to send CRM data (called from async dispatch context)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._send_crm_data_async(call_data))
+            except RuntimeError:
+                # No running event loop, try to get/create one
+                try:
+                    asyncio.ensure_future(self._send_crm_data_async(call_data))
+                except Exception:
+                    log.debug("Could not schedule CRM send task")
+            
+        except Exception as e:
+            log.error(f"Error preparing CRM data for call: {e}")
+    
+    async def _send_crm_data_async(self, call_data: Dict):
+        """Async helper to send CRM data without blocking."""
+        try:
+            if self.crm_connector:
+                result = await self.crm_connector.send_call_data(call_data)
+                if result.get('success'):
+                    log.debug(f"Successfully sent call data to CRM: {call_data.get('caller')} -> {call_data.get('destination')}")
+                else:
+                    log.warning(f"Failed to send call data to CRM: {result.get('error')}")
+        except Exception as e:
+            log.error(f"Error sending call data to CRM: {e}")
 
     def _ev_ExtensionStatus(self, p, ts):
         ext  = p.get('Exten', '')
@@ -788,6 +946,12 @@ class AMIExtensionsMonitor:
         if not uniqueid:
             uniqueid = self.ch2uniqueid.get(ch, '')
         
+        # Get queue name before cleaning up queue entries
+        queue = None
+        if uniqueid and uniqueid in self.queue_entries:
+            entry = self.queue_entries.get(uniqueid)
+            queue = entry.get('queue', '') if entry else None
+        
         # Clean up queue entries for this uniqueid
         if uniqueid and uniqueid in self.queue_entries:
             entry = self.queue_entries.pop(uniqueid)
@@ -814,8 +978,19 @@ class AMIExtensionsMonitor:
         if caller_ext:
             caller_info = self.active_calls.get(caller_ext)
             if caller_info:
-                # Check if this channel matches the caller's destchannel or main channel
-                if caller_info.get('destchannel') == ch or caller_info.get('channel') == ch:
+                    # Check if this channel matches the caller's destchannel or main channel
+                    if caller_info.get('destchannel') == ch or caller_info.get('channel') == ch:
+                        # Send CRM data before cleaning up (for outgoing calls)
+                        if self.crm_connector:
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(self._send_crm_data(caller_ext, caller_info, p, queue))
+                            except RuntimeError:
+                                try:
+                                    asyncio.ensure_future(self._send_crm_data(caller_ext, caller_info, p, queue))
+                                except Exception:
+                                    log.debug("Could not schedule CRM send task for caller")
+                    
                     # This channel was part of the caller's call - clean up
                     if caller_ext in self.monitored:
                         num = self._display_number(caller_info, caller_ext)
@@ -839,6 +1014,17 @@ class AMIExtensionsMonitor:
             # Check if this channel matches the extension's channel
             ext_info = self.active_calls.get(ext)
             if ext_info and ext_info.get('channel') == ch:
+                # Send CRM data before cleaning up (for incoming/internal calls)
+                if self.crm_connector:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._send_crm_data(ext, ext_info, p, queue))
+                    except RuntimeError:
+                        try:
+                            asyncio.ensure_future(self._send_crm_data(ext, ext_info, p, queue))
+                        except Exception:
+                            log.debug("Could not schedule CRM send task for extension")
+                
                 # This is the main channel for this extension - log and clean up
                 if ext in self.monitored:
                     caller = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '')

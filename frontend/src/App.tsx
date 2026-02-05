@@ -4,6 +4,7 @@ import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
 import { SupervisorModal } from './components/SupervisorModal';
+import { CRMSettingsModal } from './components/CRMSettingsModal';
 import { 
   Phone, 
   PhoneCall, 
@@ -12,7 +13,8 @@ import {
   Activity,
   Wifi,
   WifiOff,
-  RefreshCw
+  RefreshCw,
+  Settings
 } from 'lucide-react';
 
 type TabType = 'extensions' | 'calls' | 'queues';
@@ -25,6 +27,7 @@ function App() {
     mode: 'listen' | 'whisper' | 'barge';
     target: string;
   }>({ isOpen: false, mode: 'listen', target: '' });
+  const [crmSettingsOpen, setCrmSettingsOpen] = useState(false);
 
   const handleSupervisorAction = useCallback((
     mode: 'listen' | 'whisper' | 'barge', 
@@ -95,6 +98,14 @@ function App() {
           >
             <RefreshCw size={14} />
             Sync
+          </button>
+
+          <button 
+            className="btn" 
+            onClick={() => setCrmSettingsOpen(true)}
+            title="CRM Settings"
+          >
+            <Settings size={14} />
           </button>
 
           <div className="connection-status">
@@ -216,6 +227,12 @@ function App() {
           onSubmit={executeSupervisorAction}
         />
       )}
+
+      {/* CRM Settings Modal */}
+      <CRMSettingsModal
+        isOpen={crmSettingsOpen}
+        onClose={() => setCrmSettingsOpen(false)}
+      />
 
       {/* Notifications */}
       <div className="notifications">
