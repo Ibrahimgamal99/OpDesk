@@ -837,6 +837,9 @@ async def get_status():
 @app.get("/api/crm/config")
 async def get_crm_config():
     """Get current CRM configuration from environment variables."""
+    # Reload .env file to ensure we have the latest values
+    load_dotenv(override=True)
+    
     # Build config from environment variables
     config = {
         "enabled": os.getenv('CRM_ENABLED', '').lower() in ('true', '1', 'yes'),
@@ -882,8 +885,15 @@ async def save_crm_config(config_data: dict):
         
         # Read existing .env file
         env_content = ""
+        existing_crm_vars = {}
         if env_file.exists():
             env_content = env_file.read_text()
+            # Extract existing CRM variables to preserve masked values (passwords, API keys, etc.)
+            for line in env_content.split('\n'):
+                line = line.strip()
+                if '=' in line and line.startswith('CRM_'):
+                    key, value = line.split('=', 1)
+                    existing_crm_vars[key] = value
         
         # Prepare new CRM config entries
         crm_vars = {
@@ -896,25 +906,47 @@ async def save_crm_config(config_data: dict):
         }
         
         # Add auth-specific variables
+        # For sensitive fields (password, api_key, bearer_token, oauth2_client_secret),
+        # preserve existing value if new value is "***" (masked) or empty
         auth_type = config_data.get('auth_type', 'api_key')
         if auth_type == 'api_key':
-            if config_data.get('api_key'):
-                crm_vars['CRM_API_KEY'] = config_data.get('api_key', '')
+            api_key = config_data.get('api_key', '')
+            if api_key and api_key != '***':
+                # Save new API key as plain text in .env file
+                crm_vars['CRM_API_KEY'] = api_key
+            elif 'CRM_API_KEY' in existing_crm_vars:
+                # Preserve existing API key from .env file (plain text)
+                crm_vars['CRM_API_KEY'] = existing_crm_vars['CRM_API_KEY']
             if config_data.get('api_key_header'):
                 crm_vars['CRM_API_KEY_HEADER'] = config_data.get('api_key_header', '')
         elif auth_type == 'basic_auth':
             if config_data.get('username'):
                 crm_vars['CRM_USERNAME'] = config_data.get('username', '')
-            if config_data.get('password'):
-                crm_vars['CRM_PASSWORD'] = config_data.get('password', '')
+            password = config_data.get('password', '')
+            if password and password != '***':
+                # Save new password as plain text in .env file
+                crm_vars['CRM_PASSWORD'] = password
+            elif 'CRM_PASSWORD' in existing_crm_vars:
+                # Preserve existing password from .env file (plain text)
+                crm_vars['CRM_PASSWORD'] = existing_crm_vars['CRM_PASSWORD']
         elif auth_type == 'bearer_token':
-            if config_data.get('bearer_token'):
-                crm_vars['CRM_BEARER_TOKEN'] = config_data.get('bearer_token', '')
+            bearer_token = config_data.get('bearer_token', '')
+            if bearer_token and bearer_token != '***':
+                # Save new bearer token as plain text in .env file
+                crm_vars['CRM_BEARER_TOKEN'] = bearer_token
+            elif 'CRM_BEARER_TOKEN' in existing_crm_vars:
+                # Preserve existing bearer token from .env file (plain text)
+                crm_vars['CRM_BEARER_TOKEN'] = existing_crm_vars['CRM_BEARER_TOKEN']
         elif auth_type == 'oauth2':
             if config_data.get('oauth2_client_id'):
                 crm_vars['CRM_OAUTH2_CLIENT_ID'] = config_data.get('oauth2_client_id', '')
-            if config_data.get('oauth2_client_secret'):
-                crm_vars['CRM_OAUTH2_CLIENT_SECRET'] = config_data.get('oauth2_client_secret', '')
+            oauth2_secret = config_data.get('oauth2_client_secret', '')
+            if oauth2_secret and oauth2_secret != '***':
+                # Save new OAuth2 client secret as plain text in .env file
+                crm_vars['CRM_OAUTH2_CLIENT_SECRET'] = oauth2_secret
+            elif 'CRM_OAUTH2_CLIENT_SECRET' in existing_crm_vars:
+                # Preserve existing OAuth2 client secret from .env file (plain text)
+                crm_vars['CRM_OAUTH2_CLIENT_SECRET'] = existing_crm_vars['CRM_OAUTH2_CLIENT_SECRET']
             if config_data.get('oauth2_token_url'):
                 crm_vars['CRM_OAUTH2_TOKEN_URL'] = config_data.get('oauth2_token_url', '')
             if config_data.get('oauth2_scope'):
@@ -944,6 +976,9 @@ async def save_crm_config(config_data: dict):
         
         # Write back to .env file
         env_file.write_text('\n'.join(filtered_lines))
+        
+        # Reload environment variables from .env file so changes are immediately available
+        load_dotenv(override=True)
         
         log.info("CRM configuration saved to .env file")
         

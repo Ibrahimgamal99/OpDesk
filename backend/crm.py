@@ -69,6 +69,7 @@ class CRMConnector:
             "caller": "1002",
             "destination": "1001",
             "duration": "00:05:23",
+            "talk_time": "00:04:50",
             "datetime": "2024-01-01T12:00:00",
             "call_status": "completed",
             "queue": "sales",
@@ -291,7 +292,8 @@ class CRMConnector:
             call_data: Dictionary containing call information. Expected fields:
                 - caller: Caller extension/number (required)
                 - destination: Destination extension/number (required)
-                - duration: Call duration in seconds or formatted string (e.g., "00:05:23" or 323)
+                - duration: Call duration in seconds or formatted string (e.g., "00:05:23" or 323) - total time
+                - talk_time: Talk time in seconds or formatted string - time from answer to hangup (optional)
                 - datetime: Call datetime in ISO format (e.g., "2024-01-01T12:00:00")
                 - call_status: Call status (e.g., "completed", "answered", "no_answer", "busy", "failed")
                 - queue: Queue name if call was queued (optional)
@@ -312,6 +314,7 @@ class CRMConnector:
                 "caller": "1002",
                 "destination": "1001",
                 "duration": "00:05:23",
+                "talk_time": "00:04:50",
                 "datetime": "2024-01-01T12:00:00",
                 "call_status": "completed",
                 "queue": "sales",
@@ -511,6 +514,7 @@ class CRMConnector:
         call_status: Optional[str] = None,
         queue: Optional[str] = None,
         call_type: Optional[str] = None,
+        talk_time: Optional[Union[int, str]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -519,11 +523,12 @@ class CRMConnector:
         Args:
             caller: Caller extension/number
             destination: Destination extension/number
-            duration: Call duration (e.g., "00:05:23" or seconds as int/str)
+            duration: Call duration (e.g., "00:05:23" or seconds as int/str) - total time from start to hangup
             datetime_str: Call datetime in ISO format (defaults to current time if not provided)
             call_status: Call status (e.g., "completed", "answered", "no_answer", "busy", "failed", "ringing")
             queue: Queue name if call was queued (optional)
             call_type: Type of call - "inbound", "outbound", or "internal" (optional)
+            talk_time: Talk time (e.g., "00:05:23" or seconds as int/str) - time from answer to hangup (optional)
             **kwargs: Additional custom fields to include
         
         Returns:
@@ -534,6 +539,7 @@ class CRMConnector:
                 caller="1002",
                 destination="1001",
                 duration="00:05:23",
+                talk_time="00:04:50",
                 call_status="completed",
                 queue="sales",
                 call_type="inbound"
@@ -565,6 +571,10 @@ class CRMConnector:
         # Add call_type if provided
         if call_type is not None:
             crm_data["call_type"] = call_type
+        
+        # Add talk_time if provided (normalize format)
+        if talk_time is not None:
+            crm_data["talk_time"] = CRMConnector.normalize_duration(talk_time)
         
         # Add any additional custom fields
         crm_data.update(kwargs)

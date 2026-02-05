@@ -26,7 +26,7 @@ except ImportError:
         CRMConnector = None
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -185,6 +185,9 @@ class AMIExtensionsMonitor:
         self.queue_entries: Dict[str, Dict] = {}  # uniqueid -> queue entry info (queue, caller, position, etc.)
         self.dynamic_members: Set[str] = set()    # Track members added dynamically via AMI (can be removed)
         self.ch2uniqueid:  Dict[str, str] = {}    # channel -> uniqueid (for queue entry cleanup)
+        self.ch2linkedid:  Dict[str, str] = {}    # channel -> linkedid (for tracking related channels)
+        self.linkedid2channels: Dict[str, Set[str]] = {}  # linkedid -> set of active channels (to detect final hangup)
+        self.linkedid_crm_sent: Set[str] = set()  # "linkedid:uniqueid" -> track which channel instances have already sent CRM data (prevent duplicates)
 
     # ------------------------------------------------------------------
     # Connection
@@ -654,7 +657,8 @@ class AMIExtensionsMonitor:
         'QueueMemberStatus','QueueMemberAdded','QueueMemberRemoved',
         'QueueEntry','QueueCallerJoin','QueueCallerLeave',
         'QueueMemberPause','QueueMemberPaused','QueueMemberUnpause',
-        'QueueMemberRingInUse','QueueSummary'
+        'QueueMemberRingInUse','QueueSummary',
+        'AgentCalled','AgentConnect','AgentComplete'
     })
 
     async def _dispatch_async(self, raw: str):
@@ -767,9 +771,52 @@ class AMIExtensionsMonitor:
             queue: Optional queue name
         """
         if not self.crm_connector:
+            log.info(f"⏸️ CRM connector not available - skipping CRM send for extension {ext}")
             return
         
         try:
+            # Check if this is a queue call still waiting (caller in queue, no agent answered yet)
+            # The queue_waiting flag is on the CALLER's call_info, not the agent's
+            # So we need to check both the current call_info AND the caller's call_info if this is an agent
+            queue_waiting = call_info.get('queue_waiting', False)
+            queue_answered = call_info.get('queue_answered', False)
+            queue_caller_channel = call_info.get('queue_caller_channel', '')
+            hangup_channel = hangup_event.get('Channel', '')
+            
+            # If this is an agent's call_info, check the actual caller's queue_waiting status
+            queue_caller = call_info.get('queue_caller', '') or call_info.get('caller', '')
+            if queue_caller and queue_caller != ext:
+                caller_call_info = self.active_calls.get(queue_caller)
+                if caller_call_info:
+                    # Use caller's queue_waiting and queue_answered status
+                    queue_waiting = caller_call_info.get('queue_waiting', queue_waiting)
+                    queue_answered = caller_call_info.get('queue_answered', queue_answered)
+                    queue_caller_channel = caller_call_info.get('queue_caller_channel', queue_caller_channel)
+                    log.debug(f"Using caller {queue_caller} queue status: waiting={queue_waiting}, answered={queue_answered}")
+            
+            # For queue calls that are still waiting (no agent answered):
+            # Only send CRM if the caller hangs up (abandons the queue)
+            # Don't send CRM when agents' ring attempts timeout
+            if queue_waiting and not queue_answered:
+                # Check if this hangup is from the caller's channel
+                is_caller_hangup = (queue_caller_channel and hangup_channel == queue_caller_channel)
+                
+                # Also check if ext is an internal extension (agent) vs external caller
+                is_agent_ext = ext and ext.isdigit() and 3 <= len(ext) <= 5
+                
+                if is_agent_ext and not is_caller_hangup:
+                    # This is an agent's channel timing out while caller is still in queue
+                    # Don't send CRM - wait for caller hangup or agent answer
+                    log.info(f"⏸️ Queue call still waiting - skipping CRM for agent {ext} ring timeout (waiting for caller hangup or agent answer)")
+                    return
+                elif not is_caller_hangup:
+                    # Unknown channel but not the caller - skip
+                    log.debug(f"⏸️ Queue call still waiting - skipping CRM for {ext} (not caller channel)")
+                    return
+                else:
+                    # This is the caller hanging up (abandoning the queue)
+                    log.info(f"📤 Queue caller abandoned - sending CRM for caller {ext}")
+            
             # Extract hangup cause and dial status
             cause = hangup_event.get('Cause', '')
             dial_status = call_info.get('dialstatus', '')
@@ -777,23 +824,111 @@ class AMIExtensionsMonitor:
             # Map to CRM status
             call_status = self.map_cause_to_status(cause, dial_status)
             
+            # Log if status seems incorrect (Cause=16 should be completed unless dial_status overrides)
+            if cause == '16' and call_status == 'noanswer' and dial_status:
+                log.debug(f"Status mapped to 'noanswer' for Cause=16 due to dial_status={dial_status}")
+            
+            # Get queue from parameter or from call_info (stored when call entered queue)
+            if not queue:
+                queue = call_info.get('queue')
+            
+            # Skip sending CRM data if this extension is the queue itself
+            # We only want to send CRM data from the agent's perspective
+            if queue and ext == queue:
+                log.info(f"⏸️ Skipping CRM send for queue extension {ext} - will send from agent's perspective instead")
+                return
+            
             # Determine caller and destination
             caller = ext
-            destination = call_info.get('original_destination') or call_info.get('destination') or call_info.get('exten') or ''
+            original_dest = call_info.get('original_destination') or call_info.get('destination') or call_info.get('exten') or ''
             
-            # Check if this is an incoming call (has 'caller' field set)
-            incoming_caller = call_info.get('caller', '')
-            if incoming_caller and incoming_caller != ext:
-                # This is an incoming call - swap caller/destination
+            # Check for queue call with external caller (from AgentConnect event)
+            queue_caller = call_info.get('queue_caller', '')
+            queue_answered = call_info.get('queue_answered', False)
+            
+            # Check if this is an incoming call
+            # Priority order for detecting incoming caller:
+            # 1. queue_caller (external caller from queue - set by AgentConnect)
+            # 2. caller field (set by Newchannel or other events)
+            # 3. callerid field (set by NewCallerid event for incoming calls)
+            # 4. Check if ext is an external number
+            incoming_caller = queue_caller or call_info.get('caller', '') or call_info.get('callerid', '')
+            
+            # If incoming_caller is an external number (>5 digits), this is an inbound call
+            # Don't use internal extension numbers as incoming_caller
+            if incoming_caller and incoming_caller.isdigit() and len(incoming_caller) <= 5:
+                # This looks like an internal extension, not an external caller
+                # Only keep it as incoming_caller if it's different from ext (internal transfer)
+                if incoming_caller == ext:
+                    incoming_caller = ''
+            
+            is_external_caller = ext and (not ext.isdigit() or len(ext) < 3 or len(ext) > 5)
+            
+            # For queue calls where agent answered: ext is the agent, incoming_caller is the external caller
+            if queue and incoming_caller and incoming_caller != ext and (len(incoming_caller) > 5 or not incoming_caller.isdigit()):
+                # This is a queue call with external caller
+                # ext is the agent extension, incoming_caller is the external caller
                 caller = incoming_caller
-                destination = ext
+                destination = ext  # Agent extension
+                log.debug(f"Queue call detected: caller={caller}, destination={destination}, queue={queue}")
+            elif (incoming_caller and incoming_caller != ext) or is_external_caller:
+                # This is an incoming call - swap caller/destination
+                # For caller_ext path: ext is the caller's number, need to find the actual extension
+                # For extension path: ext is the extension that handled the call
+                if is_external_caller:
+                    # ext is the external caller number, use it as caller
+                    caller = ext
+                    # Find the actual extension that answered - prefer ext if it's a valid extension, otherwise look in call_info
+                    if ext and ext.isdigit() and 3 <= len(ext) <= 5:
+                        # ext is actually an extension (from caller_ext path when channel has extension)
+                        destination = ext
+                    else:
+                        # ext is external caller, find extension from call_info
+                        destination = call_info.get('destination', '')
+                        # If destination is a queue, we need to find the actual agent extension
+                        if queue and destination == queue:
+                            # Try to find from other fields or use the channel's extension if available
+                            connected_dest = call_info.get('destination', '')
+                            if connected_dest and connected_dest != queue and connected_dest.isdigit() and 3 <= len(connected_dest) <= 5:
+                                destination = connected_dest
+                else:
+                    # Standard incoming call detection
+                    caller = incoming_caller
+                    destination = ext  # ext is the extension that handled the call
+            else:
+                # Outbound call - use original destination
+                destination = original_dest
+                # Handle queue calls: if destination matches queue, find the actual agent extension
+                if queue and destination == queue:
+                    # Destination is the queue, need to find the actual agent extension
+                    # Try to find agent extension from call_info
+                    connected_dest = call_info.get('destination', '')
+                    if connected_dest and connected_dest != queue and connected_dest.isdigit() and 3 <= len(connected_dest) <= 5:
+                        destination = connected_dest
+                    # If destination still matches queue, we couldn't find the agent
+                    # This might happen if the call didn't connect to an agent
+                    # In this case, keep destination as queue (call didn't reach agent)
+            
+            # Override call_status if queue_answered is set (agent answered the queue call)
+            if queue_answered and call_status in ('noanswer', 'failed'):
+                call_status = 'completed'
+                log.debug(f"Overriding call_status to 'completed' because queue_answered=True")
+            
+            # If destination is still the queue and we have answered_agent, use that instead
+            answered_agent = call_info.get('answered_agent', '')
+            if queue and destination == queue and _meaningful(answered_agent):
+                destination = answered_agent
+                log.debug(f"Using answered_agent {answered_agent} as destination instead of queue {queue}")
             
             # Skip if we don't have meaningful caller/destination
             if not _meaningful(caller) or not _meaningful(destination):
+                log.info(f"⏸️ Skipping CRM send for extension {ext}: missing meaningful caller ({caller}) or destination ({destination})")
+                log.debug(f"  call_info keys: {list(call_info.keys())}, original_dest={original_dest}, incoming_caller={incoming_caller}")
                 return
             
             # Calculate duration
             duration_seconds = 0
+            talk_seconds = 0
             datetime_str = datetime.now().isoformat()
             if 'start_time' in call_info:
                 start_time = call_info['start_time']
@@ -806,6 +941,18 @@ class AMIExtensionsMonitor:
                 duration = datetime.now() - start_time
                 duration_seconds = int(duration.total_seconds())
                 datetime_str = start_time.isoformat()
+            
+            # Calculate talk time (time from answer to hangup)
+            if 'answer_time' in call_info:
+                answer_time = call_info['answer_time']
+                if isinstance(answer_time, str):
+                    try:
+                        answer_time = datetime.fromisoformat(answer_time.replace('Z', '+00:00'))
+                    except:
+                        answer_time = None
+                if answer_time:
+                    talk_duration = datetime.now() - answer_time
+                    talk_seconds = int(talk_duration.total_seconds())
             
             # Determine call type
             call_type = 'internal'
@@ -832,8 +979,11 @@ class AMIExtensionsMonitor:
                 datetime_str=datetime_str,
                 call_status=call_status,
                 queue=queue,  # Optional queue parameter
-                call_type=call_type
+                call_type=call_type,
+                talk_time=talk_seconds  # Talk time (time from answer to hangup)
             )
+            
+            log.info(f"📤 Preparing to send CRM data: {caller} -> {destination} (status: {call_status}, type: {call_type}, duration: {duration_seconds}s, talk: {talk_seconds}s, queue: {queue or 'N/A'})")
             
             # Send to CRM (fire and forget - don't block hangup processing)
             # Create async task to send CRM data (called from async dispatch context)
@@ -844,8 +994,8 @@ class AMIExtensionsMonitor:
                 # No running event loop, try to get/create one
                 try:
                     asyncio.ensure_future(self._send_crm_data_async(call_data))
-                except Exception:
-                    log.debug("Could not schedule CRM send task")
+                except Exception as e:
+                    log.error(f"Could not schedule CRM send task: {e}")
             
         except Exception as e:
             log.error(f"Error preparing CRM data for call: {e}")
@@ -854,13 +1004,20 @@ class AMIExtensionsMonitor:
         """Async helper to send CRM data without blocking."""
         try:
             if self.crm_connector:
+                caller = call_data.get('caller', 'unknown')
+                destination = call_data.get('destination', 'unknown')
+                log.info(f"📤 Sending call data to CRM: {caller} -> {destination}")
                 result = await self.crm_connector.send_call_data(call_data)
                 if result.get('success'):
-                    log.debug(f"Successfully sent call data to CRM: {call_data.get('caller')} -> {call_data.get('destination')}")
+                    log.info(f"✅ Successfully sent call data to CRM: {caller} -> {destination}")
                 else:
-                    log.warning(f"Failed to send call data to CRM: {result.get('error')}")
+                    error_msg = result.get('error', 'Unknown error')
+                    status_code = result.get('status_code', 'N/A')
+                    log.error(f"❌ Failed to send call data to CRM: {caller} -> {destination} (HTTP {status_code}): {error_msg}")
+            else:
+                log.warning(f"CRM connector not available when trying to send call data: {call_data.get('caller')} -> {call_data.get('destination')}")
         except Exception as e:
-            log.error(f"Error sending call data to CRM: {e}")
+            log.error(f"❌ Error sending call data to CRM: {e}", exc_info=True)
 
     def _ev_ExtensionStatus(self, p, ts):
         ext  = p.get('Exten', '')
@@ -868,9 +1025,10 @@ class AMIExtensionsMonitor:
         if not ext:
             return
         self.extensions[ext] = p
-        if code == '0' and ext in self.active_calls:
-            del self.active_calls[ext]
-            # Hangup logged in _ev_Hangup
+        # NOTE: Do NOT delete from active_calls here!
+        # ExtensionStatus with code '0' (Idle) can arrive BEFORE the Hangup event.
+        # Deleting here would cause "No ext_info found" in _ev_Hangup, preventing CRM data send.
+        # Let _ev_Hangup handle all cleanup - it's the authoritative event for call completion.
 
     def _ev_PeerStatus(self, p, ts):
         pass  # Silent
@@ -886,11 +1044,20 @@ class AMIExtensionsMonitor:
         callerid = p.get('CallerIDNum') or p.get('CallerIDName', '')
         exten = p.get('Exten', '')
         uniqueid = p.get('Uniqueid', '')
+        linkedid = p.get('Linkedid', '') or uniqueid  # Use Linkedid if available, fallback to uniqueid
         ext = _ext_from_channel(ch)
         
         # Track uniqueid for queue entry cleanup
         if uniqueid:
             self.ch2uniqueid[ch] = uniqueid
+        
+        # Track Linkedid to identify related channels (for detecting final hangup)
+        if linkedid:
+            self.ch2linkedid[ch] = linkedid
+            if linkedid not in self.linkedid2channels:
+                self.linkedid2channels[linkedid] = set()
+            self.linkedid2channels[linkedid].add(ch)
+            log.debug(f"🔗 Newchannel: Channel={ch}, Linkedid={linkedid}, ext={ext}")
         
         # Only use exten as fallback if it's a meaningful number (not dialplan context)
         if not ext and _meaningful(exten):
@@ -918,14 +1085,16 @@ class AMIExtensionsMonitor:
             info['start_time'] = datetime.now()
             info['answer_time'] = None
         
-        # If callerid is an internal extension and different from ext, this is an incoming call
-        if callerid and callerid != ext and callerid.isdigit() and len(callerid) <= 5:
+        # If callerid is different from ext, this is an incoming call
+        # Set caller field for both internal extensions (≤5 digits) and external callers (>5 digits)
+        if callerid and callerid != ext and callerid.isdigit():
             info['caller'] = callerid
-            # Also update the caller's entry to know who they're calling
-            caller_info = self.active_calls.get(callerid)
-            if caller_info and 'original_destination' not in caller_info:
-                caller_info['original_destination'] = ext
-                caller_info['exten'] = ext
+            # For internal callers, also update the caller's entry
+            if len(callerid) <= 5:
+                caller_info = self.active_calls.get(callerid)
+                if caller_info and 'original_destination' not in caller_info:
+                    caller_info['original_destination'] = ext
+                    caller_info['exten'] = ext
         
         if 'original_destination' not in info:
             if _meaningful(exten) and exten != ext:
@@ -939,7 +1108,13 @@ class AMIExtensionsMonitor:
     def _ev_Hangup(self, p, ts):
         ch = p.get('Channel', '')
         uniqueid = p.get('Uniqueid', '')
+        cause = p.get('Cause', '')
+        
+        # Log all hangup events at INFO level to track if events are received
+        log.info(f"🔔 Hangup event received: Channel={ch}, Uniqueid={uniqueid}, Cause={cause}")
+        
         if not ch:
+            log.debug("Hangup event ignored: no channel")
             return
         
         # Get uniqueid from event or channel mapping
@@ -964,73 +1139,195 @@ class AMIExtensionsMonitor:
         # Clean up uniqueid mapping
         self.ch2uniqueid.pop(ch, None)
         
+        # Get Linkedid from hangup event or from tracking
+        # Hangup event might have Linkedid even if Newchannel didn't
+        event_linkedid = p.get('Linkedid', '')
+        tracked_linkedid = self.ch2linkedid.get(ch, '')
+        linkedid = event_linkedid or tracked_linkedid
+        
+        # If we got Linkedid from event but channel wasn't tracked, add it now
+        if event_linkedid and not tracked_linkedid:
+            self.ch2linkedid[ch] = event_linkedid
+            if event_linkedid not in self.linkedid2channels:
+                self.linkedid2channels[event_linkedid] = set()
+            self.linkedid2channels[event_linkedid].add(ch)
+            log.info(f"🔍 Found Linkedid {event_linkedid} in hangup event for channel {ch}")
+        
+        is_final_hangup = False  # Default to False - only send CRM when we explicitly confirm final hangup
+        
+        if linkedid:
+            # Check if there are other active channels with the same Linkedid BEFORE removing this one
+            if linkedid in self.linkedid2channels:
+                remaining_channels = self.linkedid2channels[linkedid]
+                # Filter out channels that are no longer in ch2ext (already hung up) and exclude current channel
+                # Also exclude system channels like "asterisk" which are not real call channels
+                active_channels = {
+                    ch_name for ch_name in remaining_channels 
+                    if ch_name != ch 
+                    and ch_name in self.ch2ext 
+                    and not ch_name.startswith('PJSIP/asterisk-')  # Exclude system channels
+                }
+                if active_channels:
+                    is_final_hangup = False
+                    log.info(f"⏸️ Channel {ch} hung up but other channels still active with Linkedid {linkedid}: {active_channels} - skipping CRM send")
+                else:
+                    is_final_hangup = True
+                    log.info(f"✅ Final channel hung up for Linkedid {linkedid} - will send CRM data")
+            else:
+                # Linkedid exists but no channel tracking - treat as final
+                is_final_hangup = True
+                log.info(f"✅ Final channel hung up for Linkedid {linkedid} (no channel tracking) - will send CRM data")
+            # Remove this channel from Linkedid tracking
+            self.linkedid2channels[linkedid].discard(ch)
+            # Clean up empty Linkedid entry if no channels remain
+            if not self.linkedid2channels[linkedid]:
+                self.linkedid2channels.pop(linkedid, None)
+                # Also clean up linkedid_crm_sent entries for this Linkedid (keys are "linkedid:uniqueid")
+                # This handles the case where Asterisk reuses Linkedid for queue re-rings
+                keys_to_remove = [k for k in self.linkedid_crm_sent if k.startswith(f"{linkedid}:")]
+                for k in keys_to_remove:
+                    self.linkedid_crm_sent.discard(k)
+                if keys_to_remove:
+                    log.debug(f"🧹 Cleaned up Linkedid {linkedid} tracking (all channels gone, removed {len(keys_to_remove)} CRM tracking keys)")
+            # Clean up channel to Linkedid mapping
+            self.ch2linkedid.pop(ch, None)
+        else:
+            # No Linkedid - skip CRM send (cannot determine if final)
+            log.debug(f"⏸️ Channel {ch} hung up without Linkedid - skipping CRM send (cannot determine if final)")
+        
         # Get extension from channel mapping or extract from channel name
+        # Store original ext before popping (needed for finding actual extension in caller_ext path)
+        original_ext = self.ch2ext.get(ch)
         ext = self.ch2ext.pop(ch, None)
         if not ext:
             ext = _ext_from_channel(ch)
+            original_ext = ext
         
         # Clean up dest channel mapping
         caller_ext = self.destch2ext.pop(ch, None)
         ch_type = self._get_channel_type(ch)
         
+        # Skip CRM sends for trunk/system channels (e.g., PJSIP/asterisk-*)
+        # These are not actual call participants, just the connection to the external network
+        is_trunk_channel = ch.startswith('PJSIP/asterisk-') or ch.startswith('SIP/asterisk-')
+        if is_trunk_channel and is_final_hangup:
+            log.debug(f"⏸️ Skipping CRM send for trunk channel {ch} - CRM should be sent from agent/extension perspective")
+            is_final_hangup = False  # Prevent CRM send for trunk channels
+        
         # Clean up caller's active call if this was a destination channel
         # (caller_ext is set when this channel was a destination for an outgoing call)
-        if caller_ext:
+        # Skip this path if we already have extension info - extension path will handle it
+        if caller_ext and not (ext and ext in self.active_calls):
             caller_info = self.active_calls.get(caller_ext)
+            
             if caller_info:
-                    # Check if this channel matches the caller's destchannel or main channel
-                    if caller_info.get('destchannel') == ch or caller_info.get('channel') == ch:
-                        # Send CRM data before cleaning up (for outgoing calls)
-                        if self.crm_connector:
-                            try:
-                                loop = asyncio.get_running_loop()
-                                loop.create_task(self._send_crm_data(caller_ext, caller_info, p, queue))
-                            except RuntimeError:
-                                try:
-                                    asyncio.ensure_future(self._send_crm_data(caller_ext, caller_info, p, queue))
-                                except Exception:
-                                    log.debug("Could not schedule CRM send task for caller")
+                # Check if this channel matches the caller's destchannel or main channel
+                destchannel_match = caller_info.get('destchannel') == ch
+                channel_match = caller_info.get('channel') == ch
+                
+                if destchannel_match or channel_match:
+                    # If caller_ext is an external number, store it in caller_info for CRM
+                    # (caller_ext is the key in active_calls but might not be stored as a field)
+                    if caller_ext and caller_ext.isdigit() and len(caller_ext) > 5:
+                        # External caller - ensure caller number is stored in call_info
+                        if not caller_info.get('callerid'):
+                            caller_info['callerid'] = caller_ext
+                        if not caller_info.get('caller'):
+                            caller_info['caller'] = caller_ext
                     
-                    # This channel was part of the caller's call - clean up
-                    if caller_ext in self.monitored:
-                        num = self._display_number(caller_info, caller_ext)
-                        if num != 'Unknown':
-                            # Calculate duration
-                            duration_str = ""
-                            if 'start_time' in caller_info:
-                                duration = datetime.now() - caller_info['start_time']
-                                duration_str = f" | Duration: {_format_duration(duration)}"
-                                
-                                # Add talk time if answered
-                                if caller_info.get('answer_time'):
-                                    talk_time = datetime.now() - caller_info['answer_time']
-                                    duration_str += f" | Talk: {_format_duration(talk_time)}"
-                            
-                            log.info("[%s] 📴 %s: Hangup with %s (channel %s)%s", ts, caller_ext, num, ch_type or caller_ext, duration_str)
-                    self.active_calls.pop(caller_ext, None)
+                    # If it's final hangup, send CRM data (for outgoing calls)
+                    if is_final_hangup:
+                        # Use the actual extension from the channel (ext), not caller_ext
+                        # This ensures we send CRM data with correct extension perspective
+                        actual_ext = ext if (ext and ext.isdigit() and 3 <= len(ext) <= 5) else caller_ext
+                        # Use linkedid:uniqueid as key to allow different ring cycles to send CRM
+                        crm_key = f"{linkedid}:{uniqueid}" if (linkedid and uniqueid) else None
+                        
+                        # Check if CRM data has already been sent for this channel instance
+                        if crm_key and crm_key in self.linkedid_crm_sent:
+                            log.info(f"⏸️ CRM data already sent for {crm_key} - skipping duplicate send for caller {caller_ext}")
+                        else:
+                            log.info(f"📤 Hangup detected for caller {caller_ext}, attempting CRM send")
+                            if crm_key:
+                                self.linkedid_crm_sent.add(crm_key)
+                            if self.crm_connector:
+                                try:
+                                    loop = asyncio.get_running_loop()
+                                    loop.create_task(self._send_crm_data(actual_ext, caller_info, p, queue))
+                                except RuntimeError:
+                                    try:
+                                        asyncio.ensure_future(self._send_crm_data(caller_ext, caller_info, p, queue))
+                                    except Exception as e:
+                                        log.error(f"Could not schedule CRM send task for caller {caller_ext}: {e}")
+                    
+                    # This channel was part of the caller's call - log it
+                    num = self._display_number(caller_info, caller_ext)
+                    if caller_ext in self.monitored and num != 'Unknown':
+                        duration_str = ""
+                        if 'start_time' in caller_info:
+                            duration = datetime.now() - caller_info['start_time']
+                            duration_str = f" | Duration: {_format_duration(duration)}"
+                            if caller_info.get('answer_time'):
+                                talk_time = datetime.now() - caller_info['answer_time']
+                                duration_str += f" | Talk: {_format_duration(talk_time)}"
+                        log.info("[%s] 📴 %s: Hangup with %s (channel %s)%s", ts, caller_ext, num, ch_type or caller_ext, duration_str)
+                    
+                    # Only clean up caller's active_calls entry if this is the final hangup
+                    # (i.e., caller's own channel has also hung up)
+                    # Otherwise, leave it for when the caller's channel hangs up
+                    if is_final_hangup:
+                        self.active_calls.pop(caller_ext, None)
+                    else:
+                        # Just clear the destchannel reference since dest hung up
+                        caller_info.pop('destchannel', None)
         
         # Clean up the extension's active call
         if ext:
             # Check if this channel matches the extension's channel
             ext_info = self.active_calls.get(ext)
+            
+            # Debug logging for hangup channel matching
+            if ext_info:
+                stored_channel = ext_info.get('channel', 'NOT SET')
+                if stored_channel != ch:
+                    log.debug(f"Channel mismatch for {ext}: stored={stored_channel}, hangup={ch}")
+            else:
+                log.debug(f"No ext_info found for extension {ext} in active_calls")
+            
             if ext_info and ext_info.get('channel') == ch:
-                # Send CRM data before cleaning up (for incoming/internal calls)
-                if self.crm_connector:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(self._send_crm_data(ext, ext_info, p, queue))
-                    except RuntimeError:
-                        try:
-                            asyncio.ensure_future(self._send_crm_data(ext, ext_info, p, queue))
-                        except Exception:
-                            log.debug("Could not schedule CRM send task for extension")
+                # Only send CRM data if this is the final hangup (no other channels with same Linkedid)
+                if is_final_hangup:
+                    # Use linkedid:uniqueid as key to allow different ring cycles to send CRM
+                    crm_key = f"{linkedid}:{uniqueid}" if (linkedid and uniqueid) else None
+                    
+                    # Check if CRM data has already been sent for this channel instance
+                    if crm_key and crm_key in self.linkedid_crm_sent:
+                        log.info(f"⏸️ CRM data already sent for {crm_key} - skipping duplicate send for extension {ext}")
+                    else:
+                        # Send CRM data before cleaning up (for incoming/internal calls)
+                        log.info(f"📤 Hangup detected for extension {ext}, attempting CRM send")
+                        if crm_key:
+                            self.linkedid_crm_sent.add(crm_key)
+                        if self.crm_connector:
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(self._send_crm_data(ext, ext_info, p, queue))
+                            except RuntimeError:
+                                try:
+                                    asyncio.ensure_future(self._send_crm_data(ext, ext_info, p, queue))
+                                except Exception as e:
+                                    log.error(f"Could not schedule CRM send task for extension {ext}: {e}")
+                        else:
+                            log.warning(f"CRM connector not available - skipping CRM send for extension {ext}")
+                else:
+                    log.info(f"⏸️ Skipping CRM send for extension {ext} - other channels still active (transfer in progress)")
                 
                 # This is the main channel for this extension - log and clean up
+                caller = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '')
+                dialed_exten = ext_info.get('exten', '')
+                has_dest_channel = bool(ext_info.get('destchannel'))
+                
                 if ext in self.monitored:
-                    caller = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '')
-                    dialed_exten = ext_info.get('exten', '')
-                    has_dest_channel = bool(ext_info.get('destchannel'))
-                    
                     # Calculate duration
                     duration_str = ""
                     if 'start_time' in ext_info:
@@ -1047,12 +1344,38 @@ class AMIExtensionsMonitor:
                         log.info("[%s] 📴 %s: Hangup with %s (channel App)%s", ts, ext, dialed_exten, duration_str)
                     elif _meaningful(caller) and caller != ext:
                         log.info("[%s] 📴 %s: Hangup with %s (channel %s)%s", ts, ext, caller, ch_type or ext, duration_str)
+                    else:
+                        log.debug(f"Skipping hangup log for {ext}: caller={caller}, dialed_exten={dialed_exten} - conditions not met")
                 
                 # Remove the extension from active calls
                 self.active_calls.pop(ext, None)
             elif ext_info and ext_info.get('destchannel') == ch:
                 # This was a destination channel, just remove the reference
                 ext_info.pop('destchannel', None)
+            elif ext_info:
+                # Channel doesn't match exactly, but if it's the final hangup and we have ext_info, still send CRM data
+                if is_final_hangup:
+                    # Use linkedid:uniqueid as key to allow different ring cycles to send CRM
+                    crm_key = f"{linkedid}:{uniqueid}" if (linkedid and uniqueid) else None
+                    
+                    # Check if CRM data has already been sent for this channel instance
+                    if crm_key and crm_key in self.linkedid_crm_sent:
+                        log.info(f"⏸️ CRM data already sent for {crm_key} - skipping duplicate send for extension {ext}")
+                    else:
+                        log.info(f"📤 Final hangup detected for extension {ext} (channel mismatch), attempting CRM send")
+                        if crm_key:
+                            self.linkedid_crm_sent.add(crm_key)
+                        if self.crm_connector:
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(self._send_crm_data(ext, ext_info, p, queue))
+                            except RuntimeError:
+                                try:
+                                    asyncio.ensure_future(self._send_crm_data(ext, ext_info, p, queue))
+                                except Exception as e:
+                                    log.error(f"Could not schedule CRM send task for extension {ext}: {e}")
+                        else:
+                            log.warning(f"CRM connector not available - skipping CRM send for extension {ext}")
         
         # Clean up any remaining channels in ch2ext that belong to this extension
         # (in case of multiple channels per extension)
@@ -1084,9 +1407,13 @@ class AMIExtensionsMonitor:
         # This catches cases where channel mapping might be lost
         if ch:
             for ext_name, info in list(self.active_calls.items()):
-                if info.get('channel') == ch or info.get('destchannel') == ch:
-                    # This call's channel hung up - remove it
+                if info.get('channel') == ch:
+                    # This call's main channel hung up - remove the entry
                     self.active_calls.pop(ext_name, None)
+                elif info.get('destchannel') == ch:
+                    # This call's destination channel hung up - just clear destchannel reference
+                    # Don't remove the entry - caller's own channel might still be active
+                    info.pop('destchannel', None)
 
     def _ev_NewCallerid(self, p, ts):
         ch = p.get('Channel', '')
@@ -1184,7 +1511,14 @@ class AMIExtensionsMonitor:
         if ext:
             info = self.active_calls.get(ext)
             if info:
-                info['dialstatus'] = dialstatus
+                # Only update dialstatus if:
+                # 1. New status is ANSWER (always wins - call was connected)
+                # 2. OR current status is not already ANSWER (don't let CANCEL overwrite ANSWER)
+                # 3. OR no status is set yet
+                current_status = info.get('dialstatus', '').upper()
+                new_status = dialstatus.upper() if dialstatus else ''
+                if new_status == 'ANSWER' or current_status != 'ANSWER':
+                    info['dialstatus'] = dialstatus
                 if _meaningful(destexten):
                     if 'original_destination' not in info:
                         info['original_destination'] = destexten
@@ -1203,10 +1537,55 @@ class AMIExtensionsMonitor:
                     self.ch2ext[destch] = dest_ext
                 if 'caller' not in dest_info and ext:
                     dest_info['caller'] = ext
+                # For destination, also update dialstatus with same priority logic
+                dest_current_status = dest_info.get('dialstatus', '').upper()
+                new_status = dialstatus.upper() if dialstatus else ''
+                if new_status == 'ANSWER' or dest_current_status != 'ANSWER':
+                    dest_info['dialstatus'] = dialstatus
 
     def _ev_Bridge(self, p, ts):
         ch1, ch2 = p.get('Channel1',''), p.get('Channel2','')
         ext1, ext2 = self._resolve_ext(ch1), self._resolve_ext(ch2)
+        
+        # Get Linkedid from bridge event - channels being bridged should share the same Linkedid
+        linkedid1 = p.get('Linkedid', '') or self.ch2linkedid.get(ch1, '')
+        linkedid2 = p.get('Linkedid', '') or self.ch2linkedid.get(ch2, '')
+        
+        # Use the Linkedid from the event if available, otherwise use the first channel's Linkedid
+        bridge_linkedid = p.get('Linkedid', '') or linkedid1 or linkedid2
+        
+        # If we have a Linkedid, ensure both channels are tracked with it
+        if bridge_linkedid:
+            # Update Linkedid tracking for both channels
+            if ch1 and ch1 not in self.ch2linkedid:
+                self.ch2linkedid[ch1] = bridge_linkedid
+            elif ch1 and self.ch2linkedid.get(ch1) != bridge_linkedid:
+                # Update existing Linkedid - move channel to new Linkedid group
+                old_linkedid = self.ch2linkedid[ch1]
+                if old_linkedid in self.linkedid2channels:
+                    self.linkedid2channels[old_linkedid].discard(ch1)
+                    if not self.linkedid2channels[old_linkedid]:
+                        self.linkedid2channels.pop(old_linkedid, None)
+                self.ch2linkedid[ch1] = bridge_linkedid
+            
+            if ch2 and ch2 not in self.ch2linkedid:
+                self.ch2linkedid[ch2] = bridge_linkedid
+            elif ch2 and self.ch2linkedid.get(ch2) != bridge_linkedid:
+                # Update existing Linkedid - move channel to new Linkedid group
+                old_linkedid = self.ch2linkedid[ch2]
+                if old_linkedid in self.linkedid2channels:
+                    self.linkedid2channels[old_linkedid].discard(ch2)
+                    if not self.linkedid2channels[old_linkedid]:
+                        self.linkedid2channels.pop(old_linkedid, None)
+                self.ch2linkedid[ch2] = bridge_linkedid
+            
+            # Add both channels to the Linkedid group
+            if bridge_linkedid not in self.linkedid2channels:
+                self.linkedid2channels[bridge_linkedid] = set()
+            self.linkedid2channels[bridge_linkedid].add(ch1)
+            self.linkedid2channels[bridge_linkedid].add(ch2)
+            
+            log.debug(f"Bridge event: Linked channels {ch1} and {ch2} with Linkedid {bridge_linkedid}")
 
         # Gather callerids from all available sources
         def _cid(ch, ext):
@@ -1216,10 +1595,21 @@ class AMIExtensionsMonitor:
 
         cid1, cid2 = _cid(ch1, ext1), _cid(ch2, ext2)
 
-        if ext1:
-            self._call_info(ext1)['destination'] = cid2 if (cid2 and cid2 != ext1) else (ext2 or '')
-        if ext2:
-            self._call_info(ext2)['destination'] = cid1 if (cid1 and cid1 != ext2) else (ext1 or '')
+        # Get call info for both extensions
+        info1 = self._call_info(ext1) if ext1 else None
+        info2 = self._call_info(ext2) if ext2 else None
+
+        if info1:
+            info1['destination'] = cid2 if (cid2 and cid2 != ext1) else (ext2 or '')
+            # If ext2 has queue info, copy it to ext1 (for agent receiving queue call)
+            if info2 and 'queue' in info2 and 'queue' not in info1:
+                info1['queue'] = info2['queue']
+        
+        if info2:
+            info2['destination'] = cid1 if (cid1 and cid1 != ext2) else (ext1 or '')
+            # If ext1 has queue info, copy it to ext2 (for agent receiving queue call)
+            if info1 and 'queue' in info1 and 'queue' not in info2:
+                info2['queue'] = info1['queue']
 
     def _ev_Newstate(self, p, ts):
         ch = p.get('Channel', '')
@@ -1412,6 +1802,7 @@ class AMIExtensionsMonitor:
         callerid = p.get('CallerIDNum', p.get('CallerID', 'Unknown'))
         position = p.get('Position', '0')
         channel = p.get('Channel', '')
+        linkedid = p.get('Linkedid', '')
         
         if queue and uniqueid:
             self.queue_entries[uniqueid] = {
@@ -1424,6 +1815,32 @@ class AMIExtensionsMonitor:
             # Track uniqueid for this channel if available
             if channel and uniqueid:
                 self.ch2uniqueid[channel] = uniqueid
+            
+            # Store queue in call_info for the caller's channel so we can retrieve it later
+            # Also mark as queue_waiting - CRM should not be sent until caller hangs up OR agent answers
+            if channel:
+                caller_ext = self.ch2ext.get(channel)
+                if caller_ext:
+                    call_info = self.active_calls.get(caller_ext)
+                    if call_info:
+                        call_info['queue'] = queue
+                        call_info['queue_waiting'] = True  # Don't send CRM until caller hangup or agent answer
+                        call_info['queue_caller_channel'] = channel  # Track the caller's channel
+                        log.debug(f"📥 Queue call {queue}: Marked caller {caller_ext} as queue_waiting=True")
+            
+            # Also create/update call_info for the external caller (callerid) if it's meaningful
+            # This ensures we have proper tracking for external callers entering the queue
+            if _meaningful(callerid) and callerid != 'Unknown':
+                caller_info = self._call_info(callerid)
+                caller_info['queue'] = queue
+                caller_info['queue_waiting'] = True  # Don't send CRM until caller hangup or agent answer
+                caller_info['queue_caller_channel'] = channel
+                caller_info['callerid'] = callerid
+                if 'start_time' not in caller_info:
+                    caller_info['start_time'] = datetime.now()
+                if linkedid:
+                    caller_info['linkedid'] = linkedid
+                log.debug(f"📥 Queue call {queue}: Created/updated call_info for external caller {callerid}, queue_waiting=True")
             
             if queue not in self.queues:
                 self.queues[queue] = {'members': {}, 'calls_waiting': 0}
@@ -1441,6 +1858,7 @@ class AMIExtensionsMonitor:
         callerid = p.get('CallerIDNum', p.get('CallerID', 'Unknown'))
         position = p.get('Position', '0')
         channel = p.get('Channel', '')
+        linkedid = p.get('Linkedid', '')
         
         if queue and uniqueid:
             self.queue_entries[uniqueid] = {
@@ -1453,6 +1871,31 @@ class AMIExtensionsMonitor:
             # Track uniqueid for this channel if available
             if channel and uniqueid:
                 self.ch2uniqueid[channel] = uniqueid
+            
+            # Store queue in call_info for the caller's channel so we can retrieve it later
+            # Also mark as queue_waiting - CRM should not be sent until caller hangs up OR agent answers
+            if channel:
+                caller_ext = self.ch2ext.get(channel)
+                if caller_ext:
+                    call_info = self.active_calls.get(caller_ext)
+                    if call_info:
+                        call_info['queue'] = queue
+                        call_info['queue_waiting'] = True  # Don't send CRM until caller hangup or agent answer
+                        call_info['queue_caller_channel'] = channel  # Track the caller's channel
+                        log.debug(f"📥 Queue call {queue}: Marked caller {caller_ext} as queue_waiting=True")
+            
+            # Also create/update call_info for the external caller (callerid) if it's meaningful
+            # This ensures we have proper tracking for external callers entering the queue
+            if _meaningful(callerid) and callerid != 'Unknown':
+                caller_info = self._call_info(callerid)
+                caller_info['queue'] = queue
+                caller_info['queue_waiting'] = True  # Don't send CRM until caller hangup or agent answer
+                caller_info['queue_caller_channel'] = channel
+                caller_info['callerid'] = callerid
+                caller_info['start_time'] = datetime.now()
+                if linkedid:
+                    caller_info['linkedid'] = linkedid
+                log.debug(f"📥 Queue call {queue}: Created/updated call_info for external caller {callerid}, queue_waiting=True")
             
             if queue not in self.queues:
                 self.queues[queue] = {'members': {}, 'calls_waiting': 0}
@@ -1480,6 +1923,138 @@ class AMIExtensionsMonitor:
             
             if queue in self.monitored:
                 log.info("[%s] 📤 Queue %s: Caller %s left", ts, queue, callerid)
+
+    def _ev_AgentCalled(self, p, ts):
+        """Handle AgentCalled event - agent starts ringing for a queue call."""
+        queue = p.get('Queue', '')
+        agent_channel = p.get('DestChannel', p.get('AgentChannel', ''))
+        agent_member = p.get('Interface', '')
+        callerid = p.get('CallerIDNum', p.get('CallerID', ''))
+        channel = p.get('Channel', '')  # Caller's channel
+        uniqueid = p.get('Uniqueid', '')
+        linkedid = p.get('Linkedid', '')
+        
+        # Get agent extension from member interface or channel
+        agent_ext = None
+        if agent_member and '/' in agent_member:
+            # Interface like PJSIP/1001 or SIP/1001
+            agent_ext = agent_member.split('/')[-1]
+        if not agent_ext and agent_channel:
+            agent_ext = _ext_from_channel(agent_channel)
+        
+        if agent_ext:
+            agent_info = self._call_info(agent_ext)
+            # Store the external caller for this queue call
+            if _meaningful(callerid):
+                agent_info['caller'] = callerid
+                agent_info['queue_caller'] = callerid
+            if queue:
+                agent_info['queue'] = queue
+            if linkedid:
+                agent_info['linkedid'] = linkedid
+            
+            # Propagate queue_waiting from caller's call_info to agent's call_info
+            # This ensures we can check queue_waiting when agent's channel hangs up
+            if _meaningful(callerid):
+                caller_info = self.active_calls.get(callerid)
+                if caller_info:
+                    agent_info['queue_waiting'] = caller_info.get('queue_waiting', False)
+                    agent_info['queue_caller_channel'] = caller_info.get('queue_caller_channel', '')
+            
+            log.debug(f"🔔 AgentCalled: Queue {queue}, Agent {agent_ext}, Caller {callerid}, queue_waiting={agent_info.get('queue_waiting', False)}")
+
+    def _ev_AgentConnect(self, p, ts):
+        """Handle AgentConnect event - agent answered a queue call."""
+        queue = p.get('Queue', '')
+        agent_channel = p.get('MemberChannel', p.get('Channel', ''))
+        agent_member = p.get('Interface', p.get('Member', ''))
+        callerid = p.get('CallerIDNum', p.get('CallerID', ''))
+        uniqueid = p.get('Uniqueid', '')
+        linkedid = p.get('Linkedid', '')
+        caller_channel = p.get('Channel', '')  # The caller's channel
+        
+        # Get agent extension
+        agent_ext = None
+        if agent_member and '/' in agent_member:
+            agent_ext = agent_member.split('/')[-1]
+        if not agent_ext and agent_channel:
+            agent_ext = _ext_from_channel(agent_channel)
+        
+        if agent_ext:
+            agent_info = self.active_calls.get(agent_ext)
+            if agent_info:
+                # Mark call as answered
+                agent_info['dialstatus'] = 'ANSWER'
+                agent_info['queue_answered'] = True
+                agent_info['queue_waiting'] = False  # Agent answered - no longer waiting in queue
+                agent_info['answered_agent'] = agent_ext  # Store which agent answered
+                if _meaningful(callerid):
+                    agent_info['caller'] = callerid
+                    agent_info['queue_caller'] = callerid
+                if queue:
+                    agent_info['queue'] = queue
+                if linkedid:
+                    agent_info['linkedid'] = linkedid
+                # Set answer time if not already set
+                if agent_info.get('answer_time') is None:
+                    agent_info['answer_time'] = datetime.now()
+            
+            log.info(f"[{ts}] ✅ Queue {queue}: Agent {agent_ext} connected to caller {callerid}")
+        
+        # Also update the external caller's call_info
+        # This is important because _send_crm_data may use the caller's info
+        # Create caller_info if it doesn't exist (external callers might be stored under channel name)
+        if _meaningful(callerid):
+            caller_info = self.active_calls.get(callerid)
+            if not caller_info:
+                # Create call_info for external caller - this ensures CRM has the right info
+                caller_info = self._call_info(callerid)
+                caller_info['callerid'] = callerid
+                log.debug(f"Created call_info for external caller {callerid}")
+            
+            caller_info['dialstatus'] = 'ANSWER'
+            caller_info['queue_answered'] = True
+            caller_info['queue_waiting'] = False  # Agent answered - no longer waiting in queue
+            caller_info['answered_agent'] = agent_ext  # Store which agent answered
+            caller_info['destination'] = agent_ext  # The actual destination is the agent
+            if queue:
+                caller_info['queue'] = queue
+            if linkedid:
+                caller_info['linkedid'] = linkedid
+            log.info(f"✅ Queue call answered: caller {callerid}, agent {agent_ext}, queue_waiting=False")
+        
+        # Also update based on linkedid - find all channels with same linkedid and update caller info
+        if linkedid:
+            for ext, info in self.active_calls.items():
+                if info.get('linkedid') == linkedid or (ext.isdigit() and 3 <= len(ext) <= 5):
+                    ch = info.get('channel', '')
+                    ch_linkedid = self.ch2linkedid.get(ch, '')
+                    if ch_linkedid == linkedid:
+                        # This extension is part of the same call
+                        if _meaningful(callerid):
+                            info['caller'] = callerid
+                            info['queue_caller'] = callerid
+                        if queue:
+                            info['queue'] = queue
+                        info['dialstatus'] = 'ANSWER'
+                        info['queue_answered'] = True
+                        info['queue_waiting'] = False  # Agent answered - no longer waiting in queue
+                        info['answered_agent'] = agent_ext
+
+    def _ev_AgentComplete(self, p, ts):
+        """Handle AgentComplete event - queue call completed."""
+        queue = p.get('Queue', '')
+        agent_member = p.get('Interface', p.get('Member', ''))
+        callerid = p.get('CallerIDNum', p.get('CallerID', ''))
+        talktime = p.get('TalkTime', '0')
+        reason = p.get('Reason', '')  # agent, caller, transfer
+        
+        agent_ext = None
+        if agent_member and '/' in agent_member:
+            agent_ext = agent_member.split('/')[-1]
+        
+        if queue in self.monitored or (agent_ext and agent_ext in self.monitored):
+            log.info(f"[{ts}] 📞 Queue {queue}: Agent {agent_ext} completed call with {callerid} (talk: {talktime}s, reason: {reason})")
 
     # ------------------------------------------------------------------
     # Queue management methods
