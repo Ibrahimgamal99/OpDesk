@@ -167,6 +167,7 @@ cd "$PROJECT_ROOT/frontend" && npm install || true
 # ===============================================================
 # FINAL SUMMARY REPORT
 # ===============================================================
+clear
 echo -e "\n${YELLOW}Step 9: Generating Installation Report...${NC}"
 
 echo -e "${GREEN}==============================================================="
