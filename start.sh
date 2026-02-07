@@ -32,4 +32,5 @@ echo -e "${GREEN}[AOP]${NC} Both services started. Backend PID: $BACKEND_PID, Fr
 echo -e "${YELLOW}Press Ctrl+C to stop both services${NC}"
 
 trap "echo -e \"\n${YELLOW}[AOP]${NC} Stopping services...\"; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" SIGINT SIGTERM
+
 wait
