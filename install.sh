@@ -290,7 +290,25 @@ fi
 # --- Step 8: App Config ---
 echo -e "\n${YELLOW}Step 8: Configuring Application & Installing Dependencies...${NC}"
 cd "$PROJECT_ROOT/backend"
-python -m pip install --break-system-packages -r requirements.txt || true
+
+# Check if pip supports --break-system-packages flag (pip 23.0+)
+PIP_BREAK_FLAG=""
+if python -m pip install --help 2>/dev/null | grep -q "break-system-packages"; then
+    PIP_BREAK_FLAG="--break-system-packages"
+    echo -e "${GREEN}Using --break-system-packages flag (pip 23.0+)${NC}"
+else
+    echo -e "${YELLOW}pip version doesn't support --break-system-packages, installing without it${NC}"
+fi
+
+# Upgrade pip first to ensure we have a recent version
+python -m pip install --upgrade pip 2>/dev/null || true
+
+# Install requirements
+if [ -n "$PIP_BREAK_FLAG" ]; then
+    python -m pip install $PIP_BREAK_FLAG -r requirements.txt || true
+else
+    python -m pip install -r requirements.txt || true
+fi
 cat > .env <<EOF
 OS=$OS
 PBX=$PBX
