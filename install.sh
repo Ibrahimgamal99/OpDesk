@@ -35,9 +35,9 @@ echo -e "${GREEN}Detected OS: $OS${NC}"
 # --- Step 2: Install Git & Report Tools ---
 echo -e "\n${YELLOW}Step 2: Installing Git & Required Tools...${NC}"
 if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-    sudo apt-get update && sudo apt-get install -y git lsof mariadb-client curl
+    sudo apt-get update && sudo apt-get install -y git lsof curl
 elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
-    sudo dnf install -y git lsof mariadb curl || sudo yum install -y git lsof mariadb curl
+    sudo dnf install -y git lsof curl || sudo yum install -y git lsof  curl
 fi
 
 # --- Step 3: Repository Setup ---
