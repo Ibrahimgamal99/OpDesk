@@ -141,14 +141,32 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
             sudo yum install -y python3.11 python3.11-pip python3.11-devel || \
             sudo yum install -y python3 python3-pip python3-devel || true
         fi
-        # Find installed Python version
+        # Find installed Python version - check common paths directly
         for VER in "3.13" "3.12" "3.11" ""; do
             if [ -z "$VER" ]; then
-                PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null)
+                # Try which first, then common paths
+                PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null || echo "")
+                if [ -z "$PYTHON_11_PLUS_PATH" ]; then
+                    for COMMON_PATH in "/usr/bin/python3" "/usr/local/bin/python3"; do
+                        if [ -f "$COMMON_PATH" ]; then
+                            PYTHON_11_PLUS_PATH="$COMMON_PATH"
+                            break
+                        fi
+                    done
+                fi
             else
-                PYTHON_11_PLUS_PATH=$(which python${VER} 2>/dev/null || which python3.${VER#*.} 2>/dev/null)
+                # Try which first, then check common system paths
+                PYTHON_11_PLUS_PATH=$(which python${VER} 2>/dev/null || which python3.${VER#*.} 2>/dev/null || echo "")
+                if [ -z "$PYTHON_11_PLUS_PATH" ]; then
+                    for COMMON_PATH in "/usr/bin/python${VER}" "/usr/bin/python3.${VER#*.}" "/usr/local/bin/python${VER}"; do
+                        if [ -f "$COMMON_PATH" ]; then
+                            PYTHON_11_PLUS_PATH="$COMMON_PATH"
+                            break
+                        fi
+                    done
+                fi
             fi
-            if [ -n "$PYTHON_11_PLUS_PATH" ]; then
+            if [ -n "$PYTHON_11_PLUS_PATH" ] && [ -f "$PYTHON_11_PLUS_PATH" ]; then
                 echo -e "${GREEN}Found Python at $PYTHON_11_PLUS_PATH${NC}"
                 break
             fi
@@ -159,9 +177,20 @@ if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
     fi
 fi
 
-# Verify Python is available
-if [ -z "$PYTHON_11_PLUS_PATH" ]; then
-    PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null)
+# Verify Python is available - try multiple methods
+if [ -z "$PYTHON_11_PLUS_PATH" ] || [ ! -f "$PYTHON_11_PLUS_PATH" ]; then
+    # Try which first
+    PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null || echo "")
+    # If which failed, check common system paths
+    if [ -z "$PYTHON_11_PLUS_PATH" ] || [ ! -f "$PYTHON_11_PLUS_PATH" ]; then
+        for COMMON_PATH in "/usr/bin/python3.11" "/usr/bin/python3.12" "/usr/bin/python3.13" "/usr/bin/python3" "/usr/local/bin/python3"; do
+            if [ -f "$COMMON_PATH" ]; then
+                PYTHON_11_PLUS_PATH="$COMMON_PATH"
+                echo -e "${GREEN}Found Python at $PYTHON_11_PLUS_PATH${NC}"
+                break
+            fi
+        done
+    fi
 fi
 
 if [ -z "$PYTHON_11_PLUS_PATH" ] || [ ! -f "$PYTHON_11_PLUS_PATH" ]; then
@@ -185,6 +214,7 @@ if ! "$FINAL_PYTHON_PATH" --version >/dev/null 2>&1; then
     exit 1
 fi
 echo -e "${GREEN}Python installation verified: $($FINAL_PYTHON_PATH --version 2>&1)${NC}"
+echo -e "${GREEN}Python installation completed successfully. Continuing with next steps...${NC}"
 
 # --- Step 6: PBX & Database Config ---
 echo -e "\n${YELLOW}Step 6: Detecting PBX Environment & Configuring Database...${NC}"
