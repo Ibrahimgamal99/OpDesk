@@ -70,22 +70,36 @@ PYTHON_NEEDS_UPGRADE=false
 PYTHON_11_PLUS_PATH=""
 PYTHON_11_PLUS_FOUND=false
 
+# Check for Python 3.11+ versions
 for PYTHON_VER in "3.13" "3.12" "3.11"; do
     if command_exists python${PYTHON_VER}; then
         PYTHON_11_PLUS_FOUND=true
         PYTHON_11_PLUS_VERSION=$PYTHON_VER
-        PYTHON_11_PLUS_PATH=$(which python${PYTHON_VER})
-        break
+        PYTHON_11_PLUS_PATH=$(which python${PYTHON_VER} 2>/dev/null)
+        if [ -n "$PYTHON_11_PLUS_PATH" ]; then
+            echo -e "${GREEN}Found Python ${PYTHON_VER} at $PYTHON_11_PLUS_PATH${NC}"
+            break
+        fi
     fi
 done
 
+# Check existing python3 version if 3.11+ not found
 if [ "$PYTHON_11_PLUS_FOUND" == "false" ]; then
     if command_exists python3; then
         PYTHON_VERSION_STR=$(python3 --version 2>&1)
         PYTHON_VERSION=$(echo "$PYTHON_VERSION_STR" | grep -oE '[0-9]+\.[0-9]+' | head -1)
-        PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
-        PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
-        if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
+        if [ -n "$PYTHON_VERSION" ]; then
+            PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+            PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+            if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
+                PYTHON_NEEDS_UPGRADE=true
+                echo -e "${YELLOW}Python version $PYTHON_VERSION is less than 3.11, upgrade needed${NC}"
+            else
+                PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null)
+                PYTHON_11_PLUS_FOUND=true
+                echo -e "${GREEN}Found Python $PYTHON_VERSION at $PYTHON_11_PLUS_PATH${NC}"
+            fi
+        else
             PYTHON_NEEDS_UPGRADE=true
         fi
     else
@@ -93,42 +107,170 @@ if [ "$PYTHON_11_PLUS_FOUND" == "false" ]; then
     fi
 fi
 
+# Install Python 3.11+ if needed
 if [ "$PYTHON_NEEDS_UPGRADE" == "true" ]; then
+    echo -e "${YELLOW}Installing Python 3.11+...${NC}"
     if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-        sudo apt-get update && sudo apt-get install -y software-properties-common
-        sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update
+        sudo apt-get update || true
+        sudo apt-get install -y software-properties-common || true
+        sudo add-apt-repository -y ppa:deadsnakes/ppa || true
+        sudo apt-get update || true
+        PYTHON_INSTALLED=false
         for VER in "3.13" "3.12" "3.11"; do
-            if sudo apt-get install -y python${VER} python${VER}-venv python${VER}-dev; then
-                PYTHON_11_PLUS_PATH=$(which python${VER}); break
+            if sudo apt-get install -y python${VER} python${VER}-venv python${VER}-dev 2>/dev/null; then
+                PYTHON_11_PLUS_PATH=$(which python${VER} 2>/dev/null)
+                if [ -n "$PYTHON_11_PLUS_PATH" ]; then
+                    PYTHON_INSTALLED=true
+                    echo -e "${GREEN}Successfully installed Python ${VER}${NC}"
+                    break
+                fi
             fi
         done
+        if [ "$PYTHON_INSTALLED" == "false" ]; then
+            echo -e "${YELLOW}Attempting to install python3 from default repositories...${NC}"
+            sudo apt-get install -y python3 python3-pip python3-venv || true
+            PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null)
+        fi
+    elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
+        # For RHEL-based systems
+        if command_exists dnf; then
+            sudo dnf install -y python3.11 python3.11-pip python3.11-devel || \
+            sudo dnf install -y python3.12 python3.12-pip python3.12-devel || \
+            sudo dnf install -y python3 python3-pip python3-devel || true
+        else
+            sudo yum install -y python3.11 python3.11-pip python3.11-devel || \
+            sudo yum install -y python3 python3-pip python3-devel || true
+        fi
+        # Find installed Python version
+        for VER in "3.13" "3.12" "3.11" ""; do
+            if [ -z "$VER" ]; then
+                PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null)
+            else
+                PYTHON_11_PLUS_PATH=$(which python${VER} 2>/dev/null || which python3.${VER#*.} 2>/dev/null)
+            fi
+            if [ -n "$PYTHON_11_PLUS_PATH" ]; then
+                echo -e "${GREEN}Found Python at $PYTHON_11_PLUS_PATH${NC}"
+                break
+            fi
+        done
+    else
+        echo -e "${YELLOW}Unknown OS, attempting to use system python3...${NC}"
+        PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null)
     fi
 fi
 
+# Verify Python is available
+if [ -z "$PYTHON_11_PLUS_PATH" ]; then
+    PYTHON_11_PLUS_PATH=$(which python3 2>/dev/null)
+fi
+
+if [ -z "$PYTHON_11_PLUS_PATH" ] || [ ! -f "$PYTHON_11_PLUS_PATH" ]; then
+    echo -e "${RED}Error: Python installation failed. Please install Python 3.11+ manually.${NC}"
+    exit 1
+fi
+
 # Create symlinks for python and pip
-FINAL_PYTHON_PATH=${PYTHON_11_PLUS_PATH:-$(which python3)}
-sudo ln -sf "$FINAL_PYTHON_PATH" /usr/local/bin/python
+FINAL_PYTHON_PATH="$PYTHON_11_PLUS_PATH"
+echo -e "${GREEN}Using Python: $FINAL_PYTHON_PATH${NC}"
+sudo ln -sf "$FINAL_PYTHON_PATH" /usr/local/bin/python || true
 sudo tee /usr/local/bin/pip > /dev/null << 'EOF'
 #!/bin/bash
 python -m pip "$@"
 EOF
-sudo chmod +x /usr/local/bin/pip
+sudo chmod +x /usr/local/bin/pip || true
+
+# Verify Python works
+if ! "$FINAL_PYTHON_PATH" --version >/dev/null 2>&1; then
+    echo -e "${RED}Error: Python verification failed${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Python installation verified: $($FINAL_PYTHON_PATH --version 2>&1)${NC}"
 
 # --- Step 6: PBX & Database Config ---
 echo -e "\n${YELLOW}Step 6: Detecting PBX Environment & Configuring Database...${NC}"
-DB_HOST="localhost"; DB_PORT="3306"; DB_NAME="asterisk"; DB_USER="root"; DB_PASS=""
+DB_HOST="localhost"
+DB_PORT="3306"
+DB_NAME="asterisk"
+DB_USER="root"
+DB_PASS=""
+PBX="Generic"
+
+# Detect PBX system
 if [ -d /usr/share/issabel ]; then
-    SYSTEM="Issabel"
-    DB_PASS=$(grep "mysqlrootpwd" /etc/issabel.conf | cut -d'=' -f2 | xargs 2>/dev/null || echo "")
+    PBX="Issabel"
+    echo -e "${GREEN}Detected Issabel PBX${NC}"
+    if [ -f /etc/issabel.conf ]; then
+        DB_PASS=$(grep -E "^mysqlrootpwd\s*=" /etc/issabel.conf 2>/dev/null | cut -d'=' -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+        if [ -z "$DB_PASS" ]; then
+            DB_PASS=$(grep "mysqlrootpwd" /etc/issabel.conf 2>/dev/null | cut -d'=' -f2 | xargs 2>/dev/null || echo "")
+        fi
+        if [ -n "$DB_PASS" ]; then
+            echo -e "${GREEN}Retrieved MySQL root password from Issabel config${NC}"
+        else
+            echo -e "${YELLOW}Could not retrieve MySQL password from Issabel config${NC}"
+        fi
+    fi
 elif [ -f /etc/freepbx.conf ]; then
-    SYSTEM="FreePBX"
+    PBX="FreePBX"
+    echo -e "${GREEN}Detected FreePBX${NC}"
     DB_USER="AOP"
-    DB_PASS=$(openssl rand -base64 8 | tr -dc 'a-zA-Z0-9' | head -c 8)
-    sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+    DB_PASS=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16 2>/dev/null || echo "$(date +%s | sha256sum | base64 | head -c 16)")
+    
+    # Check if MySQL/MariaDB is running
+    if command_exists systemctl; then
+        if systemctl is-active --quiet mysql || systemctl is-active --quiet mariadb; then
+            echo -e "${GREEN}MySQL/MariaDB service is running${NC}"
+        else
+            echo -e "${YELLOW}MySQL/MariaDB service may not be running. Attempting to start...${NC}"
+            sudo systemctl start mysql 2>/dev/null || sudo systemctl start mariadb 2>/dev/null || true
+        fi
+    fi
+    
+    # Try to create database user
+    echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
+    if command_exists mysql; then
+        # Try with sudo mysql (no password)
+        if sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
+            sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+            echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
+        # Try with mysql as root user
+        elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
+            mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+            echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
+        else
+            echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
+            echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\"${NC}"
+        fi
+    else
+        echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
+    fi
 else
-    SYSTEM="Generic"
+    echo -e "${YELLOW}No specific PBX detected, using Generic configuration${NC}"
 fi
+
+# Verify database connection if possible
+if command_exists mysql; then
+    echo -e "${YELLOW}Verifying database connection...${NC}"
+    if [ -n "$DB_PASS" ]; then
+        if mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" -e "SELECT 1;" 2>/dev/null >/dev/null; then
+            echo -e "${GREEN}Database connection successful${NC}"
+        elif sudo mysql -e "SELECT 1;" 2>/dev/null >/dev/null; then
+            echo -e "${GREEN}Database connection successful (using sudo)${NC}"
+        else
+            echo -e "${YELLOW}Could not verify database connection. Please check credentials manually.${NC}"
+        fi
+    else
+        if sudo mysql -e "SELECT 1;" 2>/dev/null >/dev/null; then
+            echo -e "${GREEN}Database connection successful (using sudo)${NC}"
+        else
+            echo -e "${YELLOW}Could not verify database connection. Please check MySQL/MariaDB is running.${NC}"
+        fi
+    fi
+fi
+
+echo -e "${GREEN}PBX System: $PBX${NC}"
+echo -e "${GREEN}Database Host: $DB_HOST:$DB_PORT${NC}"
+echo -e "${GREEN}Database User: $DB_USER${NC}"
 
 # --- Step 7: AMI Config ---
 echo -e "\n${YELLOW}Step 7: Configuring Asterisk AMI...${NC}"
@@ -151,7 +293,7 @@ cd "$PROJECT_ROOT/backend"
 python -m pip install --break-system-packages -r requirements.txt || true
 cat > .env <<EOF
 OS=$OS
-PBX=$SYSTEM
+PBX=$PBX
 DB_HOST=$DB_HOST
 DB_PORT=$DB_PORT
 DB_USER=$DB_USER
@@ -176,7 +318,7 @@ echo -e "===============================================================${NC}"
 echo -e "${BLUE}PROJECT DETAILS:${NC}"
 echo -e "  Location:      $PROJECT_ROOT"
 echo -e "  OS Detected:   $OS"
-echo -e "  PBX Platform:  $SYSTEM"
+echo -e "  PBX Platform:  $PBX"
 echo ""
 echo -e "${BLUE}DATABASE DETAILS:${NC}"
 echo -e "  Status:        $(mysqladmin -u$DB_USER -p$DB_PASS ping 2>/dev/null | grep -q "alive" && echo -e "${GREEN}Connected${NC}" || echo -e "${RED}Failed${NC}")"
