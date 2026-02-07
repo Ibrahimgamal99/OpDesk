@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, Save, Loader2, CheckCircle2, AlertCircle, Database } from 'lucide-react';
+import { X, Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff, Settings } from 'lucide-react';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -42,6 +42,8 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [qosLoading, setQosLoading] = useState(false);
+  const [qosMessage, setQosMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -112,6 +114,52 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     setConfig(prev => ({ ...prev, ...updates }));
   };
 
+  const handleQosEnable = async () => {
+    setQosLoading(true);
+    setQosMessage(null);
+    try {
+      const response = await fetch('/api/qos/enable', {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setQosMessage({ type: 'success', text: data.message || 'QoS enabled successfully' });
+      } else {
+        const error = await response.json();
+        setQosMessage({ type: 'error', text: error.detail || 'Failed to enable QoS' });
+      }
+    } catch (error) {
+      console.error('Failed to enable QoS:', error);
+      setQosMessage({ type: 'error', text: 'Failed to enable QoS configuration' });
+    } finally {
+      setQosLoading(false);
+    }
+  };
+
+  const handleQosDisable = async () => {
+    setQosLoading(true);
+    setQosMessage(null);
+    try {
+      const response = await fetch('/api/qos/disable', {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setQosMessage({ type: 'success', text: data.message || 'QoS disabled successfully' });
+      } else {
+        const error = await response.json();
+        setQosMessage({ type: 'error', text: error.detail || 'Failed to disable QoS' });
+      }
+    } catch (error) {
+      console.error('Failed to disable QoS:', error);
+      setQosMessage({ type: 'error', text: 'Failed to disable QoS configuration' });
+    } finally {
+      setQosLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -127,8 +175,8 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
       >
         <div className="modal-header">
           <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Database size={20} style={{ color: 'var(--accent-primary)' }} />
-            CRM Configuration
+            <Settings size={20} style={{ color: 'var(--accent-primary)' }} />
+            Settings
           </h3>
           <button className="modal-close" onClick={onClose}>
             <X size={20} />
@@ -143,21 +191,146 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
         ) : (
           <form onSubmit={handleSubmit}>
             <div className="modal-body">
-              {/* Enable/Disable Toggle */}
-              <div className="form-group">
-                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={config.enabled}
-                    onChange={(e) => updateConfig({ enabled: e.target.checked })}
-                    style={{ width: 18, height: 18 }}
-                  />
-                  Enable CRM Integration
-                </label>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                  When enabled, call data will be sent to your CRM system after each call ends.
+              {/* QoS Settings Section */}
+              <div style={{ 
+                marginBottom: 32, 
+                paddingBottom: 24, 
+                borderBottom: '1px solid var(--border-primary)' 
+              }}>
+                <h4 style={{ 
+                  fontSize: 16, 
+                  fontWeight: 600, 
+                  marginBottom: 16,
+                  color: 'var(--text-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8
+                }}>
+                  <Signal size={18} style={{ color: 'var(--accent-primary)' }} />
+                  Quality of Service (QoS)
+                </h4>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                  Enable QoS tracking to capture call quality metrics and store them in CDR records.
                 </p>
+                
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleQosEnable}
+                    disabled={qosLoading}
+                    style={{ 
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      opacity: qosLoading ? 0.6 : 1
+                    }}
+                  >
+                    {qosLoading ? (
+                      <>
+                        <Loader2 size={14} className="spinner" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <Power size={14} />
+                        Enable QoS
+                      </>
+                    )}
+                  </button>
+                  
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={handleQosDisable}
+                    disabled={qosLoading}
+                    style={{ 
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      opacity: qosLoading ? 0.6 : 1
+                    }}
+                  >
+                    {qosLoading ? (
+                      <>
+                        <Loader2 size={14} className="spinner" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <PowerOff size={14} />
+                        Disable QoS
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {qosMessage && (
+                  <div style={{
+                    marginTop: 12,
+                    padding: 12,
+                    borderRadius: 'var(--radius-md)',
+                    background: qosMessage.type === 'success' 
+                      ? 'rgba(63, 185, 80, 0.15)' 
+                      : 'rgba(248, 81, 73, 0.15)',
+                    border: `1px solid ${qosMessage.type === 'success' 
+                      ? 'rgba(63, 185, 80, 0.3)' 
+                      : 'rgba(248, 81, 73, 0.3)'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}>
+                    {qosMessage.type === 'success' ? (
+                      <CheckCircle2 size={16} style={{ color: 'var(--accent-success)' }} />
+                    ) : (
+                      <AlertCircle size={16} style={{ color: 'var(--accent-danger)' }} />
+                    )}
+                    <span style={{ 
+                      fontSize: 13,
+                      color: qosMessage.type === 'success' 
+                        ? 'var(--accent-success)' 
+                        : 'var(--accent-danger)'
+                    }}>
+                      {qosMessage.text}
+                    </span>
+                  </div>
+                )}
               </div>
+
+              {/* CRM Settings Section */}
+              <div>
+                <h4 style={{ 
+                  fontSize: 16, 
+                  fontWeight: 600, 
+                  marginBottom: 16,
+                  color: 'var(--text-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8
+                }}>
+                  <Database size={18} style={{ color: 'var(--accent-primary)' }} />
+                  CRM Integration
+                </h4>
+
+                {/* Enable/Disable Toggle */}
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={config.enabled}
+                      onChange={(e) => updateConfig({ enabled: e.target.checked })}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    Enable CRM Integration
+                  </label>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                    When enabled, call data will be sent to your CRM system after each call ends.
+                  </p>
+                </div>
 
               {config.enabled && (
                 <>
@@ -396,6 +569,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
                   )}
                 </>
               )}
+              </div>
             </div>
 
             <div className="modal-footer">

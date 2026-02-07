@@ -25,6 +25,7 @@ import uvicorn
 
 from ami import AMIExtensionsMonitor, _format_duration, _meaningful, DIALPLAN_CTX, normalize_interface
 from db_manager import get_extensions_from_db
+from qos import enable_qos, disable_qos
 
 # Load environment variables
 load_dotenv()
@@ -504,6 +505,20 @@ async def lifespan(app: FastAPI):
     # Initialize CRM connector if configured
     crm_connector = init_crm_connector()
     
+    # Check and apply QoS configuration from environment variable
+    qos_enabled = os.getenv('QOS_ENABLED', '').lower() in ('true', '1', 'yes')
+    if qos_enabled:
+        log.info("QOS_ENABLED is set to true. Enabling QoS configuration...")
+        try:
+            if enable_qos():
+                log.info("✅ QoS configuration enabled on startup")
+            else:
+                log.warning("⚠️ Failed to enable QoS configuration on startup")
+        except Exception as e:
+            log.error(f"Error enabling QoS on startup: {e}")
+    else:
+        log.info("QOS_ENABLED is not set or disabled. QoS will not be configured automatically.")
+    
     # Create AMI monitor with CRM connector
     monitor = AMIExtensionsMonitor(crm_connector=crm_connector)
     
@@ -834,6 +849,20 @@ async def get_status():
     }
 
 
+@app.get("/api/qos/status")
+async def get_qos_status():
+    """Get current QoS configuration status from environment variables."""
+    # Reload .env file to ensure we have the latest values
+    load_dotenv(override=True)
+    
+    qos_enabled = os.getenv('QOS_ENABLED', '').lower() in ('true', '1', 'yes')
+    
+    return {
+        "enabled": qos_enabled,
+        "pbx": os.getenv('PBX', 'FreePBX')
+    }
+
+
 @app.get("/api/crm/config")
 async def get_crm_config():
     """Get current CRM configuration from environment variables."""
@@ -868,6 +897,99 @@ async def get_crm_config():
         config["oauth2_scope"] = os.getenv('CRM_OAUTH2_SCOPE', '')
     
     return config
+
+
+def save_qos_status_to_env(enabled: bool):
+    """Save QoS enabled status to .env file."""
+    try:
+        from pathlib import Path
+        
+        # Get .env file path
+        env_file = Path(__file__).parent / '.env'
+        
+        # Read existing .env file
+        env_content = ""
+        if env_file.exists():
+            env_content = env_file.read_text()
+        
+        # Remove old QOS_ENABLED variable if it exists
+        lines = env_content.split('\n')
+        filtered_lines = []
+        for line in lines:
+            if not line.strip().startswith('QOS_ENABLED='):
+                filtered_lines.append(line)
+        
+        # Add new QOS_ENABLED configuration
+        if filtered_lines and filtered_lines[-1].strip():
+            filtered_lines.append('')
+        # Check if QoS section exists, if not add it
+        if not any('# QoS Configuration' in line for line in filtered_lines):
+            filtered_lines.append('# QoS Configuration')
+        filtered_lines.append(f'QOS_ENABLED={"true" if enabled else "false"}')
+        
+        # Write back to .env file
+        env_file.write_text('\n'.join(filtered_lines))
+        
+        # Reload environment variables from .env file
+        load_dotenv(override=True)
+        
+        log.info(f"QoS status saved to .env file: QOS_ENABLED={'true' if enabled else 'false'}")
+        return True
+    except Exception as e:
+        log.error(f"Failed to save QoS status to .env: {e}")
+        return False
+
+
+@app.post("/api/qos/enable")
+async def enable_qos_endpoint():
+    """
+    Enable QoS (Quality of Service) configuration.
+    This will:
+    1. Write macro-hangupcall override to the appropriate file based on PBX type
+    2. Write sub-hangupcall-custom to extensions_custom.conf
+    3. Reload Asterisk dialplan
+    4. Save QOS_ENABLED=true to .env file
+    """
+    try:
+        success = enable_qos()
+        if success:
+            # Save status to .env file
+            save_qos_status_to_env(True)
+            return {
+                "success": True,
+                "message": "QoS configuration enabled successfully. Asterisk dialplan reloaded."
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to enable QoS configuration. Check server logs for details.")
+    except Exception as e:
+        log.error(f"Failed to enable QoS: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to enable QoS configuration: {str(e)}")
+
+
+@app.post("/api/qos/disable")
+async def disable_qos_endpoint():
+    """
+    Disable QoS (Quality of Service) configuration.
+    This will:
+    1. Remove macro-hangupcall override from the appropriate file
+    2. Remove sub-hangupcall-custom from extensions_custom.conf
+    3. Reload Asterisk dialplan
+    4. Save QOS_ENABLED=false to .env file
+    """
+    try:
+        success = disable_qos()
+        if success:
+            # Save status to .env file
+            save_qos_status_to_env(False)
+            return {
+                "success": True,
+                "message": "QoS configuration disabled successfully. Asterisk dialplan reloaded."
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to disable QoS configuration. Check server logs for details.")
+    except Exception as e:
+        log.error(f"Failed to disable QoS: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to disable QoS configuration: {str(e)}")
 
 
 @app.post("/api/crm/config")
