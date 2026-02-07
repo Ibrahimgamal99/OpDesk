@@ -26,7 +26,7 @@ except ImportError:
         CRMConnector = None
 
 load_dotenv()
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------

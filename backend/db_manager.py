@@ -28,7 +28,7 @@ def get_db_config():
     return {
         'host': os.getenv('DB_HOST', 'localhost'),
         'port': int(os.getenv('DB_PORT', '3306')),
-        'user': os.getenv('DB_USER', 'asteriskuser'),
+        'user': os.getenv('DB_USER', 'root'),
         'password': os.getenv('DB_PASSWORD', ''),
         'database': os.getenv('DB_NAME', 'asterisk')
     }
@@ -67,3 +67,6 @@ def get_extensions_from_db() -> list:
         log.warning(f"⚠️  Database error getting extensions: {e}")
 
     return extensions
+if __name__ == "__main__":
+    extensions = get_extensions_from_db()
+    print(extensions)
