@@ -281,9 +281,18 @@ Call data is sent to your CRM endpoint (`/api/calls` by default) in the followin
 For questions, issues, or contributions, please contact:
 
 - **Email**: ib.gamal.a@gmail.com
-- **LinkedIn**: [Your LinkedIn Profile](https://www.linkedin.com/in/ibrahim-gamal99)
+- **LinkedIn**: [Ibrahim Gamal](https://www.linkedin.com/in/ibrahim-gamal99)
+- **GitHub**: [Ibrahimgamal99](https://github.com/Ibrahimgamal99)
 
 ## License
 
-MIT
+This project is open source and available under the MIT License.
+
+## Support
+
+AOP is free and open source. If you find it useful, please consider:
+
+- ⭐ **Starring this repository** – it helps with visibility
+- 🐛 **Reporting bugs or suggesting features** via [Issues](https://github.com/Ibrahimgamal99/AOP/issues)
+- 💬 **Contributing** to the project
 
