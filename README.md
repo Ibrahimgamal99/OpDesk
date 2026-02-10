@@ -7,8 +7,12 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 - **Real-time Extension Monitoring**: Live status updates for all extensions
 - **Active Call Tracking**: See who's talking to whom with duration and talk time tracking
 - **Call Duration & Talk Time**: Track total call duration and actual conversation time separately
+- **Call Log/CDR History**: View historical call records with filtering and search capabilities
+- **Call Recording Playback**: Listen to recorded calls directly from the web interface
 - **Queue Management**: Monitor and manage call queues
 - **Supervisor Features**: Listen, whisper, and barge into calls
+- **CRM Integration**: Send call data to external CRM systems with support for multiple authentication methods (API Key, Basic Auth, Bearer Token, OAuth2)
+- **QoS Data**: View Quality of Service metrics for calls
 - **WebSocket-based**: Event-driven architecture for instant updates
 
 ## Architecture
@@ -32,7 +36,7 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 **Note:** The installation script will automatically install:
 - Python 3.11+ and pip
 - Node.js 24+ (via nvm)
-- git (if not already installed)
+- git, lsof, and curl (if not already installed)
 
 ## Installation
 
@@ -52,20 +56,25 @@ chmod +x install.sh
 ```
 
 The script will:
-1. Detect your OS and install git (if not already installed)
-2. Clone the repository (if not already present)
+1. Detect your OS and install git, lsof, and curl (if not already installed)
+2. Clone the repository to `/opt/AOP` (if not already present)
 3. Install nvm (Node Version Manager) and Node.js 24
-4. Install Python 3 and pip
-5. Detect Issabel or FreePBX installation
-6. Prompt for database and AMI configuration
-7. Create `backend/.env` file with your settings
-8. Add AMI user to `/etc/asterisk/manager.conf`
-9. Install Python dependencies
+4. Install Python 3.11+ and pip
+5. Auto-detect Issabel or FreePBX installation
+6. Auto-configure database credentials:
+   - **Issabel**: Retrieves MySQL root password from `/etc/issabel.conf`
+   - **FreePBX**: Creates database user `AOP` with auto-generated password
+7. Auto-configure AMI user `AOP` with random secret in `/etc/asterisk/manager.conf`
+8. Create `backend/.env` file with all settings
+9. Install Python dependencies (with `--break-system-packages` on Debian/Ubuntu)
 10. Install Node.js dependencies
+11. Display installation summary report
 
-**Note:** The script will prompt you for:
-- Database credentials (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)
-- AMI configuration (AMI_HOST, AMI_PORT, AMI_SECRET)
+**Note:** The script automatically configures:
+- Database connection (auto-detects credentials for Issabel/FreePBX)
+- AMI user and secret (auto-generated and added to Asterisk config)
+- CDR database name (`asteriskcdrdb`)
+- Recording root directory (`/var/spool/asterisk/monitor/`)
 
 ### Manual Installation
 
@@ -85,19 +94,31 @@ pip3 install --break-system-packages -r requirements.txt
 2. Configure environment variables in `backend/.env`:
 
 ```env
-# AMI Configuration
-AMI_HOST=127.0.0.1
-AMI_PORT=5038
-AMI_USERNAME=AOP
-AMI_SECRET=your_ami_secret
+# Operating System
+OS=debian
 
-# Database Configuration (for extensions list)
+# PBX System
+PBX=FreePBX
+
+# Database Configuration (for extensions list and CDR)
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=asteriskuser
 DB_PASSWORD=your_db_password
 DB_NAME=asterisk
+DB_CDR=asteriskcdrdb
+
+# Asterisk Recording Root Directory
+ASTERISK_RECORDING_ROOT_DIR=/var/spool/asterisk/monitor/
+
+# AMI Configuration
+AMI_HOST=127.0.0.1
+AMI_PORT=5038
+AMI_USERNAME=AOP
+AMI_SECRET=your_ami_secret
 ```
+
+**Note:** The installation script automatically creates this file with appropriate values for your system.
 
 #### Frontend
 
@@ -184,11 +205,60 @@ Access the application at `http://localhost:8765`
 - `GET /api/calls` - Get active calls
 - `GET /api/queues` - Get queue information
 - `GET /api/status` - Get server status
+- `GET /api/call-log` - Get call log/CDR history (supports `limit`, `date`, `date_from`, `date_to` parameters)
+- `GET /api/recordings/{file_path}` - Serve call recording audio files
+- `GET /api/settings` - Get application settings
+- `POST /api/settings` - Update application settings
+- `POST /api/supervisor/{action}` - Supervisor actions (listen, whisper, barge)
 
 ### WebSocket
 
 Connect to `ws://localhost:8765/ws` for real-time updates.
 
+The WebSocket connection provides:
+- Real-time extension status updates
+- Active call events
+- Queue status changes
+- Call log updates
+- System notifications
+
+
+## CRM Integration
+
+AOP supports integration with external CRM systems to automatically send call data after each call ends.
+
+### Supported Authentication Methods
+
+- **API Key**: Custom header authentication
+- **Basic Auth**: Username/password authentication
+- **Bearer Token**: Token-based authentication
+- **OAuth2**: OAuth2 flow with client credentials
+
+### Configuration
+
+CRM integration can be configured through the web interface (Settings → CRM Settings) or via the database settings table:
+
+- `CRM_ENABLED`: Set to `true` or `1` to enable
+- `CRM_SERVER_URL`: Your CRM server URL
+- `CRM_AUTH_TYPE`: `api_key`, `basic_auth`, `bearer_token`, or `oauth2`
+- Additional fields based on selected authentication type
+
+### Call Data Format
+
+Call data is sent to your CRM endpoint (`/api/calls` by default) in the following format:
+
+```json
+{
+  "caller": "1002",
+  "destination": "1001",
+  "duration": "00:05:23",
+  "talk_time": "00:04:50",
+  "datetime": "2024-01-01T12:00:00",
+  "call_status": "completed",
+  "queue": "sales",
+  "call_type": "inbound"
+}
+```
 
 ## Technology Stack
 
@@ -197,6 +267,7 @@ Connect to `ws://localhost:8765/ws` for real-time updates.
 - **FastAPI** - Modern async web framework
 - **WebSockets** - Real-time communication
 - **asyncio** - Async I/O for AMI communication
+- **MySQL/MariaDB** - Database for extensions and CDR
 
 ### Frontend
 - **React 24** - UI framework
@@ -204,6 +275,13 @@ Connect to `ws://localhost:8765/ws` for real-time updates.
 - **Vite** - Build tool
 - **Framer Motion** - Animations
 - **Lucide React** - Icons
+
+## Contact
+
+For questions, issues, or contributions, please contact:
+
+- **Email**: ib.gamal.a@gmail.com
+- **LinkedIn**: [Your LinkedIn Profile](https://www.linkedin.com/in/ibrahim-gamal99)
 
 ## License
 
