@@ -79,3 +79,37 @@ export interface ActionMessage {
   [key: string]: unknown;
 }
 
+// Call Log types
+export interface CallLogRecord {
+  calldate: string;
+  src: string;
+  dst: string;
+  phone_number: string;
+  customer_name: string | null;
+  duration: number;
+  talk: number;
+  disposition: string;
+  status: string;
+  QoS: string | null;
+  extension: string | null;
+  call_type: string;
+  recording_path: string | null;
+  recording_file: string | null;
+  app: string;
+}
+
+export interface QoSData {
+  // Parsed QoS metrics
+  rxJitter: number | null;
+  txJitter: number | null;
+  rxPackets: number | null;
+  txPackets: number | null;
+  rxLoss: number | null;
+  txLoss: number | null;
+  rxMes: number | null;
+  txMes: number | null;
+  rtt: number | null;
+  caller: string | null;
+  raw: string;
+}
+

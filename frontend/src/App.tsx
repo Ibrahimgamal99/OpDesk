@@ -3,6 +3,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
+import { CallLogPanel } from './components/CallLogPanel';
 import { SupervisorModal } from './components/SupervisorModal';
 import { CRMSettingsModal } from './components/CRMSettingsModal';
 import { 
@@ -14,10 +15,11 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
-  Settings
+  Settings,
+  History
 } from 'lucide-react';
 
-type TabType = 'extensions' | 'calls' | 'queues';
+type TabType = 'extensions' | 'calls' | 'queues' | 'call-log';
 
 function App() {
   const { state, connected, lastUpdate, notifications, sendAction } = useWebSocket();
@@ -174,6 +176,13 @@ function App() {
               </span>
             )}
           </button>
+          <button 
+            className={`tab ${activeTab === 'call-log' ? 'active' : ''}`}
+            onClick={() => setActiveTab('call-log')}
+          >
+            <History size={16} />
+            Call History
+          </button>
         </div>
 
         {/* Tab Content */}
@@ -198,6 +207,10 @@ function App() {
             entries={state?.queue_entries || {}}
             sendAction={sendAction}
           />
+        )}
+
+        {activeTab === 'call-log' && (
+          <CallLogPanel />
         )}
 
         {/* Last update timestamp */}

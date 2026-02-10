@@ -24,8 +24,9 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from ami import AMIExtensionsMonitor, _format_duration, _meaningful, DIALPLAN_CTX, normalize_interface
-from db_manager import get_extensions_from_db
+from db_manager import get_extensions_from_db, init_settings_table, get_setting, set_setting, get_all_settings
 from qos import enable_qos, disable_qos
+from call_log import call_log as get_call_log
 
 # Load environment variables
 load_dotenv()
@@ -364,9 +365,9 @@ class AMIEventBridge:
 # ---------------------------------------------------------------------------
 def init_crm_connector() -> Optional[CRMConnector]:
     """
-    Initialize CRM connector from environment variables.
+    Initialize CRM connector from database settings.
     
-    Environment variables:
+    Database settings:
         CRM_ENABLED: Set to 'true' or '1' to enable CRM (default: disabled)
         CRM_SERVER_URL: CRM server URL (required if enabled)
         CRM_AUTH_TYPE: Authentication type - 'api_key', 'basic_auth', 'bearer_token', or 'oauth2' (required if enabled)
@@ -400,15 +401,16 @@ def init_crm_connector() -> Optional[CRMConnector]:
         log.warning("CRM connector not available - CRM functionality disabled")
         return None
     
-    # Check if CRM is enabled
-    crm_enabled = os.getenv('CRM_ENABLED', '').lower() in ('true', '1', 'yes')
+    # Check if CRM is enabled (from database, fallback to env)
+    crm_enabled_str = get_setting('CRM_ENABLED', os.getenv('CRM_ENABLED', ''))
+    crm_enabled = crm_enabled_str.lower() in ('true', '1', 'yes')
     if not crm_enabled:
         log.info("CRM is disabled (set CRM_ENABLED=true to enable)")
         return None
     
-    # Get required configuration
-    server_url = os.getenv('CRM_SERVER_URL', '').strip()
-    auth_type_str = os.getenv('CRM_AUTH_TYPE', '').strip().lower()
+    # Get required configuration (from database, fallback to env)
+    server_url = get_setting('CRM_SERVER_URL', os.getenv('CRM_SERVER_URL', '')).strip()
+    auth_type_str = get_setting('CRM_AUTH_TYPE', os.getenv('CRM_AUTH_TYPE', '')).strip().lower()
     
     if not server_url:
         log.warning("CRM_ENABLED is true but CRM_SERVER_URL is not set - CRM disabled")
@@ -418,29 +420,29 @@ def init_crm_connector() -> Optional[CRMConnector]:
         log.warning("CRM_ENABLED is true but CRM_AUTH_TYPE is not set - CRM disabled")
         return None
     
-    # Build configuration dictionary
+    # Build configuration dictionary (from database, fallback to env)
     config = {
         "server_url": server_url,
         "auth_type": auth_type_str,
-        "endpoint_path": os.getenv('CRM_ENDPOINT_PATH', '/api/calls'),
-        "timeout": int(os.getenv('CRM_TIMEOUT', '30')),
-        "verify_ssl": os.getenv('CRM_VERIFY_SSL', 'true').lower() in ('true', '1', 'yes')
+        "endpoint_path": get_setting('CRM_ENDPOINT_PATH', os.getenv('CRM_ENDPOINT_PATH', '/api/calls')),
+        "timeout": int(get_setting('CRM_TIMEOUT', os.getenv('CRM_TIMEOUT', '30'))),
+        "verify_ssl": get_setting('CRM_VERIFY_SSL', os.getenv('CRM_VERIFY_SSL', 'true')).lower() in ('true', '1', 'yes')
     }
     
-    # Add auth-specific configuration
+    # Add auth-specific configuration (from database, fallback to env)
     if auth_type_str == 'api_key':
-        api_key = os.getenv('CRM_API_KEY', '').strip()
+        api_key = get_setting('CRM_API_KEY', os.getenv('CRM_API_KEY', '')).strip()
         if not api_key:
             log.warning("CRM_AUTH_TYPE is 'api_key' but CRM_API_KEY is not set - CRM disabled")
             return None
         config["api_key"] = api_key
-        api_key_header = os.getenv('CRM_API_KEY_HEADER', '').strip()
+        api_key_header = get_setting('CRM_API_KEY_HEADER', os.getenv('CRM_API_KEY_HEADER', '')).strip()
         if api_key_header:
             config["api_key_header"] = api_key_header
     
     elif auth_type_str == 'basic_auth':
-        username = os.getenv('CRM_USERNAME', '').strip()
-        password = os.getenv('CRM_PASSWORD', '').strip()
+        username = get_setting('CRM_USERNAME', os.getenv('CRM_USERNAME', '')).strip()
+        password = get_setting('CRM_PASSWORD', os.getenv('CRM_PASSWORD', '')).strip()
         if not username or not password:
             log.warning("CRM_AUTH_TYPE is 'basic_auth' but CRM_USERNAME or CRM_PASSWORD is not set - CRM disabled")
             return None
@@ -448,16 +450,16 @@ def init_crm_connector() -> Optional[CRMConnector]:
         config["password"] = password
     
     elif auth_type_str == 'bearer_token':
-        bearer_token = os.getenv('CRM_BEARER_TOKEN', '').strip()
+        bearer_token = get_setting('CRM_BEARER_TOKEN', os.getenv('CRM_BEARER_TOKEN', '')).strip()
         if not bearer_token:
             log.warning("CRM_AUTH_TYPE is 'bearer_token' but CRM_BEARER_TOKEN is not set - CRM disabled")
             return None
         config["bearer_token"] = bearer_token
     
     elif auth_type_str == 'oauth2':
-        client_id = os.getenv('CRM_OAUTH2_CLIENT_ID', '').strip()
-        client_secret = os.getenv('CRM_OAUTH2_CLIENT_SECRET', '').strip()
-        token_url = os.getenv('CRM_OAUTH2_TOKEN_URL', '').strip()
+        client_id = get_setting('CRM_OAUTH2_CLIENT_ID', os.getenv('CRM_OAUTH2_CLIENT_ID', '')).strip()
+        client_secret = get_setting('CRM_OAUTH2_CLIENT_SECRET', os.getenv('CRM_OAUTH2_CLIENT_SECRET', '')).strip()
+        token_url = get_setting('CRM_OAUTH2_TOKEN_URL', os.getenv('CRM_OAUTH2_TOKEN_URL', '')).strip()
         if not client_id or not client_secret:
             log.warning("CRM_AUTH_TYPE is 'oauth2' but CRM_OAUTH2_CLIENT_ID or CRM_OAUTH2_CLIENT_SECRET is not set - CRM disabled")
             return None
@@ -465,7 +467,7 @@ def init_crm_connector() -> Optional[CRMConnector]:
         config["oauth2_client_secret"] = client_secret
         if token_url:
             config["oauth2_token_url"] = token_url
-        oauth2_scope = os.getenv('CRM_OAUTH2_SCOPE', '').strip()
+        oauth2_scope = get_setting('CRM_OAUTH2_SCOPE', os.getenv('CRM_OAUTH2_SCOPE', '')).strip()
         if oauth2_scope:
             config["oauth2_scope"] = oauth2_scope
     else:
@@ -502,11 +504,31 @@ async def lifespan(app: FastAPI):
     # Startup
     log.info("Starting Asterisk Operator Panel Server...")
     
+    # Initialize settings table
+    init_settings_table()
+    
+    # Initialize default settings if they don't exist
+    default_settings = {
+        'QOS_ENABLED': 'true',
+        'CRM_ENABLED': 'false',
+        'CRM_AUTH_TYPE': 'api_key',
+        'CRM_ENDPOINT_PATH': '/api/calls',
+        'CRM_TIMEOUT': '30',
+        'CRM_VERIFY_SSL': 'true',
+    }
+    
+    for key, default_value in default_settings.items():
+        current_value = get_setting(key)
+        if current_value is None or current_value == '':
+            set_setting(key, default_value)
+            log.info(f"Initialized default setting: {key}={default_value}")
+    
     # Initialize CRM connector if configured
     crm_connector = init_crm_connector()
     
-    # Check and apply QoS configuration from environment variable
-    qos_enabled = os.getenv('QOS_ENABLED', '').lower() in ('true', '1', 'yes')
+    # Check and apply QoS configuration from database (fallback to env)
+    qos_enabled_str = get_setting('QOS_ENABLED', os.getenv('QOS_ENABLED', ''))
+    qos_enabled = qos_enabled_str.lower() in ('true', '1', 'yes')
     if qos_enabled:
         log.info("QOS_ENABLED is set to true. Enabling QoS configuration...")
         try:
@@ -851,92 +873,63 @@ async def get_status():
 
 @app.get("/api/qos/status")
 async def get_qos_status():
-    """Get current QoS configuration status from environment variables."""
-    # Reload .env file to ensure we have the latest values
-    load_dotenv(override=True)
-    
-    qos_enabled = os.getenv('QOS_ENABLED', '').lower() in ('true', '1', 'yes')
+    """Get current QoS configuration status from database."""
+    qos_enabled_str = get_setting('QOS_ENABLED', os.getenv('QOS_ENABLED', ''))
+    qos_enabled = qos_enabled_str.lower() in ('true', '1', 'yes')
     
     return {
         "enabled": qos_enabled,
-        "pbx": os.getenv('PBX', 'FreePBX')
+        "pbx": get_setting('PBX', os.getenv('PBX', 'FreePBX'))
     }
 
 
 @app.get("/api/crm/config")
 async def get_crm_config():
-    """Get current CRM configuration from environment variables."""
-    # Reload .env file to ensure we have the latest values
-    load_dotenv(override=True)
-    
-    # Build config from environment variables
+    """Get current CRM configuration from database."""
+    # Build config from database (fallback to env)
+    crm_enabled_str = get_setting('CRM_ENABLED', os.getenv('CRM_ENABLED', ''))
     config = {
-        "enabled": os.getenv('CRM_ENABLED', '').lower() in ('true', '1', 'yes'),
-        "server_url": os.getenv('CRM_SERVER_URL', ''),
-        "auth_type": os.getenv('CRM_AUTH_TYPE', 'api_key').lower(),
-        "endpoint_path": os.getenv('CRM_ENDPOINT_PATH', '/api/calls'),
-        "timeout": int(os.getenv('CRM_TIMEOUT', '30')),
-        "verify_ssl": os.getenv('CRM_VERIFY_SSL', 'true').lower() in ('true', '1', 'yes'),
+        "enabled": crm_enabled_str.lower() in ('true', '1', 'yes'),
+        "server_url": get_setting('CRM_SERVER_URL', os.getenv('CRM_SERVER_URL', '')),
+        "auth_type": get_setting('CRM_AUTH_TYPE', os.getenv('CRM_AUTH_TYPE', 'api_key')).lower(),
+        "endpoint_path": get_setting('CRM_ENDPOINT_PATH', os.getenv('CRM_ENDPOINT_PATH', '/api/calls')),
+        "timeout": int(get_setting('CRM_TIMEOUT', os.getenv('CRM_TIMEOUT', '30'))),
+        "verify_ssl": get_setting('CRM_VERIFY_SSL', os.getenv('CRM_VERIFY_SSL', 'true')).lower() in ('true', '1', 'yes'),
     }
     
     auth_type = config["auth_type"]
     
     # Add auth-specific fields (masked for security)
     if auth_type == 'api_key':
-        config["api_key"] = "***" if os.getenv('CRM_API_KEY') else ""
-        config["api_key_header"] = os.getenv('CRM_API_KEY_HEADER', '')
+        api_key = get_setting('CRM_API_KEY', os.getenv('CRM_API_KEY', ''))
+        config["api_key"] = "***" if api_key else ""
+        config["api_key_header"] = get_setting('CRM_API_KEY_HEADER', os.getenv('CRM_API_KEY_HEADER', ''))
     elif auth_type == 'basic_auth':
-        config["username"] = os.getenv('CRM_USERNAME', '')
-        config["password"] = "***" if os.getenv('CRM_PASSWORD') else ""
+        config["username"] = get_setting('CRM_USERNAME', os.getenv('CRM_USERNAME', ''))
+        password = get_setting('CRM_PASSWORD', os.getenv('CRM_PASSWORD', ''))
+        config["password"] = "***" if password else ""
     elif auth_type == 'bearer_token':
-        config["bearer_token"] = "***" if os.getenv('CRM_BEARER_TOKEN') else ""
+        bearer_token = get_setting('CRM_BEARER_TOKEN', os.getenv('CRM_BEARER_TOKEN', ''))
+        config["bearer_token"] = "***" if bearer_token else ""
     elif auth_type == 'oauth2':
-        config["oauth2_client_id"] = os.getenv('CRM_OAUTH2_CLIENT_ID', '')
-        config["oauth2_client_secret"] = "***" if os.getenv('CRM_OAUTH2_CLIENT_SECRET') else ""
-        config["oauth2_token_url"] = os.getenv('CRM_OAUTH2_TOKEN_URL', '')
-        config["oauth2_scope"] = os.getenv('CRM_OAUTH2_SCOPE', '')
+        config["oauth2_client_id"] = get_setting('CRM_OAUTH2_CLIENT_ID', os.getenv('CRM_OAUTH2_CLIENT_ID', ''))
+        oauth2_secret = get_setting('CRM_OAUTH2_CLIENT_SECRET', os.getenv('CRM_OAUTH2_CLIENT_SECRET', ''))
+        config["oauth2_client_secret"] = "***" if oauth2_secret else ""
+        config["oauth2_token_url"] = get_setting('CRM_OAUTH2_TOKEN_URL', os.getenv('CRM_OAUTH2_TOKEN_URL', ''))
+        config["oauth2_scope"] = get_setting('CRM_OAUTH2_SCOPE', os.getenv('CRM_OAUTH2_SCOPE', ''))
     
     return config
 
 
-def save_qos_status_to_env(enabled: bool):
-    """Save QoS enabled status to .env file."""
+def save_qos_status_to_db(enabled: bool):
+    """Save QoS enabled status to database."""
     try:
-        from pathlib import Path
-        
-        # Get .env file path
-        env_file = Path(__file__).parent / '.env'
-        
-        # Read existing .env file
-        env_content = ""
-        if env_file.exists():
-            env_content = env_file.read_text()
-        
-        # Remove old QOS_ENABLED variable if it exists
-        lines = env_content.split('\n')
-        filtered_lines = []
-        for line in lines:
-            if not line.strip().startswith('QOS_ENABLED='):
-                filtered_lines.append(line)
-        
-        # Add new QOS_ENABLED configuration
-        if filtered_lines and filtered_lines[-1].strip():
-            filtered_lines.append('')
-        # Check if QoS section exists, if not add it
-        if not any('# QoS Configuration' in line for line in filtered_lines):
-            filtered_lines.append('# QoS Configuration')
-        filtered_lines.append(f'QOS_ENABLED={"true" if enabled else "false"}')
-        
-        # Write back to .env file
-        env_file.write_text('\n'.join(filtered_lines))
-        
-        # Reload environment variables from .env file
-        load_dotenv(override=True)
-        
-        log.info(f"QoS status saved to .env file: QOS_ENABLED={'true' if enabled else 'false'}")
-        return True
+        success = set_setting('QOS_ENABLED', 'true' if enabled else 'false')
+        if success:
+            log.info(f"QoS status saved to database: QOS_ENABLED={'true' if enabled else 'false'}")
+        return success
     except Exception as e:
-        log.error(f"Failed to save QoS status to .env: {e}")
+        log.error(f"Failed to save QoS status to database: {e}")
         return False
 
 
@@ -953,8 +946,8 @@ async def enable_qos_endpoint():
     try:
         success = enable_qos()
         if success:
-            # Save status to .env file
-            save_qos_status_to_env(True)
+            # Save status to database
+            save_qos_status_to_db(True)
             return {
                 "success": True,
                 "message": "QoS configuration enabled successfully. Asterisk dialplan reloaded."
@@ -979,8 +972,8 @@ async def disable_qos_endpoint():
     try:
         success = disable_qos()
         if success:
-            # Save status to .env file
-            save_qos_status_to_env(False)
+            # Save status to database
+            save_qos_status_to_db(False)
             return {
                 "success": True,
                 "message": "QoS configuration disabled successfully. Asterisk dialplan reloaded."
@@ -995,114 +988,65 @@ async def disable_qos_endpoint():
 @app.post("/api/crm/config")
 async def save_crm_config(config_data: dict):
     """
-    Save CRM configuration to .env file.
+    Save CRM configuration to database.
     Note: This requires server restart to take effect.
     """
     try:
-        import re
-        from pathlib import Path
+        # Get existing settings to preserve masked values
+        existing_settings = get_all_settings()
         
-        # Get .env file path
-        env_file = Path(__file__).parent / '.env'
+        # Save basic CRM settings
+        set_setting('CRM_ENABLED', 'true' if config_data.get('enabled') else 'false')
+        set_setting('CRM_SERVER_URL', config_data.get('server_url', ''))
+        set_setting('CRM_AUTH_TYPE', config_data.get('auth_type', 'api_key'))
+        set_setting('CRM_ENDPOINT_PATH', config_data.get('endpoint_path', '/api/calls'))
+        set_setting('CRM_TIMEOUT', str(config_data.get('timeout', 30)))
+        set_setting('CRM_VERIFY_SSL', 'true' if config_data.get('verify_ssl', True) else 'false')
         
-        # Read existing .env file
-        env_content = ""
-        existing_crm_vars = {}
-        if env_file.exists():
-            env_content = env_file.read_text()
-            # Extract existing CRM variables to preserve masked values (passwords, API keys, etc.)
-            for line in env_content.split('\n'):
-                line = line.strip()
-                if '=' in line and line.startswith('CRM_'):
-                    key, value = line.split('=', 1)
-                    existing_crm_vars[key] = value
-        
-        # Prepare new CRM config entries
-        crm_vars = {
-            'CRM_ENABLED': 'true' if config_data.get('enabled') else 'false',
-            'CRM_SERVER_URL': config_data.get('server_url', ''),
-            'CRM_AUTH_TYPE': config_data.get('auth_type', 'api_key'),
-            'CRM_ENDPOINT_PATH': config_data.get('endpoint_path', '/api/calls'),
-            'CRM_TIMEOUT': str(config_data.get('timeout', 30)),
-            'CRM_VERIFY_SSL': 'true' if config_data.get('verify_ssl', True) else 'false',
-        }
-        
-        # Add auth-specific variables
+        # Handle auth-specific settings
         # For sensitive fields (password, api_key, bearer_token, oauth2_client_secret),
         # preserve existing value if new value is "***" (masked) or empty
         auth_type = config_data.get('auth_type', 'api_key')
         if auth_type == 'api_key':
             api_key = config_data.get('api_key', '')
             if api_key and api_key != '***':
-                # Save new API key as plain text in .env file
-                crm_vars['CRM_API_KEY'] = api_key
-            elif 'CRM_API_KEY' in existing_crm_vars:
-                # Preserve existing API key from .env file (plain text)
-                crm_vars['CRM_API_KEY'] = existing_crm_vars['CRM_API_KEY']
+                set_setting('CRM_API_KEY', api_key)
+            elif 'CRM_API_KEY' in existing_settings:
+                # Preserve existing API key
+                pass  # Already in database
             if config_data.get('api_key_header'):
-                crm_vars['CRM_API_KEY_HEADER'] = config_data.get('api_key_header', '')
+                set_setting('CRM_API_KEY_HEADER', config_data.get('api_key_header', ''))
         elif auth_type == 'basic_auth':
             if config_data.get('username'):
-                crm_vars['CRM_USERNAME'] = config_data.get('username', '')
+                set_setting('CRM_USERNAME', config_data.get('username', ''))
             password = config_data.get('password', '')
             if password and password != '***':
-                # Save new password as plain text in .env file
-                crm_vars['CRM_PASSWORD'] = password
-            elif 'CRM_PASSWORD' in existing_crm_vars:
-                # Preserve existing password from .env file (plain text)
-                crm_vars['CRM_PASSWORD'] = existing_crm_vars['CRM_PASSWORD']
+                set_setting('CRM_PASSWORD', password)
+            elif 'CRM_PASSWORD' in existing_settings:
+                # Preserve existing password
+                pass  # Already in database
         elif auth_type == 'bearer_token':
             bearer_token = config_data.get('bearer_token', '')
             if bearer_token and bearer_token != '***':
-                # Save new bearer token as plain text in .env file
-                crm_vars['CRM_BEARER_TOKEN'] = bearer_token
-            elif 'CRM_BEARER_TOKEN' in existing_crm_vars:
-                # Preserve existing bearer token from .env file (plain text)
-                crm_vars['CRM_BEARER_TOKEN'] = existing_crm_vars['CRM_BEARER_TOKEN']
+                set_setting('CRM_BEARER_TOKEN', bearer_token)
+            elif 'CRM_BEARER_TOKEN' in existing_settings:
+                # Preserve existing bearer token
+                pass  # Already in database
         elif auth_type == 'oauth2':
             if config_data.get('oauth2_client_id'):
-                crm_vars['CRM_OAUTH2_CLIENT_ID'] = config_data.get('oauth2_client_id', '')
+                set_setting('CRM_OAUTH2_CLIENT_ID', config_data.get('oauth2_client_id', ''))
             oauth2_secret = config_data.get('oauth2_client_secret', '')
             if oauth2_secret and oauth2_secret != '***':
-                # Save new OAuth2 client secret as plain text in .env file
-                crm_vars['CRM_OAUTH2_CLIENT_SECRET'] = oauth2_secret
-            elif 'CRM_OAUTH2_CLIENT_SECRET' in existing_crm_vars:
-                # Preserve existing OAuth2 client secret from .env file (plain text)
-                crm_vars['CRM_OAUTH2_CLIENT_SECRET'] = existing_crm_vars['CRM_OAUTH2_CLIENT_SECRET']
+                set_setting('CRM_OAUTH2_CLIENT_SECRET', oauth2_secret)
+            elif 'CRM_OAUTH2_CLIENT_SECRET' in existing_settings:
+                # Preserve existing OAuth2 client secret
+                pass  # Already in database
             if config_data.get('oauth2_token_url'):
-                crm_vars['CRM_OAUTH2_TOKEN_URL'] = config_data.get('oauth2_token_url', '')
+                set_setting('CRM_OAUTH2_TOKEN_URL', config_data.get('oauth2_token_url', ''))
             if config_data.get('oauth2_scope'):
-                crm_vars['CRM_OAUTH2_SCOPE'] = config_data.get('oauth2_scope', '')
+                set_setting('CRM_OAUTH2_SCOPE', config_data.get('oauth2_scope', ''))
         
-        # Remove old CRM variables from env_content
-        lines = env_content.split('\n')
-        filtered_lines = []
-        crm_var_prefixes = ['CRM_ENABLED', 'CRM_SERVER_URL', 'CRM_AUTH_TYPE', 'CRM_API_KEY', 
-                           'CRM_API_KEY_HEADER', 'CRM_USERNAME', 'CRM_PASSWORD', 'CRM_BEARER_TOKEN',
-                           'CRM_OAUTH2_CLIENT_ID', 'CRM_OAUTH2_CLIENT_SECRET', 'CRM_OAUTH2_TOKEN_URL',
-                           'CRM_OAUTH2_SCOPE', 'CRM_ENDPOINT_PATH', 'CRM_TIMEOUT', 'CRM_VERIFY_SSL']
-        
-        for line in lines:
-            # Skip lines that start with CRM_ variables (we'll add them fresh)
-            if any(line.strip().startswith(prefix + '=') for prefix in crm_var_prefixes):
-                continue
-            filtered_lines.append(line)
-        
-        # Add new CRM configuration
-        if filtered_lines and filtered_lines[-1].strip():
-            filtered_lines.append('')
-        filtered_lines.append('# CRM Configuration')
-        for key, value in crm_vars.items():
-            if value:  # Only add non-empty values
-                filtered_lines.append(f"{key}={value}")
-        
-        # Write back to .env file
-        env_file.write_text('\n'.join(filtered_lines))
-        
-        # Reload environment variables from .env file so changes are immediately available
-        load_dotenv(override=True)
-        
-        log.info("CRM configuration saved to .env file")
+        log.info("CRM configuration saved to database")
         
         return {
             "success": True,
@@ -1112,6 +1056,134 @@ async def save_crm_config(config_data: dict):
     except Exception as e:
         log.error(f"Failed to save CRM config: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save CRM configuration: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Call Log Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/call-log")
+async def get_call_log_endpoint(limit: int = 100, date: str = None,
+                                date_from: str = None, date_to: str = None):
+    """
+    Get call log / CDR history.
+    
+    Query params:
+        limit: Maximum number of records (default 100)
+        date: Filter by exact date in 'YYYY-MM-DD' format (optional)
+        date_from: Filter from this date inclusive, 'YYYY-MM-DD' (optional)
+        date_to: Filter up to this date inclusive, 'YYYY-MM-DD' (optional)
+    """
+    try:
+        data = get_call_log(limit=limit, date=date,
+                            date_from=date_from, date_to=date_to)
+        return {"calls": data, "total": len(data)}
+    except Exception as e:
+        log.error(f"Error fetching call log: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch call log: {str(e)}")
+
+
+@app.get("/api/recordings/{file_path:path}")
+async def serve_recording(file_path: str):
+    """
+    Serve a recording audio file.
+    The file_path should be the full absolute path to the recording.
+    """
+    from fastapi.responses import FileResponse as AudioFileResponse
+    import mimetypes
+    
+    # Security: only allow serving files from the recording root directory
+    root_dir = os.getenv('ASTERISK_RECORDING_ROOT_DIR', '/home/ibrahim/pyc/voip/')
+    
+    # Normalize paths
+    requested_path = os.path.normpath(file_path)
+    root_normalized = os.path.normpath(root_dir)
+    
+    # If file_path is not absolute, treat as relative to root_dir
+    if not os.path.isabs(requested_path):
+        requested_path = os.path.normpath(os.path.join(root_dir, requested_path))
+    
+    # Security check: ensure the path is within the recording root
+    if not requested_path.startswith(root_normalized):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not os.path.exists(requested_path) or not os.path.isfile(requested_path):
+        raise HTTPException(status_code=404, detail="Recording not found")
+    
+    # Determine content type
+    content_type, _ = mimetypes.guess_type(requested_path)
+    if not content_type:
+        content_type = "audio/wav"
+    
+    return AudioFileResponse(
+        requested_path,
+        media_type=content_type,
+        filename=os.path.basename(requested_path)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Settings Management Endpoints
+# ---------------------------------------------------------------------------
+@app.post("/api/settings")
+async def save_settings(settings_data: dict):
+    """
+    Save settings to database.
+    Accepts a dictionary of key-value pairs to save.
+    """
+    try:
+        saved_settings = []
+        failed_settings = []
+        
+        for key, value in settings_data.items():
+            # Convert value to string if it's not already
+            value_str = str(value) if value is not None else ''
+            if set_setting(key, value_str):
+                saved_settings.append(key)
+            else:
+                failed_settings.append(key)
+        
+        if failed_settings:
+            log.warning(f"Failed to save some settings: {failed_settings}")
+        
+        return {
+            "success": len(failed_settings) == 0,
+            "saved": saved_settings,
+            "failed": failed_settings,
+            "message": f"Saved {len(saved_settings)} setting(s)" + (f", {len(failed_settings)} failed" if failed_settings else "")
+        }
+    
+    except Exception as e:
+        log.error(f"Failed to save settings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """Get all settings from database."""
+    try:
+        settings = get_all_settings()
+        return {
+            "success": True,
+            "settings": settings
+        }
+    except Exception as e:
+        log.error(f"Failed to get settings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get settings: {str(e)}")
+
+
+@app.get("/api/settings/{key}")
+async def get_setting_by_key(key: str):
+    """Get a specific setting by key."""
+    try:
+        value = get_setting(key)
+        return {
+            "success": True,
+            "key": key,
+            "value": value
+        }
+    except Exception as e:
+        log.error(f"Failed to get setting {key}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get setting: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
