@@ -1,7 +1,7 @@
 # Asterisk Operator Panel (AOP)
 
 A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but built with modern technologies.
-
+ 
 ## Features
 
 - **Real-time Extension Monitoring**: Live status updates for all extensions
@@ -14,6 +14,32 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 - **CRM Integration**: Send call data to external CRM systems with support for multiple authentication methods (API Key, Basic Auth, Bearer Token, OAuth2)
 - **QoS Data**: View Quality of Service metrics for calls
 - **WebSocket-based**: Event-driven architecture for instant updates
+
+## Screenshots
+
+### Main Dashboard
+![Main Dashboard](screenshots/extensions_dashboard.png)
+*Real-time extension monitoring and active call tracking*
+
+### Active Calls Panel
+![Active Calls](screenshots/active_calls.png)
+*View active calls with duration and talk time tracking*
+
+### Call Log/CDR History
+![Call Log](screenshots/call_history.png)
+*Historical call records with filtering and search capabilities*
+
+### Queue Management
+![Queue Management](screenshots/queue.png)
+*Monitor and manage call queues in real-time*
+
+### QoS Data
+![QoS Data](screenshots/qos.png)
+*View Quality of Service metrics for calls*
+
+### Settings
+![Settings](screenshots/setting.png)
+*Configure CRM integration and application settings*
 
 ## Architecture
 

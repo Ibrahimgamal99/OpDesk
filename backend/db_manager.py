@@ -23,39 +23,21 @@ except ImportError:
     exit(1)
 
 
-def get_db_config():
+def get_db_config(password,database):
     """Get database configuration from environment variables."""
     return {
         'host': os.getenv('DB_HOST', 'localhost'),
         'port': int(os.getenv('DB_PORT', '3306')),
         'user': os.getenv('DB_USER', 'root'),
-        'password': os.getenv('DB_PASSWORD', ''),
-        'database': os.getenv('DB_NAME', 'asterisk')
+        'password':password,
+        'database': database
     }
 
-def get_db_config_cdr():
-    """Get database configuration from environment variables."""
-    return {
-        'host': os.getenv('DB_HOST', 'localhost'),
-        'port': int(os.getenv('DB_PORT', '3306')),
-        'user': os.getenv('DB_USER', 'root'),
-        'password': os.getenv('DB_PASSWORD', ''),
-        'database': os.getenv('DB_CDR', '')
-    }
 
-def get_db_config_aop():
-    """Get AOP database configuration for settings."""
-    return {
-        'host': os.getenv('DB_HOST', 'localhost'),
-        'port': int(os.getenv('DB_PORT', '3306')),
-        'user': os.getenv('DB_USER', 'root'),
-        'password': os.getenv('DB_PASSWORD', ''),
-        'database': 'AOP'  # Always use AOP database
-    }
 
 def get_extensions_from_db() -> list:
     """Get list of extension numbers from the database."""
-    config = get_db_config()
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_NAME', 'asterisk'))
     extensions = []
 
     try:
@@ -101,7 +83,7 @@ def get_call_log_from_db(limit: int = None, date: str = None,
     Returns:
         List of CDR records as dictionaries
     """
-    config = get_db_config_cdr()
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_CDR', ''))
     data = []
 
     try:
@@ -167,7 +149,7 @@ def get_call_log_from_db(limit: int = None, date: str = None,
 
 def check_database_exists(db_name: str) -> bool:
     """Check if a database exists."""
-    config_no_db = get_db_config_aop().copy()
+    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'AOP').copy()
     config_no_db.pop('database')
     
     try:
@@ -185,7 +167,7 @@ def check_database_exists(db_name: str) -> bool:
 
 def execute_sql_file(sql_file_path: str) -> bool:
     """Execute SQL commands from a file."""
-    config_no_db = get_db_config_aop().copy()
+    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'AOP').copy()
     config_no_db.pop('database')
     
     try:
@@ -245,7 +227,7 @@ def init_settings_table():
         log.info("✅ AOP database already exists")
         # Verify table exists, create if missing
         try:
-            config = get_db_config_aop()
+            config = get_db_config(os.getenv('DB_PASSWORD'),'AOP')
             conn = mysql.connector.connect(**config)
             cursor = conn.cursor()
             cursor.execute("SHOW TABLES LIKE 'aop_settings'")
@@ -280,7 +262,7 @@ def init_settings_table():
     if execute_sql_file(schema_path):
         # After creating database, connect to it and create table
         try:
-            config = get_db_config_aop()
+            config = get_db_config(os.getenv('DB_PASSWORD'),'AOP')
             conn = mysql.connector.connect(**config)
             cursor = conn.cursor()
             cursor.execute("""
@@ -314,7 +296,7 @@ def get_setting(key: str, default: str = None) -> str:
     Returns:
         Setting value or default
     """
-    config = get_db_config_aop()
+    config = get_db_config(os.getenv('DB_PASSWORD'),'AOP')
     
     try:
         conn = mysql.connector.connect(**config)
@@ -346,7 +328,7 @@ def set_setting(key: str, value: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    config = get_db_config_aop()
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),'AOP')
     
     try:
         # Ensure database and table exist
@@ -379,7 +361,7 @@ def get_all_settings() -> dict:
     Returns:
         Dictionary of all settings
     """
-    config = get_db_config_aop()
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),'AOP')
     settings = {}
     
     try:
