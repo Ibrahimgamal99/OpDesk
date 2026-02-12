@@ -2099,9 +2099,18 @@ class AMIExtensionsMonitor:
         log.info(f"QueueSummary found {len(queues_summary)} queues: {list(queues_summary.keys())}")
         return queues_summary
 
-    async def list_queues(self) -> Dict[str, Dict]:
-        """List all queues with their status."""
+    async def list_queues(self, queue: str = None) -> Dict[str, Dict]:
+        """List queues with their status. If queue is None, list all queues."""
         summary = await self.get_queue_summary()
+        
+        # Filter to specific queue if requested
+        if queue:
+            if queue in summary:
+                summary = {queue: summary[queue]}
+            else:
+                log.info(f"\nQueue '{queue}' not found")
+                log.info("-" * 80)
+                return {}
         
         log.info(f"\n{'Queue':<20} {'Members':<12} {'Available':<12} {'Calls Waiting':<15} {'Longest Hold':<15}")
         log.info("-" * 80)

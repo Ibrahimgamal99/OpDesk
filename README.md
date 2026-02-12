@@ -310,6 +310,10 @@ For questions, issues, or contributions, please contact:
 - **LinkedIn**: [Ibrahim Gamal](https://www.linkedin.com/in/ibrahim-gamal99)
 - **GitHub**: [Ibrahimgamal99](https://github.com/Ibrahimgamal99)
 
+## Development Note
+
+This project was entirely developed by Ibrahim Gamal, with AI tools assisting in generating repetitive code (boilerplate) and speeding up development.
+
 ## License
 
 This project is open source and available under the MIT License.
