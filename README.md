@@ -37,6 +37,8 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 ![QoS Data](screenshots/qos.png)
 *View Quality of Service metrics for calls*
 
+**Note:** QoS functionality has been tested and verified on FreePBX systems.
+
 ### Settings
 ![Settings](screenshots/setting.png)
 *Configure CRM integration and application settings*
@@ -269,22 +271,6 @@ CRM integration can be configured through the web interface (Settings → CRM Se
 - `CRM_AUTH_TYPE`: `api_key`, `basic_auth`, `bearer_token`, or `oauth2`
 - Additional fields based on selected authentication type
 
-### Call Data Format
-
-Call data is sent to your CRM endpoint (`/api/calls` by default) in the following format:
-
-```json
-{
-  "caller": "1002",
-  "destination": "1001",
-  "duration": "00:05:23",
-  "talk_time": "00:04:50",
-  "datetime": "2024-01-01T12:00:00",
-  "call_status": "completed",
-  "queue": "sales",
-  "call_type": "inbound"
-}
-```
 
 ## Technology Stack
 
