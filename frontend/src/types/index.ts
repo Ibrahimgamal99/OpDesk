@@ -22,6 +22,7 @@ export interface CallInfo {
 
 export interface Extension {
   extension: string;
+  name?: string;
   status: ExtensionStatus;
   status_code: string;
   call_info: CallInfo | null;

@@ -72,7 +72,12 @@ function ExtensionCard({ extension, onSupervisorAction }: ExtensionCardProps) {
       transition={{ duration: 0.2 }}
       className={`extension-card status-${extension.status}`}
     >
-      <div className="extension-number">{extension.extension}</div>
+      <div className="extension-header">
+        <div className="extension-number">{extension.extension}</div>
+        {extension.name && (
+          <div className="extension-name">{extension.name}</div>
+        )}
+      </div>
       
       <div className={`extension-status ${extension.status}`}>
         <StatusIcon size={16} />

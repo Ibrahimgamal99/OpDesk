@@ -540,17 +540,42 @@ body::before {
   }
 }
 
+.extension-header {
+  margin-bottom: 12px;
+}
+
 .extension-number {
   font-size: 28px;
   font-weight: 800;
   color: var(--text-primary);
   font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
-  margin-bottom: 12px;
   letter-spacing: -0.02em;
   background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+
+.extension-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 2px;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+  letter-spacing: 0.01em;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Roboto', sans-serif;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.extension-card:hover .extension-name {
+  opacity: 1;
+  color: var(--text-primary);
 }
 
 .extension-status {

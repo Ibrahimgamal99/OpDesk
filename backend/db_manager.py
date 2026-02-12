@@ -69,6 +69,50 @@ def get_extensions_from_db() -> list:
 
     return extensions
 
+def get_extension_names_from_db() -> dict:
+    """Get extension names mapping (extension -> name) from the database."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_NAME', 'asterisk'))
+    extension_names = {}
+
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+
+        # Try FreePBX users table first (name field)
+        try:
+            cursor.execute("SELECT extension, name FROM users WHERE extension IS NOT NULL ORDER BY extension")
+            users = cursor.fetchall()
+            for u in users:
+                if u['extension']:
+                    ext = str(u['extension'])
+                    name = u.get('name', '') or ''
+                    if name:
+                        extension_names[ext] = name
+        except Error as e:
+            log.debug(f"Could not get names from users table: {e}")
+
+        # If no names found, try PJSIP endpoints (description field)
+        if not extension_names:
+            try:
+                cursor.execute("SELECT id, description FROM ps_endpoints WHERE id REGEXP '^[0-9]+$' ORDER BY CAST(id AS UNSIGNED)")
+                endpoints = cursor.fetchall()
+                for e in endpoints:
+                    if e['id']:
+                        ext = str(e['id'])
+                        name = e.get('description', '') or ''
+                        if name:
+                            extension_names[ext] = name
+            except Error as e:
+                log.debug(f"Could not get names from ps_endpoints table: {e}")
+
+        cursor.close()
+        conn.close()
+
+    except Error as e:
+        log.warning(f"⚠️  Database error getting extension names: {e}")
+
+    return extension_names
+
 def get_call_log_from_db(limit: int = None, date: str = None,
                          date_from: str = None, date_to: str = None) -> list:
     """

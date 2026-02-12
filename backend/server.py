@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from ami import AMIExtensionsMonitor, _format_duration, _meaningful, DIALPLAN_CTX, normalize_interface
-from db_manager import get_extensions_from_db, init_settings_table, get_setting, set_setting, get_all_settings
+from db_manager import get_extensions_from_db, get_extension_names_from_db, init_settings_table, get_setting, set_setting, get_all_settings
 from qos import enable_qos, disable_qos
 from call_log import call_log as get_call_log
 
@@ -143,6 +143,7 @@ class AMIEventBridge:
         self._event_task: Optional[asyncio.Task] = None
         self._broadcast_task: Optional[asyncio.Task] = None
         self._state_queue: asyncio.Queue = asyncio.Queue()
+        self._extension_names: Dict[str, str] = {}  # Cache extension names
     
     async def start(self):
         """Start the event bridge."""
@@ -150,6 +151,10 @@ class AMIEventBridge:
             return
         
         self._running = True
+        
+        # Load extension names from database
+        self._extension_names = get_extension_names_from_db()
+        
         
         # Register callback to receive AMI events
         self.monitor.register_event_callback(self._on_ami_event)
@@ -256,6 +261,7 @@ class AMIEventBridge:
             
             extensions[ext] = {
                 "extension": ext,
+                "name": self._extension_names.get(ext, ""),
                 "status": status,
                 "status_code": status_code,
                 "call_info": self._format_call_info(ext, call_info) if call_info else None
@@ -591,7 +597,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Asterisk Operator Panel",
     description="Real-time extension monitoring and call management",
-    version="1.0.0",
+    version="1.2.0",
     lifespan=lifespan
 )
 

@@ -2096,7 +2096,6 @@ class AMIExtensionsMonitor:
             elif current_queue and k in ('Available', 'LoggedIn', 'Callers', 'HoldTime', 'TalkTime', 'LongestHoldTime'):
                 queues_summary[current_queue][k] = v
         
-        log.info(f"QueueSummary found {len(queues_summary)} queues: {list(queues_summary.keys())}")
         return queues_summary
 
     async def list_queues(self, queue: str = None) -> Dict[str, Dict]:
