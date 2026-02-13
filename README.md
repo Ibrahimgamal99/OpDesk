@@ -1,4 +1,4 @@
-# Asterisk Operator Panel (OpDesk)
+# Operator Panel Desk (OpDesk)
 
 A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but built with modern technologies.
  
