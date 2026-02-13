@@ -63,7 +63,7 @@ function App() {
             <Radio size={20} />
           </div>
           <div>
-            <h1 className="header-title">AOP</h1>
+            <h1 className="header-title">OpDesk</h1>
             <p className="header-subtitle">Asterisk Real-time Monitor</p>
           </div>
         </div>

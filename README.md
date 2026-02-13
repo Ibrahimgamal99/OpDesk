@@ -1,4 +1,4 @@
-# Asterisk Operator Panel (AOP)
+# Asterisk Operator Panel (OpDesk)
 
 A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but built with modern technologies.
  
@@ -74,7 +74,7 @@ Use the provided installation script for a complete automated setup:
 
 **One-liner (download and run):**
 ```bash
-curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/AOP/main/install.sh && chmod +x install.sh && ./install.sh
+curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh && chmod +x install.sh && ./install.sh
 ```
 
 **Or if you already have the repository:**
@@ -85,14 +85,14 @@ chmod +x install.sh
 
 The script will:
 1. Detect your OS and install git, lsof, and curl (if not already installed)
-2. Clone the repository to `/opt/AOP` (if not already present)
+2. Clone the repository to `/opt/OpDesk` (if not already present)
 3. Install nvm (Node Version Manager) and Node.js 24
 4. Install Python 3.11+ and pip
 5. Auto-detect Issabel or FreePBX installation
 6. Auto-configure database credentials:
    - **Issabel**: Retrieves MySQL root password from `/etc/issabel.conf`
-   - **FreePBX**: Creates database user `AOP` with auto-generated password
-7. Auto-configure AMI user `AOP` with random secret in `/etc/asterisk/manager.conf`
+   - **FreePBX**: Creates database user `OpDesk` with auto-generated password
+7. Auto-configure AMI user `OpDesk` with random secret in `/etc/asterisk/manager.conf`
 8. Create `backend/.env` file with all settings
 9. Install Python dependencies (with `--break-system-packages` on Debian/Ubuntu)
 10. Install Node.js dependencies
@@ -142,7 +142,7 @@ ASTERISK_RECORDING_ROOT_DIR=/var/spool/asterisk/monitor/
 # AMI Configuration
 AMI_HOST=127.0.0.1
 AMI_PORT=5038
-AMI_USERNAME=AOP
+AMI_USERNAME=OpDesk
 AMI_SECRET=your_ami_secret
 ```
 
@@ -253,7 +253,7 @@ The WebSocket connection provides:
 
 ## CRM Integration
 
-AOP supports integration with external CRM systems to automatically send call data after each call ends.
+OpDesk supports integration with external CRM systems to automatically send call data after each call ends.
 
 ### Supported Authentication Methods
 
@@ -306,9 +306,9 @@ This project is open source and available under the MIT License.
 
 ## Support
 
-AOP is free and open source. If you find it useful, please consider:
+OpDesk is free and open source. If you find it useful, please consider:
 
 - ⭐ **Starring this repository** – it helps with visibility
-- 🐛 **Reporting bugs or suggesting features** via [Issues](https://github.com/Ibrahimgamal99/AOP/issues)
+- 🐛 **Reporting bugs or suggesting features** via [Issues](https://github.com/Ibrahimgamal99/OpDesk/issues)
 - 💬 **Contributing** to the project
 
