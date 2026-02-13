@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =================================================================
-# AOP System Unified Installation Script 
+# OpDesk System Unified Installation Script 
 # Restoration: Original Python Logic + User-Preferred Summary
 # =================================================================
 
@@ -15,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' 
 
 clear
-echo -e "${BLUE}=== AOP System Installation ===${NC}"
+echo -e "${BLUE}=== OpDesk System Installation ===${NC}"
 
 # Function to check if command exists
 command_exists() {
@@ -42,8 +42,8 @@ fi
 
 # --- Step 3: Repository Setup ---
 echo -e "\n${YELLOW}Step 3: Setting Up Repository...${NC}"
-PROJECT_ROOT="/opt/AOP"
-REPO_URL="https://github.com/Ibrahimgamal99/AOP.git"
+PROJECT_ROOT="/opt/OpDesk"
+REPO_URL="https://github.com/Ibrahimgamal99/OpDesk.git"
 
 if [ -d "$PROJECT_ROOT/.git" ]; then
     cd "$PROJECT_ROOT" && git pull || true
@@ -243,7 +243,7 @@ if [ -d /usr/share/issabel ]; then
 elif [ -f /etc/freepbx.conf ]; then
     PBX="FreePBX"
     echo -e "${GREEN}Detected FreePBX${NC}"
-    DB_USER="AOP"
+    DB_USER="OpDesk"
     DB_PASS=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16 2>/dev/null || echo "$(date +%s | sha256sum | base64 | head -c 16)")
     
     # Check if MySQL/MariaDB is running
@@ -304,7 +304,7 @@ echo -e "${GREEN}Database User: $DB_USER${NC}"
 
 # --- Step 7: AMI Config ---
 echo -e "\n${YELLOW}Step 7: Configuring Asterisk AMI...${NC}"
-AMI_HOST="localhost"; AMI_PORT="5038"; AMI_USER="AOP"
+AMI_HOST="localhost"; AMI_PORT="5038"; AMI_USER="OpDesk"
 AMI_SECRET=$(openssl rand -hex 4)
 if [ -f /etc/asterisk/manager.conf ] && ! grep -q "\[$AMI_USER\]" /etc/asterisk/manager.conf; then
     sudo tee -a /etc/asterisk/manager.conf <<EOF
@@ -353,7 +353,7 @@ clear
 echo -e "\n${YELLOW}Step 9: Generating Installation Report...${NC}"
 
 echo -e "${GREEN}==============================================================="
-echo "                  AOP INSTALLATION REPORT"
+echo "                  OpDesk INSTALLATION REPORT"
 echo -e "===============================================================${NC}"
 echo -e "${BLUE}PROJECT DETAILS:${NC}"
 echo -e "  Location:      $PROJECT_ROOT"

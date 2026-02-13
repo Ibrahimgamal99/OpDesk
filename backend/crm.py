@@ -255,7 +255,7 @@ class CRMConnector:
         """Build request headers based on authentication type."""
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "AOP-CRM-Connector/1.0"
+            "User-Agent": "OpDesk-CRM-Connector/1.0"
         }
         
         # Add custom headers
@@ -433,7 +433,7 @@ class CRMConnector:
         test_data = {
             "test": True,
             "timestamp": datetime.now().isoformat(),
-            "message": "Connection test from AOP CRM Connector"
+            "message": "Connection test from OpDesk CRM Connector"
         }
         
         try:

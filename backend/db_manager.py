@@ -193,7 +193,7 @@ def get_call_log_from_db(limit: int = None, date: str = None,
 
 def check_database_exists(db_name: str) -> bool:
     """Check if a database exists."""
-    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'AOP').copy()
+    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk').copy()
     config_no_db.pop('database')
     
     try:
@@ -211,7 +211,7 @@ def check_database_exists(db_name: str) -> bool:
 
 def execute_sql_file(sql_file_path: str) -> bool:
     """Execute SQL commands from a file."""
-    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'AOP').copy()
+    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk').copy()
     config_no_db.pop('database')
     
     try:
@@ -265,27 +265,27 @@ def execute_sql_file(sql_file_path: str) -> bool:
 
 
 def init_settings_table():
-    """Check if AOP database exists, and if not, create it from schema.sql."""
-    # Check if AOP database exists
-    if check_database_exists('AOP'):
-        log.info("✅ AOP database already exists")
+    """Check if OpDesk database exists, and if not, create it from schema.sql."""
+    # Check if OpDesk database exists
+    if check_database_exists('OpDesk'):
+        log.info("✅ OpDesk database already exists")
         # Verify table exists, create if missing
         try:
-            config = get_db_config(os.getenv('DB_PASSWORD'),'AOP')
+            config = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk')
             conn = mysql.connector.connect(**config)
             cursor = conn.cursor()
-            cursor.execute("SHOW TABLES LIKE 'aop_settings'")
+            cursor.execute("SHOW TABLES LIKE 'OpDesk_settings'")
             if not cursor.fetchone():
-                log.info("📋 Creating aop_settings table...")
+                log.info("📋 Creating OpDesk_settings table...")
                 cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS aop_settings (
+                    CREATE TABLE IF NOT EXISTS OpDesk_settings (
                         setting_key VARCHAR(255) PRIMARY KEY,
                         setting_value TEXT,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """)
                 conn.commit()
-                log.info("✅ aop_settings table created")
+                log.info("✅ OpDesk_settings table created")
             cursor.close()
             conn.close()
         except Error as e:
@@ -293,7 +293,7 @@ def init_settings_table():
         return True
     
     # Database doesn't exist, create it from schema.sql
-    log.info("📋 AOP database not found. Creating from schema.sql...")
+    log.info("📋 OpDesk database not found. Creating from schema.sql...")
     
     # Get path to schema.sql file
     schema_path = os.path.join(os.path.dirname(__file__), 'schema.sql')
@@ -306,11 +306,11 @@ def init_settings_table():
     if execute_sql_file(schema_path):
         # After creating database, connect to it and create table
         try:
-            config = get_db_config(os.getenv('DB_PASSWORD'),'AOP')
+            config = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk')
             conn = mysql.connector.connect(**config)
             cursor = conn.cursor()
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS aop_settings (
+                CREATE TABLE IF NOT EXISTS OpDesk_settings (
                     setting_key VARCHAR(255) PRIMARY KEY,
                     setting_value TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -319,19 +319,19 @@ def init_settings_table():
             conn.commit()
             cursor.close()
             conn.close()
-            log.info("✅ AOP database and tables created successfully from schema.sql")
+            log.info("✅ OpDesk database and tables created successfully from schema.sql")
             return True
         except Error as e:
             log.error(f"❌ Failed to create table after database creation: {e}")
             return False
     else:
-        log.error("❌ Failed to create AOP database from schema.sql")
+        log.error("❌ Failed to create OpDesk database from schema.sql")
         return False
 
 
 def get_setting(key: str, default: str = None) -> str:
     """
-    Get a setting value from the AOP database.
+    Get a setting value from the OpDesk database.
     
     Args:
         key: Setting key name
@@ -340,13 +340,13 @@ def get_setting(key: str, default: str = None) -> str:
     Returns:
         Setting value or default
     """
-    config = get_db_config(os.getenv('DB_PASSWORD'),'AOP')
+    config = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk')
     
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
         
-        cursor.execute("SELECT setting_value FROM aop_settings WHERE setting_key = %s", (key,))
+        cursor.execute("SELECT setting_value FROM OpDesk_settings WHERE setting_key = %s", (key,))
         result = cursor.fetchone()
         
         cursor.close()
@@ -363,7 +363,7 @@ def get_setting(key: str, default: str = None) -> str:
 
 def set_setting(key: str, value: str) -> bool:
     """
-    Set a setting value in the AOP database.
+    Set a setting value in the OpDesk database.
     
     Args:
         key: Setting key name
@@ -372,7 +372,7 @@ def set_setting(key: str, value: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    config = get_db_config(os.getenv('DB_PASSWORD', ''),'AOP')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),'OpDesk')
     
     try:
         # Ensure database and table exist
@@ -382,7 +382,7 @@ def set_setting(key: str, value: str) -> bool:
         cursor = conn.cursor()
         
         cursor.execute("""
-            INSERT INTO aop_settings (setting_key, setting_value)
+            INSERT INTO OpDesk_settings (setting_key, setting_value)
             VALUES (%s, %s)
             ON DUPLICATE KEY UPDATE setting_value = %s, updated_at = CURRENT_TIMESTAMP
         """, (key, value, value))
@@ -400,19 +400,19 @@ def set_setting(key: str, value: str) -> bool:
 
 def get_all_settings() -> dict:
     """
-    Get all settings from the AOP database.
+    Get all settings from the OpDesk database.
     
     Returns:
         Dictionary of all settings
     """
-    config = get_db_config(os.getenv('DB_PASSWORD', ''),'AOP')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),'OpDesk')
     settings = {}
     
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
         
-        cursor.execute("SELECT setting_key, setting_value FROM aop_settings")
+        cursor.execute("SELECT setting_key, setting_value FROM OpDesk_settings")
         results = cursor.fetchall()
         
         for row in results:
