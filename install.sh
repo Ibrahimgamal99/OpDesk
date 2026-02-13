@@ -214,7 +214,54 @@ if ! "$FINAL_PYTHON_PATH" --version >/dev/null 2>&1; then
     exit 1
 fi
 echo -e "${GREEN}Python installation verified: $($FINAL_PYTHON_PATH --version 2>&1)${NC}"
-echo -e "${GREEN}Python installation completed successfully. Continuing with next steps...${NC}"
+
+# Install pip if not already available
+echo -e "\n${YELLOW}Installing pip...${NC}"
+if ! "$FINAL_PYTHON_PATH" -m pip --version >/dev/null 2>&1; then
+    if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
+        # Extract Python version from path
+        PYTHON_VER=$(basename "$FINAL_PYTHON_PATH" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if [ -n "$PYTHON_VER" ]; then
+            sudo apt-get install -y python${PYTHON_VER}-pip python${PYTHON_VER}-distutils || \
+            sudo apt-get install -y python3-pip || true
+        else
+            sudo apt-get install -y python3-pip || true
+        fi
+    elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
+        # Extract Python version from path
+        PYTHON_VER=$(basename "$FINAL_PYTHON_PATH" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if [ -n "$PYTHON_VER" ]; then
+            if command_exists dnf; then
+                sudo dnf install -y python${PYTHON_VER}-pip || sudo dnf install -y python3-pip || true
+            else
+                sudo yum install -y python${PYTHON_VER}-pip || sudo yum install -y python3-pip || true
+            fi
+        else
+            if command_exists dnf; then
+                sudo dnf install -y python3-pip || true
+            else
+                sudo yum install -y python3-pip || true
+            fi
+        fi
+    fi
+    
+    # If package manager installation failed, try ensurepip
+    if ! "$FINAL_PYTHON_PATH" -m pip --version >/dev/null 2>&1; then
+        echo -e "${YELLOW}Attempting to install pip using ensurepip...${NC}"
+        "$FINAL_PYTHON_PATH" -m ensurepip --upgrade --default-pip 2>/dev/null || true
+    fi
+    
+    # Verify pip installation
+    if "$FINAL_PYTHON_PATH" -m pip --version >/dev/null 2>&1; then
+        echo -e "${GREEN}pip installation verified: $($FINAL_PYTHON_PATH -m pip --version 2>&1 | head -1)${NC}"
+    else
+        echo -e "${YELLOW}Warning: pip installation may have failed. You may need to install it manually.${NC}"
+    fi
+else
+    echo -e "${GREEN}pip is already installed: $($FINAL_PYTHON_PATH -m pip --version 2>&1 | head -1)${NC}"
+fi
+
+echo -e "${GREEN}Python and pip installation completed successfully. Continuing with next steps...${NC}"
 
 # --- Step 6: PBX & Database Config ---
 echo -e "\n${YELLOW}Step 6: Detecting PBX Environment & Configuring Database...${NC}"
