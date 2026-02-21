@@ -4,16 +4,19 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
  
 ## Features
 
-- **Real-time Extension Monitoring**: Live status updates for all extensions
+- **Authentication & User Management**: Login by username or extension with password; JWT-based auth; admin and supervisor roles
+- **Role-based Access**: Admins see all extensions and queues; supervisors see only their assigned extensions and queues (filter by role, extension, and queue)
+- **Monitor Modes (multi-select)**: Per-user selection of Listen, Whisper, and/or Barge; only allowed actions are shown in the UI
+- **Real-time Extension Monitoring**: Live status updates for extensions (filtered by user scope)
 - **Active Call Tracking**: See who's talking to whom with duration and talk time tracking
 - **Call Duration & Talk Time**: Track total call duration and actual conversation time separately
 - **Call Log/CDR History**: View historical call records with filtering and search capabilities
 - **Call Recording Playback**: Listen to recorded calls directly from the web interface
-- **Queue Management**: Monitor and manage call queues
-- **Supervisor Features**: Listen, whisper, and barge into calls
+- **Queue Management**: Monitor and manage call queues (filtered by user scope for supervisors)
+- **Supervisor Features**: Listen, whisper, and barge into calls (according to each user’s allowed monitor modes)
 - **CRM Integration**: Send call data to external CRM systems with support for multiple authentication methods (API Key, Basic Auth, Bearer Token, OAuth2)
 - **QoS Data**: View Quality of Service metrics for calls
-- **WebSocket-based**: Event-driven architecture for instant updates
+- **WebSocket-based**: Event-driven architecture for instant updates; state is filtered per user (admin vs supervisor scope)
 
 ## Screenshots
 
@@ -42,6 +45,16 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 ### Settings
 ![Settings](screenshots/setting.png)
 *Configure CRM integration and application settings*
+
+## Authentication & User Management
+
+- **Login**: Use extension or username plus password. Tokens are JWT; the frontend stores the token and user info (role, extension, monitor modes, assigned scope).
+- **Roles**:
+  - **Admin**: Full access; sees all extensions, queues, and calls; can manage users (Settings → Users).
+  - **Supervisor**: Sees only extensions and queues assigned to them; can use only the monitor actions (Listen / Whisper / Barge) enabled for their account.
+- **User scope**: Admins assign each supervisor a set of **extensions (agents)** and **queues**. The panel and API return only data within that scope.
+- **Monitor modes**: Each user can have one or more of **Listen**, **Whisper**, and **Barge**. Only those options appear as actions in the Extensions and Active Calls panels. Configured in Settings → Users (admin only).
+- **Default account**: After install, log in with username `admin` and the password set by the installer (e.g. `OpDesk@2026`). Change the password after first login.
 
 ## Architecture
 
@@ -179,6 +192,8 @@ After running the installation script (`./install.sh`), start the application:
 
 This will start both backend and frontend services with logging. Press `Ctrl+C` to stop.
 
+**Default login:** Username `admin` with the password configured during installation (e.g. `OpDesk@2026`). Change it after first login.
+
 ### Development Mode
 
 #### Option 1: Using the start script (recommended)
@@ -227,28 +242,38 @@ Access the application at `http://localhost:8765`
 
 ## API Endpoints
 
-### REST API
+All API access (except login) requires a valid JWT in the `Authorization: Bearer <token>` header. Responses for extensions, calls, and queues are filtered by the current user’s role and assigned scope (supervisors see only their extensions and queues).
 
-- `GET /api/extensions` - Get list of monitored extensions
-- `GET /api/calls` - Get active calls
-- `GET /api/queues` - Get queue information
-- `GET /api/status` - Get server status
-- `GET /api/call-log` - Get call log/CDR history (supports `limit`, `date`, `date_from`, `date_to` parameters)
+### Auth (no token required)
+
+- `POST /api/auth/login` - Login with `{ "login": "username_or_extension", "password": "..." }`; returns `access_token` and `user` (id, username, role, extension, monitor_modes, allowed_agent_extensions, allowed_queue_names)
+- `GET /api/auth/me` - Return current user (requires valid token)
+
+### REST API (token required)
+
+- `GET /api/extensions` - List monitored extensions (filtered by user scope)
+- `GET /api/calls` - Active calls (filtered by user scope)
+- `GET /api/queues` - Queue information (filtered by user scope)
+- `GET /api/status` - Server status
+- `GET /api/call-log` - Call log/CDR history (supports `limit`, `date`, `date_from`, `date_to`)
 - `GET /api/recordings/{file_path}` - Serve call recording audio files
-- `GET /api/settings` - Get application settings
+- `GET /api/settings` - Application settings
 - `POST /api/settings` - Update application settings
-- `POST /api/supervisor/{action}` - Supervisor actions (listen, whisper, barge)
+- **User management (admin only):** `GET/POST /api/settings/users`, `GET/PUT/DELETE /api/settings/users/{id}` - List, create, update, delete users and assign extensions, queues, and monitor modes
+
+Supervisor actions (listen, whisper, barge) are sent via WebSocket messages; the server enforces the user’s allowed monitor modes and scope.
 
 ### WebSocket
 
-Connect to `ws://localhost:8765/ws` for real-time updates.
+Connect to `ws://localhost:8765/ws?token=<JWT>` (or send `{ "token": "<JWT>" }` in the first message) for real-time updates.
 
 The WebSocket connection provides:
+- **Per-user filtered state**: Each client receives only the extensions, calls, and queues they are allowed to see (admin = full; supervisor = assigned agents and queues only)
 - Real-time extension status updates
 - Active call events
 - Queue status changes
-- Call log updates
 - System notifications
+- Client can send actions: `get_state`, `sync`, `listen`, `whisper`, `barge`, `queue_add`, `queue_remove`, `queue_pause`, `queue_unpause`, etc.
 
 
 ## CRM Integration

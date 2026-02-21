@@ -100,9 +100,10 @@ def get_recording_path(file_wav):
     return None
 
 
-def call_log(limit=None, date=None, date_from=None, date_to=None):
+def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extensions=None):
     call_log = get_call_log_from_db(limit=limit, date=date,
-                                     date_from=date_from, date_to=date_to)
+                                     date_from=date_from, date_to=date_to,
+                                     allowed_extensions=allowed_extensions)
     
     result = []
     for cdr in call_log:

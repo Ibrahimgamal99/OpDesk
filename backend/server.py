@@ -12,19 +12,31 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import unquote
 from typing import Dict, Set, Optional
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+import jwt
+from pydantic import BaseModel
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
 from ami import AMIExtensionsMonitor, _format_duration, _meaningful, DIALPLAN_CTX, normalize_interface
-from db_manager import get_extensions_from_db, get_extension_names_from_db, init_settings_table, get_setting, set_setting, get_all_settings
+from db_manager import (
+    get_extensions_from_db, get_extension_names_from_db, init_settings_table,
+    get_setting, set_setting, get_all_settings,
+    ensure_users_extension_column, ensure_user_monitor_modes_table, authenticate_user,
+    get_call_log_count_from_db,
+    get_all_users, get_user_by_id, create_user as db_create_user, update_user as db_update_user,
+    delete_user as db_delete_user, get_user_agents_and_queues, set_user_agents_and_queues,
+    get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
+)
 from qos import enable_qos, disable_qos
 from call_log import call_log as get_call_log
 
@@ -77,32 +89,38 @@ def log_startup_summary(monitor: AMIExtensionsMonitor):
 # Connection Manager for WebSocket clients
 # ---------------------------------------------------------------------------
 class ConnectionManager:
-    """Manages WebSocket connections and broadcasts."""
+    """Manages WebSocket connections and broadcasts. Stores per-connection user scope for filtered state."""
     
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
+        self._connection_scope: Dict[WebSocket, dict] = {}  # websocket -> {role, allowed_agent_extensions, allowed_queue_names}
         self._lock = asyncio.Lock()
     
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, user_scope: Optional[dict] = None):
+        """Register an already-accepted WebSocket. user_scope: {role, extension, allowed_agent_extensions, allowed_queue_names}."""
         async with self._lock:
             self.active_connections.add(websocket)
+            self._connection_scope[websocket] = user_scope or {}
         log.info(f"Client connected. Total connections: {len(self.active_connections)}")
     
     async def disconnect(self, websocket: WebSocket):
         async with self._lock:
             self.active_connections.discard(websocket)
+            self._connection_scope.pop(websocket, None)
         log.info(f"Client disconnected. Total connections: {len(self.active_connections)}")
     
+    def get_scope(self, websocket: WebSocket) -> dict:
+        """Get user scope for this connection (for filtered state)."""
+        return self._connection_scope.get(websocket, {})
+    
     async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients."""
+        """Broadcast same message to all connected clients."""
         if not self.active_connections:
             return
         
         data = json.dumps(message, default=str)
         disconnected = set()
         
-        # Copy connections to avoid modification during iteration
         async with self._lock:
             connections = list(self.active_connections)
         
@@ -112,10 +130,11 @@ class ConnectionManager:
             except Exception:
                 disconnected.add(connection)
         
-        # Clean up disconnected clients
         if disconnected:
             async with self._lock:
                 self.active_connections -= disconnected
+                for ws in disconnected:
+                    self._connection_scope.pop(ws, None)
     
     async def send_personal(self, websocket: WebSocket, message: dict):
         """Send message to specific client."""
@@ -213,23 +232,42 @@ class AMIEventBridge:
                 await asyncio.sleep(1)
     
     async def _broadcast_current_state(self):
-        """Broadcast current state to all clients."""
-        state = self.get_current_state()
-        await self.manager.broadcast({
-            "type": "state_update",
-            "data": state,
-            "timestamp": datetime.now().isoformat()
-        })
+        """Broadcast state to each client with their scope filter (role/ext/queue)."""
+        async with self.manager._lock:
+            connections = list(self.manager.active_connections)
+            scopes = {ws: self.manager.get_scope(ws) for ws in connections}
+        disconnected = set()
+        for connection in connections:
+            scope = scopes.get(connection, {})
+            allow_ext = None if scope.get("role") == "admin" else (scope.get("allowed_agent_extensions") or [])
+            allow_queues = None if scope.get("role") == "admin" else (scope.get("allowed_queue_names") or [])
+            state = self.get_current_state(allow_extensions=allow_ext, allow_queues=allow_queues)
+            try:
+                await self.manager.send_personal(connection, {
+                    "type": "state_update",
+                    "data": state,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception:
+                disconnected.add(connection)
+        if disconnected:
+            async with self.manager._lock:
+                for ws in disconnected:
+                    self.manager.active_connections.discard(ws)
+                    self.manager._connection_scope.pop(ws, None)
     
     async def broadcast_state_now(self):
         """Trigger immediate state broadcast (public method)."""
         await self._broadcast_current_state()
     
-    def get_current_state(self) -> dict:
-        """Get current state for broadcast."""
+    def get_current_state(self, allow_extensions: Optional[list] = None, allow_queues: Optional[list] = None) -> dict:
+        """Get current state, optionally filtered by allowed extensions and queue names (None = no filter)."""
+        ext_set = None if allow_extensions is None else set(str(e) for e in allow_extensions)
+        queue_set = None if allow_queues is None else set(str(q) for q in allow_queues)
         # Build extensions status
         extensions = {}
-        for ext in self.monitor.monitored:
+        monitored = self.monitor.monitored if ext_set is None else (self.monitor.monitored & ext_set)
+        for ext in monitored:
             ext_data = self.monitor.extensions.get(ext, {})
             call_info = self.monitor.active_calls.get(ext, {})
             
@@ -267,18 +305,18 @@ class AMIEventBridge:
                 "call_info": self._format_call_info(ext, call_info) if call_info else None
             }
         
-        # Build active calls (caller perspective only)
+        # Build active calls (caller perspective only), filter by ext_set if present
         active_calls = {}
         callees = set()
         
-        # First pass: identify callees
         for ext, info in self.monitor.active_calls.items():
             caller = info.get('caller', '')
             if caller and caller.isdigit() and len(caller) <= 5:
                 callees.add(ext)
         
-        # Second pass: build active list
         for ext, info in self.monitor.active_calls.items():
+            if ext_set is not None and ext not in ext_set:
+                continue
             if not info.get('channel') or not ext.isdigit() or ext in DIALPLAN_CTX:
                 continue
             if ext in callees:
@@ -289,9 +327,11 @@ class AMIEventBridge:
             
             active_calls[ext] = self._format_call_info(ext, info)
         
-        # Build queue info
+        # Build queue info, filter by queue_set if present
         queues = {}
         for queue_name, queue_info in self.monitor.queues.items():
+            if queue_set is not None and queue_name not in queue_set:
+                continue
             queues[queue_name] = {
                 "name": queue_name,
                 "members": queue_info.get('members', {}),
@@ -300,17 +340,23 @@ class AMIEventBridge:
         
         queue_members = {}
         for member_key, member_info in self.monitor.queue_members.items():
+            q = member_info.get('queue', '')
+            if queue_set is not None and q not in queue_set:
+                continue
             queue_members[member_key] = {
                 "queue": member_info.get('queue', ''),
                 "interface": member_info.get('interface', ''),
                 "membername": member_info.get('membername', ''),
                 "status": member_info.get('status', ''),
                 "paused": member_info.get('paused', False),
-                "dynamic": member_info.get('dynamic', False)  # True if added via AMI, False if static
+                "dynamic": member_info.get('dynamic', False)
             }
         
         queue_entries = {}
         for uniqueid, entry in self.monitor.queue_entries.items():
+            q = entry.get('queue', '')
+            if queue_set is not None and q not in queue_set:
+                continue
             entry_time = entry.get('entry_time')
             wait_time = None
             if entry_time:
@@ -512,7 +558,10 @@ async def lifespan(app: FastAPI):
     
     # Initialize settings table
     init_settings_table()
-    
+    # Ensure users table has extension column (login by ext or username)
+    ensure_users_extension_column()
+    ensure_user_monitor_modes_table()
+
     # Initialize default settings if they don't exist
     default_settings = {
         'QOS_ENABLED': 'true',
@@ -610,21 +659,341 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Auth: JWT
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_HOURS = 24
+
+
+def _get_jwt_secret() -> str:
+    secret = get_setting("JWT_SECRET", os.getenv("JWT_SECRET", "")).strip()
+    if not secret:
+        secret = "opdesk-dev-secret-change-in-production"
+        log.warning("JWT_SECRET not set; using default (set JWT_SECRET in production)")
+    return secret
+
+
+def create_access_token(user: dict) -> str:
+    payload = {
+        "sub": str(user["id"]),
+        "username": user["username"],
+        "role": user["role"],
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def decode_token(token: str) -> Optional[dict]:
+    try:
+        return jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+    except Exception:
+        return None
+
+
+security = HTTPBearer(auto_error=False)
+
+
+def _get_user_scope(user_id: int) -> dict:
+    """Load user extension, monitor_modes (list), and allowed agents/queues. Admin gets None for allowed_* (see all)."""
+    user = get_user_by_id(user_id)
+    if not user:
+        return {"role": "supervisor", "extension": None, "monitor_modes": ["listen"], "allowed_agent_extensions": [], "allowed_queue_names": []}
+    role = user.get("role") or "supervisor"
+    extension = user.get("extension")
+    monitor_modes = user.get("monitor_modes") or ["listen"]
+    if role == "admin":
+        return {"role": "admin", "extension": extension, "monitor_modes": monitor_modes, "allowed_agent_extensions": None, "allowed_queue_names": None}
+    agents, queues = get_user_agents_and_queues(user_id)
+    return {
+        "role": role,
+        "extension": extension,
+        "monitor_modes": monitor_modes,
+        "allowed_agent_extensions": agents or [],
+        "allowed_queue_names": queues or [],
+    }
+
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> dict:
+    """Dependency: require valid JWT. Returns user with id, username, role, extension, allowed_agent_extensions, allowed_queue_names."""
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user_id = int(payload["sub"])
+    scope = _get_user_scope(user_id)
+    return {
+        "id": user_id,
+        "username": payload["username"],
+        "role": scope["role"],
+        "extension": scope.get("extension"),
+        "monitor_modes": scope.get("monitor_modes") or ["listen"],
+        "allowed_agent_extensions": scope.get("allowed_agent_extensions"),
+        "allowed_queue_names": scope.get("allowed_queue_names"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auth API (public)
+# ---------------------------------------------------------------------------
+class LoginBody(BaseModel):
+    login: str
+    password: str
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: LoginBody):
+    """
+    Login with extension or username and password.
+    Body: { "login": "ext_or_username", "password": "..." }
+    Returns: { "access_token": "...", "token_type": "bearer", "user": { id, username, name, role } }
+    """
+    login = (body.login or "").strip()
+    password = body.password or ""
+    if not login or not password:
+        raise HTTPException(status_code=400, detail="Login and password required")
+    user = authenticate_user(login, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid extension/username or password")
+    token = create_access_token(user)
+    scope = _get_user_scope(user["id"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "name": user.get("name"),
+            "role": user["role"],
+            "extension": user.get("extension"),
+            "monitor_modes": scope.get("monitor_modes") or ["listen"],
+            "allowed_agent_extensions": scope.get("allowed_agent_extensions"),
+            "allowed_queue_names": scope.get("allowed_queue_names"),
+        },
+    }
+
+
+@app.get("/api/auth/me")
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    """Return current user with role, extension, and filter scope (requires valid token)."""
+    return current_user
+
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Dependency: require admin role."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return current_user
+
+
+# ---------------------------------------------------------------------------
+# Settings: User management (admin only), agents & queues for selection
+# ---------------------------------------------------------------------------
+class CreateUserBody(BaseModel):
+    username: str
+    password: str
+    name: Optional[str] = None
+    extension: Optional[str] = None
+    role: str = "supervisor"
+    monitor_mode: Optional[str] = None  # legacy single; use monitor_modes
+    monitor_modes: Optional[list] = None  # list of 'listen','whisper','barge'
+    agent_extensions: Optional[list] = None
+    queue_names: Optional[list] = None
+
+
+class UpdateUserBody(BaseModel):
+    name: Optional[str] = None
+    extension: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    monitor_mode: Optional[str] = None
+    monitor_modes: Optional[list] = None  # list of 'listen','whisper','barge'
+    password: Optional[str] = None
+    agent_extensions: Optional[list] = None
+    queue_names: Optional[list] = None
+
+
+@app.get("/api/settings/users")
+async def api_list_users(
+    current_user: dict = Depends(require_admin),
+):
+    """List all users (admin only)."""
+    users = get_all_users()
+    out = []
+    for u in users:
+        agents, queues = get_user_agents_and_queues(u["id"])
+        out.append({**u, "agent_extensions": agents, "queue_names": queues})
+    return {"users": out}
+
+
+@app.get("/api/settings/users/{user_id}")
+async def api_get_user(
+    user_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """Get one user with agents and queues (admin only)."""
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    agents, queues = get_user_agents_and_queues(user_id)
+    return {**user, "agent_extensions": agents, "queue_names": queues}
+
+
+@app.post("/api/settings/users")
+async def api_create_user(
+    body: CreateUserBody,
+    current_user: dict = Depends(require_admin),
+):
+    """Create user and optionally assign agents/queues (admin only)."""
+    username = (body.username or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username required")
+    if not (body.password or "").strip():
+        raise HTTPException(status_code=400, detail="Password required")
+    monitor_modes = body.monitor_modes if body.monitor_modes is not None else None
+    if monitor_modes is None and body.monitor_mode:
+        monitor_modes = ["listen", "whisper", "barge"] if body.monitor_mode == "full" else [body.monitor_mode]
+    user_id = db_create_user(
+        username=username,
+        password=body.password,
+        name=body.name,
+        extension=body.extension,
+        role=body.role or "supervisor",
+        monitor_mode=body.monitor_mode or "listen",
+        monitor_modes=monitor_modes,
+    )
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Username or extension already in use")
+    set_user_agents_and_queues(
+        user_id,
+        agent_extensions=body.agent_extensions or [],
+        queue_names=body.queue_names or [],
+    )
+    user = get_user_by_id(user_id)
+    agents, queues = get_user_agents_and_queues(user_id)
+    return {**user, "agent_extensions": agents, "queue_names": queues}
+
+
+@app.put("/api/settings/users/{user_id}")
+async def api_update_user(
+    user_id: int,
+    body: UpdateUserBody,
+    current_user: dict = Depends(require_admin),
+):
+    """Update user and/or agents/queues (admin only)."""
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_update_user(
+        user_id,
+        name=body.name,
+        extension=body.extension,
+        role=body.role,
+        is_active=body.is_active,
+        monitor_mode=body.monitor_mode,
+        monitor_modes=body.monitor_modes,
+        password=body.password,
+    )
+    if body.agent_extensions is not None or body.queue_names is not None:
+        agents = body.agent_extensions if body.agent_extensions is not None else get_user_agents_and_queues(user_id)[0]
+        queues = body.queue_names if body.queue_names is not None else get_user_agents_and_queues(user_id)[1]
+        set_user_agents_and_queues(user_id, agent_extensions=agents, queue_names=queues)
+    user = get_user_by_id(user_id)
+    agents, queues = get_user_agents_and_queues(user_id)
+    return {**user, "agent_extensions": agents, "queue_names": queues}
+
+
+@app.delete("/api/settings/users/{user_id}")
+async def api_delete_user(
+    user_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """Delete user (admin only)."""
+    if current_user.get("id") == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not db_delete_user(user_id):
+        raise HTTPException(status_code=500, detail="Failed to delete user")
+    return {"ok": True}
+
+
+@app.get("/api/settings/agents")
+async def api_list_agents(
+    current_user: dict = Depends(get_current_user),
+):
+    """List all extensions/agents for selection. Syncs from Asterisk if monitor available."""
+    if monitor and getattr(monitor, "monitored", None):
+        exts = list(monitor.monitored)
+        names = get_extension_names_from_db()
+        sync_agents_from_extensions(exts, names)
+    agents = get_agents_list()
+    if not agents and monitor and getattr(monitor, "monitored", None):
+        exts = list(monitor.monitored)
+        names = get_extension_names_from_db()
+        sync_agents_from_extensions(exts, names)
+        agents = get_agents_list()
+    return {"agents": agents}
+
+
+@app.get("/api/settings/queues")
+async def api_list_queues(
+    current_user: dict = Depends(get_current_user),
+):
+    """List all queues for selection. Syncs from Asterisk if monitor available."""
+    if monitor and getattr(monitor, "queues", None):
+        sync_queues_from_list(list(monitor.queues.keys()))
+    queues = get_queues_list()
+    if not queues and monitor and getattr(monitor, "queues", None):
+        sync_queues_from_list(list(monitor.queues.keys()))
+        queues = get_queues_list()
+    return {"queues": queues}
+
 
 # ---------------------------------------------------------------------------
 # WebSocket Endpoint
 # ---------------------------------------------------------------------------
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time updates."""
-    await manager.connect(websocket)
+    """WebSocket endpoint for real-time updates. Auth via ?token=<JWT> or first message { \"token\": \"<JWT>\" }."""
+    await websocket.accept()
+    query_string = (websocket.scope.get("query_string") or b"").decode()
+    token = None
+    for part in query_string.split("&"):
+        if part.startswith("token="):
+            token = unquote(part[6:].strip())
+            break
+    if token and not decode_token(token):
+        await websocket.close(code=4001)
+        return
+    if not token:
+        try:
+            data = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+            msg = json.loads(data)
+            token = msg.get("token") or msg.get("auth_token")
+            if not token or not decode_token(token):
+                await websocket.close(code=4001)
+                return
+        except (asyncio.TimeoutError, json.JSONDecodeError, KeyError):
+            await websocket.close(code=4001)
+            return
+    payload = decode_token(token)
+    user_id = int(payload["sub"])
+    user_scope = _get_user_scope(user_id)
+    await manager.connect(websocket, user_scope=user_scope)
     
     try:
-        # Send initial state
+        # Send initial state filtered by user role/ext/queue
         if bridge:
+            allow_ext = None if user_scope.get("role") == "admin" else (user_scope.get("allowed_agent_extensions") or [])
+            allow_queues = None if user_scope.get("role") == "admin" else (user_scope.get("allowed_queue_names") or [])
+            state = bridge.get_current_state(allow_extensions=allow_ext, allow_queues=allow_queues)
             await manager.send_personal(websocket, {
                 "type": "initial_state",
-                "data": bridge.get_current_state(),
+                "data": state,
                 "timestamp": datetime.now().isoformat()
             })
         
@@ -633,6 +1002,9 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             try:
                 message = json.loads(data)
+                # Ignore auth message if already authenticated
+                if message.get("token") or message.get("action") == "auth":
+                    continue
                 await handle_client_message(websocket, message)
             except json.JSONDecodeError:
                 await manager.send_personal(websocket, {
@@ -651,8 +1023,24 @@ async def websocket_endpoint(websocket: WebSocket):
         await manager.disconnect(websocket)
 
 
+def _scope_can_access_extension(scope: dict, ext: str) -> bool:
+    """True if scope allows access to this extension (admin or ext in allowed list)."""
+    if not scope or scope.get("role") == "admin":
+        return True
+    allowed = scope.get("allowed_agent_extensions") or []
+    return str(ext).strip() in [str(e) for e in allowed]
+
+
+def _scope_can_access_queue(scope: dict, queue: str) -> bool:
+    """True if scope allows access to this queue (admin or queue in allowed list)."""
+    if not scope or scope.get("role") == "admin":
+        return True
+    allowed = scope.get("allowed_queue_names") or []
+    return str(queue).strip() in [str(q) for q in allowed]
+
+
 async def handle_client_message(websocket: WebSocket, message: dict):
-    """Handle incoming client messages (commands)."""
+    """Handle incoming client messages (commands). Enforces role/ext/queue filter for supervisors."""
     global monitor
     
     if not monitor or not monitor.connected:
@@ -662,14 +1050,18 @@ async def handle_client_message(websocket: WebSocket, message: dict):
         })
         return
     
+    scope = manager.get_scope(websocket)
     action = message.get("action", "")
     
     try:
         if action == "get_state":
             if bridge:
+                allow_ext = None if scope.get("role") == "admin" else (scope.get("allowed_agent_extensions") or [])
+                allow_queues = None if scope.get("role") == "admin" else (scope.get("allowed_queue_names") or [])
+                state = bridge.get_current_state(allow_extensions=allow_ext, allow_queues=allow_queues)
                 await manager.send_personal(websocket, {
                     "type": "state_update",
-                    "data": bridge.get_current_state(),
+                    "data": state,
                     "timestamp": datetime.now().isoformat()
                 })
         
@@ -697,37 +1089,46 @@ async def handle_client_message(websocket: WebSocket, message: dict):
             supervisor = message.get("supervisor", "")
             target = message.get("target", "")
             if supervisor and target:
-                result = await monitor.listen_to_call(supervisor, target)
-                await manager.send_personal(websocket, {
-                    "type": "action_result",
-                    "action": "listen",
-                    "success": result,
-                    "message": f"{'Started' if result else 'Failed to start'} listening to {target}"
-                })
+                if not _scope_can_access_extension(scope, target):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "listen", "success": False, "message": "Not allowed to monitor this extension"})
+                else:
+                    result = await monitor.listen_to_call(supervisor, target)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "listen",
+                        "success": result,
+                        "message": f"{'Started' if result else 'Failed to start'} listening to {target}"
+                    })
         
         elif action == "whisper":
             supervisor = message.get("supervisor", "")
             target = message.get("target", "")
             if supervisor and target:
-                result = await monitor.whisper_to_call(supervisor, target)
-                await manager.send_personal(websocket, {
-                    "type": "action_result",
-                    "action": "whisper",
-                    "success": result,
-                    "message": f"{'Started' if result else 'Failed to start'} whispering to {target}"
-                })
+                if not _scope_can_access_extension(scope, target):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "whisper", "success": False, "message": "Not allowed to monitor this extension"})
+                else:
+                    result = await monitor.whisper_to_call(supervisor, target)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "whisper",
+                        "success": result,
+                        "message": f"{'Started' if result else 'Failed to start'} whispering to {target}"
+                    })
         
         elif action == "barge":
             supervisor = message.get("supervisor", "")
             target = message.get("target", "")
             if supervisor and target:
-                result = await monitor.barge_into_call(supervisor, target)
-                await manager.send_personal(websocket, {
-                    "type": "action_result",
-                    "action": "barge",
-                    "success": result,
-                    "message": f"{'Started' if result else 'Failed to start'} barging into {target}"
-                })
+                if not _scope_can_access_extension(scope, target):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "barge", "success": False, "message": "Not allowed to monitor this extension"})
+                else:
+                    result = await monitor.barge_into_call(supervisor, target)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "barge",
+                        "success": result,
+                        "message": f"{'Started' if result else 'Failed to start'} barging into {target}"
+                    })
         
         elif action == "queue_add":
             queue = message.get("queue", "")
@@ -737,32 +1138,36 @@ async def handle_client_message(websocket: WebSocket, message: dict):
             paused = message.get("paused", False)
             
             if queue and interface:
-                success, msg = await monitor.queue_add(queue, interface, penalty, membername or None, paused)
-                await manager.send_personal(websocket, {
-                    "type": "action_result",
-                    "action": "queue_add",
-                    "success": success,
-                    "message": msg if success else f"Failed to add {interface} to {queue}: {msg}"
-                })
-                # Trigger immediate state broadcast on success
-                if success and bridge:
-                    await bridge.broadcast_state_now()
+                if not _scope_can_access_queue(scope, queue):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "queue_add", "success": False, "message": "Not allowed to manage this queue"})
+                else:
+                    success, msg = await monitor.queue_add(queue, interface, penalty, membername or None, paused)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "queue_add",
+                        "success": success,
+                        "message": msg if success else f"Failed to add {interface} to {queue}: {msg}"
+                    })
+                    if success and bridge:
+                        await bridge.broadcast_state_now()
         
         elif action == "queue_remove":
             queue = message.get("queue", "")
             interface = normalize_interface(message.get("interface", ""))
             
             if queue and interface:
-                success, msg = await monitor.queue_remove(queue, interface)
-                await manager.send_personal(websocket, {
-                    "type": "action_result",
-                    "action": "queue_remove",
-                    "success": success,
-                    "message": msg if success else f"Failed to remove {interface} from {queue}: {msg}"
-                })
-                # Trigger immediate state broadcast on success
-                if success and bridge:
-                    await bridge.broadcast_state_now()
+                if not _scope_can_access_queue(scope, queue):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "queue_remove", "success": False, "message": "Not allowed to manage this queue"})
+                else:
+                    success, msg = await monitor.queue_remove(queue, interface)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "queue_remove",
+                        "success": success,
+                        "message": msg if success else f"Failed to remove {interface} from {queue}: {msg}"
+                    })
+                    if success and bridge:
+                        await bridge.broadcast_state_now()
         
         elif action == "queue_pause":
             queue = message.get("queue", "")
@@ -770,32 +1175,36 @@ async def handle_client_message(websocket: WebSocket, message: dict):
             reason = message.get("reason", "")
             
             if queue and interface:
-                success, msg = await monitor.queue_pause(queue, interface, True, reason)
-                await manager.send_personal(websocket, {
-                    "type": "action_result",
-                    "action": "queue_pause",
-                    "success": success,
-                    "message": msg if success else f"Failed to pause {interface} in {queue}: {msg}"
-                })
-                # Trigger immediate state broadcast on success
-                if success and bridge:
-                    await bridge.broadcast_state_now()
+                if not _scope_can_access_queue(scope, queue):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "queue_pause", "success": False, "message": "Not allowed to manage this queue"})
+                else:
+                    success, msg = await monitor.queue_pause(queue, interface, True, reason)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "queue_pause",
+                        "success": success,
+                        "message": msg if success else f"Failed to pause {interface} in {queue}: {msg}"
+                    })
+                    if success and bridge:
+                        await bridge.broadcast_state_now()
         
         elif action == "queue_unpause":
             queue = message.get("queue", "")
             interface = normalize_interface(message.get("interface", ""))
             
             if queue and interface:
-                success, msg = await monitor.queue_unpause(queue, interface)
-                await manager.send_personal(websocket, {
-                    "type": "action_result",
-                    "action": "queue_unpause",
-                    "success": success,
-                    "message": msg if success else f"Failed to unpause {interface} in {queue}: {msg}"
-                })
-                # Trigger immediate state broadcast on success
-                if success and bridge:
-                    await bridge.broadcast_state_now()
+                if not _scope_can_access_queue(scope, queue):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "queue_unpause", "success": False, "message": "Not allowed to manage this queue"})
+                else:
+                    success, msg = await monitor.queue_unpause(queue, interface)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "queue_unpause",
+                        "success": success,
+                        "message": msg if success else f"Failed to unpause {interface} in {queue}: {msg}"
+                    })
+                    if success and bridge:
+                        await bridge.broadcast_state_now()
         
         elif action == "sync_queues":
             await monitor.sync_queue_status()
@@ -820,19 +1229,21 @@ async def handle_client_message(websocket: WebSocket, message: dict):
 
 
 # ---------------------------------------------------------------------------
-# REST API Endpoints
+# REST API Endpoints (protected)
 # ---------------------------------------------------------------------------
 @app.get("/api/extensions")
-async def get_extensions():
-    """Get list of monitored extensions."""
+async def get_extensions(current_user: dict = Depends(get_current_user)):
+    """Get list of monitored extensions (filtered by user role/agents for supervisors)."""
     if not monitor:
         raise HTTPException(status_code=503, detail="AMI not connected")
     
+    allowed = current_user.get("allowed_agent_extensions")
+    monitored = monitor.monitored if allowed is None else (monitor.monitored & set(str(e) for e in (allowed or [])))
+    
     extensions = []
-    for ext in monitor.monitored:
+    for ext in monitored:
         ext_data = monitor.extensions.get(ext, {})
         call_info = monitor.active_calls.get(ext, {})
-        
         extensions.append({
             "extension": ext,
             "status": ext_data.get('Status', '-1'),
@@ -844,30 +1255,42 @@ async def get_extensions():
 
 
 @app.get("/api/calls")
-async def get_active_calls():
-    """Get list of active calls."""
+async def get_active_calls(current_user: dict = Depends(get_current_user)):
+    """Get list of active calls (filtered by user allowed extensions for supervisors)."""
     if not monitor:
         raise HTTPException(status_code=503, detail="AMI not connected")
     
     await monitor.sync_active_calls()
-    return {"calls": monitor.active_calls}
+    allowed = current_user.get("allowed_agent_extensions")
+    if allowed is None:
+        return {"calls": monitor.active_calls}
+    ext_set = set(str(e) for e in (allowed or []))
+    calls = {k: v for k, v in monitor.active_calls.items() if k in ext_set}
+    return {"calls": calls}
 
 
 @app.get("/api/queues")
-async def get_queues():
-    """Get queue information."""
+async def get_queues(current_user: dict = Depends(get_current_user)):
+    """Get queue information (filtered by user allowed queues for supervisors)."""
     if not monitor:
         raise HTTPException(status_code=503, detail="AMI not connected")
     
-    return {
-        "queues": monitor.queues,
-        "members": monitor.queue_members,
-        "entries": monitor.queue_entries
-    }
+    allowed = current_user.get("allowed_queue_names")
+    if allowed is None:
+        return {
+            "queues": monitor.queues,
+            "members": monitor.queue_members,
+            "entries": monitor.queue_entries
+        }
+    q_set = set(str(q) for q in (allowed or []))
+    queues = {k: v for k, v in monitor.queues.items() if k in q_set}
+    members = {k: v for k, v in monitor.queue_members.items() if v.get("queue") in q_set}
+    entries = {k: v for k, v in monitor.queue_entries.items() if v.get("queue") in q_set}
+    return {"queues": queues, "members": members, "entries": entries}
 
 
 @app.get("/api/status")
-async def get_status():
+async def get_status(current_user: dict = Depends(get_current_user)):
     """Get server status."""
     return {
         "connected": monitor.connected if monitor else False,
@@ -878,7 +1301,7 @@ async def get_status():
 
 
 @app.get("/api/qos/status")
-async def get_qos_status():
+async def get_qos_status(current_user: dict = Depends(get_current_user)):
     """Get current QoS configuration status from database."""
     qos_enabled_str = get_setting('QOS_ENABLED', os.getenv('QOS_ENABLED', ''))
     qos_enabled = qos_enabled_str.lower() in ('true', '1', 'yes')
@@ -890,7 +1313,7 @@ async def get_qos_status():
 
 
 @app.get("/api/crm/config")
-async def get_crm_config():
+async def get_crm_config(current_user: dict = Depends(get_current_user)):
     """Get current CRM configuration from database."""
     # Build config from database (fallback to env)
     crm_enabled_str = get_setting('CRM_ENABLED', os.getenv('CRM_ENABLED', ''))
@@ -940,7 +1363,7 @@ def save_qos_status_to_db(enabled: bool):
 
 
 @app.post("/api/qos/enable")
-async def enable_qos_endpoint():
+async def enable_qos_endpoint(current_user: dict = Depends(get_current_user)):
     """
     Enable QoS (Quality of Service) configuration.
     This will:
@@ -966,7 +1389,7 @@ async def enable_qos_endpoint():
 
 
 @app.post("/api/qos/disable")
-async def disable_qos_endpoint():
+async def disable_qos_endpoint(current_user: dict = Depends(get_current_user)):
     """
     Disable QoS (Quality of Service) configuration.
     This will:
@@ -992,7 +1415,7 @@ async def disable_qos_endpoint():
 
 
 @app.post("/api/crm/config")
-async def save_crm_config(config_data: dict):
+async def save_crm_config(config_data: dict, current_user: dict = Depends(get_current_user)):
     """
     Save CRM configuration to database.
     Note: This requires server restart to take effect.
@@ -1068,8 +1491,11 @@ async def save_crm_config(config_data: dict):
 # Call Log Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/api/call-log")
-async def get_call_log_endpoint(limit: int = 100, date: str = None,
-                                date_from: str = None, date_to: str = None):
+async def get_call_log_endpoint(
+    limit: int = 100, date: str = None,
+    date_from: str = None, date_to: str = None,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Get call log / CDR history.
     
@@ -1082,21 +1508,28 @@ async def get_call_log_endpoint(limit: int = 100, date: str = None,
     try:
         data = get_call_log(limit=limit, date=date,
                             date_from=date_from, date_to=date_to)
-        return {"calls": data, "total": len(data)}
+        total = get_call_log_count_from_db(date=date, date_from=date_from, date_to=date_to)
+        return {"calls": data, "total": total}
     except Exception as e:
         log.error(f"Error fetching call log: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch call log: {str(e)}")
 
 
 @app.get("/api/recordings/{file_path:path}")
-async def serve_recording(file_path: str):
-    """
-    Serve a recording audio file.
-    The file_path should be the full absolute path to the recording.
-    """
+async def serve_recording(
+    file_path: str,
+    token: Optional[str] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+):
+    """Serve a recording audio file. Auth via Bearer header or ?token= query (for audio src)."""
     from fastapi.responses import FileResponse as AudioFileResponse
     import mimetypes
-    
+
+    # Validate auth: Bearer header or query token
+    jwt_token = (credentials.credentials if credentials else None) or token
+    if not jwt_token or not decode_token(jwt_token):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     # Security: only allow serving files from the recording root directory
     root_dir = os.getenv('ASTERISK_RECORDING_ROOT_DIR', '/home/ibrahim/pyc/voip/')
     
@@ -1131,7 +1564,7 @@ async def serve_recording(file_path: str):
 # Settings Management Endpoints
 # ---------------------------------------------------------------------------
 @app.post("/api/settings")
-async def save_settings(settings_data: dict):
+async def save_settings(settings_data: dict, current_user: dict = Depends(get_current_user)):
     """
     Save settings to database.
     Accepts a dictionary of key-value pairs to save.
@@ -1164,7 +1597,7 @@ async def save_settings(settings_data: dict):
 
 
 @app.get("/api/settings")
-async def get_settings():
+async def get_settings(current_user: dict = Depends(get_current_user)):
     """Get all settings from database."""
     try:
         settings = get_all_settings()
@@ -1178,7 +1611,7 @@ async def get_settings():
 
 
 @app.get("/api/settings/{key}")
-async def get_setting_by_key(key: str):
+async def get_setting_by_key(key: str, current_user: dict = Depends(get_current_user)):
     """Get a specific setting by key."""
     try:
         value = get_setting(key)

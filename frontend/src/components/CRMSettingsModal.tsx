@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff, Settings } from 'lucide-react';
+import {
+  X, Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff, Settings,
+  ChevronDown, ChevronRight, Plug,
+} from 'lucide-react';
+import { getAuthHeaders } from '../auth';
+
+export type SettingsTab = 'integrations' | 'qos';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -31,6 +37,8 @@ interface CRMSettingsModalProps {
 }
 
 export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>('integrations');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [config, setConfig] = useState<CRMConfig>({
     enabled: false,
     server_url: '',
@@ -47,6 +55,8 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
 
   useEffect(() => {
     if (isOpen) {
+      setActiveTab('integrations');
+      setAdvancedOpen(false);
       loadConfig();
     }
   }, [isOpen]);
@@ -55,7 +65,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     setLoading(true);
     setMessage(null);
     try {
-      const response = await fetch('/api/crm/config');
+      const response = await fetch('/api/crm/config', { headers: getAuthHeaders() });
       if (response.ok) {
         const data = await response.json();
         setConfig(data);
@@ -84,7 +94,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     try {
       const response = await fetch('/api/crm/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(config),
       });
 
@@ -120,6 +130,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     try {
       const response = await fetch('/api/qos/enable', {
         method: 'POST',
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
@@ -143,6 +154,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     try {
       const response = await fetch('/api/qos/disable', {
         method: 'POST',
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
@@ -163,14 +175,14 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay settings-modal" onClick={onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         transition={{ duration: 0.2 }}
         className="modal"
-        style={{ maxWidth: 700, maxHeight: '90vh', overflowY: 'auto' }}
+        style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
@@ -178,432 +190,332 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
             <Settings size={20} style={{ color: 'var(--accent-primary)' }} />
             Settings
           </h3>
-          <button className="modal-close" onClick={onClose}>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
             <X size={20} />
           </button>
         </div>
 
-        {loading ? (
-          <div style={{ padding: 40, textAlign: 'center' }}>
-            <Loader2 size={24} className="spinner" />
-            <p style={{ marginTop: 16, color: 'var(--text-secondary)' }}>Loading configuration...</p>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit}>
-            <div className="modal-body">
-              {/* QoS Settings Section */}
-              <div style={{ 
-                marginBottom: 32, 
-                paddingBottom: 24, 
-                borderBottom: '1px solid var(--border-primary)' 
-              }}>
-                <h4 style={{ 
-                  fontSize: 16, 
-                  fontWeight: 600, 
-                  marginBottom: 16,
-                  color: 'var(--text-primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8
-                }}>
-                  <Signal size={18} style={{ color: 'var(--accent-primary)' }} />
-                  Quality of Service (QoS)
-                </h4>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
-                  Enable QoS tracking to capture call quality metrics and store them in CDR records.
-                </p>
-                
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={handleQosEnable}
-                    disabled={qosLoading}
-                    style={{ 
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      opacity: qosLoading ? 0.6 : 1
-                    }}
-                  >
-                    {qosLoading ? (
-                      <>
-                        <Loader2 size={14} className="spinner" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <Power size={14} />
-                        Enable QoS
-                      </>
-                    )}
-                  </button>
-                  
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={handleQosDisable}
-                    disabled={qosLoading}
-                    style={{ 
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      opacity: qosLoading ? 0.6 : 1
-                    }}
-                  >
-                    {qosLoading ? (
-                      <>
-                        <Loader2 size={14} className="spinner" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <PowerOff size={14} />
-                        Disable QoS
-                      </>
-                    )}
-                  </button>
-                </div>
+        <div className="settings-tabs">
+          <button
+            type="button"
+            className={`settings-tab ${activeTab === 'integrations' ? 'active' : ''}`}
+            onClick={() => setActiveTab('integrations')}
+          >
+            <Plug size={16} />
+            Integrations
+          </button>
+          <button
+            type="button"
+            className={`settings-tab ${activeTab === 'qos' ? 'active' : ''}`}
+            onClick={() => setActiveTab('qos')}
+          >
+            <Signal size={16} />
+            Quality of Service
+          </button>
+        </div>
 
-                {qosMessage && (
-                  <div style={{
-                    marginTop: 12,
-                    padding: 12,
-                    borderRadius: 'var(--radius-md)',
-                    background: qosMessage.type === 'success' 
-                      ? 'rgba(63, 185, 80, 0.15)' 
-                      : 'rgba(248, 81, 73, 0.15)',
-                    border: `1px solid ${qosMessage.type === 'success' 
-                      ? 'rgba(63, 185, 80, 0.3)' 
-                      : 'rgba(248, 81, 73, 0.3)'}`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                  }}>
-                    {qosMessage.type === 'success' ? (
-                      <CheckCircle2 size={16} style={{ color: 'var(--accent-success)' }} />
-                    ) : (
-                      <AlertCircle size={16} style={{ color: 'var(--accent-danger)' }} />
-                    )}
-                    <span style={{ 
-                      fontSize: 13,
-                      color: qosMessage.type === 'success' 
-                        ? 'var(--accent-success)' 
-                        : 'var(--accent-danger)'
-                    }}>
-                      {qosMessage.text}
-                    </span>
+        {activeTab === 'qos' && (
+          <div className="settings-body">
+            <div className="settings-section">
+              <div className="settings-section-header">
+                <div className="settings-section-icon">
+                  <Signal size={20} />
+                </div>
+                <div>
+                  <div className="settings-section-title">Quality of Service (QoS)</div>
+                  <div className="settings-section-desc">
+                    Capture call quality metrics and store them in CDR records for reporting and troubleshooting.
                   </div>
-                )}
+                </div>
               </div>
-
-              {/* CRM Settings Section */}
-              <div>
-                <h4 style={{ 
-                  fontSize: 16, 
-                  fontWeight: 600, 
-                  marginBottom: 16,
-                  color: 'var(--text-primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8
-                }}>
-                  <Database size={18} style={{ color: 'var(--accent-primary)' }} />
-                  CRM Integration
-                </h4>
-
-                {/* Enable/Disable Toggle */}
-                <div className="form-group">
-                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={config.enabled}
-                      onChange={(e) => updateConfig({ enabled: e.target.checked })}
-                      style={{ width: 18, height: 18 }}
-                    />
-                    Enable CRM Integration
-                  </label>
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                    When enabled, call data will be sent to your CRM system after each call ends.
-                  </p>
+              <div className="settings-actions-row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleQosEnable}
+                  disabled={qosLoading}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: qosLoading ? 0.6 : 1 }}
+                >
+                  {qosLoading ? <Loader2 size={14} className="spinner" /> : <Power size={14} />}
+                  {qosLoading ? 'Processing...' : 'Enable QoS'}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleQosDisable}
+                  disabled={qosLoading}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: qosLoading ? 0.6 : 1 }}
+                >
+                  {qosLoading ? <Loader2 size={14} className="spinner" /> : <PowerOff size={14} />}
+                  {qosLoading ? 'Processing...' : 'Disable QoS'}
+                </button>
+              </div>
+              {qosMessage && (
+                <div className={`settings-alert ${qosMessage.type === 'success' ? 'success' : 'error'}`}>
+                  {qosMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                  <span>{qosMessage.text}</span>
                 </div>
-
-              {config.enabled && (
-                <>
-                  {/* Server URL */}
-                  <div className="form-group">
-                    <label className="form-label">CRM Server URL *</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="https://crm.example.com or http://192.168.1.100:8080"
-                      value={config.server_url}
-                      onChange={(e) => updateConfig({ server_url: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  {/* Auth Type */}
-                  <div className="form-group">
-                    <label className="form-label">Authentication Type *</label>
-                    <select
-                      className="form-input"
-                      value={config.auth_type}
-                      onChange={(e) => updateConfig({ auth_type: e.target.value as CRMConfig['auth_type'] })}
-                      required
-                    >
-                      <option value="api_key">API Key</option>
-                      <option value="basic_auth">Basic Auth</option>
-                      <option value="bearer_token">Bearer Token</option>
-                      <option value="oauth2">OAuth2</option>
-                    </select>
-                  </div>
-
-                  {/* API Key Auth Fields */}
-                  {config.auth_type === 'api_key' && (
-                    <>
-                      <div className="form-group">
-                        <label className="form-label">API Key *</label>
-                        <input
-                          type="password"
-                          className="form-input"
-                          placeholder="Your API key"
-                          value={config.api_key || ''}
-                          onChange={(e) => updateConfig({ api_key: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">API Key Header (optional)</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="X-API-Key"
-                          value={config.api_key_header || ''}
-                          onChange={(e) => updateConfig({ api_key_header: e.target.value })}
-                        />
-                        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                          Default: X-API-Key
-                        </p>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Basic Auth Fields */}
-                  {config.auth_type === 'basic_auth' && (
-                    <>
-                      <div className="form-group">
-                        <label className="form-label">Username *</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="Username"
-                          value={config.username || ''}
-                          onChange={(e) => updateConfig({ username: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Password *</label>
-                        <input
-                          type="password"
-                          className="form-input"
-                          placeholder="Password"
-                          value={config.password || ''}
-                          onChange={(e) => updateConfig({ password: e.target.value })}
-                          required
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {/* Bearer Token Auth Fields */}
-                  {config.auth_type === 'bearer_token' && (
-                    <div className="form-group">
-                      <label className="form-label">Bearer Token *</label>
-                      <input
-                        type="password"
-                        className="form-input"
-                        placeholder="Your bearer token"
-                        value={config.bearer_token || ''}
-                        onChange={(e) => updateConfig({ bearer_token: e.target.value })}
-                        required
-                      />
-                    </div>
-                  )}
-
-                  {/* OAuth2 Auth Fields */}
-                  {config.auth_type === 'oauth2' && (
-                    <>
-                      <div className="form-group">
-                        <label className="form-label">Client ID *</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="OAuth2 Client ID"
-                          value={config.oauth2_client_id || ''}
-                          onChange={(e) => updateConfig({ oauth2_client_id: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Client Secret *</label>
-                        <input
-                          type="password"
-                          className="form-input"
-                          placeholder="OAuth2 Client Secret"
-                          value={config.oauth2_client_secret || ''}
-                          onChange={(e) => updateConfig({ oauth2_client_secret: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Token URL (optional)</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="https://crm.example.com/oauth/token"
-                          value={config.oauth2_token_url || ''}
-                          onChange={(e) => updateConfig({ oauth2_token_url: e.target.value })}
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Scope (optional)</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="read write"
-                          value={config.oauth2_scope || ''}
-                          onChange={(e) => updateConfig({ oauth2_scope: e.target.value })}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {/* Optional Settings */}
-                  <div style={{ 
-                    marginTop: 24, 
-                    paddingTop: 24, 
-                    borderTop: '1px solid var(--border-primary)' 
-                  }}>
-                    <h4 style={{ 
-                      fontSize: 14, 
-                      fontWeight: 600, 
-                      marginBottom: 16,
-                      color: 'var(--text-secondary)'
-                    }}>
-                      Optional Settings
-                    </h4>
-
-                    <div className="form-group">
-                      <label className="form-label">Endpoint Path</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="/api/calls"
-                        value={config.endpoint_path || ''}
-                        onChange={(e) => updateConfig({ endpoint_path: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Timeout (seconds)</label>
-                      <input
-                        type="number"
-                        className="form-input"
-                        placeholder="30"
-                        value={config.timeout || 30}
-                        onChange={(e) => updateConfig({ timeout: parseInt(e.target.value) || 30 })}
-                        min="1"
-                        max="300"
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <input
-                          type="checkbox"
-                          checked={config.verify_ssl !== false}
-                          onChange={(e) => updateConfig({ verify_ssl: e.target.checked })}
-                          style={{ width: 18, height: 18 }}
-                        />
-                        Verify SSL Certificates
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Message Display */}
-                  {message && (
-                    <div style={{
-                      padding: 12,
-                      borderRadius: 'var(--radius-md)',
-                      background: message.type === 'success' 
-                        ? 'rgba(63, 185, 80, 0.15)' 
-                        : 'rgba(248, 81, 73, 0.15)',
-                      border: `1px solid ${message.type === 'success' 
-                        ? 'rgba(63, 185, 80, 0.3)' 
-                        : 'rgba(248, 81, 73, 0.3)'}`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      marginTop: 16,
-                    }}>
-                      {message.type === 'success' ? (
-                        <CheckCircle2 size={16} style={{ color: 'var(--accent-success)' }} />
-                      ) : (
-                        <AlertCircle size={16} style={{ color: 'var(--accent-danger)' }} />
-                      )}
-                      <span style={{ 
-                        fontSize: 13,
-                        color: message.type === 'success' 
-                          ? 'var(--accent-success)' 
-                          : 'var(--accent-danger)'
-                      }}>
-                        {message.text}
-                      </span>
-                    </div>
-                  )}
-                </>
               )}
-              </div>
             </div>
+          </div>
+        )}
 
-            <div className="modal-footer">
-              <button type="button" className="btn" onClick={onClose} disabled={saving}>
-                Cancel
-              </button>
-              <button 
-                type="submit" 
-                className="btn btn-primary"
-                disabled={saving || (config.enabled && !config.server_url)}
-                style={{ 
-                  opacity: (saving || (config.enabled && !config.server_url)) ? 0.5 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-              >
-                {saving ? (
-                  <>
-                    <Loader2 size={14} className="spinner" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save size={14} />
-                    Save Configuration
-                  </>
-                )}
-              </button>
+        {activeTab === 'integrations' && (
+          loading ? (
+            <div className="settings-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48 }}>
+              <Loader2 size={28} className="spinner" />
+              <p style={{ marginTop: 16, color: 'var(--text-secondary)', fontSize: 14 }}>Loading configuration...</p>
             </div>
-          </form>
+          ) : (
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <div className="settings-body">
+                <div className="settings-section">
+                  <div className="settings-section-header">
+                    <div className="settings-section-icon">
+                      <Database size={20} />
+                    </div>
+                    <div>
+                      <div className="settings-section-title">CRM Integration</div>
+                      <div className="settings-section-desc">
+                        Send call data to your CRM after each call. Configure server URL and authentication.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={config.enabled}
+                        onChange={(e) => updateConfig({ enabled: e.target.checked })}
+                        style={{ width: 18, height: 18 }}
+                      />
+                      Enable CRM integration
+                    </label>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, marginLeft: 28 }}>
+                      When enabled, call data will be sent to your CRM system after each call ends.
+                    </p>
+                  </div>
+
+                  {config.enabled && (
+                    <>
+                      <div className="form-group">
+                        <label className="form-label">CRM Server URL *</label>
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="https://crm.example.com or http://192.168.1.100:8080"
+                          value={config.server_url}
+                          onChange={(e) => updateConfig({ server_url: e.target.value })}
+                          required
+                        />
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Authentication type</label>
+                        <select
+                          className="form-input"
+                          value={config.auth_type}
+                          onChange={(e) => updateConfig({ auth_type: e.target.value as CRMConfig['auth_type'] })}
+                          required
+                        >
+                          <option value="api_key">API Key</option>
+                          <option value="basic_auth">Basic Auth</option>
+                          <option value="bearer_token">Bearer Token</option>
+                          <option value="oauth2">OAuth2</option>
+                        </select>
+                      </div>
+
+                      {config.auth_type === 'api_key' && (
+                        <>
+                          <div className="form-group">
+                            <label className="form-label">API Key *</label>
+                            <input
+                              type="password"
+                              className="form-input"
+                              placeholder="Your API key"
+                              value={config.api_key || ''}
+                              onChange={(e) => updateConfig({ api_key: e.target.value })}
+                              required
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">API Key header (optional)</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="X-API-Key"
+                              value={config.api_key_header || ''}
+                              onChange={(e) => updateConfig({ api_key_header: e.target.value })}
+                            />
+                            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Default: X-API-Key</p>
+                          </div>
+                        </>
+                      )}
+
+                      {config.auth_type === 'basic_auth' && (
+                        <>
+                          <div className="form-group">
+                            <label className="form-label">Username *</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="Username"
+                              value={config.username || ''}
+                              onChange={(e) => updateConfig({ username: e.target.value })}
+                              required
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Password *</label>
+                            <input
+                              type="password"
+                              className="form-input"
+                              placeholder="Password"
+                              value={config.password || ''}
+                              onChange={(e) => updateConfig({ password: e.target.value })}
+                              required
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {config.auth_type === 'bearer_token' && (
+                        <div className="form-group">
+                          <label className="form-label">Bearer token *</label>
+                          <input
+                            type="password"
+                            className="form-input"
+                            placeholder="Your bearer token"
+                            value={config.bearer_token || ''}
+                            onChange={(e) => updateConfig({ bearer_token: e.target.value })}
+                            required
+                          />
+                        </div>
+                      )}
+
+                      {config.auth_type === 'oauth2' && (
+                        <>
+                          <div className="form-group">
+                            <label className="form-label">Client ID *</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="OAuth2 Client ID"
+                              value={config.oauth2_client_id || ''}
+                              onChange={(e) => updateConfig({ oauth2_client_id: e.target.value })}
+                              required
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Client secret *</label>
+                            <input
+                              type="password"
+                              className="form-input"
+                              placeholder="OAuth2 Client Secret"
+                              value={config.oauth2_client_secret || ''}
+                              onChange={(e) => updateConfig({ oauth2_client_secret: e.target.value })}
+                              required
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Token URL (optional)</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="https://crm.example.com/oauth/token"
+                              value={config.oauth2_token_url || ''}
+                              onChange={(e) => updateConfig({ oauth2_token_url: e.target.value })}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Scope (optional)</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="read write"
+                              value={config.oauth2_scope || ''}
+                              onChange={(e) => updateConfig({ oauth2_scope: e.target.value })}
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      <button
+                        type="button"
+                        className="settings-advanced-toggle"
+                        onClick={() => setAdvancedOpen((o) => !o)}
+                      >
+                        {advancedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        Advanced options
+                      </button>
+                      {advancedOpen && (
+                        <div className="settings-advanced-body">
+                          <div className="form-group">
+                            <label className="form-label">Endpoint path</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="/api/calls"
+                              value={config.endpoint_path || ''}
+                              onChange={(e) => updateConfig({ endpoint_path: e.target.value })}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Timeout (seconds)</label>
+                            <input
+                              type="number"
+                              className="form-input"
+                              placeholder="30"
+                              value={config.timeout || 30}
+                              onChange={(e) => updateConfig({ timeout: parseInt(e.target.value) || 30 })}
+                              min={1}
+                              max={300}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={config.verify_ssl !== false}
+                                onChange={(e) => updateConfig({ verify_ssl: e.target.checked })}
+                                style={{ width: 18, height: 18 }}
+                              />
+                              Verify SSL certificates
+                            </label>
+                          </div>
+                        </div>
+                      )}
+
+                      {message && (
+                        <div className={`settings-alert ${message.type === 'success' ? 'success' : 'error'}`}>
+                          {message.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                          <span>{message.text}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn" onClick={onClose} disabled={saving}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={saving || (config.enabled && !config.server_url)}
+                  style={{ opacity: (saving || (config.enabled && !config.server_url)) ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 8 }}
+                >
+                  {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+                  {saving ? 'Saving...' : 'Save configuration'}
+                </button>
+              </div>
+            </form>
+          )
         )}
       </motion.div>
     </div>
   );
 }
-

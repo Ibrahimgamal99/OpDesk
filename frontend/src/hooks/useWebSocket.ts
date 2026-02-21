@@ -1,13 +1,35 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { AppState, WebSocketMessage, ActionMessage } from '../types';
 
-const WS_URL = import.meta.env.DEV 
-  ? `ws://${window.location.host}/ws`
-  : `ws://${window.location.host}/ws`;
-
 const RECONNECT_DELAY = 3000;
 
-export function useWebSocket() {
+/** Close code sent by server when token is invalid or expired - do not reconnect. */
+const WS_CLOSE_AUTH_FAILED = 4001;
+
+export type UseWebSocketOptions = {
+  /** Called when server closes with auth failure (e.g. 4001). Use to clear token and redirect to login. */
+  onAuthFailure?: () => void;
+};
+
+/** In dev, set VITE_API_ORIGIN (e.g. http://172.16.11.65:8765) to connect WS directly to backend when proxy fails. */
+function getWsUrl(token: string | null): string | null {
+  if (!token) return null;
+  const apiOrigin = import.meta.env.VITE_API_ORIGIN as string | undefined;
+  let wsBase: string;
+  if (apiOrigin) {
+    // Connect directly to backend (e.g. ws://172.16.11.65:8765)
+    wsBase = apiOrigin.replace(/^http/, 'ws');
+    if (wsBase.endsWith('/')) wsBase = wsBase.slice(0, -1);
+  } else {
+    const base = window.location.host;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsBase = `${protocol}//${base}`;
+  }
+  return `${wsBase}/ws?token=${encodeURIComponent(token)}`;
+}
+
+export function useWebSocket(token: string | null, options: UseWebSocketOptions = {}) {
+  const { onAuthFailure } = options;
   const [state, setState] = useState<AppState | null>(null);
   const [connected, setConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -25,12 +47,15 @@ export function useWebSocket() {
   }, []);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    const url = getWsUrl(token);
+    if (!url || wsRef.current?.readyState === WebSocket.OPEN) return;
 
     try {
-      const ws = new WebSocket(WS_URL);
-      
+      const ws = new WebSocket(url);
+
       ws.onopen = () => {
+        // Send token in first message so server can auth if proxy stripped query string
+        if (token) ws.send(JSON.stringify({ token }));
         console.log('WebSocket connected');
         setConnected(true);
         addNotification('Connected to server');
@@ -57,11 +82,16 @@ export function useWebSocket() {
         }
       };
 
-      ws.onclose = () => {
-        console.log('WebSocket disconnected');
+      ws.onclose = (event) => {
+        console.log('WebSocket disconnected', event.code ? `(code ${event.code})` : '');
         setConnected(false);
         wsRef.current = null;
-        
+
+        if (event.code === WS_CLOSE_AUTH_FAILED) {
+          onAuthFailure?.();
+          return;
+        }
+
         // Reconnect after delay
         reconnectTimeoutRef.current = window.setTimeout(() => {
           console.log('Attempting to reconnect...');
@@ -77,7 +107,7 @@ export function useWebSocket() {
     } catch (e) {
       console.error('Failed to create WebSocket:', e);
     }
-  }, [addNotification]);
+  }, [token, addNotification, onAuthFailure]);
 
   const sendAction = useCallback((action: ActionMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -98,9 +128,9 @@ export function useWebSocket() {
   }, []);
 
   useEffect(() => {
-    connect();
+    if (token) connect();
     return () => disconnect();
-  }, [connect, disconnect]);
+  }, [token, connect, disconnect]);
 
   return {
     state,

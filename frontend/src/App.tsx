@@ -1,9 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
+import { getToken, setUser, getUser, isFilteredScope, getMonitorModesLabel } from './auth';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
 import { CallLogPanel } from './components/CallLogPanel';
+import { UsersPanel } from './components/UsersPanel';
 import { SupervisorModal } from './components/SupervisorModal';
 import { CRMSettingsModal } from './components/CRMSettingsModal';
 import { 
@@ -16,13 +18,21 @@ import {
   WifiOff,
   RefreshCw,
   Settings,
-  History
+  History,
+  LogOut,
+  UserCog,
+  Monitor
 } from 'lucide-react';
 
-type TabType = 'extensions' | 'calls' | 'queues' | 'call-log';
+type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'users';
 
-function App() {
-  const { state, connected, lastUpdate, notifications, sendAction } = useWebSocket();
+type AppProps = { onLogout: () => void };
+
+function App({ onLogout }: AppProps) {
+  const token = getToken();
+  const { state, connected, lastUpdate, notifications, sendAction } = useWebSocket(token, {
+    onAuthFailure: onLogout,
+  });
   const [activeTab, setActiveTab] = useState<TabType>('extensions');
   const [supervisorModal, setSupervisorModal] = useState<{
     isOpen: boolean;
@@ -30,6 +40,17 @@ function App() {
     target: string;
   }>({ isOpen: false, mode: 'listen', target: '' });
   const [crmSettingsOpen, setCrmSettingsOpen] = useState(false);
+
+  // Refresh user (role, extension, scope) from server so scope is up to date
+  useEffect(() => {
+    if (!token) return;
+    const ac = new AbortController();
+    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` }, signal: ac.signal })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data) setUser(data); })
+      .catch(() => {});
+    return () => ac.abort();
+  }, [token]);
 
   const handleSupervisorAction = useCallback((
     mode: 'listen' | 'whisper' | 'barge', 
@@ -93,6 +114,14 @@ function App() {
             </div>
           </div>
 
+          <span
+            className="header-monitor-mode"
+            title={`Monitor: ${getMonitorModesLabel(getUser()?.monitor_modes)}`}
+          >
+            <Monitor size={16} className="header-monitor-icon" />
+            <span className="header-monitor-label">{getMonitorModesLabel(getUser()?.monitor_modes)}</span>
+          </span>
+
           <button 
             className="btn" 
             onClick={() => sendAction({ action: 'sync' })}
@@ -108,6 +137,15 @@ function App() {
             title="CRM Settings"
           >
             <Settings size={14} />
+          </button>
+
+          <button 
+            className="btn" 
+            onClick={onLogout}
+            title="Sign out"
+          >
+            <LogOut size={14} />
+            Logout
           </button>
 
           <div className="connection-status">
@@ -183,6 +221,15 @@ function App() {
             <History size={16} />
             Call History
           </button>
+          {getUser()?.role === 'admin' && (
+            <button 
+              className={`tab ${activeTab === 'users' ? 'active' : ''}`}
+              onClick={() => setActiveTab('users')}
+            >
+              <UserCog size={16} />
+              Users
+            </button>
+          )}
         </div>
 
         {/* Tab Content */}
@@ -211,6 +258,10 @@ function App() {
 
         {activeTab === 'call-log' && (
           <CallLogPanel />
+        )}
+
+        {activeTab === 'users' && (
+          <UsersPanel />
         )}
 
         {/* Last update timestamp */}

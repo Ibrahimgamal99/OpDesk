@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { PhoneCall, Headphones, MessageSquare, Radio, Phone } from 'lucide-react';
 import type { CallInfo } from '../types';
+import { getAllowedMonitorModes } from '../auth';
 
 interface ActiveCallsPanelProps {
   calls: Record<string, CallInfo>;
@@ -96,27 +97,33 @@ function CallRow({ call, onSupervisorAction }: CallRowProps) {
       </td>
       <td>
         <div className="call-actions">
-          <button 
-            className="btn btn-icon btn-listen"
-            onClick={() => onSupervisorAction('listen', call.extension)}
-            title="Listen (Silent)"
-          >
-            <Headphones size={18} />
-          </button>
-          <button 
-            className="btn btn-icon btn-whisper"
-            onClick={() => onSupervisorAction('whisper', call.extension)}
-            title="Whisper to Agent"
-          >
-            <MessageSquare size={18} />
-          </button>
-          <button 
-            className="btn btn-icon btn-barge"
-            onClick={() => onSupervisorAction('barge', call.extension)}
-            title="Barge In"
-          >
-            <Radio size={18} />
-          </button>
+          {getAllowedMonitorModes().includes('listen') && (
+            <button 
+              className="btn btn-icon btn-listen"
+              onClick={() => onSupervisorAction('listen', call.extension)}
+              title="Listen (Silent)"
+            >
+              <Headphones size={18} />
+            </button>
+          )}
+          {getAllowedMonitorModes().includes('whisper') && (
+            <button 
+              className="btn btn-icon btn-whisper"
+              onClick={() => onSupervisorAction('whisper', call.extension)}
+              title="Whisper to Agent"
+            >
+              <MessageSquare size={18} />
+            </button>
+          )}
+          {getAllowedMonitorModes().includes('barge') && (
+            <button 
+              className="btn btn-icon btn-barge"
+              onClick={() => onSupervisorAction('barge', call.extension)}
+              title="Barge In"
+            >
+              <Radio size={18} />
+            </button>
+          )}
         </div>
       </td>
     </motion.tr>

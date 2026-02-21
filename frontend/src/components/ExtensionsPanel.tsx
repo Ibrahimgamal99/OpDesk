@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Headphones, MessageSquare, Radio } from 'lucide-react';
 import type { Extension, ExtensionStatus } from '../types';
+import { getAllowedMonitorModes } from '../auth';
 
 interface ExtensionsPanelProps {
   extensions: Record<string, Extension>;
@@ -100,45 +101,54 @@ function ExtensionCard({ extension, onSupervisorAction }: ExtensionCardProps) {
         </div>
       )}
 
-      {isInCall && (
-        <div style={{ 
-          display: 'flex', 
-          gap: 8, 
-          marginTop: 16,
-          justifyContent: 'center',
-        }}>
-          <button 
-            className="btn btn-icon btn-listen"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSupervisorAction('listen', extension.extension);
-            }}
-            title="Listen (Silent)"
-          >
-            <Headphones size={18} />
-          </button>
-          <button 
-            className="btn btn-icon btn-whisper"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSupervisorAction('whisper', extension.extension);
-            }}
-            title="Whisper to Agent"
-          >
-            <MessageSquare size={18} />
-          </button>
-          <button 
-            className="btn btn-icon btn-barge"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSupervisorAction('barge', extension.extension);
-            }}
-            title="Barge In"
-          >
-            <Radio size={18} />
-          </button>
-        </div>
-      )}
+      {isInCall && (() => {
+        const allowed = getAllowedMonitorModes();
+        return (
+          <div style={{ 
+            display: 'flex', 
+            gap: 8, 
+            marginTop: 16,
+            justifyContent: 'center',
+          }}>
+            {allowed.includes('listen') && (
+              <button 
+                className="btn btn-icon btn-listen"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSupervisorAction('listen', extension.extension);
+                }}
+                title="Listen (Silent)"
+              >
+                <Headphones size={18} />
+              </button>
+            )}
+            {allowed.includes('whisper') && (
+              <button 
+                className="btn btn-icon btn-whisper"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSupervisorAction('whisper', extension.extension);
+                }}
+                title="Whisper to Agent"
+              >
+                <MessageSquare size={18} />
+              </button>
+            )}
+            {allowed.includes('barge') && (
+              <button 
+                className="btn btn-icon btn-barge"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSupervisorAction('barge', extension.extension);
+                }}
+                title="Barge In"
+              >
+                <Radio size={18} />
+              </button>
+            )}
+          </div>
+        );
+      })()}
     </motion.div>
   );
 }

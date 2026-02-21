@@ -5,6 +5,7 @@ import {
   ChevronLeft, ChevronRight, Loader2, BarChart3
 } from 'lucide-react';
 import type { CallLogRecord, QoSData } from '../types';
+import { getAuthHeaders } from '../auth';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -177,7 +178,8 @@ function AudioPlayer({ recordingPath, recordingFile }: AudioPlayerProps) {
     );
   }
 
-  const audioUrl = `/api/recordings/${encodeURIComponent(recordingPath)}`;
+  const token = getAuthHeaders().Authorization?.replace(/^Bearer\s+/i, '') || '';
+  const audioUrl = `/api/recordings/${encodeURIComponent(recordingPath)}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 
   const togglePlay = () => {
     const el = audioRef.current;
@@ -398,6 +400,7 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
 export function CallLogPanel() {
   // Data
   const [calls, setCalls] = useState<CallLogRecord[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -425,10 +428,11 @@ export function CallLogPanel() {
       params.set('limit', '500');
       if (dateFrom) params.set('date_from', dateFrom);
       if (dateTo) params.set('date_to', dateTo);
-      const res = await fetch(`/api/call-log?${params.toString()}`);
+      const res = await fetch(`/api/call-log?${params.toString()}`, { headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setCalls(json.calls || []);
+      setTotalCount(typeof json.total === 'number' ? json.total : (json.calls || []).length);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load call history');
     } finally {
@@ -495,7 +499,7 @@ export function CallLogPanel() {
             {sortAsc ? 'Oldest First' : 'Newest First'}
           </button>
           <div className="cl-stats-card">
-            <span className="cl-stats-count">{sorted.length}</span>
+            <span className="cl-stats-count">{totalCount}</span>
             <span className="cl-stats-label">Total Calls</span>
           </div>
         </div>
