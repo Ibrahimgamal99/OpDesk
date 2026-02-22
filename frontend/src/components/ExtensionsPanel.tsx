@@ -1,11 +1,12 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Headphones, MessageSquare, Radio } from 'lucide-react';
+import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Headphones, MessageSquare, Radio, RefreshCw } from 'lucide-react';
 import type { Extension, ExtensionStatus } from '../types';
 import { getAllowedMonitorModes } from '../auth';
 
 interface ExtensionsPanelProps {
   extensions: Record<string, Extension>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
+  onSync?: () => void;
 }
 
 const statusConfig: Record<ExtensionStatus, { icon: typeof Phone; label: string }> = {
@@ -17,7 +18,7 @@ const statusConfig: Record<ExtensionStatus, { icon: typeof Phone; label: string 
   on_hold: { icon: Pause, label: 'On Hold' },
 };
 
-export function ExtensionsPanel({ extensions, onSupervisorAction }: ExtensionsPanelProps) {
+export function ExtensionsPanel({ extensions, onSupervisorAction, onSync }: ExtensionsPanelProps) {
   const extensionList = Object.values(extensions).sort((a, b) => 
     a.extension.localeCompare(b.extension, undefined, { numeric: true })
   );
@@ -29,6 +30,12 @@ export function ExtensionsPanel({ extensions, onSupervisorAction }: ExtensionsPa
           <Phone size={18} className="panel-title-icon" />
           Extensions ({extensionList.length})
         </h2>
+        {onSync && (
+          <button type="button" className="btn btn-panel-sync" onClick={onSync} title="Sync all data">
+            <RefreshCw size={14} />
+            Sync
+          </button>
+        )}
       </div>
       <div className="panel-content">
         {extensionList.length === 0 ? (

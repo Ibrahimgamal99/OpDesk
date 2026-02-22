@@ -270,10 +270,29 @@ DB_PORT="3306"
 DB_NAME="asterisk"
 DB_USER="root"
 DB_PASS=""
+DB_EXISTING=""
 PBX="Generic"
 
-# Detect PBX system
-if [ -d /usr/share/issabel ]; then
+# Use existing database config from previous install if present
+if [ -f "$PROJECT_ROOT/backend/.env" ]; then
+    _db_host=$(grep -E '^DB_HOST=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+    _db_port=$(grep -E '^DB_PORT=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+    _db_name=$(grep -E '^DB_NAME=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+    _db_user=$(grep -E '^DB_USER=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+    _db_pass=$(grep -E '^DB_PASSWORD=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+    _pbx=$(grep -E '^PBX=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+    if [ -n "$_db_user" ]; then
+        DB_HOST="${_db_host:-$DB_HOST}"; DB_PORT="${_db_port:-$DB_PORT}"; DB_NAME="${_db_name:-$DB_NAME}"; DB_USER="$_db_user"; DB_PASS="$_db_pass"
+        [ -n "$_pbx" ] && PBX="$_pbx"
+        DB_EXISTING=" (existing)"
+        echo -e "${GREEN}Using existing database configuration from .env${NC}"
+    fi
+fi
+
+# Detect PBX system (skip creating user if we already loaded from .env)
+if [ -n "$DB_EXISTING" ]; then
+    :
+elif [ -d /usr/share/issabel ]; then
     PBX="Issabel"
     echo -e "${GREEN}Detected Issabel PBX${NC}"
     if [ -f /etc/issabel.conf ]; then
@@ -291,35 +310,52 @@ elif [ -f /etc/freepbx.conf ]; then
     PBX="FreePBX"
     echo -e "${GREEN}Detected FreePBX${NC}"
     DB_USER="OpDesk"
-    DB_PASS=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16 2>/dev/null || echo "$(date +%s | sha256sum | base64 | head -c 16)")
-    
-    # Check if MySQL/MariaDB is running
-    if command_exists systemctl; then
-        if systemctl is-active --quiet mysql || systemctl is-active --quiet mariadb; then
-            echo -e "${GREEN}MySQL/MariaDB service is running${NC}"
-        else
-            echo -e "${YELLOW}MySQL/MariaDB service may not be running. Attempting to start...${NC}"
-            sudo systemctl start mysql 2>/dev/null || sudo systemctl start mariadb 2>/dev/null || true
+    # Check if OpDesk user already exists in MySQL (do not overwrite)
+    _opdesk_exists=""
+    if command_exists mysql; then
+        if sudo mysql -e "SELECT 1 FROM mysql.user WHERE User='OpDesk' AND Host='localhost';" 2>/dev/null | grep -q 1; then
+            _opdesk_exists=1
+        elif mysql -u root -e "SELECT 1 FROM mysql.user WHERE User='OpDesk' AND Host='localhost';" 2>/dev/null | grep -q 1; then
+            _opdesk_exists=1
         fi
     fi
-    
-    # Try to create database user
-    echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
-    if command_exists mysql; then
-        # Try with sudo mysql (no password)
-        if sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-            sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
-            echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
-        # Try with mysql as root user
-        elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-            mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
-            echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
-        else
-            echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
-            echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\"${NC}"
+    if [ -n "$_opdesk_exists" ]; then
+        DB_EXISTING=" (existing)"
+        echo -e "${GREEN}Using existing database user in MySQL: $DB_USER${NC}"
+        # Use password from .env if present; otherwise leave empty (user must set in .env)
+        if [ -f "$PROJECT_ROOT/backend/.env" ]; then
+            _existing_pass=$(grep -E '^DB_PASSWORD=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+            [ -n "$_existing_pass" ] && DB_PASS="$_existing_pass"
         fi
     else
-        echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
+        DB_PASS=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16 2>/dev/null || echo "$(date +%s | sha256sum | base64 | head -c 16)")
+    fi
+    
+    # Create database user only if it does not already exist
+    if [ -z "$_opdesk_exists" ]; then
+        if command_exists systemctl; then
+            if systemctl is-active --quiet mysql || systemctl is-active --quiet mariadb; then
+                echo -e "${GREEN}MySQL/MariaDB service is running${NC}"
+            else
+                echo -e "${YELLOW}MySQL/MariaDB service may not be running. Attempting to start...${NC}"
+                sudo systemctl start mysql 2>/dev/null || sudo systemctl start mariadb 2>/dev/null || true
+            fi
+        fi
+        echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
+        if command_exists mysql; then
+            if sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
+                sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
+            elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
+                mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
+            else
+                echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
+                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\"${NC}"
+            fi
+        else
+            echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
+        fi
     fi
 else
     echo -e "${YELLOW}No specific PBX detected, using Generic configuration${NC}"
@@ -352,16 +388,26 @@ echo -e "${GREEN}Database User: $DB_USER${NC}"
 # --- Step 7: AMI Config ---
 echo -e "\n${YELLOW}Step 7: Configuring Asterisk AMI...${NC}"
 AMI_HOST="localhost"; AMI_PORT="5038"; AMI_USER="OpDesk"
-AMI_SECRET=$(openssl rand -hex 4)
-if [ -f /etc/asterisk/manager.conf ] && ! grep -q "\[$AMI_USER\]" /etc/asterisk/manager.conf; then
-    sudo tee -a /etc/asterisk/manager.conf <<EOF
+AMI_USER_EXISTING=""
+if [ -f /etc/asterisk/manager.conf ] && grep -q "\[$AMI_USER\]" /etc/asterisk/manager.conf; then
+    # AMI user already exists in manager.conf: do not rewrite; use existing secret
+    AMI_SECRET=$(sed -n '/^\['"$AMI_USER"'\][[:space:]]*$/,/^\[/p' /etc/asterisk/manager.conf | grep -E '^[[:space:]]*secret[[:space:]]*=' | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$AMI_SECRET" ] && AMI_SECRET=$(openssl rand -hex 4)
+    AMI_USER_EXISTING=" (existing in manager.conf)"
+    echo -e "${GREEN}Using existing AMI user in manager: $AMI_USER${NC}"
+else
+    AMI_SECRET=$(openssl rand -hex 4)
+    if [ -f /etc/asterisk/manager.conf ]; then
+        sudo tee -a /etc/asterisk/manager.conf <<EOF
+
 [$AMI_USER]
 secret = $AMI_SECRET
 read = all
 write = all
 permit = 127.0.0.1/255.255.255.255
 EOF
-    sudo asterisk -rx "manager reload" || true
+        sudo asterisk -rx "manager reload" || true
+    fi
 fi
 
 # --- Step 8: App Config ---
@@ -390,6 +436,7 @@ AMI_HOST=$AMI_HOST
 AMI_PORT=$AMI_PORT
 AMI_USERNAME=$AMI_USER
 AMI_SECRET=$AMI_SECRET
+DB_OpDesk=OpDesk
 JWT_SECRET=OpDesk
 EOF
 cd "$PROJECT_ROOT/frontend" && npm install || true
@@ -409,9 +456,9 @@ echo -e "  OS Detected:   $OS"
 echo -e "  PBX Platform:  $PBX"
 echo ""
 echo -e "${BLUE}DATABASE DETAILS:${NC}"
-echo -e "  Status:        $(mysqladmin -u$DB_USER -p$DB_PASS ping 2>/dev/null | grep -q "alive" && echo -e "${GREEN}Connected${NC}" || echo -e "${RED}Failed${NC}")"
+echo -e "  Status:        $(([ -n "$DB_PASS" ] && mysqladmin -u$DB_USER -p"$DB_PASS" ping 2>/dev/null || mysqladmin -u$DB_USER ping 2>/dev/null) | grep -q "alive" && echo -e "${GREEN}Connected${NC}" || echo -e "${RED}Failed${NC}")"
 echo -e "  Host/Port:     $DB_HOST:$DB_PORT"
-echo -e "  Username:      $DB_USER"
+echo -e "  Username:      $DB_USER$DB_EXISTING"
 echo -e "  Password:      $DB_PASS"
 echo -e "  Database:      $DB_NAME"
 echo ""
@@ -420,7 +467,7 @@ echo -e "${BLUE}ASTERISK AMI DETAILS:${NC}"
 AMI_STATUS=$(lsof -i :$AMI_PORT > /dev/null && echo -e "${GREEN}Active${NC}" || echo -e "${RED}Inactive (Check Asterisk)${NC}")
 echo -e "  Status:        $AMI_STATUS"
 echo -e "  Host/Port:     $AMI_HOST:$AMI_PORT"
-echo -e "  Username:      $AMI_USER"
+echo -e "  Username:      $AMI_USER$AMI_USER_EXISTING"
 echo -e "  Secret:        $AMI_SECRET"
 echo ""
 echo -e "${BLUE}RUNTIME VERSIONS:${NC}"

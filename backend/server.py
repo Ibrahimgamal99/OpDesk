@@ -29,12 +29,14 @@ import uvicorn
 
 from ami import AMIExtensionsMonitor, _format_duration, _meaningful, DIALPLAN_CTX, normalize_interface
 from db_manager import (
-    get_extensions_from_db, get_extension_names_from_db, init_settings_table,
+    get_extensions_from_db, get_extension_names_from_db, get_queue_names_from_db, init_settings_table,
     get_setting, set_setting, get_all_settings,
     ensure_users_extension_column, ensure_user_monitor_modes_table, authenticate_user,
     get_call_log_count_from_db,
     get_all_users, get_user_by_id, create_user as db_create_user, update_user as db_update_user,
     delete_user as db_delete_user, get_user_agents_and_queues, set_user_agents_and_queues,
+    get_user_group_ids, set_user_groups,
+    get_groups_list, get_group, create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
     get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
 )
 from qos import enable_qos, disable_qos
@@ -327,13 +329,18 @@ class AMIEventBridge:
             
             active_calls[ext] = self._format_call_info(ext, info)
         
-        # Build queue info, filter by queue_set if present
+        # Build queue info, filter by queue_set if present (extension + display name like agents). Hide "default" queue.
+        DEFAULT_QUEUE_HIDDEN = "default"
+        queue_display = {q["extension"]: q["queue_name"] for q in get_queues_list()}
         queues = {}
-        for queue_name, queue_info in self.monitor.queues.items():
-            if queue_set is not None and queue_name not in queue_set:
+        for queue_ext, queue_info in self.monitor.queues.items():
+            if (queue_ext or "").strip().lower() == DEFAULT_QUEUE_HIDDEN:
                 continue
-            queues[queue_name] = {
-                "name": queue_name,
+            if queue_set is not None and queue_ext not in queue_set:
+                continue
+            queues[queue_ext] = {
+                "extension": queue_ext,
+                "name": queue_display.get(queue_ext) or queue_ext,
                 "members": queue_info.get('members', {}),
                 "calls_waiting": queue_info.get('calls_waiting', 0)
             }
@@ -341,6 +348,8 @@ class AMIEventBridge:
         queue_members = {}
         for member_key, member_info in self.monitor.queue_members.items():
             q = member_info.get('queue', '')
+            if (q or "").strip().lower() == DEFAULT_QUEUE_HIDDEN:
+                continue
             if queue_set is not None and q not in queue_set:
                 continue
             queue_members[member_key] = {
@@ -355,6 +364,8 @@ class AMIEventBridge:
         queue_entries = {}
         for uniqueid, entry in self.monitor.queue_entries.items():
             q = entry.get('queue', '')
+            if (q or "").strip().lower() == DEFAULT_QUEUE_HIDDEN:
+                continue
             if queue_set is not None and q not in queue_set:
                 continue
             entry_time = entry.get('entry_time')
@@ -799,8 +810,7 @@ class CreateUserBody(BaseModel):
     role: str = "supervisor"
     monitor_mode: Optional[str] = None  # legacy single; use monitor_modes
     monitor_modes: Optional[list] = None  # list of 'listen','whisper','barge'
-    agent_extensions: Optional[list] = None
-    queue_names: Optional[list] = None
+    group_ids: Optional[list] = None  # access via groups (replaces per-user agents/queues)
 
 
 class UpdateUserBody(BaseModel):
@@ -811,8 +821,7 @@ class UpdateUserBody(BaseModel):
     monitor_mode: Optional[str] = None
     monitor_modes: Optional[list] = None  # list of 'listen','whisper','barge'
     password: Optional[str] = None
-    agent_extensions: Optional[list] = None
-    queue_names: Optional[list] = None
+    group_ids: Optional[list] = None  # access via groups
 
 
 @app.get("/api/settings/users")
@@ -824,7 +833,8 @@ async def api_list_users(
     out = []
     for u in users:
         agents, queues = get_user_agents_and_queues(u["id"])
-        out.append({**u, "agent_extensions": agents, "queue_names": queues})
+        group_ids = get_user_group_ids(u["id"])
+        out.append({**u, "agent_extensions": agents, "queue_names": queues, "group_ids": group_ids})
     return {"users": out}
 
 
@@ -833,12 +843,13 @@ async def api_get_user(
     user_id: int,
     current_user: dict = Depends(require_admin),
 ):
-    """Get one user with agents and queues (admin only)."""
+    """Get one user with agents, queues, and group_ids (admin only)."""
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     agents, queues = get_user_agents_and_queues(user_id)
-    return {**user, "agent_extensions": agents, "queue_names": queues}
+    group_ids = get_user_group_ids(user_id)
+    return {**user, "agent_extensions": agents, "queue_names": queues, "group_ids": group_ids}
 
 
 @app.post("/api/settings/users")
@@ -866,14 +877,11 @@ async def api_create_user(
     )
     if not user_id:
         raise HTTPException(status_code=400, detail="Username or extension already in use")
-    set_user_agents_and_queues(
-        user_id,
-        agent_extensions=body.agent_extensions or [],
-        queue_names=body.queue_names or [],
-    )
+    set_user_groups(user_id, group_ids=body.group_ids or [])
     user = get_user_by_id(user_id)
     agents, queues = get_user_agents_and_queues(user_id)
-    return {**user, "agent_extensions": agents, "queue_names": queues}
+    group_ids = get_user_group_ids(user_id)
+    return {**user, "agent_extensions": agents, "queue_names": queues, "group_ids": group_ids}
 
 
 @app.put("/api/settings/users/{user_id}")
@@ -896,13 +904,12 @@ async def api_update_user(
         monitor_modes=body.monitor_modes,
         password=body.password,
     )
-    if body.agent_extensions is not None or body.queue_names is not None:
-        agents = body.agent_extensions if body.agent_extensions is not None else get_user_agents_and_queues(user_id)[0]
-        queues = body.queue_names if body.queue_names is not None else get_user_agents_and_queues(user_id)[1]
-        set_user_agents_and_queues(user_id, agent_extensions=agents, queue_names=queues)
+    if body.group_ids is not None:
+        set_user_groups(user_id, body.group_ids)
     user = get_user_by_id(user_id)
     agents, queues = get_user_agents_and_queues(user_id)
-    return {**user, "agent_extensions": agents, "queue_names": queues}
+    group_ids = get_user_group_ids(user_id)
+    return {**user, "agent_extensions": agents, "queue_names": queues, "group_ids": group_ids}
 
 
 @app.delete("/api/settings/users/{user_id}")
@@ -943,14 +950,113 @@ async def api_list_agents(
 async def api_list_queues(
     current_user: dict = Depends(get_current_user),
 ):
-    """List all queues for selection. Syncs from Asterisk if monitor available."""
+    """List all queues for selection. Syncs from Asterisk if monitor available, else from DB (like agents). Uses name_map from DB for display names."""
+    name_map = get_queue_names_from_db()
     if monitor and getattr(monitor, "queues", None):
-        sync_queues_from_list(list(monitor.queues.keys()))
+        sync_queues_from_list(list(monitor.queues.keys()), name_map)
+    else:
+        if name_map:
+            sync_queues_from_list(list(name_map.keys()), name_map)
     queues = get_queues_list()
     if not queues and monitor and getattr(monitor, "queues", None):
-        sync_queues_from_list(list(monitor.queues.keys()))
+        sync_queues_from_list(list(monitor.queues.keys()), name_map)
+        queues = get_queues_list()
+    if not queues and name_map:
+        sync_queues_from_list(list(name_map.keys()), name_map)
         queues = get_queues_list()
     return {"queues": queues}
+
+
+# ---------------------------------------------------------------------------
+# Settings: Groups (admin only) – group name, agents, queues, users
+# ---------------------------------------------------------------------------
+class CreateGroupBody(BaseModel):
+    name: str
+    agent_extensions: Optional[list] = None
+    queue_extensions: Optional[list] = None
+    user_ids: Optional[list] = None
+
+
+class UpdateGroupBody(BaseModel):
+    name: Optional[str] = None
+    agent_extensions: Optional[list] = None
+    queue_extensions: Optional[list] = None
+    user_ids: Optional[list] = None
+
+
+@app.get("/api/settings/groups")
+async def api_list_groups(
+    current_user: dict = Depends(require_admin),
+):
+    """List all groups with agents, queues, and user ids (admin only)."""
+    return {"groups": get_groups_list()}
+
+
+@app.get("/api/settings/groups/{group_id}")
+async def api_get_group(
+    group_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """Get one group (admin only)."""
+    g = get_group(group_id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return g
+
+
+@app.post("/api/settings/groups")
+async def api_create_group(
+    body: CreateGroupBody,
+    current_user: dict = Depends(require_admin),
+):
+    """Create group with name, agents, queues, users (admin only)."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Group name required")
+    gid = create_group(name)
+    if not gid:
+        raise HTTPException(status_code=400, detail="Group name may already exist")
+    if body.agent_extensions:
+        set_group_agents(gid, body.agent_extensions)
+    if body.queue_extensions:
+        set_group_queues(gid, body.queue_extensions)
+    if body.user_ids is not None:
+        set_group_users(gid, body.user_ids)
+    return get_group(gid)
+
+
+@app.put("/api/settings/groups/{group_id}")
+async def api_update_group(
+    group_id: int,
+    body: UpdateGroupBody,
+    current_user: dict = Depends(require_admin),
+):
+    """Update group name, agents, queues, users (admin only)."""
+    g = get_group(group_id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Group not found")
+    if body.name is not None:
+        name = (body.name or "").strip()
+        if name:
+            update_group(group_id, name)
+    if body.agent_extensions is not None:
+        set_group_agents(group_id, body.agent_extensions)
+    if body.queue_extensions is not None:
+        set_group_queues(group_id, body.queue_extensions)
+    if body.user_ids is not None:
+        set_group_users(group_id, body.user_ids)
+    return get_group(group_id)
+
+
+@app.delete("/api/settings/groups/{group_id}")
+async def api_delete_group(
+    group_id: int,
+    current_user: dict = Depends(require_admin),
+):
+    """Delete group (admin only)."""
+    if not delete_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found or cannot delete")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1271,21 +1377,22 @@ async def get_active_calls(current_user: dict = Depends(get_current_user)):
 
 @app.get("/api/queues")
 async def get_queues(current_user: dict = Depends(get_current_user)):
-    """Get queue information (filtered by user allowed queues for supervisors)."""
+    """Get queue information (filtered by user allowed queues for supervisors). Default queue is hidden."""
     if not monitor:
         raise HTTPException(status_code=503, detail="AMI not connected")
-    
+    def _not_default(q: str) -> bool:
+        return (q or "").strip().lower() != "default"
     allowed = current_user.get("allowed_queue_names")
     if allowed is None:
         return {
-            "queues": monitor.queues,
-            "members": monitor.queue_members,
-            "entries": monitor.queue_entries
+            "queues": {k: v for k, v in monitor.queues.items() if _not_default(k)},
+            "members": {k: v for k, v in monitor.queue_members.items() if _not_default(v.get("queue", ""))},
+            "entries": {k: v for k, v in monitor.queue_entries.items() if _not_default(v.get("queue", ""))},
         }
     q_set = set(str(q) for q in (allowed or []))
-    queues = {k: v for k, v in monitor.queues.items() if k in q_set}
-    members = {k: v for k, v in monitor.queue_members.items() if v.get("queue") in q_set}
-    entries = {k: v for k, v in monitor.queue_entries.items() if v.get("queue") in q_set}
+    queues = {k: v for k, v in monitor.queues.items() if k in q_set and _not_default(k)}
+    members = {k: v for k, v in monitor.queue_members.items() if v.get("queue") in q_set and _not_default(v.get("queue", ""))}
+    entries = {k: v for k, v in monitor.queue_entries.items() if v.get("queue") in q_set and _not_default(v.get("queue", ""))}
     return {"queues": queues, "members": members, "entries": entries}
 
 
