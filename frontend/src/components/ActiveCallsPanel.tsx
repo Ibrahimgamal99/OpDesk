@@ -1,14 +1,15 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { PhoneCall, Headphones, MessageSquare, Radio, Phone } from 'lucide-react';
+import { PhoneCall, Headphones, MessageSquare, Radio, Phone, RefreshCw } from 'lucide-react';
 import type { CallInfo } from '../types';
 import { getAllowedMonitorModes } from '../auth';
 
 interface ActiveCallsPanelProps {
   calls: Record<string, CallInfo>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
+  onSync?: () => void;
 }
 
-export function ActiveCallsPanel({ calls, onSupervisorAction }: ActiveCallsPanelProps) {
+export function ActiveCallsPanel({ calls, onSupervisorAction, onSync }: ActiveCallsPanelProps) {
   const callList = Object.values(calls).sort((a, b) => 
     a.extension.localeCompare(b.extension, undefined, { numeric: true })
   );
@@ -20,6 +21,12 @@ export function ActiveCallsPanel({ calls, onSupervisorAction }: ActiveCallsPanel
           <PhoneCall size={18} className="panel-title-icon" />
           Active Calls ({callList.length})
         </h2>
+        {onSync && (
+          <button type="button" className="btn btn-panel-sync" onClick={onSync} title="Sync all data">
+            <RefreshCw size={14} />
+            Sync
+          </button>
+        )}
       </div>
       <div className="panel-content" style={{ padding: 0 }}>
         {callList.length === 0 ? (

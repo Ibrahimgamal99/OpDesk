@@ -49,7 +49,7 @@ CREATE TABLE agents (
 
 -- Queues table
 CREATE TABLE queues (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    extension VARCHAR(20) PRIMARY KEY,
     queue_name VARCHAR(100) UNIQUE NOT NULL,
     INDEX idx_queue_name (queue_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -73,14 +73,14 @@ CREATE TABLE group_agents (
     INDEX idx_agent (agent_ext)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Junction: groups <-> queues
+-- Junction: groups <-> queues (uses queues.extension like group_agents uses agents.extension)
 CREATE TABLE group_queues (
     group_id INT,
-    queue_id INT,
-    PRIMARY KEY (group_id, queue_id),
+    queue_extension VARCHAR(20),
+    PRIMARY KEY (group_id, queue_extension),
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
-    FOREIGN KEY (queue_id) REFERENCES queues(id) ON DELETE CASCADE,
-    INDEX idx_queue (queue_id)
+    FOREIGN KEY (queue_extension) REFERENCES queues(extension) ON DELETE CASCADE,
+    INDEX idx_queue (queue_extension)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- User monitor modes: multiple modes per user (listen, whisper, barge).

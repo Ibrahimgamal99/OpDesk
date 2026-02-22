@@ -6,6 +6,7 @@ import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
 import { CallLogPanel } from './components/CallLogPanel';
 import { UsersPanel } from './components/UsersPanel';
+import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
 import { CRMSettingsModal } from './components/CRMSettingsModal';
 import { 
@@ -16,15 +17,26 @@ import {
   Activity,
   Wifi,
   WifiOff,
-  RefreshCw,
   Settings,
   History,
   LogOut,
   UserCog,
-  Monitor
+  Monitor,
+  Group
 } from 'lucide-react';
 
-type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'users';
+type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users';
+
+/** Snapshot of user form when opening "Create new group" from Users tab (preserved in memory, no API). */
+export interface PendingUserFormSnapshot {
+  username: string;
+  password: string;
+  name: string;
+  extension: string;
+  role: 'admin' | 'supervisor';
+  monitor_modes: string[];
+  group_ids: string[];
+}
 
 type AppProps = { onLogout: () => void };
 
@@ -34,6 +46,10 @@ function App({ onLogout }: AppProps) {
     onAuthFailure: onLogout,
   });
   const [activeTab, setActiveTab] = useState<TabType>('extensions');
+  /** User form preserved when switching to Groups to create a new group (no API call). */
+  const [pendingUserForm, setPendingUserForm] = useState<PendingUserFormSnapshot | null>(null);
+  /** When set, Groups tab opens create form with this name pre-filled; consumed after applied. */
+  const [groupsTabIntent, setGroupsTabIntent] = useState<{ prefillGroupName: string } | null>(null);
   const [supervisorModal, setSupervisorModal] = useState<{
     isOpen: boolean;
     mode: 'listen' | 'whisper' | 'barge';
@@ -122,22 +138,28 @@ function App({ onLogout }: AppProps) {
             <span className="header-monitor-label">{getMonitorModesLabel(getUser()?.monitor_modes)}</span>
           </span>
 
-          <button 
-            className="btn" 
-            onClick={() => sendAction({ action: 'sync' })}
-            title="Sync all data"
-          >
-            <RefreshCw size={14} />
-            Sync
-          </button>
+          <div className={`connection-status ${connected ? 'connected' : ''}`}>
+            <span className="connection-icon" aria-hidden>
+              {connected ? (
+                <Wifi size={16} />
+              ) : (
+                <WifiOff size={16} />
+              )}
+            </span>
+            <span className="connection-text">
+              {connected ? 'Connected' : 'Disconnected'}
+            </span>
+          </div>
 
-          <button 
-            className="btn" 
-            onClick={() => setCrmSettingsOpen(true)}
-            title="CRM Settings"
-          >
-            <Settings size={14} />
-          </button>
+          {getUser()?.role === 'admin' && (
+            <button 
+              className="btn" 
+              onClick={() => setCrmSettingsOpen(true)}
+              title="CRM Settings"
+            >
+              <Settings size={14} />
+            </button>
+          )}
 
           <button 
             className="btn" 
@@ -147,23 +169,6 @@ function App({ onLogout }: AppProps) {
             <LogOut size={14} />
             Logout
           </button>
-
-          <div className="connection-status">
-            <div className={`connection-dot ${connected ? 'connected' : ''}`} />
-            <span className="connection-text">
-              {connected ? (
-                <>
-                  <Wifi size={14} style={{ marginRight: 6 }} />
-                  Connected
-                </>
-              ) : (
-                <>
-                  <WifiOff size={14} style={{ marginRight: 6 }} />
-                  Disconnected
-                </>
-              )}
-            </span>
-          </div>
         </div>
       </header>
 
@@ -222,13 +227,22 @@ function App({ onLogout }: AppProps) {
             Call History
           </button>
           {getUser()?.role === 'admin' && (
-            <button 
-              className={`tab ${activeTab === 'users' ? 'active' : ''}`}
-              onClick={() => setActiveTab('users')}
-            >
-              <UserCog size={16} />
-              Users
-            </button>
+            <>
+              <button 
+                className={`tab ${activeTab === 'groups' ? 'active' : ''}`}
+                onClick={() => setActiveTab('groups')}
+              >
+                <Group size={16} />
+                Groups
+              </button>
+              <button 
+                className={`tab ${activeTab === 'users' ? 'active' : ''}`}
+                onClick={() => setActiveTab('users')}
+              >
+                <UserCog size={16} />
+                Users
+              </button>
+            </>
           )}
         </div>
 
@@ -237,6 +251,7 @@ function App({ onLogout }: AppProps) {
           <ExtensionsPanel 
             extensions={state?.extensions || {}}
             onSupervisorAction={handleSupervisorAction}
+            onSync={() => sendAction({ action: 'sync' })}
           />
         )}
 
@@ -244,6 +259,7 @@ function App({ onLogout }: AppProps) {
           <ActiveCallsPanel 
             calls={state?.active_calls || {}}
             onSupervisorAction={handleSupervisorAction}
+            onSync={() => sendAction({ action: 'sync' })}
           />
         )}
 
@@ -253,6 +269,7 @@ function App({ onLogout }: AppProps) {
             members={state?.queue_members || {}}
             entries={state?.queue_entries || {}}
             sendAction={sendAction}
+            onSync={() => sendAction({ action: 'sync' })}
           />
         )}
 
@@ -260,8 +277,23 @@ function App({ onLogout }: AppProps) {
           <CallLogPanel />
         )}
 
+        {activeTab === 'groups' && (
+          <GroupsPanel
+            initialGroupName={groupsTabIntent?.prefillGroupName ?? undefined}
+            onConsumeIntent={groupsTabIntent ? () => setGroupsTabIntent(null) : undefined}
+          />
+        )}
+
         {activeTab === 'users' && (
-          <UsersPanel />
+          <UsersPanel
+            pendingUserForm={pendingUserForm}
+            onClearPendingUserForm={() => setPendingUserForm(null)}
+            onOpenCreateGroup={(formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => {
+              setPendingUserForm(formSnapshot);
+              setGroupsTabIntent({ prefillGroupName: prefillGroupName ?? '' });
+              setActiveTab('groups');
+            }}
+          />
         )}
 
         {/* Last update timestamp */}

@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, Phone, List, ChevronDown,
+  X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus,
 } from 'lucide-react';
 import { getAuthHeaders, getUser } from '../auth';
+import type { PendingUserFormSnapshot } from '../App';
 
 export interface OpDeskUser {
   id: number;
@@ -14,18 +16,24 @@ export interface OpDeskUser {
   monitor_mode?: string;
   /** Multiple monitor modes (listen, whisper, barge). */
   monitor_modes?: string[];
+  /** Access via groups (agents/queues come from groups). */
+  group_ids?: number[];
+  /** Computed from groups for display. */
   agent_extensions?: string[];
   queue_names?: string[];
 }
 
-interface AgentOption {
-  extension: string;
+interface GroupOption {
+  id: number;
   name: string;
 }
 
-interface QueueOption {
-  id: number;
-  queue_name: string;
+export interface UsersPanelProps {
+  /** Restored form when returning from Groups tab (create new group flow). */
+  pendingUserForm?: PendingUserFormSnapshot | null;
+  onClearPendingUserForm?: () => void;
+  /** Open Groups tab with create form; pass current form snapshot and optional group name to pre-fill. */
+  onOpenCreateGroup?: (formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => void;
 }
 
 function MultiSelectDropdown({
@@ -43,12 +51,52 @@ function MultiSelectDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
+  const [listStyle, setListStyle] = useState<React.CSSProperties | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const updateListPosition = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setListStyle({
+      position: 'fixed' as const,
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: rect.width,
+      maxHeight: 220,
+      overflowY: 'auto' as const,
+      overflowX: 'hidden' as const,
+      overscrollBehavior: 'contain',
+      WebkitOverflowScrolling: 'touch',
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border-primary)',
+      borderRadius: 'var(--radius-md)',
+      boxShadow: 'var(--shadow-lg)',
+      zIndex: 10000,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setListStyle(null);
+      return;
+    }
+    updateListPosition();
+    const onScrollOrResize = () => updateListPosition();
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  }, [open, updateListPosition]);
 
   useEffect(() => {
     if (!open) return;
     const handle = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+      const el = e.target as Node;
+      if (containerRef.current?.contains(el) || listRef.current?.contains(el)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
@@ -95,6 +143,32 @@ function MultiSelectDropdown({
   };
 
   const selectedLabels = value.map(v => options.find(o => o.value === v)?.label ?? v);
+
+  const listbox = open && listStyle ? (
+    <div
+      ref={listRef}
+      role="listbox"
+      style={listStyle}
+      onClick={e => e.stopPropagation()}
+      onWheel={e => e.stopPropagation()}
+    >
+      {filtered.length === 0 ? (
+        <div style={{ padding: 12, color: 'var(--text-muted)', fontSize: 13 }}>{emptyMessage}</div>
+      ) : (
+        filtered.map(opt => (
+          <div
+            key={opt.value}
+            role="option"
+            aria-selected={value.includes(opt.value)}
+            onClick={() => toggle(opt.value)}
+            style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, background: value.includes(opt.value) ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)' }}
+          >
+            {opt.label}
+          </div>
+        ))
+      )}
+    </div>
+  ) : null;
 
   return (
     <div ref={containerRef} style={{ position: 'relative' }}>
@@ -143,44 +217,23 @@ function MultiSelectDropdown({
           <ChevronDown size={16} style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
         </div>
       </div>
-      {open && (
-        <div
-          role="listbox"
-          style={{ position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 4, maxHeight: 220, overflowY: 'auto', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 50 }}
-          onClick={e => e.stopPropagation()}
-        >
-          {filtered.length === 0 ? (
-            <div style={{ padding: 12, color: 'var(--text-muted)', fontSize: 13 }}>{emptyMessage}</div>
-          ) : (
-            filtered.map(opt => (
-              <div
-                key={opt.value}
-                role="option"
-                aria-selected={value.includes(opt.value)}
-                onClick={() => toggle(opt.value)}
-                style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, background: value.includes(opt.value) ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)' }}
-              >
-                {opt.label}
-              </div>
-            ))
-          )}
-        </div>
-      )}
+      {listbox && createPortal(listbox, document.body)}
     </div>
   );
 }
 
-export function UsersPanel() {
+export function UsersPanel(props: UsersPanelProps = {}) {
+  const { pendingUserForm = null, onClearPendingUserForm, onOpenCreateGroup } = props;
   const currentUser = getUser();
   const isAdmin = currentUser?.role === 'admin';
   const [users, setUsers] = useState<OpDeskUser[]>([]);
-  const [agents, setAgents] = useState<AgentOption[]>([]);
-  const [queues, setQueues] = useState<QueueOption[]>([]);
+  const [groups, setGroups] = useState<GroupOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingUser, setEditingUser] = useState<OpDeskUser | null>(null);
   const [usersSubTab, setUsersSubTab] = useState<'create' | 'list'>('create');
   const [expandedAccessUserId, setExpandedAccessUserId] = useState<number | null>(null);
+  const [newGroupNameForCreate, setNewGroupNameForCreate] = useState('');
   const [form, setForm] = useState({
     username: '',
     password: '',
@@ -188,37 +241,47 @@ export function UsersPanel() {
     extension: '',
     role: 'supervisor' as 'admin' | 'supervisor',
     monitor_modes: ['listen'] as string[],
-    agent_extensions: [] as string[],
-    queue_names: [] as string[],
+    group_ids: [] as string[],
   });
+
+  // Restore user form when returning from Groups tab (create new group flow)
+  useEffect(() => {
+    if (!pendingUserForm || !onClearPendingUserForm) return;
+    setForm({
+      username: pendingUserForm.username,
+      password: pendingUserForm.password,
+      name: pendingUserForm.name,
+      extension: pendingUserForm.extension,
+      role: pendingUserForm.role,
+      monitor_modes: pendingUserForm.monitor_modes,
+      group_ids: pendingUserForm.group_ids,
+    });
+    setUsersSubTab('create');
+    onClearPendingUserForm();
+  }, [pendingUserForm, onClearPendingUserForm]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setMessage(null);
     try {
-      const [usersRes, agentsRes, queuesRes] = await Promise.all([
+      const [usersRes, groupsRes] = await Promise.all([
         fetch('/api/settings/users', { headers: getAuthHeaders() }),
-        fetch('/api/settings/agents', { headers: getAuthHeaders() }),
-        fetch('/api/settings/queues', { headers: getAuthHeaders() }),
+        fetch('/api/settings/groups', { headers: getAuthHeaders() }),
       ]);
       if (usersRes.ok) {
         const d = await usersRes.json();
         setUsers(d.users || []);
       }
-      if (agentsRes.ok) {
-        const d = await agentsRes.json();
-        setAgents(d.agents || []);
-      }
-      if (queuesRes.ok) {
-        const d = await queuesRes.json();
-        setQueues(d.queues || []);
+      if (groupsRes.ok) {
+        const d = await groupsRes.json();
+        setGroups((d.groups || []).map((g: { id: number; name: string }) => ({ id: g.id, name: g.name })));
       }
       if (!usersRes.ok && usersRes.status === 403) {
         setMessage({ type: 'error', text: 'Admin access required to manage users.' });
       }
     } catch (e) {
       console.error(e);
-      setMessage({ type: 'error', text: 'Failed to load users or options' });
+      setMessage({ type: 'error', text: 'Failed to load users or groups' });
     } finally {
       setLoading(false);
     }
@@ -237,8 +300,7 @@ export function UsersPanel() {
       extension: '',
       role: 'supervisor',
       monitor_modes: ['listen'],
-      agent_extensions: [],
-      queue_names: [],
+      group_ids: [],
     });
     setUsersSubTab('list');
   }, []);
@@ -257,8 +319,7 @@ export function UsersPanel() {
       extension: u.extension || '',
       role: (u.role as 'admin' | 'supervisor') || 'supervisor',
       monitor_modes: [...modes],
-      agent_extensions: u.agent_extensions || [],
-      queue_names: u.queue_names || [],
+      group_ids: (u.group_ids || []).map(String),
     });
     setUsersSubTab('create');
   };
@@ -285,8 +346,7 @@ export function UsersPanel() {
             role: form.role,
             monitor_modes: form.monitor_modes,
             password: form.password || undefined,
-            agent_extensions: form.agent_extensions,
-            queue_names: form.queue_names,
+            group_ids: form.group_ids.map(Number),
           }),
         });
         if (!res.ok) {
@@ -305,8 +365,7 @@ export function UsersPanel() {
             extension: form.extension || null,
             role: form.role,
             monitor_modes: form.monitor_modes.length ? form.monitor_modes : ['listen'],
-            agent_extensions: form.agent_extensions,
-            queue_names: form.queue_names,
+            group_ids: form.group_ids.map(Number),
           }),
         });
         if (!res.ok) {
@@ -371,21 +430,16 @@ export function UsersPanel() {
     );
   }
 
-  const extCount = (u: OpDeskUser) => u.agent_extensions?.length ?? 0;
-  const queueCount = (u: OpDeskUser) => u.queue_names?.length ?? 0;
-
+  const groupCount = (u: OpDeskUser) => u.group_ids?.length ?? 0;
   const accessSummary = (u: OpDeskUser) => {
-    const ext = extCount(u);
-    const q = queueCount(u);
-    if (ext === 0 && q === 0) return { short: 'All extensions & queues', title: 'All extensions & queues', full: [] as string[] };
-    const parts: string[] = [];
-    if (ext > 0) parts.push(ext === 1 ? '1 extension' : `${ext} extensions`);
-    if (q > 0) parts.push(q === 1 ? '1 queue' : `${q} queues`);
-    const short = parts.join(', ');
-    const full: string[] = [];
-    if (ext > 0) full.push(`Ext: ${(u.agent_extensions || []).join(', ')}`);
-    if (q > 0) full.push(`Queues: ${(u.queue_names || []).join(', ')}`);
-    const title = full.join(' · ');
+    const n = groupCount(u);
+    const groupNames = (u.group_ids || [])
+      .map(gid => groups.find(g => g.id === gid)?.name)
+      .filter(Boolean) as string[];
+    if (n === 0) return { short: 'No groups', title: 'No groups assigned', full: [] as string[] };
+    const short = n === 1 ? '1 group' : `${n} groups`;
+    const title = groupNames.length ? groupNames.join(', ') : short;
+    const full = groupNames.length ? groupNames : [short];
     return { short, title, full };
   };
 
@@ -512,38 +566,55 @@ export function UsersPanel() {
               </div>
             </div>
 
-            <div className="up-form-divider">Access</div>
+            <div className="up-form-divider">Access (via groups)</div>
             <div className="up-form-row single">
               <div className="up-form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Phone size={14} />
-                  Extensions / agents (select which this user can access)
+                  <Users size={14} />
+                  Groups (user gets access to agents and queues from selected groups)
                 </label>
                 <MultiSelectDropdown
-                  options={agents.map(a => ({
-                    value: a.extension,
-                    label: `${a.extension} ${a.name !== a.extension ? a.name : ''}`.trim() || a.extension,
-                  }))}
-                  value={form.agent_extensions}
-                  onChange={agent_extensions => setForm(f => ({ ...f, agent_extensions }))}
-                  placeholder="Select extension..."
-                  emptyMessage="No extensions in system"
+                  options={groups.map(g => ({ value: String(g.id), label: g.name }))}
+                  value={form.group_ids}
+                  onChange={group_ids => setForm(f => ({ ...f, group_ids }))}
+                  placeholder="Select groups..."
+                  emptyMessage="No groups. Create groups in the Groups tab first."
                 />
-              </div>
-            </div>
-            <div className="up-form-row single">
-              <div className="up-form-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <List size={14} />
-                  Queues (select which this user can access)
-                </label>
-                <MultiSelectDropdown
-                  options={queues.map(q => ({ value: q.queue_name, label: q.queue_name }))}
-                  value={form.queue_names}
-                  onChange={queue_names => setForm(f => ({ ...f, queue_names }))}
-                  placeholder="Select queue..."
-                  emptyMessage="No queues in system"
-                />
+                {onOpenCreateGroup && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={newGroupNameForCreate}
+                      onChange={e => setNewGroupNameForCreate(e.target.value)}
+                      placeholder="New group name (optional)"
+                      style={{ width: 200, flex: '0 0 auto' }}
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => {
+                        onOpenCreateGroup(
+                          {
+                            username: form.username,
+                            password: form.password,
+                            name: form.name,
+                            extension: form.extension,
+                            role: form.role,
+                            monitor_modes: form.monitor_modes,
+                            group_ids: form.group_ids,
+                          },
+                          newGroupNameForCreate.trim() || undefined
+                        );
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Plus size={14} />
+                      <Group size={14} />
+                      Create new group
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 

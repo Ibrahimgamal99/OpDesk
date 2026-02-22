@@ -45,6 +45,9 @@ export interface QueueEntry {
 }
 
 export interface Queue {
+  /** Queue identifier (extension) from Asterisk */
+  extension?: string;
+  /** Display name (from DB or same as extension) */
   name: string;
   members: Record<string, { status: string; paused: boolean; membername: string }>;
   calls_waiting: number;

@@ -114,6 +114,37 @@ def get_extension_names_from_db() -> dict:
 
     return extension_names
 
+def get_queue_names_from_db() -> dict:
+    """Get queue names mapping (queue -> name) from the database."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_NAME', 'asterisk'))
+    queue_names = {}
+
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+
+        # Try FreePBX users table first (name field)
+        try:
+            cursor.execute("SELECT extension, descr FROM queues_config WHERE extension IS NOT NULL ORDER BY extension")
+            users = cursor.fetchall()
+            for u in users:
+                if u['extension']:
+                    ext = str(u['extension'])
+                    name = u.get('descr', '') or ''
+                    if name:
+                        queue_names[ext] = name
+        except Error as e:
+            log.debug(f"Could not get names from users table: {e}")
+
+        cursor.close()
+        conn.close()
+
+    except Error as e:
+        log.warning(f"⚠️  Database error getting extension names: {e}")
+
+    return queue_names
+
+
 def get_call_log_from_db(limit: int = None, date: str = None,
                          date_from: str = None, date_to: str = None,
                          allowed_extensions: Optional[List[str]] = None) -> list:
@@ -262,7 +293,7 @@ def get_call_log_count_from_db(date: str = None,
 
 def check_database_exists(db_name: str) -> bool:
     """Check if a database exists."""
-    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk').copy()
+    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk')).copy()
     config_no_db.pop('database')
     
     try:
@@ -280,7 +311,7 @@ def check_database_exists(db_name: str) -> bool:
 
 def execute_sql_file(sql_file_path: str) -> bool:
     """Execute SQL commands from a file."""
-    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk').copy()
+    config_no_db = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk')).copy()
     config_no_db.pop('database')
     
     try:
@@ -337,7 +368,7 @@ def init_settings_table():
         log.info("✅ OpDesk database already exists")
         # Verify table exists, create if missing
         try:
-            config = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk')
+            config = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk'))
             conn = mysql.connector.connect(**config)
             cursor = conn.cursor()
             cursor.execute("SHOW TABLES LIKE 'OpDesk_settings'")
@@ -372,7 +403,7 @@ def init_settings_table():
     if execute_sql_file(schema_path):
         # After creating database, connect to it and create table
         try:
-            config = get_db_config(os.getenv('DB_PASSWORD'),'OpDesk')
+            config = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk'))
             conn = mysql.connector.connect(**config)
             cursor = conn.cursor()
             cursor.execute("""
@@ -438,7 +469,7 @@ def set_setting(key: str, value: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    config = get_db_config(os.getenv('DB_PASSWORD', ''),'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_OpDesk', 'OpDesk'))
     
     try:
         # Ensure database and table exist
@@ -471,7 +502,7 @@ def get_all_settings() -> dict:
     Returns:
         Dictionary of all settings
     """
-    config = get_db_config(os.getenv('DB_PASSWORD', ''),'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_OpDesk', 'OpDesk'))
     settings = {}
 
     try:
@@ -499,7 +530,7 @@ def get_all_settings() -> dict:
 
 def ensure_users_extension_column():
     """Add extension column to users table if missing (migration for existing DBs)."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -522,7 +553,7 @@ def ensure_users_extension_column():
 
 def get_user_by_username(username: str) -> dict:
     """Get user by username. Returns dict with id, username, extension, name, role, password_hash, is_active or None."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -543,7 +574,7 @@ def get_user_by_extension(extension: str) -> dict:
     """Get user by extension. Returns dict with id, username, extension, name, role, password_hash, is_active or None."""
     if not extension or not str(extension).strip():
         return None
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -574,7 +605,7 @@ def verify_user_password(password_hash: str, password: str) -> bool:
 
 def update_last_login(user_id: int) -> None:
     """Update last_login_at for user."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -620,7 +651,7 @@ def authenticate_user(login: str, password: str) -> dict:
 
 def get_all_users() -> list:
     """Get all users (id, username, extension, name, role, is_active, monitor_modes). No password_hash."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -660,7 +691,7 @@ def create_user(username: str, password: str, name: str = None, extension: str =
     except Exception as e:
         log.warning(f"Password hash failed: {e}")
         return None
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -689,7 +720,7 @@ def update_user(user_id: int, name: str = None, extension: str = None, role: str
                 is_active: bool = None, monitor_mode: str = None, monitor_modes: list = None,
                 password: str = None) -> bool:
     """Update user. password optional (new hash). monitor_modes: optional list to set multiple modes. Returns True on success."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -736,7 +767,7 @@ def update_user(user_id: int, name: str = None, extension: str = None, role: str
 
 def delete_user(user_id: int) -> bool:
     """Delete user and their group assignments and monitor modes. Returns True on success."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -760,7 +791,7 @@ VALID_MONITOR_MODES = ('listen', 'whisper', 'barge')
 
 def ensure_user_monitor_modes_table():
     """Create user_monitor_modes table if missing and backfill users that have no modes (by role)."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -796,7 +827,7 @@ def ensure_user_monitor_modes_table():
 
 def get_user_monitor_modes(user_id: int) -> list:
     """Return list of monitor modes for user (from user_monitor_modes). Default ['listen'] if none set."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -821,7 +852,7 @@ def set_user_monitor_modes(user_id: int, modes: list) -> bool:
     valid = [m for m in (modes or []) if m in VALID_MONITOR_MODES]
     if not valid:
         valid = ['listen']
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -845,7 +876,7 @@ def set_user_monitor_modes(user_id: int, modes: list) -> bool:
 
 def get_user_by_id(user_id: int) -> Optional[dict]:
     """Get user by id (no password_hash). Includes monitor_modes (list)."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -868,9 +899,28 @@ def get_user_by_id(user_id: int) -> Optional[dict]:
         return None
 
 
+def get_user_group_ids(user_id: int) -> list:
+    """Return list of group ids the user belongs to (excluding user_<id> auto-groups for display)."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    out = []
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT g.id FROM user_groups ug JOIN groups g ON ug.group_id = g.id WHERE ug.user_id = %s AND g.name NOT LIKE 'user\\_%' ORDER BY g.name",
+            (user_id,)
+        )
+        out = [r['id'] for r in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+    except Error as e:
+        log.warning(f"⚠️  Database error get_user_group_ids: {e}")
+    return out
+
+
 def get_user_agents_and_queues(user_id: int) -> tuple:
-    """Return (list of agent extensions, list of queue names) for user via their groups."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    """Return (list of agent extensions, list of queue extensions) for user via their groups. Queue extensions are used for filtering in get_current_state (monitor.queues is keyed by extension)."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     agents = []
     queues = []
     try:
@@ -889,11 +939,11 @@ def get_user_agents_and_queues(user_id: int) -> tuple:
         )
         agents = [r['agent_ext'] for r in cursor.fetchall() if r.get('agent_ext')]
         cursor.execute(
-            "SELECT q.queue_name FROM group_queues gq JOIN queues q ON gq.queue_id = q.id "
+            "SELECT DISTINCT q.extension FROM group_queues gq JOIN queues q ON gq.queue_extension = q.extension "
             "WHERE gq.group_id IN (" + placeholders + ")",
             tuple(group_ids)
         )
-        queues = [r['queue_name'] for r in cursor.fetchall() if r.get('queue_name')]
+        queues = [str(r['extension']) for r in cursor.fetchall() if r.get('extension')]
         cursor.close()
         conn.close()
     except Error as e:
@@ -909,7 +959,7 @@ def set_user_agents_and_queues(user_id: int, agent_extensions: list, queue_names
     """
     if not user_id:
         return False
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -940,11 +990,8 @@ def set_user_agents_and_queues(user_id: int, agent_extensions: list, queue_names
             if not qname:
                 continue
             try:
-                cursor.execute("INSERT INTO queues (queue_name) VALUES (%s) ON DUPLICATE KEY UPDATE queue_name = queue_name", (qname,))
-                cursor.execute("SELECT id FROM queues WHERE queue_name = %s", (qname,))
-                qrow = cursor.fetchone()
-                if qrow:
-                    cursor.execute("INSERT INTO group_queues (group_id, queue_id) VALUES (%s, %s)", (group_id, qrow['id']))
+                cursor.execute("INSERT INTO queues (extension, queue_name) VALUES (%s, %s) ON DUPLICATE KEY UPDATE queue_name = VALUES(queue_name)", (qname, qname))
+                cursor.execute("INSERT INTO group_queues (group_id, queue_extension) VALUES (%s, %s)", (group_id, qname))
             except Error:
                 pass
         conn.commit()
@@ -956,9 +1003,240 @@ def set_user_agents_and_queues(user_id: int, agent_extensions: list, queue_names
         return False
 
 
+def get_groups_list() -> list:
+    """Return all groups (excluding auto-created user_<id> ones) with agents, queues, and user ids."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    out = []
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id, name FROM groups WHERE name NOT LIKE 'user\_%' ORDER BY name")
+        rows = cursor.fetchall()
+        for r in rows:
+            gid = r['id']
+            cursor.execute("SELECT agent_ext FROM group_agents WHERE group_id = %s", (gid,))
+            agents = [x['agent_ext'] for x in cursor.fetchall() if x.get('agent_ext')]
+            cursor.execute(
+                "SELECT q.extension, q.queue_name FROM group_queues gq JOIN queues q ON gq.queue_extension = q.extension WHERE gq.group_id = %s",
+                (gid,)
+            )
+            queues = [{"extension": x["extension"], "queue_name": x["queue_name"]} for x in cursor.fetchall()]
+            cursor.execute("SELECT user_id FROM user_groups WHERE group_id = %s", (gid,))
+            user_ids = [x['user_id'] for x in cursor.fetchall()]
+            out.append({
+                "id": gid,
+                "name": r["name"],
+                "agent_extensions": agents,
+                "queues": queues,
+                "user_ids": user_ids,
+            })
+        cursor.close()
+        conn.close()
+    except Error as e:
+        log.warning(f"⚠️  Database error get_groups_list: {e}")
+    return out
+
+
+def get_group(group_id: int):
+    """Return one group by id with agents, queues, and user ids, or None."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id, name FROM groups WHERE id = %s", (group_id,))
+        r = cursor.fetchone()
+        if not r:
+            cursor.close()
+            conn.close()
+            return None
+        gid = r['id']
+        cursor.execute("SELECT agent_ext FROM group_agents WHERE group_id = %s", (gid,))
+        agents = [x['agent_ext'] for x in cursor.fetchall() if x.get('agent_ext')]
+        cursor.execute(
+            "SELECT q.extension, q.queue_name FROM group_queues gq JOIN queues q ON gq.queue_extension = q.extension WHERE gq.group_id = %s",
+            (gid,)
+        )
+        queues = [{"extension": x["extension"], "queue_name": x["queue_name"]} for x in cursor.fetchall()]
+        cursor.execute("SELECT user_id FROM user_groups WHERE group_id = %s", (gid,))
+        user_ids = [x['user_id'] for x in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+        return {
+            "id": gid,
+            "name": r["name"],
+            "agent_extensions": agents,
+            "queues": queues,
+            "user_ids": user_ids,
+        }
+    except Error as e:
+        log.warning(f"⚠️  Database error get_group: {e}")
+        return None
+
+
+def create_group(name: str):
+    """Create a group. Returns group id or None."""
+    name = (name or '').strip()
+    if not name:
+        return None
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO groups (name) VALUES (%s)", (name,))
+        gid = cursor.lastrowid
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return gid
+    except Error as e:
+        log.warning(f"⚠️  Database error create_group: {e}")
+        return None
+
+
+def update_group(group_id: int, name: str) -> bool:
+    """Update group name. Do not use for user_<id> groups."""
+    name = (name or '').strip()
+    if not name or not group_id:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE groups SET name = %s WHERE id = %s AND name NOT LIKE 'user\_%'", (name, group_id))
+        ok = cursor.rowcount > 0
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return ok
+    except Error as e:
+        log.warning(f"⚠️  Database error update_group: {e}")
+        return False
+
+
+def set_group_agents(group_id: int, agent_extensions: list) -> bool:
+    """Set agents for a group. Ensures agents exist in agents table."""
+    if not group_id:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM group_agents WHERE group_id = %s", (group_id,))
+        for ext in (agent_extensions or []):
+            ext = str(ext).strip()
+            if not ext:
+                continue
+            try:
+                cursor.execute("INSERT IGNORE INTO agents (extension, name) VALUES (%s, %s)", (ext, ext))
+                cursor.execute("INSERT INTO group_agents (group_id, agent_ext) VALUES (%s, %s)", (group_id, ext))
+            except Error:
+                pass
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error set_group_agents: {e}")
+        return False
+
+
+def set_group_queues(group_id: int, queue_extensions: list) -> bool:
+    """Set queues for a group by queue extension. Ensures queues exist (by extension)."""
+    if not group_id:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM group_queues WHERE group_id = %s", (group_id,))
+        for qext in (queue_extensions or []):
+            qext = str(qext).strip()
+            if not qext or qext.lower() == "default":
+                continue
+            try:
+                cursor.execute("INSERT INTO queues (extension, queue_name) VALUES (%s, %s) ON DUPLICATE KEY UPDATE queue_name = VALUES(queue_name)", (qext, qext))
+                cursor.execute("INSERT INTO group_queues (group_id, queue_extension) VALUES (%s, %s)", (group_id, qext))
+            except Error:
+                pass
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error set_group_queues: {e}")
+        return False
+
+
+def set_group_users(group_id: int, user_ids: list) -> bool:
+    """Set which users belong to this group (replaces existing)."""
+    if not group_id:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM user_groups WHERE group_id = %s", (group_id,))
+        for uid in (user_ids or []):
+            try:
+                uid = int(uid)
+                cursor.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (uid, group_id))
+            except (ValueError, Error):
+                pass
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error set_group_users: {e}")
+        return False
+
+
+def set_user_groups(user_id: int, group_ids: list) -> bool:
+    """Set which groups a user belongs to (replaces existing). Removes user from any user_<id> auto-group."""
+    if not user_id:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM user_groups WHERE user_id = %s", (user_id,))
+        for gid in (group_ids or []):
+            try:
+                gid = int(gid)
+                cursor.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (user_id, gid))
+            except (ValueError, Error):
+                pass
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error set_user_groups: {e}")
+        return False
+
+
+def delete_group(group_id: int) -> bool:
+    """Delete a group (only if not a user_<id> auto-group). CASCADE removes group_agents, group_queues, user_groups."""
+    if not group_id:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM groups WHERE id = %s AND name NOT LIKE 'user\_%'", (group_id,))
+        ok = cursor.rowcount > 0
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return ok
+    except Error as e:
+        log.warning(f"⚠️  Database error delete_group: {e}")
+        return False
+
+
 def get_agents_list() -> list:
     """Get list of agents from OpDesk agents table: [{ extension, name }, ...]."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -973,16 +1251,20 @@ def get_agents_list() -> list:
 
 
 def get_queues_list() -> list:
-    """Get list of queues from OpDesk queues table: [{ id, queue_name }, ...]."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    """Get list of queues from OpDesk queues table: [{ extension, queue_name }, ...]. Excludes 'default' queue."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id, queue_name FROM queues ORDER BY queue_name")
+        cursor.execute("SELECT extension, queue_name FROM queues ORDER BY queue_name")
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
-        return [{"id": r["id"], "queue_name": r["queue_name"]} for r in rows]
+        return [
+            {"extension": r["extension"], "queue_name": r["queue_name"]}
+            for r in rows
+            if (r.get("extension") or "").strip().lower() != "default"
+        ]
     except Error as e:
         log.warning(f"⚠️  Database error get_queues_list: {e}")
         return []
@@ -992,7 +1274,7 @@ def sync_agents_from_extensions(extension_list: list, name_map: dict) -> None:
     """Ensure OpDesk agents table has entries for given extensions (from Asterisk/FreePBX)."""
     if not extension_list:
         return
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -1009,19 +1291,20 @@ def sync_agents_from_extensions(extension_list: list, name_map: dict) -> None:
         log.warning(f"⚠️  Database error sync_agents_from_extensions: {e}")
 
 
-def sync_queues_from_list(queue_names: list) -> None:
-    """Ensure OpDesk queues table has entries for given queue names (from Asterisk)."""
-    if not queue_names:
+def sync_queues_from_list(queue_extensions: list, name_map: dict = None) -> None:
+    """Ensure OpDesk queues table has entries for given queue extensions (extension as PK). Uses name_map for display names. Skips 'default' queue."""
+    if not queue_extensions:
         return
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), 'OpDesk')
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
-        for qname in queue_names:
-            qname = (qname or '').strip()
-            if not qname:
+        for qext in queue_extensions:
+            qext = (qext or '').strip()
+            if not qext or qext.lower() == "default":
                 continue
-            cursor.execute("INSERT INTO queues (queue_name) VALUES (%s) ON DUPLICATE KEY UPDATE queue_name = queue_name", (qname,))
+            name = (name_map or {}).get(qext) or qext
+            cursor.execute("INSERT INTO queues (extension, queue_name) VALUES (%s, %s) ON DUPLICATE KEY UPDATE queue_name = VALUES(queue_name)", (qext, name))
         conn.commit()
         cursor.close()
         conn.close()
