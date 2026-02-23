@@ -27,14 +27,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
-from ami import AMIExtensionsMonitor, _format_duration, _meaningful, DIALPLAN_CTX, normalize_interface
+from ami import AMIExtensionsMonitor, _format_duration, DIALPLAN_CTX, normalize_interface
 from db_manager import (
     get_extensions_from_db, get_extension_names_from_db, get_queue_names_from_db, init_settings_table,
     get_setting, set_setting, get_all_settings,
-    ensure_users_extension_column, ensure_user_monitor_modes_table, authenticate_user,
+    ensure_users_extension_column, ensure_users_extension_secret_column, ensure_user_monitor_modes_table, authenticate_user,
     get_call_log_count_from_db,
     get_all_users, get_user_by_id, create_user as db_create_user, update_user as db_update_user,
-    delete_user as db_delete_user, get_user_agents_and_queues, set_user_agents_and_queues,
+    delete_user as db_delete_user, get_user_agents_and_queues,
     get_user_group_ids, set_user_groups,
     get_groups_list, get_group, create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
     get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
@@ -571,6 +571,7 @@ async def lifespan(app: FastAPI):
     init_settings_table()
     # Ensure users table has extension column (login by ext or username)
     ensure_users_extension_column()
+    ensure_users_extension_secret_column()
     ensure_user_monitor_modes_table()
 
     # Initialize default settings if they don't exist
@@ -581,6 +582,7 @@ async def lifespan(app: FastAPI):
         'CRM_ENDPOINT_PATH': '/api/calls',
         'CRM_TIMEOUT': '30',
         'CRM_VERIFY_SSL': 'true',
+        'WEBRTC_PBX_SERVER': '',
     }
     
     for key, default_value in default_settings.items():
@@ -705,7 +707,7 @@ security = HTTPBearer(auto_error=False)
 
 
 def _get_user_scope(user_id: int) -> dict:
-    """Load user extension, monitor_modes (list), and allowed agents/queues. Admin gets None for allowed_* (see all)."""
+    """Load user extension, monitor_modes (list), and allowed agents/queues. Admin gets None for allowed_* (see all). Agent sees only their extension."""
     user = get_user_by_id(user_id)
     if not user:
         return {"role": "supervisor", "extension": None, "monitor_modes": ["listen"], "allowed_agent_extensions": [], "allowed_queue_names": []}
@@ -714,6 +716,10 @@ def _get_user_scope(user_id: int) -> dict:
     monitor_modes = user.get("monitor_modes") or ["listen"]
     if role == "admin":
         return {"role": "admin", "extension": extension, "monitor_modes": monitor_modes, "allowed_agent_extensions": None, "allowed_queue_names": None}
+    if role == "agent":
+        # Agent sees only their own extension and no queues
+        agent_exts = [extension] if extension else []
+        return {"role": "agent", "extension": extension, "monitor_modes": [], "allowed_agent_extensions": agent_exts, "allowed_queue_names": []}
     agents, queues = get_user_agents_and_queues(user_id)
     return {
         "role": role,
@@ -790,6 +796,21 @@ async def auth_login(body: LoginBody):
 async def auth_me(current_user: dict = Depends(get_current_user)):
     """Return current user with role, extension, and filter scope (requires valid token)."""
     return current_user
+
+
+class UpdateMeBody(BaseModel):
+    extension_secret: Optional[str] = None
+
+
+@app.patch("/api/auth/me")
+async def update_me(body: UpdateMeBody, current_user: dict = Depends(get_current_user)):
+    """Update current user's own profile. Only extension_secret is allowed (for WebRTC)."""
+    if body.extension_secret is None:
+        raise HTTPException(status_code=400, detail="extension_secret required")
+    ok = db_update_user(current_user["id"], extension_secret=body.extension_secret)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to update extension secret")
+    return {"success": True, "message": "Extension secret saved"}
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -1605,7 +1626,7 @@ async def get_call_log_endpoint(
 ):
     """
     Get call log / CDR history.
-    
+    Admin: all calls. Supervisor/agent: only calls for their allowed extensions.
     Query params:
         limit: Maximum number of records (default 100)
         date: Filter by exact date in 'YYYY-MM-DD' format (optional)
@@ -1613,9 +1634,12 @@ async def get_call_log_endpoint(
         date_to: Filter up to this date inclusive, 'YYYY-MM-DD' (optional)
     """
     try:
+        allowed_ext = None if current_user.get("role") == "admin" else (current_user.get("allowed_agent_extensions") or [])
         data = get_call_log(limit=limit, date=date,
-                            date_from=date_from, date_to=date_to)
-        total = get_call_log_count_from_db(date=date, date_from=date_from, date_to=date_to)
+                            date_from=date_from, date_to=date_to,
+                            allowed_extensions=allowed_ext)
+        total = get_call_log_count_from_db(date=date, date_from=date_from, date_to=date_to,
+                                           allowed_extensions=allowed_ext)
         return {"calls": data, "total": total}
     except Exception as e:
         log.error(f"Error fetching call log: {e}")
@@ -1638,7 +1662,7 @@ async def serve_recording(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Security: only allow serving files from the recording root directory
-    root_dir = os.getenv('ASTERISK_RECORDING_ROOT_DIR', '/home/ibrahim/pyc/voip/')
+    root_dir = os.getenv('ASTERISK_RECORDING_ROOT_DIR')
     
     # Normalize paths
     requested_path = os.path.normpath(file_path)

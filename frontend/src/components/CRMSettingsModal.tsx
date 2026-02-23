@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   X, Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff, Settings,
-  ChevronDown, ChevronRight, Plug,
+  ChevronDown, ChevronRight, Plug, Server,
 } from 'lucide-react';
 import { getAuthHeaders } from '../auth';
 
-export type SettingsTab = 'integrations' | 'qos';
+export type SettingsTab = 'integrations' | 'qos' | 'webrtc';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -52,6 +52,10 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [qosLoading, setQosLoading] = useState(false);
   const [qosMessage, setQosMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [webrtcPbxServer, setWebrtcPbxServer] = useState('');
+  const [webrtcLoading, setWebrtcLoading] = useState(false);
+  const [webrtcSaving, setWebrtcSaving] = useState(false);
+  const [webrtcMessage, setWebrtcMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -60,6 +64,52 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
       loadConfig();
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'webrtc') {
+      loadWebrtcSettings();
+    }
+  }, [isOpen, activeTab]);
+
+  const loadWebrtcSettings = async () => {
+    setWebrtcLoading(true);
+    setWebrtcMessage(null);
+    try {
+      const response = await fetch('/api/settings', { headers: getAuthHeaders() });
+      if (response.ok) {
+        const data = await response.json();
+        setWebrtcPbxServer(data.settings?.WEBRTC_PBX_SERVER ?? '');
+      }
+    } catch (error) {
+      console.error('Failed to load WebRTC settings:', error);
+      setWebrtcMessage({ type: 'error', text: 'Failed to load WebRTC settings' });
+    } finally {
+      setWebrtcLoading(false);
+    }
+  };
+
+  const saveWebrtcSettings = async () => {
+    setWebrtcSaving(true);
+    setWebrtcMessage(null);
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ WEBRTC_PBX_SERVER: webrtcPbxServer.trim() }),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setWebrtcMessage({ type: 'success', text: 'WebRTC settings saved successfully' });
+      } else {
+        setWebrtcMessage({ type: 'error', text: data.detail || 'Failed to save WebRTC settings' });
+      }
+    } catch (error) {
+      console.error('Failed to save WebRTC settings:', error);
+      setWebrtcMessage({ type: 'error', text: 'Failed to save WebRTC settings' });
+    } finally {
+      setWebrtcSaving(false);
+    }
+  };
 
   const loadConfig = async () => {
     setLoading(true);
@@ -212,7 +262,68 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
             <Signal size={16} />
             Quality of Service
           </button>
+          <button
+            type="button"
+            className={`settings-tab ${activeTab === 'webrtc' ? 'active' : ''}`}
+            onClick={() => setActiveTab('webrtc')}
+          >
+            <Server size={16} />
+            WebRTC
+          </button>
         </div>
+
+        {activeTab === 'webrtc' && (
+          <div className="settings-body">
+            {webrtcLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48 }}>
+                <Loader2 size={28} className="spinner" />
+                <p style={{ marginTop: 16, color: 'var(--text-secondary)', fontSize: 14 }}>Loading WebRTC settings...</p>
+              </div>
+            ) : (
+              <div className="settings-section">
+                <div className="settings-section-header">
+                  <div className="settings-section-icon">
+                    <Server size={20} />
+                  </div>
+                  <div>
+                    <div className="settings-section-title">WebRTC / PBX WebSocket</div>
+                    <div className="settings-section-desc">
+                      WebSocket URL of your PBX server for WebRTC. Use the form wss://server:port/ws or ws://server:port/ws.
+                    </div>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">WebSocket URL</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="wss://server:port/ws"
+                    value={webrtcPbxServer}
+                    onChange={(e) => setWebrtcPbxServer(e.target.value)}
+                  />
+                </div>
+                {webrtcMessage && (
+                  <div className={`settings-alert ${webrtcMessage.type === 'success' ? 'success' : 'error'}`}>
+                    {webrtcMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                    <span>{webrtcMessage.text}</span>
+                  </div>
+                )}
+                <div className="settings-actions-row">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={saveWebrtcSettings}
+                    disabled={webrtcSaving}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                  >
+                    {webrtcSaving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+                    {webrtcSaving ? 'Saving...' : 'Save WebRTC settings'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {activeTab === 'qos' && (
           <div className="settings-body">

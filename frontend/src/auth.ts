@@ -42,9 +42,10 @@ export function getUser(): User | null {
   }
 }
 
-/** True if current user is a supervisor with a limited scope (only some extensions/queues). */
+/** True if current user has limited scope (supervisor with groups, or agent seeing only their extension). */
 export function isFilteredScope(): boolean {
   const u = getUser();
+  if (u?.role === 'agent') return true;
   return u?.role === 'supervisor' && (
     (Array.isArray(u.allowed_agent_extensions) && u.allowed_agent_extensions.length > 0) ||
     (Array.isArray(u.allowed_queue_names) && u.allowed_queue_names.length > 0)
