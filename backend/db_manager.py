@@ -551,6 +551,29 @@ def ensure_users_extension_column():
         log.warning(f"⚠️  Migration users.extension: {e}")
 
 
+def ensure_users_extension_secret_column():
+    """Add extension_secret column to users table if missing (migration for existing DBs)."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            ALTER TABLE users
+            ADD COLUMN extension_secret VARCHAR(255) NULL AFTER extension
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        log.info("Added extension_secret column to users table")
+    except Error as e:
+        if "Duplicate column name" in str(e):
+            pass  # Column already exists
+        else:
+            log.warning(f"⚠️  Migration users.extension_secret: {e}")
+    except Exception as e:
+        log.warning(f"⚠️  Migration users.extension_secret: {e}")
+
+
 def get_user_by_username(username: str) -> dict:
     """Get user by username. Returns dict with id, username, extension, name, role, password_hash, is_active or None."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
@@ -699,7 +722,7 @@ def create_user(username: str, password: str, name: str = None, extension: str =
             "INSERT INTO users (username, extension, password_hash, name, role) "
             "VALUES (%s, %s, %s, %s, %s)",
             (username, (extension or '').strip() or None, password_hash, (name or '').strip() or None,
-             role if role in ('admin', 'supervisor') else 'supervisor')
+             role if role in ('admin', 'supervisor', 'agent') else 'supervisor')
         )
         user_id = cursor.lastrowid
         conn.commit()
@@ -718,8 +741,8 @@ def create_user(username: str, password: str, name: str = None, extension: str =
 
 def update_user(user_id: int, name: str = None, extension: str = None, role: str = None,
                 is_active: bool = None, monitor_mode: str = None, monitor_modes: list = None,
-                password: str = None) -> bool:
-    """Update user. password optional (new hash). monitor_modes: optional list to set multiple modes. Returns True on success."""
+                password: str = None, extension_secret: str = None) -> bool:
+    """Update user. password optional (new hash). extension_secret: optional (for WebRTC). monitor_modes: optional list to set multiple modes. Returns True on success."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
@@ -737,12 +760,15 @@ def update_user(user_id: int, name: str = None, extension: str = None, role: str
         if extension is not None:
             updates.append("extension = %s")
             params.append((str(extension).strip() or None))
-        if role is not None and role in ('admin', 'supervisor'):
+        if role is not None and role in ('admin', 'supervisor', 'agent'):
             updates.append("role = %s")
             params.append(role)
         if is_active is not None:
             updates.append("is_active = %s")
             params.append(1 if is_active else 0)
+        if extension_secret is not None:
+            updates.append("extension_secret = %s")
+            params.append((extension_secret or '').strip() or None)
         if password is not None and password:
             try:
                 import bcrypt
@@ -812,7 +838,7 @@ def ensure_user_monitor_modes_table():
             cursor.execute("SELECT 1 FROM user_monitor_modes WHERE user_id = %s LIMIT 1", (uid,))
             if cursor.fetchone():
                 continue
-            modes = list(VALID_MONITOR_MODES) if role == 'admin' else ['listen']
+            modes = list(VALID_MONITOR_MODES) if role == 'admin' else ([] if role == 'agent' else ['listen'])
             for m in modes:
                 try:
                     cursor.execute("INSERT IGNORE INTO user_monitor_modes (user_id, mode) VALUES (%s, %s)", (uid, m))

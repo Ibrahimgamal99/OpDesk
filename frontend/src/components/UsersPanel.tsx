@@ -239,7 +239,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     password: '',
     name: '',
     extension: '',
-    role: 'supervisor' as 'admin' | 'supervisor',
+    role: 'supervisor' as 'admin' | 'supervisor' | 'agent',
     monitor_modes: ['listen'] as string[],
     group_ids: [] as string[],
   });
@@ -317,7 +317,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       password: '',
       name: u.name || '',
       extension: u.extension || '',
-      role: (u.role as 'admin' | 'supervisor') || 'supervisor',
+      role: (u.role as 'admin' | 'supervisor' | 'agent') || 'supervisor',
       monitor_modes: [...modes],
       group_ids: (u.group_ids || []).map(String),
     });
@@ -344,9 +344,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             name: form.name || null,
             extension: form.extension || null,
             role: form.role,
-            monitor_modes: form.monitor_modes,
+            monitor_modes: form.role === 'agent' ? [] : form.monitor_modes,
             password: form.password || undefined,
-            group_ids: form.group_ids.map(Number),
+            group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
         if (!res.ok) {
@@ -364,8 +364,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             name: form.name || null,
             extension: form.extension || null,
             role: form.role,
-            monitor_modes: form.monitor_modes.length ? form.monitor_modes : ['listen'],
-            group_ids: form.group_ids.map(Number),
+            monitor_modes: form.role === 'agent' ? [] : (form.monitor_modes.length ? form.monitor_modes : ['listen']),
+            group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
         if (!res.ok) {
@@ -544,28 +544,36 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 <select
                   className="form-input"
                   value={form.role}
-                  onChange={e => setForm(f => ({ ...f, role: e.target.value as 'admin' | 'supervisor' }))}
+                  onChange={e => setForm(f => ({ ...f, role: e.target.value as 'admin' | 'supervisor' | 'agent' }))}
                 >
                   <option value="supervisor">Supervisor</option>
+                  <option value="agent">Agent</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
-              <div className="up-form-group">
-                <label>Monitor modes (select one or more)</label>
-                <MultiSelectDropdown
-                  options={[
-                    { value: 'listen', label: 'Listen' },
-                    { value: 'whisper', label: 'Whisper' },
-                    { value: 'barge', label: 'Barge' },
-                  ]}
-                  value={form.monitor_modes}
-                  onChange={monitor_modes => setForm(f => ({ ...f, monitor_modes: monitor_modes.length ? monitor_modes : ['listen'] }))}
-                  placeholder="Select modes..."
-                  emptyMessage="Select at least one"
-                />
-              </div>
+              {form.role !== 'agent' && (
+                <div className="up-form-group">
+                  <label>Monitor modes (select one or more)</label>
+                  <MultiSelectDropdown
+                    options={[
+                      { value: 'listen', label: 'Listen' },
+                      { value: 'whisper', label: 'Whisper' },
+                      { value: 'barge', label: 'Barge' },
+                    ]}
+                    value={form.monitor_modes}
+                    onChange={monitor_modes => setForm(f => ({ ...f, monitor_modes: monitor_modes.length ? monitor_modes : ['listen'] }))}
+                    placeholder="Select modes..."
+                    emptyMessage="Select at least one"
+                  />
+                </div>
+              )}
+              {form.role === 'agent' && (
+                <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Agent sees only their extension, active call, and call history.</p>
+              )}
             </div>
 
+            {form.role !== 'agent' && (
+            <>
             <div className="up-form-divider">Access (via groups)</div>
             <div className="up-form-row single">
               <div className="up-form-group">
@@ -617,6 +625,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 )}
               </div>
             </div>
+            </>
+            )}
 
             <div className="up-actions">
               <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

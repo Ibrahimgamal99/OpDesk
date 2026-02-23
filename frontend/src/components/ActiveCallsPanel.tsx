@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { PhoneCall, Headphones, MessageSquare, Radio, Phone, RefreshCw } from 'lucide-react';
 import type { CallInfo } from '../types';
-import { getAllowedMonitorModes } from '../auth';
+import { getUser, getAllowedMonitorModes } from '../auth';
 
 interface ActiveCallsPanelProps {
   calls: Record<string, CallInfo>;
@@ -43,7 +43,7 @@ export function ActiveCallsPanel({ calls, onSupervisorAction, onSync }: ActiveCa
                 <th>Talking To</th>
                 <th>Duration</th>
                 <th>Talk Time</th>
-                <th>Actions</th>
+                {getUser()?.role !== 'agent' && <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -102,37 +102,39 @@ function CallRow({ call, onSupervisorAction }: CallRowProps) {
           {call.talk_time || '—'}
         </span>
       </td>
-      <td>
-        <div className="call-actions">
-          {getAllowedMonitorModes().includes('listen') && (
-            <button 
-              className="btn btn-icon btn-listen"
-              onClick={() => onSupervisorAction('listen', call.extension)}
-              title="Listen (Silent)"
-            >
-              <Headphones size={18} />
-            </button>
-          )}
-          {getAllowedMonitorModes().includes('whisper') && (
-            <button 
-              className="btn btn-icon btn-whisper"
-              onClick={() => onSupervisorAction('whisper', call.extension)}
-              title="Whisper to Agent"
-            >
-              <MessageSquare size={18} />
-            </button>
-          )}
-          {getAllowedMonitorModes().includes('barge') && (
-            <button 
-              className="btn btn-icon btn-barge"
-              onClick={() => onSupervisorAction('barge', call.extension)}
-              title="Barge In"
-            >
-              <Radio size={18} />
-            </button>
-          )}
-        </div>
-      </td>
+      {getUser()?.role !== 'agent' && (
+        <td>
+          <div className="call-actions">
+            {getAllowedMonitorModes().includes('listen') && (
+              <button 
+                className="btn btn-icon btn-listen"
+                onClick={() => onSupervisorAction('listen', call.extension)}
+                title="Listen (Silent)"
+              >
+                <Headphones size={18} />
+              </button>
+            )}
+            {getAllowedMonitorModes().includes('whisper') && (
+              <button 
+                className="btn btn-icon btn-whisper"
+                onClick={() => onSupervisorAction('whisper', call.extension)}
+                title="Whisper to Agent"
+              >
+                <MessageSquare size={18} />
+              </button>
+            )}
+            {getAllowedMonitorModes().includes('barge') && (
+              <button 
+                className="btn btn-icon btn-barge"
+                onClick={() => onSupervisorAction('barge', call.extension)}
+                title="Barge In"
+              >
+                <Radio size={18} />
+              </button>
+            )}
+          </div>
+        </td>
+      )}
     </motion.tr>
   );
 }

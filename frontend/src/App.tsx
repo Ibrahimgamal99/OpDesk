@@ -22,8 +22,13 @@ import {
   LogOut,
   UserCog,
   Monitor,
-  Group
+  Group,
+  KeyRound,
+  X,
+  Save,
+  Loader2,
 } from 'lucide-react';
+import { getAuthHeaders } from './auth';
 
 type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users';
 
@@ -33,7 +38,7 @@ export interface PendingUserFormSnapshot {
   password: string;
   name: string;
   extension: string;
-  role: 'admin' | 'supervisor';
+  role: 'admin' | 'supervisor' | 'agent';
   monitor_modes: string[];
   group_ids: string[];
 }
@@ -56,6 +61,10 @@ function App({ onLogout }: AppProps) {
     target: string;
   }>({ isOpen: false, mode: 'listen', target: '' });
   const [crmSettingsOpen, setCrmSettingsOpen] = useState(false);
+  const [extensionSecretOpen, setExtensionSecretOpen] = useState(false);
+  const [extensionSecretValue, setExtensionSecretValue] = useState('');
+  const [extensionSecretSaving, setExtensionSecretSaving] = useState(false);
+  const [extensionSecretMessage, setExtensionSecretMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Refresh user (role, extension, scope) from server so scope is up to date
   useEffect(() => {
@@ -67,6 +76,14 @@ function App({ onLogout }: AppProps) {
       .catch(() => {});
     return () => ac.abort();
   }, [token]);
+
+  // Agent only has Extensions, Active Calls, Call History; switch away from other tabs
+  const userRole = getUser()?.role;
+  useEffect(() => {
+    if (userRole === 'agent' && !['extensions', 'calls', 'call-log'].includes(activeTab)) {
+      setActiveTab('extensions');
+    }
+  }, [userRole, activeTab]);
 
   const handleSupervisorAction = useCallback((
     mode: 'listen' | 'whisper' | 'barge', 
@@ -83,6 +100,30 @@ function App({ onLogout }: AppProps) {
     });
     setSupervisorModal(prev => ({ ...prev, isOpen: false }));
   }, [sendAction, supervisorModal.mode, supervisorModal.target]);
+
+  const saveExtensionSecret = useCallback(async () => {
+    setExtensionSecretSaving(true);
+    setExtensionSecretMessage(null);
+    try {
+      const res = await fetch('/api/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ extension_secret: extensionSecretValue }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setExtensionSecretMessage({ type: 'success', text: data.message || 'Extension secret saved' });
+        setExtensionSecretValue('');
+        setTimeout(() => setExtensionSecretOpen(false), 1200);
+      } else {
+        setExtensionSecretMessage({ type: 'error', text: data.detail || 'Failed to save' });
+      }
+    } catch (e) {
+      setExtensionSecretMessage({ type: 'error', text: 'Failed to save extension secret' });
+    } finally {
+      setExtensionSecretSaving(false);
+    }
+  }, [extensionSecretValue]);
 
   const stats = state?.stats || {
     total_extensions: 0,
@@ -130,13 +171,15 @@ function App({ onLogout }: AppProps) {
             </div>
           </div>
 
-          <span
-            className="header-monitor-mode"
-            title={`Monitor: ${getMonitorModesLabel(getUser()?.monitor_modes)}`}
-          >
-            <Monitor size={16} className="header-monitor-icon" />
-            <span className="header-monitor-label">{getMonitorModesLabel(getUser()?.monitor_modes)}</span>
-          </span>
+          {getUser()?.role !== 'agent' && (
+            <span
+              className="header-monitor-mode"
+              title={`Monitor: ${getMonitorModesLabel(getUser()?.monitor_modes)}`}
+            >
+              <Monitor size={16} className="header-monitor-icon" />
+              <span className="header-monitor-label">{getMonitorModesLabel(getUser()?.monitor_modes)}</span>
+            </span>
+          )}
 
           <div className={`connection-status ${connected ? 'connected' : ''}`}>
             <span className="connection-icon" aria-hidden>
@@ -183,6 +226,15 @@ function App({ onLogout }: AppProps) {
             <Phone size={16} />
             Extensions
           </button>
+          <button
+            type="button"
+            className="btn btn-tab-icon"
+            onClick={() => { setExtensionSecretMessage(null); setExtensionSecretValue(''); setExtensionSecretOpen(true); }}
+            title="Extension secret (WebRTC)"
+            aria-label="Set extension secret"
+          >
+            <KeyRound size={16} />
+          </button>
           <button 
             className={`tab ${activeTab === 'calls' ? 'active' : ''}`}
             onClick={() => setActiveTab('calls')}
@@ -201,24 +253,26 @@ function App({ onLogout }: AppProps) {
               </span>
             )}
           </button>
-          <button 
-            className={`tab ${activeTab === 'queues' ? 'active' : ''}`}
-            onClick={() => setActiveTab('queues')}
-          >
-            <Users size={16} />
-            Queues
-            {stats.total_waiting > 0 && (
-              <span style={{ 
-                background: 'var(--status-ringing)',
-                padding: '2px 8px',
-                borderRadius: 10,
-                fontSize: 11,
-                marginLeft: 4,
-              }}>
-                {stats.total_waiting}
-              </span>
-            )}
-          </button>
+          {getUser()?.role !== 'agent' && (
+            <button 
+              className={`tab ${activeTab === 'queues' ? 'active' : ''}`}
+              onClick={() => setActiveTab('queues')}
+            >
+              <Users size={16} />
+              Queues
+              {stats.total_waiting > 0 && (
+                <span style={{ 
+                  background: 'var(--status-ringing)',
+                  padding: '2px 8px',
+                  borderRadius: 10,
+                  fontSize: 11,
+                  marginLeft: 4,
+                }}>
+                  {stats.total_waiting}
+                </span>
+              )}
+            </button>
+          )}
           <button 
             className={`tab ${activeTab === 'call-log' ? 'active' : ''}`}
             onClick={() => setActiveTab('call-log')}
@@ -329,6 +383,59 @@ function App({ onLogout }: AppProps) {
         isOpen={crmSettingsOpen}
         onClose={() => setCrmSettingsOpen(false)}
       />
+
+      {/* Extension secret modal */}
+      {extensionSecretOpen && (
+        <div className="modal-overlay" onClick={() => setExtensionSecretOpen(false)}>
+          <div className="modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <KeyRound size={20} style={{ color: 'var(--accent-primary)' }} />
+                Extension secret
+              </h3>
+              <button type="button" className="modal-close" onClick={() => setExtensionSecretOpen(false)} aria-label="Close">
+                <X size={20} />
+              </button>
+            </div>
+            <div style={{ padding: 16 }}>
+              <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                Set the secret for your extension (used for WebRTC registration). Stored in your user account.
+              </p>
+              <div className="form-group">
+                <label className="form-label">Extension secret</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  placeholder="Your extension secret"
+                  value={extensionSecretValue}
+                  onChange={(e) => setExtensionSecretValue(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              {extensionSecretMessage && (
+                <div className={`settings-alert ${extensionSecretMessage.type === 'success' ? 'success' : 'error'}`} style={{ marginTop: 12 }}>
+                  {extensionSecretMessage.text}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn" onClick={() => setExtensionSecretOpen(false)} disabled={extensionSecretSaving}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={saveExtensionSecret}
+                disabled={extensionSecretSaving}
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                {extensionSecretSaving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+                {extensionSecretSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Notifications */}
       <div className="notifications">

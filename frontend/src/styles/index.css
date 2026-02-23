@@ -676,6 +676,26 @@ body::before {
   opacity: 0.1;
 }
 
+.btn-tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+  margin: 0 2px;
+}
+
+.btn-tab-icon:hover {
+  color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+
 .tab.active {
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-teal));
   color: var(--bg-primary);

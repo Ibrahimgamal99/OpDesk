@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Headphones, MessageSquare, Radio, RefreshCw } from 'lucide-react';
 import type { Extension, ExtensionStatus } from '../types';
-import { getAllowedMonitorModes } from '../auth';
+import { getUser, getAllowedMonitorModes } from '../auth';
 
 interface ExtensionsPanelProps {
   extensions: Record<string, Extension>;
@@ -108,7 +108,7 @@ function ExtensionCard({ extension, onSupervisorAction }: ExtensionCardProps) {
         </div>
       )}
 
-      {isInCall && (() => {
+      {isInCall && getUser()?.role !== 'agent' && (() => {
         const allowed = getAllowedMonitorModes();
         return (
           <div style={{ 
