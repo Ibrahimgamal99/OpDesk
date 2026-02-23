@@ -368,6 +368,58 @@ body::before {
   box-shadow: var(--shadow-md), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
 }
 
+.header-softphone-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(6px, 1vw, 10px);
+  padding: clamp(6px, 1.5vw, 10px) clamp(10px, 2vw, 16px);
+  margin-right: 8px;
+  border-right: 1px solid var(--border-subtle);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: clamp(12px, 2.5vw, 14px);
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.header-softphone-btn:hover {
+  background: var(--bg-hover);
+}
+
+.header-softphone-btn.registered {
+  color: var(--status-idle);
+}
+
+.header-softphone-btn.registered:hover {
+  color: var(--status-idle);
+}
+
+.header-softphone-btn.not-registered {
+  color: var(--accent-danger);
+}
+
+.header-softphone-btn.not-registered:hover {
+  color: var(--accent-danger);
+}
+
+@media (max-width: 600px) {
+  .header-softphone-btn span {
+    display: none;
+  }
+
+  .header-softphone-btn {
+    padding: 8px 12px;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+}
+
 .header-status .stats-bar {
   display: flex;
   gap: 8px;
@@ -616,6 +668,7 @@ body::before {
 /* Main content */
 .main-content {
   flex: 1;
+  min-height: 0;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -3070,6 +3123,707 @@ body::before {
   .cl-stats-card {
     width: 100%;
     justify-content: center;
+  }
+}
+
+/* ================================================================
+   SOFTPHONE – Responsive, modern dialpad + incoming call (scroll enabled)
+   ================================================================ */
+
+/* Softphone wrapper: fills main content area, scrollable when needed */
+.main-content > .softphone-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.softphone-wrap {
+  width: 100%;
+  max-width: 100%;
+  padding: 0 clamp(12px, 3vw, 28px) clamp(12px, 3vw, 28px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.softphone-panel {
+  width: 100%;
+  max-width: 400px;
+  min-width: 280px;
+  flex: 1 1 auto;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.2),
+    0 8px 24px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: box-shadow var(--transition-normal), border-color var(--transition-normal);
+}
+
+.softphone-panel:focus-within {
+  border-color: var(--border-accent);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.2),
+    0 10px 32px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(88, 166, 255, 0.15);
+}
+
+.softphone-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 12px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.softphone-header-icon {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.softphone-header-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+  letter-spacing: -0.02em;
+}
+
+.softphone-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.softphone-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.softphone-status-dot.registered {
+  background: var(--status-idle);
+  box-shadow: 0 0 8px var(--status-idle-glow);
+}
+
+.softphone-header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.softphone-header-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+}
+
+.softphone-header-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.softphone-dial-area {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.softphone-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.softphone-search-icon {
+  position: absolute;
+  left: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.softphone-search-input {
+  width: 100%;
+  padding: 14px 72px 14px 42px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 16px;
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+  letter-spacing: 0.02em;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.softphone-search-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--status-call-glow);
+}
+
+.softphone-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.softphone-call-using-label {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+/* Dialpad – responsive, scales with viewport */
+.softphone-dialpad {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 1.5vw, 12px);
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: min(280px, 95%);
+  margin: 0 auto;
+}
+
+.softphone-dialpad-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(6px, 1.5vw, 12px);
+}
+
+.softphone-dialpad-key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-height: clamp(40px, 11vw, 56px);
+  padding: clamp(6px, 1.5vw, 10px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: clamp(16px, 4.5vw, 22px);
+  font-weight: 600;
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.softphone-dialpad-key:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-accent);
+  transform: scale(1.02);
+}
+
+.softphone-dialpad-key:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.softphone-dialpad-key:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.softphone-dialpad-digit {
+  line-height: 1.2;
+}
+
+.softphone-dialpad-letters {
+  font-size: clamp(7px, 1.8vw, 10px);
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 1px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.softphone-bottom-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding-top: 8px;
+}
+
+.softphone-bottom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.softphone-bottom-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-accent);
+}
+
+.softphone-bottom-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.softphone-bottom-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.softphone-call-btn {
+  width: 60px;
+  height: 60px;
+  background: linear-gradient(145deg, var(--accent-primary), var(--accent-teal));
+  border: none;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(88, 166, 255, 0.25);
+}
+
+.softphone-call-btn:hover:not(:disabled) {
+  background: linear-gradient(145deg, var(--accent-primary-hover), var(--accent-teal));
+  box-shadow: 0 6px 16px rgba(88, 166, 255, 0.35);
+  transform: scale(1.05);
+}
+
+.softphone-alert.error {
+  flex-shrink: 0;
+  margin: 0 20px 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.25);
+  color: var(--accent-danger);
+}
+
+.softphone-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 20px 8px;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.softphone-call-status {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-subtle);
+  gap: 12px;
+}
+
+.softphone-duration {
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.softphone-log-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.softphone-log-toggle {
+  width: 100%;
+  padding: 10px 20px;
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.softphone-log-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.softphone-log-box {
+  padding: 0 20px 14px;
+  flex-shrink: 0;
+}
+
+.softphone-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.softphone-log-content {
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+
+/* Incoming call screen */
+.softphone-incoming {
+  max-width: 400px;
+  animation: softphone-incoming-in 0.25s ease-out;
+}
+
+@keyframes softphone-incoming-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.softphone-incoming .softphone-header {
+  flex-shrink: 0;
+}
+
+.softphone-incoming-body {
+  flex: 1;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px 28px;
+  gap: 6px;
+}
+
+.softphone-caller-number {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+  letter-spacing: -0.02em;
+  text-align: center;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.softphone-caller-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.softphone-status-row {
+  flex-shrink: 0;
+  margin: 10px 0 4px;
+}
+
+.softphone-status-badge {
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: default;
+}
+
+.softphone-answer-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  margin-top: 20px;
+  padding-top: 16px;
+}
+
+.softphone-btn-decline,
+.softphone-btn-answer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.softphone-btn-decline {
+  background: var(--accent-danger);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(248, 81, 73, 0.35);
+}
+
+.softphone-btn-decline:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 18px rgba(248, 81, 73, 0.45);
+}
+
+.softphone-btn-decline:active {
+  transform: scale(0.96);
+}
+
+.softphone-btn-answer {
+  background: var(--status-idle);
+  color: #fff;
+  box-shadow: 0 4px 14px var(--status-idle-glow);
+}
+
+.softphone-btn-answer:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 18px var(--status-idle-glow);
+}
+
+.softphone-btn-answer:active {
+  transform: scale(0.96);
+}
+
+/* In-call view – 3 actions: Hold, Mute, Transfer */
+.softphone-incall {
+  max-width: 400px;
+}
+
+.softphone-incall .softphone-header {
+  flex-shrink: 0;
+}
+
+.softphone-incall-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 20px 20px;
+  gap: 2px;
+}
+
+.softphone-incall-number {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+  letter-spacing: -0.02em;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.softphone-incall-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.softphone-incall-duration {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 14px;
+}
+
+.softphone-incall-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  padding: 0 8px;
+  margin-bottom: 14px;
+}
+
+.softphone-incall-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 52px;
+  padding: 10px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.softphone-incall-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-accent);
+  color: var(--text-primary);
+}
+
+.softphone-incall-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.softphone-btn-hangup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-danger);
+  color: #fff;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: 0 4px 14px rgba(248, 81, 73, 0.35);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.softphone-btn-hangup:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 18px rgba(248, 81, 73, 0.45);
+}
+
+.softphone-btn-hangup:active {
+  transform: scale(0.96);
+}
+
+/* Responsive breakpoints */
+@media (max-width: 480px) {
+  .softphone-wrap {
+    padding: 0 12px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .softphone-panel {
+    min-width: 260px;
+  }
+
+  .softphone-dial-area {
+    padding: 12px 16px 16px;
+  }
+
+  .softphone-search-input {
+    padding-left: 38px;
+    padding-right: 64px;
+    font-size: 15px;
+  }
+
+  .softphone-call-using-label {
+    right: 10px;
+    font-size: 10px;
+  }
+}
+
+@media (min-width: 768px) {
+  .softphone-wrap {
+    padding: 0 20px 24px;
+  }
+
+  .softphone-panel:hover {
+    border-color: var(--border-accent);
+    box-shadow:
+      0 4px 8px rgba(0, 0, 0, 0.2),
+      0 12px 32px rgba(0, 0, 0, 0.28),
+      0 0 0 1px rgba(0, 0, 0, 0.05);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .softphone-panel,
+  .softphone-dialpad-key,
+  .softphone-bottom-btn,
+  .softphone-btn-answer,
+  .softphone-btn-decline,
+  .softphone-btn-hangup,
+  .softphone-incall-btn,
+  .softphone-header-btn,
+  .softphone-call-using-label {
+    transition: none;
+  }
+
+  .softphone-incoming {
+    animation: none;
+  }
+
+  .softphone-dialpad-key:hover:not(:disabled),
+  .softphone-dialpad-key:active:not(:disabled),
+  .softphone-bottom-btn:active:not(:disabled),
+  .softphone-call-btn:hover:not(:disabled),
+  .softphone-btn-answer:hover,
+  .softphone-btn-answer:active,
+  .softphone-btn-decline:hover,
+  .softphone-btn-decline:active,
+  .softphone-btn-hangup:hover,
+  .softphone-btn-hangup:active,
+  .softphone-incall-btn:active:not(:disabled) {
+    transform: none;
   }
 }
 

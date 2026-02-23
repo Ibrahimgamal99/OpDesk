@@ -1,4 +1,6 @@
 import { defineConfig, Plugin } from 'vite'
+import fs from 'node:fs'
+import path from 'node:path'
 import react from '@vitejs/plugin-react'
 
 // Plugin to suppress ECONNREFUSED errors from WebSocket proxy
@@ -86,6 +88,18 @@ function suppressWsProxyErrors(): Plugin {
   }
 }
 
+// Use project cert/ for HTTPS (same cert as generate-ssl-cert.sh)
+const certDir = path.resolve(__dirname, '../cert')
+const httpsConfig: { key: Buffer; cert: Buffer } | undefined = (() => {
+  try {
+    const key = fs.readFileSync(path.join(certDir, 'opdesk_key.pem'))
+    const cert = fs.readFileSync(path.join(certDir, 'opdesk_cert.pem'))
+    return { key, cert }
+  } catch {
+    return undefined // no certs: dev server runs over HTTP
+  }
+})()
+
 export default defineConfig({
   plugins: [
     react(),
@@ -93,6 +107,7 @@ export default defineConfig({
   ],
   server: {
     port: 3000,
+    ...(httpsConfig && { https: httpsConfig }),
     proxy: {
       '/ws': {
         target: 'ws://localhost:8765',
@@ -100,7 +115,8 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         configure: (proxy, _options) => {
-          proxy.on('error', (err: any, _req, _res) => {
+          const emitter = proxy as unknown as { on(event: string, handler: (...args: any[]) => void): void }
+          emitter.on('error', (err: any, _req, _res) => {
             // Suppress connection refused errors - backend may not be ready yet
             // These are expected during startup or when backend is restarting
             const isConnectionRefused =
@@ -121,12 +137,11 @@ export default defineConfig({
           })
           
           // Suppress proxy connection errors
-          proxy.on('proxyReqWs', () => {
+          emitter.on('proxyReqWs', () => {
             // Connection attempt started
           })
           
-          // Use type assertion to handle proxyReqWsError event
-          ;(proxy.on as any)('proxyReqWsError', (err: any, _req: any, _socket: any) => {
+          emitter.on('proxyReqWsError', (err: any, _req: any, _socket: any) => {
             // Suppress WebSocket connection errors
             const isConnectionRefused =
               err?.code === 'ECONNREFUSED' ||

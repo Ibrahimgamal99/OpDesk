@@ -900,6 +900,27 @@ def set_user_monitor_modes(user_id: int, modes: list) -> bool:
         return False
 
 
+def get_user_webrtc_credentials(user_id: int) -> Optional[dict]:
+    """Get extension and extension_secret for the given user (for WebRTC softphone). Returns None if user not found."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT extension, extension_secret FROM users WHERE id = %s",
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if not row:
+            return None
+        return {"extension": row.get("extension"), "extension_secret": row.get("extension_secret")}
+    except Error as e:
+        log.warning(f"⚠️  Database error get_user_webrtc_credentials: {e}")
+        return None
+
+
 def get_user_by_id(user_id: int) -> Optional[dict]:
     """Get user by id (no password_hash). Includes monitor_modes (list)."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))

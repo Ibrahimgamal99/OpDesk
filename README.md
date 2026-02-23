@@ -16,6 +16,7 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 - **Supervisor Features**: Listen, whisper, and barge into calls (according to each user’s allowed monitor modes)
 - **CRM Integration**: Send call data to external CRM systems with support for multiple authentication methods (API Key, Basic Auth, Bearer Token, OAuth2)
 - **QoS Data**: View Quality of Service metrics for calls
+- **Web call (Softphone)**: Make and receive calls from the browser via WebRTC; in-call controls (hold, mute, transfer, keypad); redirect to softphone and browser notifications on incoming call
 - **WebSocket-based**: Event-driven architecture for instant updates; state is filtered per user (admin vs supervisor scope)
 
 ## Screenshots
@@ -46,6 +47,30 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 ![Settings](screenshots/setting.png)
 *Configure CRM integration and application settings*
 
+## Web call (Softphone)
+
+OpDesk includes a **WebRTC softphone** so you can make and receive calls directly in the browser—no desk phone required.
+
+### What you get
+
+- **Make calls**: Open the Softphone tab, enter a number or extension, and click Call. The app uses your extension and secret to register with the PBX over WebRTC (SIP over WebSocket).
+- **Receive calls**: Incoming calls show an answer/decline screen. The app switches to the Softphone tab automatically and can show a **browser (system) notification** so you’re alerted even if the tab is in the background. Allow notifications when prompted (or when opening the Softphone tab) for the best experience.
+- **In-call**: Once the call is answered, an in-call view shows the other party’s number/name, call duration, and controls: Hold, Mute, New call, Conference, Transfer, Attended Transfer, Record, Keypad, and Video. The red **End call** button hangs up.
+- **Sounds**: Ringtone for incoming calls, dial tone for outgoing (while ringing), and a short hangup sound when the call ends.
+
+### Requirements
+
+- **HTTPS**: Browsers allow microphone access only on **HTTPS** or **localhost**. See [HTTPS (for WebRTC Softphone / Microphone)](#https-for-webrtc-softphone--microphone) below for dev and production setup.
+- **PBX WebSocket**: Asterisk must expose a **wss://** endpoint for WebRTC. In OpDesk **Settings**, set **WEBRTC_PBX_SERVER** to that URL (e.g. `wss://your-pbx-ip:8089/ws`). Using **ws://** on a TLS port can cause Asterisk “Internal SSL error”; see [Asterisk "Internal SSL error" (WebRTC / wss://)](#asterisk-internal-ssl-error-webrtc--wss) if you see that.
+- **Extension and secret**: Each user needs an **extension** and **extension secret** (WebRTC registration). Configure the extension in the Extensions panel and set the secret via the key icon in the Extensions tab or in Settings.
+
+### Using the Softphone
+
+1. Log in and ensure the Softphone is **registered** (green indicator in the header or Softphone tab).
+2. **Make a call**: Go to the **Softphone** tab (or click the headset icon in the header), enter the number or extension, and click the green call button.
+3. **Incoming call**: The app opens the Softphone tab and shows the incoming screen; if you allowed notifications, a system notification appears. Click **Answer** or **Decline**.
+4. **During the call**: Use Hold, Mute, Keypad, etc., and click the red **End call** button to hang up.
+
 ## Authentication & User Management
 
 - **Login**: Use extension or username plus password. Tokens are JWT; the frontend stores the token and user info (role, extension, monitor modes, assigned scope).
@@ -64,6 +89,51 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 │  (WebSocket)    │     │  (WebSocket)     │     │                 │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
+
+## HTTPS (for WebRTC Softphone / Microphone)
+
+Browsers allow microphone access only on **HTTPS** or **localhost**. To use the Softphone from other machines (e.g. over the LAN), serve the app over HTTPS.
+
+### Development (Vite dev server)
+
+The frontend uses `@vitejs/plugin-basic-ssl`. Run:
+
+```bash
+cd frontend && npm run dev
+```
+
+Then open **https://localhost:3000**. Accept the browser’s self-signed certificate warning; the page will be secure and the Softphone microphone will work.
+
+### Production (backend only)
+
+1. **Generate a self-signed certificate** (or use your own cert/key):
+
+```bash
+cd backend
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
+```
+
+2. **Set in `backend/.env`**:
+
+```env
+HTTPS_CERT=/opt/OpDesk/backend/cert.pem
+HTTPS_KEY=/opt/OpDesk/backend/key.pem
+OPDESK_HTTPS_PORT=8443
+```
+
+3. **Start the backend** – it will listen on HTTPS (e.g. https://your-server:8443). Open that URL and accept the certificate if self-signed.
+
+For a trusted certificate in production, use Let’s Encrypt or your CA and point `HTTPS_CERT` / `HTTPS_KEY` to those files.
+
+### Asterisk "Internal SSL error" (WebRTC / wss://)
+
+If Asterisk CLI shows:
+`ast_iostream_start_tls: Problem setting up ssl connection: error:00000001:lib(0)::reason(1), Internal SSL error` and `Unable to set up ssl connection with peer '...'`:
+
+1. **Use wss://, not ws://** – In OpDesk Settings, set **WEBRTC_PBX_SERVER** to `wss://your-pbx-ip:8089/ws`. Using `ws://` against a TLS-enabled port causes this error.
+2. **Asterisk http.conf** – Set both `tlscertfile` and `tlskeyfile` in `/etc/asterisk/http.conf` (not only the cert). Install the cert with `./generate-ssl-cert.sh YOUR_PBX_IP asterisk`.
+3. **Certificate CN** – Generate the cert with the same host/IP you use in the URL (e.g. `./generate-ssl-cert.sh 172.16.11.65`).
+4. **Browser** – Open `https://your-pbx-ip:8089` once and accept the self-signed certificate so the softphone’s wss:// connection is allowed.
 
 ## Prerequisites
 

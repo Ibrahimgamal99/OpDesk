@@ -292,6 +292,19 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
                     </div>
                   </div>
                 </div>
+                {webrtcPbxServer.trim().startsWith('wss://') && (() => {
+                  const s = webrtcPbxServer.trim().replace(/^wss:\/\//, '').split('/')[0];
+                  const httpsUrl = s ? `https://${s}` : '';
+                  return httpsUrl ? (
+                    <p className="settings-hint" style={{ marginBottom: 12, fontSize: 13, color: 'var(--text-secondary)' }}>
+                      Using self-signed cert? In <strong>Firefox</strong>, open{' '}
+                      <a href={httpsUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>
+                        {httpsUrl}
+                      </a>{' '}
+                      in a new tab and accept the certificate, then try the softphone again.
+                    </p>
+                  ) : null;
+                })()}
                 <div className="form-group">
                   <label className="form-label">WebSocket URL</label>
                   <input
