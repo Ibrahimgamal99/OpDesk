@@ -33,7 +33,7 @@ from db_manager import (
     get_setting, set_setting, get_all_settings,
     ensure_users_extension_column, ensure_users_extension_secret_column, ensure_user_monitor_modes_table, authenticate_user,
     get_call_log_count_from_db,
-    get_all_users, get_user_by_id, create_user as db_create_user, update_user as db_update_user,
+    get_all_users, get_user_by_id, get_user_webrtc_credentials, create_user as db_create_user, update_user as db_update_user,
     delete_user as db_delete_user, get_user_agents_and_queues,
     get_user_group_ids, set_user_groups,
     get_groups_list, get_group, create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
@@ -796,6 +796,21 @@ async def auth_login(body: LoginBody):
 async def auth_me(current_user: dict = Depends(get_current_user)):
     """Return current user with role, extension, and filter scope (requires valid token)."""
     return current_user
+
+
+@app.get("/api/webrtc/config")
+async def webrtc_config(current_user: dict = Depends(get_current_user)):
+    """
+    Return WebRTC softphone config for the current user: PBX WebSocket server URL (from settings),
+    user extension and extension_secret (from DB). Used by the React softphone to register with SIP.js.
+    """
+    server = (get_setting("WEBRTC_PBX_SERVER", os.getenv("WEBRTC_PBX_SERVER", "")) or "").strip()
+    creds = get_user_webrtc_credentials(current_user["id"])
+    if not creds:
+        return {"server": server, "extension": None, "extension_secret": None}
+    ext = creds.get("extension")
+    secret = creds.get("extension_secret")
+    return {"server": server, "extension": ext, "extension_secret": secret}
 
 
 class UpdateMeBody(BaseModel):
@@ -1759,8 +1774,9 @@ async def get_setting_by_key(key: str, current_user: dict = Depends(get_current_
 # ---------------------------------------------------------------------------
 # Serve React Frontend (production)
 # ---------------------------------------------------------------------------
-# Check if frontend build exists
-frontend_path = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+# Check if frontend build exists (build lives in project root frontend/dist)
+frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+frontend_path = os.path.abspath(frontend_path)
 if os.path.exists(frontend_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
     
@@ -1776,12 +1792,46 @@ if os.path.exists(frontend_path):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def _get_ssl_paths():
+    """Return (certfile, keyfile) for HTTPS if configured, else (None, None).
+    Supports absolute paths (e.g. /opt/OpDesk/cert/opdesk_cert.pem) or paths relative to this file's directory.
+    """
+    cert = os.getenv("HTTPS_CERT", "").strip()
+    key = os.getenv("HTTPS_KEY", "").strip()
+    if not cert or not key:
+        return None, None
+    _dir = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.isabs(cert):
+        cert = os.path.normpath(os.path.join(_dir, cert))
+    if not os.path.isabs(key):
+        key = os.path.normpath(os.path.join(_dir, key))
+    if os.path.isfile(cert) and os.path.isfile(key):
+        return cert, key
+    return None, None
+
+
 if __name__ == "__main__":
-    uvicorn.run(
-        "server:app",
-        host="0.0.0.0",
-        port=8765,
-        reload=True,
-        log_level="info"
-    )
+    ssl_cert, ssl_key = _get_ssl_paths()
+    if ssl_cert and ssl_key:
+        port = int(os.getenv("OPDESK_HTTPS_PORT", "8443"))
+        log.info("Starting OpDesk over HTTPS on port %s (cert=%s)", port, ssl_cert)
+        uvicorn.run(
+            "server:app",
+            host="0.0.0.0",
+            port=port,
+            ssl_certfile=ssl_cert,
+            ssl_keyfile=ssl_key,
+            reload=True,
+            log_level="info",
+        )
+    else:
+        port = int(os.getenv("PORT", "8765"))
+        log.info("Starting OpDesk over HTTP on port %s (set HTTPS_CERT and HTTPS_KEY for HTTPS)", port)
+        uvicorn.run(
+            "server:app",
+            host="0.0.0.0",
+            port=port,
+            reload=True,
+            log_level="info",
+        )
 

@@ -1,6 +1,8 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
-import { getToken, setUser, getUser, isFilteredScope, getMonitorModesLabel } from './auth';
+import { useWebPhone } from './hooks/useWebPhone';
+import { WebPhoneProvider } from './contexts/WebPhoneContext';
+import { getToken, setUser, getUser, getMonitorModesLabel } from './auth';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
@@ -9,6 +11,7 @@ import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
 import { CRMSettingsModal } from './components/CRMSettingsModal';
+import { Softphone } from './components/Softphone';
 import { 
   Phone, 
   PhoneCall, 
@@ -27,10 +30,11 @@ import {
   X,
   Save,
   Loader2,
+  Headphones,
 } from 'lucide-react';
 import { getAuthHeaders } from './auth';
 
-type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users';
+type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'phone';
 
 /** Snapshot of user form when opening "Create new group" from Users tab (preserved in memory, no API). */
 export interface PendingUserFormSnapshot {
@@ -47,8 +51,39 @@ type AppProps = { onLogout: () => void };
 
 function App({ onLogout }: AppProps) {
   const token = getToken();
+  const webPhone = useWebPhone();
+  const { connect, disconnect, canConnect, isConnected, configLoading, incomingCall } = webPhone;
+  const disconnectRef = useRef(disconnect);
+  disconnectRef.current = disconnect;
+
+  // AudioContext must be created/resumed after a user gesture (Chrome autoplay policy).
+  // Unlock on first user interaction so ringtone can play when an incoming call arrives.
+  const audioContextRef = useRef<AudioContext | null>(null);
+  useEffect(() => {
+    const unlock = () => {
+      if (audioContextRef.current) return;
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new Ctx();
+      audioContextRef.current = ctx;
+      if (ctx.state === 'suspended') ctx.resume();
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+    };
+    document.addEventListener('click', unlock, { once: true });
+    document.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    disconnectRef.current();
+    onLogout();
+  }, [onLogout]);
+
   const { state, connected, lastUpdate, notifications, sendAction } = useWebSocket(token, {
-    onAuthFailure: onLogout,
+    onAuthFailure: handleLogout,
   });
   const [activeTab, setActiveTab] = useState<TabType>('extensions');
   /** User form preserved when switching to Groups to create a new group (no API call). */
@@ -77,10 +112,92 @@ function App({ onLogout }: AppProps) {
     return () => ac.abort();
   }, [token]);
 
-  // Agent only has Extensions, Active Calls, Call History; switch away from other tabs
+  // Auto-connect softphone when logged in and config is ready
+  useEffect(() => {
+    if (!canConnect || isConnected || configLoading) return;
+    connect();
+  }, [canConnect, isConnected, configLoading, connect]);
+
+  // Disconnect SIP on tab close
+  useEffect(() => {
+    const onUnload = () => { disconnectRef.current(); };
+    window.addEventListener('beforeunload', onUnload);
+    window.addEventListener('pagehide', onUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onUnload);
+      window.removeEventListener('pagehide', onUnload);
+    };
+  }, []);
+
+  // Redirect to softphone and show browser notification when incoming call
+  useEffect(() => {
+    if (!incomingCall) return;
+    setActiveTab('phone');
+    let notification: Notification | null = null;
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      const title = 'Incoming call';
+      const body = incomingCall.callerName
+        ? `${incomingCall.callerName} (${incomingCall.callerNumber})`
+        : incomingCall.callerNumber;
+      notification = new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+        tag: 'opdesk-incoming-call',
+        requireInteraction: true,
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification?.close();
+      };
+    }
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+    return () => {
+      notification?.close();
+    };
+  }, [incomingCall]);
+
+  // Play ringtone when incoming call is ringing (uses AudioContext unlocked by user gesture)
+  useEffect(() => {
+    if (!incomingCall) return;
+    const ctx = audioContextRef.current;
+    if (!ctx) return; // No user gesture yet; ringtone would be blocked by autoplay policy
+    let stopped = false;
+    const playRing = () => {
+      if (stopped) return;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      const playTone = (freq: number, start: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = freq;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.15, start);
+        gain.gain.exponentialRampToValueAtTime(0.01, start + duration);
+        osc.start(start);
+        osc.stop(start + duration);
+      };
+      playTone(440, 0, 0.2);
+      playTone(440, 0.2, 0.2);
+      playTone(480, 0.5, 0.2);
+      playTone(480, 0.7, 0.2);
+    };
+    const interval = setInterval(playRing, 2000);
+    playRing();
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
+  }, [incomingCall]);
+
+  // Agent only has Extensions, Active Calls, Call History, Softphone; switch away from other tabs
   const userRole = getUser()?.role;
   useEffect(() => {
-    if (userRole === 'agent' && !['extensions', 'calls', 'call-log'].includes(activeTab)) {
+    if (userRole === 'agent' && !['extensions', 'calls', 'call-log', 'phone'].includes(activeTab)) {
       setActiveTab('extensions');
     }
   }, [userRole, activeTab]);
@@ -132,7 +249,15 @@ function App({ onLogout }: AppProps) {
     total_waiting: 0,
   };
 
+  const openSoftphone = useCallback(() => {
+    setActiveTab('phone');
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
   return (
+    <WebPhoneProvider value={webPhone}>
     <div className="app">
       {/* Header */}
       <header className="header">
@@ -147,9 +272,19 @@ function App({ onLogout }: AppProps) {
         </div>
 
         <div className="header-status">
-          <div className="stats-bar">
-            <div className="stat-item">
-              <Phone size={16} className="stat-icon" />
+            <button
+              type="button"
+              className={`header-softphone-btn ${isConnected ? 'registered' : 'not-registered'}`}
+              onClick={openSoftphone}
+              title={isConnected ? 'Softphone (registered)' : 'Softphone (not registered)'}
+              aria-label="Open Softphone"
+            >
+              <Headphones size={18} />
+              <span>Softphone</span>
+            </button>
+            <div className="stats-bar">
+              <div className="stat-item">
+                <Phone size={16} className="stat-icon" />
               <div>
                 <div className="stat-value">{stats.total_extensions}</div>
                 <div className="stat-label">Extensions</div>
@@ -206,7 +341,7 @@ function App({ onLogout }: AppProps) {
 
           <button 
             className="btn" 
-            onClick={onLogout}
+            onClick={handleLogout}
             title="Sign out"
           >
             <LogOut size={14} />
@@ -280,6 +415,14 @@ function App({ onLogout }: AppProps) {
             <History size={16} />
             Call History
           </button>
+          <button 
+            className={`tab ${activeTab === 'phone' ? 'active' : ''}`}
+            onClick={openSoftphone}
+            title="WebRTC Softphone"
+          >
+            <Headphones size={16} />
+            Softphone
+          </button>
           {getUser()?.role === 'admin' && (
             <>
               <button 
@@ -329,6 +472,12 @@ function App({ onLogout }: AppProps) {
 
         {activeTab === 'call-log' && (
           <CallLogPanel />
+        )}
+
+        {activeTab === 'phone' && (
+          <div className="softphone-wrap">
+            <Softphone />
+          </div>
         )}
 
         {activeTab === 'groups' && (
@@ -446,6 +595,7 @@ function App({ onLogout }: AppProps) {
         ))}
       </div>
     </div>
+    </WebPhoneProvider>
   );
 }
 
