@@ -32,12 +32,12 @@ else
 fi
 echo -e "${GREEN}Detected OS: $OS${NC}"
 
-# --- Step 2: Install Git & Report Tools ---
+# --- Step 2: Install Git & Required Tools ---
 echo -e "\n${YELLOW}Step 2: Installing Git & Required Tools...${NC}"
 if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-    sudo apt-get update && sudo apt-get install -y git lsof curl
+    sudo apt-get update && sudo apt-get install -y git lsof curl openssl
 elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
-    sudo dnf install -y git lsof curl || sudo yum install -y git lsof  curl
+    sudo dnf install -y git lsof curl openssl || sudo yum install -y git lsof curl openssl
 fi
 
 # --- Step 3: Repository Setup ---
@@ -410,8 +410,8 @@ EOF
     fi
 fi
 
-# --- Step 8: App Config ---
-echo -e "\n${YELLOW}Step 8: Configuring Application & Installing Dependencies...${NC}"
+# --- Step 8: App Config & HTTPS Certificate ---
+echo -e "\n${YELLOW}Step 8: Configuring Application, HTTPS & Installing Dependencies...${NC}"
 cd "$PROJECT_ROOT/backend"
 
 # Only use --break-system-packages on Debian/Ubuntu systems
@@ -422,6 +422,66 @@ else
     echo -e "${YELLOW}Installing Python dependencies (non-Debian system)...${NC}"
     python -m pip install -r requirements.txt || true
 fi
+
+# Generate or reuse OpDesk HTTPS certificate (for backend and optional Asterisk)
+echo -e "\n${YELLOW}Generating HTTPS certificate for OpDesk (and Asterisk if present)...${NC}"
+CERT_DIR="$PROJECT_ROOT/cert"
+mkdir -p "$CERT_DIR"
+HTTPS_CERT="$CERT_DIR/opdesk_cert.pem"
+HTTPS_KEY="$CERT_DIR/opdesk_key.pem"
+OPDESK_HTTPS_PORT="8443"
+
+if [ -f "$HTTPS_CERT" ] && [ -f "$HTTPS_KEY" ]; then
+    echo -e "${GREEN}Existing HTTPS certificate found at $HTTPS_CERT and key at $HTTPS_KEY; reusing.${NC}"
+else
+    # Detect primary local IP; fallback to localhost
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -z "$LOCAL_IP" ] && LOCAL_IP="localhost"
+    CN="$LOCAL_IP"
+
+    echo -e "${YELLOW}Creating new self-signed certificate with CN=$CN ...${NC}"
+    openssl req -x509 -newkey rsa:4096 -keyout "$HTTPS_KEY" -out "$HTTPS_CERT" -days 365 -nodes \
+      -subj "/CN=$CN"
+
+    chmod 600 "$HTTPS_KEY"
+    chmod 644 "$HTTPS_CERT"
+
+    # Verify cert and key match (avoids Asterisk "Internal SSL error" from mismatch)
+    CERT_MOD=$(openssl x509 -noout -modulus -in "$HTTPS_CERT" 2>/dev/null | openssl md5)
+    KEY_MOD=$(openssl rsa -noout -modulus -in "$HTTPS_KEY" 2>/dev/null | openssl md5)
+    if [[ "$CERT_MOD" != "$KEY_MOD" ]]; then
+        echo -e "${RED}Error: Generated certificate and key modulus mismatch. Please re-run installation.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Created HTTPS certificate and key (CN=$CN) at:${NC}"
+    echo -e "  Cert: $HTTPS_CERT"
+    echo -e "  Key:  $HTTPS_KEY"
+
+    # If Asterisk is installed, install the same cert/key for it (wss://)
+    if [ -d /etc/asterisk ]; then
+        AST_DIR="/etc/asterisk/key"
+        AST_CERT="$AST_DIR/opdesk_cert.pem"
+        AST_KEY="$AST_DIR/opdesk_key.pem"
+        if [ "$EUID" -ne 0 ]; then
+            echo -e "${YELLOW}To install certificate for Asterisk, re-run install as root or manually run:${NC}"
+            echo -e "  sudo cp \"$HTTPS_CERT\" \"$AST_CERT\""
+            echo -e "  sudo cp \"$HTTPS_KEY\" \"$AST_KEY\""
+            echo -e "  sudo chown asterisk:asterisk \"$AST_CERT\" \"$AST_KEY\""
+            echo -e "  sudo chmod 644 \"$AST_CERT\""
+            echo -e "  sudo chmod 600 \"$AST_KEY\""
+        else
+            cp "$HTTPS_CERT" "$AST_CERT"
+            cp "$HTTPS_KEY" "$AST_KEY"
+            chown asterisk:asterisk "$AST_CERT" "$AST_KEY" || true
+            chmod 644 "$AST_CERT"
+            chmod 600 "$AST_KEY"
+            echo -e "${GREEN}Installed same certificate for Asterisk at:${NC}"
+            echo -e "  Cert: $AST_CERT"
+            echo -e "  Key:  $AST_KEY"
+        fi
+    fi
+fi
+
 cat > .env <<EOF
 OS=$OS
 PBX=$PBX
@@ -438,6 +498,9 @@ AMI_USERNAME=$AMI_USER
 AMI_SECRET=$AMI_SECRET
 DB_OpDesk=OpDesk
 JWT_SECRET=OpDesk
+HTTPS_CERT=$HTTPS_CERT
+HTTPS_KEY=$HTTPS_KEY
+OPDESK_HTTPS_PORT=$OPDESK_HTTPS_PORT
 EOF
 cd "$PROJECT_ROOT/frontend" && npm install || true
 

@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 from datetime import datetime, timedelta
 from urllib.parse import unquote
 from typing import Dict, Set, Optional
@@ -20,7 +21,7 @@ from dotenv import load_dotenv
 
 import jwt
 from pydantic import BaseModel
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -30,14 +31,12 @@ import uvicorn
 from ami import AMIExtensionsMonitor, _format_duration, DIALPLAN_CTX, normalize_interface
 from db_manager import (
     get_extensions_from_db, get_extension_names_from_db, get_queue_names_from_db, init_settings_table,
-    get_setting, set_setting, get_all_settings,
-    ensure_users_extension_column, ensure_users_extension_secret_column, ensure_user_monitor_modes_table, authenticate_user,
-    get_call_log_count_from_db,
+    get_setting, set_setting, get_all_settings, ensure_user_monitor_modes_table, authenticate_user,get_call_log_count_from_db,
     get_all_users, get_user_by_id, get_user_webrtc_credentials, create_user as db_create_user, update_user as db_update_user,
-    delete_user as db_delete_user, get_user_agents_and_queues,
-    get_user_group_ids, set_user_groups,
-    get_groups_list, get_group, create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
+    delete_user as db_delete_user, get_user_agents_and_queues,get_user_group_ids, set_user_groups,get_groups_list, get_group, 
+    create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
     get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
+    set_extension_webrtc, get_extensions_with_webrtc_from_users,get_extension_secret_from_db
 )
 from qos import enable_qos, disable_qos
 from call_log import call_log as get_call_log
@@ -68,6 +67,24 @@ watchfiles_logger.setLevel(logging.WARNING)
 # Apply filter to root logger to catch all "change detected" messages
 root_logger = logging.getLogger()
 root_logger.addFilter(SuppressChangeDetectedFilter())
+
+
+def detect_local_ip() -> str:
+    """
+    Best-effort detection of the local IPv4 address to use for WebRTC defaults.
+    Falls back to loopback if detection fails.
+    """
+    try:
+        # This does not send traffic; it just forces the OS to pick a default
+        # outbound interface so we can read its local address.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
 
 
 def log_startup_summary(monitor: AMIExtensionsMonitor):
@@ -569,20 +586,20 @@ async def lifespan(app: FastAPI):
     
     # Initialize settings table
     init_settings_table()
-    # Ensure users table has extension column (login by ext or username)
-    ensure_users_extension_column()
-    ensure_users_extension_secret_column()
     ensure_user_monitor_modes_table()
+
+    # Detect local IP for WebRTC default (can be overridden via settings/UI)
+    local_ip = detect_local_ip()
 
     # Initialize default settings if they don't exist
     default_settings = {
-        'QOS_ENABLED': 'true',
+        'QOS_ENABLED': 'false',
         'CRM_ENABLED': 'false',
         'CRM_AUTH_TYPE': 'api_key',
         'CRM_ENDPOINT_PATH': '/api/calls',
         'CRM_TIMEOUT': '30',
         'CRM_VERIFY_SSL': 'true',
-        'WEBRTC_PBX_SERVER': '',
+        'WEBRTC_PBX_SERVER': f'wss://{local_ip}:8098/ws',
     }
     
     for key, default_value in default_settings.items():
@@ -813,21 +830,6 @@ async def webrtc_config(current_user: dict = Depends(get_current_user)):
     return {"server": server, "extension": ext, "extension_secret": secret}
 
 
-class UpdateMeBody(BaseModel):
-    extension_secret: Optional[str] = None
-
-
-@app.patch("/api/auth/me")
-async def update_me(body: UpdateMeBody, current_user: dict = Depends(get_current_user)):
-    """Update current user's own profile. Only extension_secret is allowed (for WebRTC)."""
-    if body.extension_secret is None:
-        raise HTTPException(status_code=400, detail="extension_secret required")
-    ok = db_update_user(current_user["id"], extension_secret=body.extension_secret)
-    if not ok:
-        raise HTTPException(status_code=500, detail="Failed to update extension secret")
-    return {"success": True, "message": "Extension secret saved"}
-
-
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     """Dependency: require admin role."""
     if current_user.get("role") != "admin":
@@ -901,7 +903,8 @@ async def api_create_user(
         raise HTTPException(status_code=400, detail="Password required")
     monitor_modes = body.monitor_modes if body.monitor_modes is not None else None
     if monitor_modes is None and body.monitor_mode:
-        monitor_modes = ["listen", "whisper", "barge"] if body.monitor_mode == "full" else [body.monitor_mode]
+        monitor_modes = [body.monitor_mode]
+    extension_secret = get_extension_secret_from_db(body.extension)
     user_id = db_create_user(
         username=username,
         password=body.password,
@@ -910,6 +913,7 @@ async def api_create_user(
         role=body.role or "supervisor",
         monitor_mode=body.monitor_mode or "listen",
         monitor_modes=monitor_modes,
+        extension_secret=extension_secret,
     )
     if not user_id:
         raise HTTPException(status_code=400, detail="Username or extension already in use")
@@ -930,6 +934,7 @@ async def api_update_user(
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    extension_secret = get_extension_secret_from_db(body.extension)
     db_update_user(
         user_id,
         name=body.name,
@@ -939,6 +944,7 @@ async def api_update_user(
         monitor_mode=body.monitor_mode,
         monitor_modes=body.monitor_modes,
         password=body.password,
+        extension_secret=extension_secret,
     )
     if body.group_ids is not None:
         set_user_groups(user_id, body.group_ids)
@@ -980,6 +986,60 @@ async def api_list_agents(
         sync_agents_from_extensions(exts, names)
         agents = get_agents_list()
     return {"agents": agents}
+
+
+@app.get("/api/settings/extensions/webrtc")
+async def api_list_extensions_webrtc(
+    current_user: dict = Depends(get_current_user),
+):
+    """List extensions with webrtc flag. Admin: all; agent: own extension; supervisor: own + allowed_agent_extensions."""
+    all_exts = get_extensions_with_webrtc_from_users()
+    role = current_user.get("role")
+    user_ext = current_user.get("extension")
+    allowed = current_user.get("allowed_agent_extensions") or []
+
+    if role == "admin":
+        return {"extensions": all_exts}
+    allow_set = set()
+    if user_ext:
+        allow_set.add(str(user_ext))
+    for e in allowed:
+        allow_set.add(str(e))
+    return {"extensions": [e for e in all_exts if e.get("extension") in allow_set]}
+
+
+@app.put("/api/settings/extensions/{extension}/webrtc")
+async def api_set_extension_webrtc(
+    extension: str,
+    enabled: bool = Body(..., embed=True),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Enable/disable WebRTC (enable = all yes + dtls, disable = all no).
+    Permissions:
+      - admin: any extension
+      - agent: only their own extension
+      - supervisor: their own extension or extensions in allowed_agent_extensions
+    """
+    role = current_user.get("role")
+    user_ext = current_user.get("extension")
+    allowed_exts = current_user.get("allowed_agent_extensions") or []
+    ext = str(extension)
+
+    allowed = False
+    if role == "admin":
+        allowed = True
+    elif role == "agent":
+        allowed = bool(user_ext and str(user_ext) == ext)
+    elif role == "supervisor":
+        allowed = (user_ext and str(user_ext) == ext) or ext in [str(e) for e in allowed_exts]
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Not allowed to change WebRTC for this extension")
+
+    if not set_extension_webrtc(extension=ext, enabled=enabled):
+        raise HTTPException(status_code=404, detail="Extension not found in users")
+    return {"ok": True, "extension": ext}
 
 
 @app.get("/api/settings/queues")
@@ -1208,10 +1268,18 @@ async def handle_client_message(websocket: WebSocket, message: dict):
                 })
         
         elif action == "sync":
-            # Full sync like on server start - extensions, calls, and queues
-            await monitor.sync_extension_statuses()
-            await monitor.sync_active_calls()
-            await monitor.sync_queue_status()
+            # Full sync: reload extensions from Asterisk DB only if the set changed (new/removed), then sync status/calls/queues
+            if monitor:
+                extensions = get_extensions_from_db()
+                if extensions:
+                    new_set = set(str(e) for e in extensions)
+                    if new_set != getattr(monitor, "monitored", set()):
+                        monitor.monitored = new_set
+                        names = get_extension_names_from_db()
+                        sync_agents_from_extensions(list(monitor.monitored), names)
+                await monitor.sync_extension_statuses()
+                await monitor.sync_active_calls()
+                await monitor.sync_queue_status()
             await manager.send_personal(websocket, {
                 "type": "action_result",
                 "action": "sync",

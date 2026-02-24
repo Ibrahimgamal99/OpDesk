@@ -26,10 +26,6 @@ import {
   UserCog,
   Monitor,
   Group,
-  KeyRound,
-  X,
-  Save,
-  Loader2,
   Headphones,
 } from 'lucide-react';
 import { getAuthHeaders } from './auth';
@@ -96,10 +92,7 @@ function App({ onLogout }: AppProps) {
     target: string;
   }>({ isOpen: false, mode: 'listen', target: '' });
   const [crmSettingsOpen, setCrmSettingsOpen] = useState(false);
-  const [extensionSecretOpen, setExtensionSecretOpen] = useState(false);
-  const [extensionSecretValue, setExtensionSecretValue] = useState('');
-  const [extensionSecretSaving, setExtensionSecretSaving] = useState(false);
-  const [extensionSecretMessage, setExtensionSecretMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [webrtcExtensions, setWebrtcExtensions] = useState<{ extension: string; name?: string; webrtc?: string }[]>([]);
 
   // Refresh user (role, extension, scope) from server so scope is up to date
   useEffect(() => {
@@ -111,6 +104,15 @@ function App({ onLogout }: AppProps) {
       .catch(() => {});
     return () => ac.abort();
   }, [token]);
+
+  // Load WebRTC extension list for Extensions tab (who can toggle and current state)
+  useEffect(() => {
+    if (activeTab !== 'extensions') return;
+    fetch('/api/settings/extensions/webrtc', { headers: getAuthHeaders() })
+      .then((r) => r.ok ? r.json() : { extensions: [] })
+      .then((data) => setWebrtcExtensions(data.extensions || []))
+      .catch(() => setWebrtcExtensions([]));
+  }, [activeTab, token]);
 
   // Auto-connect softphone when logged in and config is ready
   useEffect(() => {
@@ -218,30 +220,6 @@ function App({ onLogout }: AppProps) {
     setSupervisorModal(prev => ({ ...prev, isOpen: false }));
   }, [sendAction, supervisorModal.mode, supervisorModal.target]);
 
-  const saveExtensionSecret = useCallback(async () => {
-    setExtensionSecretSaving(true);
-    setExtensionSecretMessage(null);
-    try {
-      const res = await fetch('/api/auth/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ extension_secret: extensionSecretValue }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setExtensionSecretMessage({ type: 'success', text: data.message || 'Extension secret saved' });
-        setExtensionSecretValue('');
-        setTimeout(() => setExtensionSecretOpen(false), 1200);
-      } else {
-        setExtensionSecretMessage({ type: 'error', text: data.detail || 'Failed to save' });
-      }
-    } catch (e) {
-      setExtensionSecretMessage({ type: 'error', text: 'Failed to save extension secret' });
-    } finally {
-      setExtensionSecretSaving(false);
-    }
-  }, [extensionSecretValue]);
-
   const stats = state?.stats || {
     total_extensions: 0,
     active_calls_count: 0,
@@ -329,11 +307,11 @@ function App({ onLogout }: AppProps) {
             </span>
           </div>
 
-          {getUser()?.role === 'admin' && (
+          {(getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && (
             <button 
               className="btn" 
               onClick={() => setCrmSettingsOpen(true)}
-              title="CRM Settings"
+              title="Settings"
             >
               <Settings size={14} />
             </button>
@@ -360,15 +338,6 @@ function App({ onLogout }: AppProps) {
           >
             <Phone size={16} />
             Extensions
-          </button>
-          <button
-            type="button"
-            className="btn btn-tab-icon"
-            onClick={() => { setExtensionSecretMessage(null); setExtensionSecretValue(''); setExtensionSecretOpen(true); }}
-            title="Extension secret (WebRTC)"
-            aria-label="Set extension secret"
-          >
-            <KeyRound size={16} />
           </button>
           <button 
             className={`tab ${activeTab === 'calls' ? 'active' : ''}`}
@@ -445,10 +414,23 @@ function App({ onLogout }: AppProps) {
 
         {/* Tab Content */}
         {activeTab === 'extensions' && (
-          <ExtensionsPanel 
+          <ExtensionsPanel
             extensions={state?.extensions || {}}
             onSupervisorAction={handleSupervisorAction}
             onSync={() => sendAction({ action: 'sync' })}
+            webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
+            allowedWebrtcExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
+            onWebrtcToggle={async (ext, enabled) => {
+              const res = await fetch(`/api/settings/extensions/${ext}/webrtc`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                body: JSON.stringify({ enabled }),
+              });
+              if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+              const list = await fetch('/api/settings/extensions/webrtc', { headers: getAuthHeaders() });
+              const data = await list.json();
+              setWebrtcExtensions(data.extensions || []);
+            }}
           />
         )}
 
@@ -532,59 +514,6 @@ function App({ onLogout }: AppProps) {
         isOpen={crmSettingsOpen}
         onClose={() => setCrmSettingsOpen(false)}
       />
-
-      {/* Extension secret modal */}
-      {extensionSecretOpen && (
-        <div className="modal-overlay" onClick={() => setExtensionSecretOpen(false)}>
-          <div className="modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <KeyRound size={20} style={{ color: 'var(--accent-primary)' }} />
-                Extension secret
-              </h3>
-              <button type="button" className="modal-close" onClick={() => setExtensionSecretOpen(false)} aria-label="Close">
-                <X size={20} />
-              </button>
-            </div>
-            <div style={{ padding: 16 }}>
-              <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Set the secret for your extension (used for WebRTC registration). Stored in your user account.
-              </p>
-              <div className="form-group">
-                <label className="form-label">Extension secret</label>
-                <input
-                  type="password"
-                  className="form-input"
-                  placeholder="Your extension secret"
-                  value={extensionSecretValue}
-                  onChange={(e) => setExtensionSecretValue(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
-              {extensionSecretMessage && (
-                <div className={`settings-alert ${extensionSecretMessage.type === 'success' ? 'success' : 'error'}`} style={{ marginTop: 12 }}>
-                  {extensionSecretMessage.text}
-                </div>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn" onClick={() => setExtensionSecretOpen(false)} disabled={extensionSecretSaving}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={saveExtensionSecret}
-                disabled={extensionSecretSaving}
-                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-              >
-                {extensionSecretSaving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
-                {extensionSecretSaving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Notifications */}
       <div className="notifications">

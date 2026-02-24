@@ -94,46 +94,7 @@ OpDesk includes a **WebRTC softphone** so you can make and receive calls directl
 
 Browsers allow microphone access only on **HTTPS** or **localhost**. To use the Softphone from other machines (e.g. over the LAN), serve the app over HTTPS.
 
-### Development (Vite dev server)
 
-The frontend uses `@vitejs/plugin-basic-ssl`. Run:
-
-```bash
-cd frontend && npm run dev
-```
-
-Then open **https://localhost:3000**. Accept the browser’s self-signed certificate warning; the page will be secure and the Softphone microphone will work.
-
-### Production (backend only)
-
-1. **Generate a self-signed certificate** (or use your own cert/key):
-
-```bash
-cd backend
-openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
-```
-
-2. **Set in `backend/.env`**:
-
-```env
-HTTPS_CERT=/opt/OpDesk/backend/cert.pem
-HTTPS_KEY=/opt/OpDesk/backend/key.pem
-OPDESK_HTTPS_PORT=8443
-```
-
-3. **Start the backend** – it will listen on HTTPS (e.g. https://your-server:8443). Open that URL and accept the certificate if self-signed.
-
-For a trusted certificate in production, use Let’s Encrypt or your CA and point `HTTPS_CERT` / `HTTPS_KEY` to those files.
-
-### Asterisk "Internal SSL error" (WebRTC / wss://)
-
-If Asterisk CLI shows:
-`ast_iostream_start_tls: Problem setting up ssl connection: error:00000001:lib(0)::reason(1), Internal SSL error` and `Unable to set up ssl connection with peer '...'`:
-
-1. **Use wss://, not ws://** – In OpDesk Settings, set **WEBRTC_PBX_SERVER** to `wss://your-pbx-ip:8089/ws`. Using `ws://` against a TLS-enabled port causes this error.
-2. **Asterisk http.conf** – Set both `tlscertfile` and `tlskeyfile` in `/etc/asterisk/http.conf` (not only the cert). Install the cert with `./generate-ssl-cert.sh YOUR_PBX_IP asterisk`.
-3. **Certificate CN** – Generate the cert with the same host/IP you use in the URL (e.g. `./generate-ssl-cert.sh 172.16.11.65`).
-4. **Browser** – Open `https://your-pbx-ip:8089` once and accept the self-signed certificate so the softphone’s wss:// connection is allowed.
 
 ## Prerequisites
 
