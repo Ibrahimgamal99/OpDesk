@@ -280,7 +280,7 @@ export function Softphone() {
       )}
       {config?.server?.trim() && (!config?.extension?.trim() || !config?.extension_secret?.trim()) && !configLoading && (
         <p className="softphone-hint">
-          Set your <strong>extension</strong> and <strong>extension secret</strong> (key icon in Extensions tab).
+          Set your <strong>extension</strong> and <strong>extension secret</strong> (configured by an administrator).
         </p>
       )}
       {/* Call status & duration */}

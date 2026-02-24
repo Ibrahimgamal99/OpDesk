@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Headphones, MessageSquare, Radio, RefreshCw } from 'lucide-react';
+import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Headphones, MessageSquare, Radio, RefreshCw, Loader2 } from 'lucide-react';
 import type { Extension, ExtensionStatus } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
 
@@ -7,6 +8,11 @@ interface ExtensionsPanelProps {
   extensions: Record<string, Extension>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   onSync?: () => void;
+  /** Extension -> webrtc 'yes'|'no' for extensions current user can manage */
+  webrtcMap?: Record<string, string>;
+  /** Extensions the current user is allowed to toggle WebRTC for */
+  allowedWebrtcExtensions?: Set<string>;
+  onWebrtcToggle?: (extension: string, enabled: boolean) => Promise<void>;
 }
 
 const statusConfig: Record<ExtensionStatus, { icon: typeof Phone; label: string }> = {
@@ -18,8 +24,15 @@ const statusConfig: Record<ExtensionStatus, { icon: typeof Phone; label: string 
   on_hold: { icon: Pause, label: 'On Hold' },
 };
 
-export function ExtensionsPanel({ extensions, onSupervisorAction, onSync }: ExtensionsPanelProps) {
-  const extensionList = Object.values(extensions).sort((a, b) => 
+export function ExtensionsPanel({
+  extensions,
+  onSupervisorAction,
+  onSync,
+  webrtcMap = {},
+  allowedWebrtcExtensions = new Set(),
+  onWebrtcToggle,
+}: ExtensionsPanelProps) {
+  const extensionList = Object.values(extensions).sort((a, b) =>
     a.extension.localeCompare(b.extension, undefined, { numeric: true })
   );
 
@@ -51,6 +64,9 @@ export function ExtensionsPanel({ extensions, onSupervisorAction, onSync }: Exte
                   key={ext.extension}
                   extension={ext}
                   onSupervisorAction={onSupervisorAction}
+                  webrtcEnabled={webrtcMap[ext.extension] === 'yes'}
+                  canToggleWebrtc={allowedWebrtcExtensions.has(ext.extension)}
+                  onWebrtcToggle={onWebrtcToggle}
                 />
               ))}
             </AnimatePresence>
@@ -64,13 +80,27 @@ export function ExtensionsPanel({ extensions, onSupervisorAction, onSync }: Exte
 interface ExtensionCardProps {
   extension: Extension;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
+  webrtcEnabled: boolean;
+  canToggleWebrtc: boolean;
+  onWebrtcToggle?: (extension: string, enabled: boolean) => Promise<void>;
 }
 
-function ExtensionCard({ extension, onSupervisorAction }: ExtensionCardProps) {
+function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggleWebrtc, onWebrtcToggle }: ExtensionCardProps) {
+  const [webrtcSaving, setWebrtcSaving] = useState(false);
   const config = statusConfig[extension.status] || statusConfig.unavailable;
   const StatusIcon = config.icon;
   const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
   const isRinging = extension.status === 'ringing';
+
+  const handleWebrtcClick = async () => {
+    if (!canToggleWebrtc || !onWebrtcToggle || webrtcSaving) return;
+    setWebrtcSaving(true);
+    try {
+      await onWebrtcToggle(extension.extension, !webrtcEnabled);
+    } finally {
+      setWebrtcSaving(false);
+    }
+  };
 
   return (
     <motion.div
@@ -80,13 +110,34 @@ function ExtensionCard({ extension, onSupervisorAction }: ExtensionCardProps) {
       transition={{ duration: 0.2 }}
       className={`extension-card status-${extension.status}`}
     >
-      <div className="extension-header">
-        <div className="extension-number">{extension.extension}</div>
-        {extension.name && (
-          <div className="extension-name">{extension.name}</div>
+      <div className="extension-header" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="extension-number">{extension.extension}</div>
+          {extension.name && (
+            <div className="extension-name">{extension.name}</div>
+          )}
+        </div>
+        {canToggleWebrtc && (
+          <button
+            type="button"
+            className="btn btn-icon"
+            onClick={(e) => { e.stopPropagation(); handleWebrtcClick(); }}
+            disabled={webrtcSaving}
+            title={webrtcEnabled ? 'WebRTC enabled (click to disable)' : 'WebRTC disabled (click to enable)'}
+            style={{ flexShrink: 0, padding: 4 }}
+            aria-label={webrtcEnabled ? 'WebRTC on' : 'WebRTC off'}
+          >
+            {webrtcSaving ? (
+              <Loader2 size={18} className="spinner" />
+            ) : webrtcEnabled ? (
+              <Phone size={18} style={{ color: 'var(--status-idle)' }} />
+            ) : (
+              <PhoneOff size={18} style={{ color: 'var(--text-muted)' }} />
+            )}
+          </button>
         )}
       </div>
-      
+
       <div className={`extension-status ${extension.status}`}>
         <StatusIcon size={16} />
         {config.label}

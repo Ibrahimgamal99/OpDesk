@@ -143,6 +143,29 @@ def reload_asterisk_dialplan():
         return False
 
 
+def reload_asterisk_sip():
+    """Reload FreePBX/Asterisk config using 'fwconsole reload'."""
+    log.info("Running 'fwconsole reload' to apply SIP/WebRTC changes...")
+    try:
+        result = subprocess.run(
+            ['sudo', 'fwconsole', 'reload'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            log.info("Successfully ran 'fwconsole reload'")
+            return True
+        log.warning(f"fwconsole reload failed: {result.stderr or result.stdout}")
+        return False
+    except subprocess.TimeoutExpired:
+        log.warning("Timeout while running 'fwconsole reload'")
+        return False
+    except Exception as e:
+        log.warning(f"Error running 'fwconsole reload': {e}")
+        return False
+
+
 def remove_custom_file():
     """Remove the QoS dialplan sections from extensions_custom.conf."""
     log.info(f"Removing QoS custom dialplan from {EXTENSIONS_CUSTOM_CONF}")

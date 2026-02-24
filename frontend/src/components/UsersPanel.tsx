@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus,
+  X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus, Phone,
 } from 'lucide-react';
 import { getAuthHeaders, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
@@ -25,6 +25,11 @@ export interface OpDeskUser {
 
 interface GroupOption {
   id: number;
+  name: string;
+}
+
+interface AgentOption {
+  extension: string;
   name: string;
 }
 
@@ -228,6 +233,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const isAdmin = currentUser?.role === 'admin';
   const [users, setUsers] = useState<OpDeskUser[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingUser, setEditingUser] = useState<OpDeskUser | null>(null);
@@ -264,9 +270,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     setLoading(true);
     setMessage(null);
     try {
-      const [usersRes, groupsRes] = await Promise.all([
+      const [usersRes, groupsRes, agentsRes] = await Promise.all([
         fetch('/api/settings/users', { headers: getAuthHeaders() }),
         fetch('/api/settings/groups', { headers: getAuthHeaders() }),
+        fetch('/api/settings/agents', { headers: getAuthHeaders() }),
       ]);
       if (usersRes.ok) {
         const d = await usersRes.json();
@@ -275,6 +282,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       if (groupsRes.ok) {
         const d = await groupsRes.json();
         setGroups((d.groups || []).map((g: { id: number; name: string }) => ({ id: g.id, name: g.name })));
+      }
+      if (agentsRes.ok) {
+        const d = await agentsRes.json();
+        setAgents(d.agents || []);
       }
       if (!usersRes.ok && usersRes.status === 403) {
         setMessage({ type: 'error', text: 'Admin access required to manage users.' });
@@ -528,14 +539,25 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 />
               </div>
               <div className="up-form-group">
-                <label>Extension (optional)</label>
-                <input
-                  type="text"
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Phone size={14} />
+                  Extension (optional)
+                </label>
+                <select
                   className="form-input"
                   value={form.extension}
                   onChange={e => setForm(f => ({ ...f, extension: e.target.value }))}
-                  placeholder="e.g. 1001"
-                />
+                >
+                  <option value="">None</option>
+                  {agents.map(a => (
+                    <option key={a.extension} value={a.extension}>
+                      {`${a.extension} ${a.name !== a.extension ? a.name : ''}`.trim() || a.extension}
+                    </option>
+                  ))}
+                </select>
+                {agents.length === 0 && (
+                  <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>No extensions in system</p>
+                )}
               </div>
             </div>
             <div className="up-form-row">

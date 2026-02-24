@@ -8,8 +8,13 @@ Configuration (via .env):
 
 import logging
 import os
-from typing import Optional, List
+from typing import Any, Optional, List
 from dotenv import load_dotenv
+
+try:
+    from qos import reload_asterisk_sip
+except ImportError:
+    reload_asterisk_sip = None
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -143,6 +148,136 @@ def get_queue_names_from_db() -> dict:
         log.warning(f"⚠️  Database error getting extension names: {e}")
 
     return queue_names
+
+
+def get_extension_secret_from_db(extension):
+    """Get extension secret from the database."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_NAME', 'asterisk'))
+
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+
+        try:
+            cursor.execute("SELECT data FROM sip WHERE id = %s and keyword = 'secret'", (extension,))
+            secret = cursor.fetchall()
+            secret = secret[0]['data']
+        except Error as e:
+            log.debug(f"Could not get extension secret from database: {e}")
+
+        cursor.close()
+        conn.close()
+
+    except Error as e:
+        log.warning(f"⚠️  Database error getting extension secret: {e}")
+
+    return secret
+
+def get_extensions_with_webrtc_from_users() -> list:
+    """Only source for listing extensions in WebRTC tab. OpDesk users with an extension; unique by extension. Returns [{ extension, name, webrtc }, ...]."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    seen = set()
+    out = []
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT extension, name, COALESCE(webrtc, 'no') AS webrtc FROM users WHERE extension IS NOT NULL AND extension != '' ORDER BY extension"
+        )
+        for row in cursor.fetchall():
+            ext = row.get('extension')
+            if not ext:
+                continue
+            ext = str(ext)
+            if ext in seen:
+                continue
+            seen.add(ext)
+            out.append({
+                'extension': ext,
+                'name': (row.get('name') or '').strip() or ext,
+                'webrtc': (row.get('webrtc') or 'no').strip().lower(),
+            })
+        cursor.close()
+        conn.close()
+    except Error as e:
+        log.warning(f"get_extensions_with_webrtc_from_users: {e}")
+    return out
+
+
+def set_extension_webrtc(extension: str, enabled: bool) -> bool:
+    """
+    Single place for enable/disable and SIP options.
+    Backend behavior (as requested):
+      - If enabled = True  -> rtcp_mux = yes, avpf = yes, icesupport = yes, media_encryption = dtls
+      - If enabled = False -> rtcp_mux = no,  avpf = no,  icesupport = no,  media_encryption = no
+    Updates OpDesk users.webrtc and Asterisk sip accordingly. Only extensions from users (same as list) can be set.
+    """
+    ext = str(extension).strip()
+    if not ext:
+        return False
+    webrtc_val = 'yes' if enabled else 'no'
+    # Map enabled flag to fixed SIP values
+    if enabled:
+        r = a = i = 'yes'
+        e = 'dtls'
+    else:
+        r = a = i = 'no'
+        e = 'no'
+
+    # Enable/disable: OpDesk users.webrtc only
+    opdesk_config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**opdesk_config)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET webrtc = %s WHERE extension = %s", (webrtc_val, ext))
+        if cursor.rowcount == 0:
+            cursor.close()
+            conn.close()
+            return False  # Extension not in users (same as list; no duplicate path)
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Error as err:
+        log.warning(f"set_extension_webrtc users ({ext}): {err}")
+        return False
+
+    # Update Asterisk sip table (id, keyword, data): rtcp_mux, avpf, icesupport, media_encryption
+    # When enabled: ensure certman_mapping row (id=ext, cid=2, verify=fingerprint, setup=actpass, rekey=0, auto_generate_cert=0)
+    # When disabled: delete certman_mapping row for this extension
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_NAME', 'asterisk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        updated = 0
+        for keyword, value in [
+            ('rtcp_mux', r),
+            ('avpf', a),
+            ('icesupport', i),
+            ('media_encryption', e),
+        ]:
+            cursor.execute(
+                "UPDATE sip SET data = %s WHERE id = %s AND keyword = %s",
+                (value, ext, keyword),
+            )
+            updated += cursor.rowcount
+        if enabled:
+            cursor.execute(
+                "REPLACE INTO certman_mapping (id, cid, verify, setup, rekey, auto_generate_cert) VALUES (%s, 2, 'fingerprint', 'actpass', 0, 0)",
+                (ext,),
+            )
+        else:
+            cursor.execute("DELETE FROM certman_mapping WHERE id = %s", (ext,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        if updated:
+            log.info(f"Updated WebRTC for extension {ext}: users.webrtc={webrtc_val}, rtcp_mux={r}, avpf={a}, icesupport={i}, media_encryption={e}")
+            if reload_asterisk_sip:
+                reload_asterisk_sip()
+        return True  # Success if we at least updated users; sip rows may not exist yet
+    except Error as err:
+        log.warning(f"set_extension_webrtc sip/certman ({ext}): {err}")
+        return True  # users.webrtc was set
 
 
 def get_call_log_from_db(limit: int = None, date: str = None,
@@ -528,52 +663,6 @@ def get_all_settings() -> dict:
 # Authentication (users table in OpDesk)
 # ---------------------------------------------------------------------------
 
-def ensure_users_extension_column():
-    """Add extension column to users table if missing (migration for existing DBs)."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
-    try:
-        conn = mysql.connector.connect(**config)
-        cursor = conn.cursor()
-        cursor.execute("""
-            ALTER TABLE users
-            ADD COLUMN extension VARCHAR(20) UNIQUE NULL AFTER username
-        """)
-        conn.commit()
-        cursor.close()
-        conn.close()
-        log.info("Added extension column to users table")
-    except Error as e:
-        if "Duplicate column name" in str(e):
-            pass  # Column already exists
-        else:
-            log.warning(f"⚠️  Migration users.extension: {e}")
-    except Exception as e:
-        log.warning(f"⚠️  Migration users.extension: {e}")
-
-
-def ensure_users_extension_secret_column():
-    """Add extension_secret column to users table if missing (migration for existing DBs)."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
-    try:
-        conn = mysql.connector.connect(**config)
-        cursor = conn.cursor()
-        cursor.execute("""
-            ALTER TABLE users
-            ADD COLUMN extension_secret VARCHAR(255) NULL AFTER extension
-        """)
-        conn.commit()
-        cursor.close()
-        conn.close()
-        log.info("Added extension_secret column to users table")
-    except Error as e:
-        if "Duplicate column name" in str(e):
-            pass  # Column already exists
-        else:
-            log.warning(f"⚠️  Migration users.extension_secret: {e}")
-    except Exception as e:
-        log.warning(f"⚠️  Migration users.extension_secret: {e}")
-
-
 def get_user_by_username(username: str) -> dict:
     """Get user by username. Returns dict with id, username, extension, name, role, password_hash, is_active or None."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
@@ -697,7 +786,7 @@ def get_all_users() -> list:
 
 def create_user(username: str, password: str, name: str = None, extension: str = None,
                 role: str = 'supervisor', monitor_mode: str = 'listen',
-                monitor_modes: list = None) -> Optional[int]:
+                monitor_modes: list = None, extension_secret: str = None) -> Optional[int]:
     """Create user. Returns new user id or None on error/duplicate. monitor_modes: optional list ['listen','whisper','barge']."""
     if not username or not username.strip():
         return None
@@ -719,10 +808,10 @@ def create_user(username: str, password: str, name: str = None, extension: str =
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO users (username, extension, password_hash, name, role) "
-            "VALUES (%s, %s, %s, %s, %s)",
+            "INSERT INTO users (username, extension, password_hash, name, role, extension_secret) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (username, (extension or '').strip() or None, password_hash, (name or '').strip() or None,
-             role if role in ('admin', 'supervisor', 'agent') else 'supervisor')
+             role if role in ('admin', 'supervisor', 'agent') else 'supervisor', extension_secret)
         )
         user_id = cursor.lastrowid
         conn.commit()
@@ -732,7 +821,7 @@ def create_user(username: str, password: str, name: str = None, extension: str =
             set_user_monitor_modes(user_id, monitor_modes)
         else:
             mode_col = monitor_mode or 'listen'
-            set_user_monitor_modes(user_id, list(VALID_MONITOR_MODES) if mode_col == 'full' else [mode_col])
+            set_user_monitor_modes(user_id, [mode_col])
         return user_id
     except Error as e:
         log.warning(f"⚠️  Database error create_user: {e}")
@@ -742,7 +831,7 @@ def create_user(username: str, password: str, name: str = None, extension: str =
 def update_user(user_id: int, name: str = None, extension: str = None, role: str = None,
                 is_active: bool = None, monitor_mode: str = None, monitor_modes: list = None,
                 password: str = None, extension_secret: str = None) -> bool:
-    """Update user. password optional (new hash). extension_secret: optional (for WebRTC). monitor_modes: optional list to set multiple modes. Returns True on success."""
+    """Update user. password optional (new hash). extension_se  cret: optional (for WebRTC). monitor_modes: optional list to set multiple modes. Returns True on success."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)

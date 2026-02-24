@@ -26,6 +26,7 @@ CREATE TABLE users (
     extension_secret VARCHAR(255),
     password_hash VARCHAR(255),
     name VARCHAR(255),
+    webrtc ENUM('yes', 'no') DEFAULT 'no',
     role ENUM('admin', 'supervisor','agent') NOT NULL,
     is_active TINYINT(1) DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
