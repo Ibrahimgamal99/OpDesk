@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Headphones, MessageSquare, Radio, RefreshCw, Loader2 } from 'lucide-react';
+import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2 } from 'lucide-react';
 import type { Extension, ExtensionStatus } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
 
@@ -177,7 +177,7 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
                 }}
                 title="Listen (Silent)"
               >
-                <Headphones size={18} />
+                <Ear size={18} />
               </button>
             )}
             {allowed.includes('whisper') && (
@@ -189,7 +189,7 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
                 }}
                 title="Whisper to Agent"
               >
-                <MessageSquare size={18} />
+                <MicVocal size={18} />
               </button>
             )}
             {allowed.includes('barge') && (
@@ -201,7 +201,7 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
                 }}
                 title="Barge In"
               >
-                <Radio size={18} />
+                <UserPlus size={18} />
               </button>
             )}
           </div>

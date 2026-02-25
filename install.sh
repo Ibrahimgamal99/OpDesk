@@ -442,16 +442,16 @@ echo -e "${GREEN}Database User: $DB_USER${NC}"
 echo -e "\n${YELLOW}Step 7: Configuring Asterisk AMI...${NC}"
 AMI_HOST="localhost"; AMI_PORT="5038"; AMI_USER="OpDesk"
 AMI_USER_EXISTING=""
-if [ -f /etc/asterisk/manager.conf ] && grep -q "\[$AMI_USER\]" /etc/asterisk/manager.conf; then
-    # AMI user already exists in manager.conf: do not rewrite; use existing secret
-    AMI_SECRET=$(sed -n '/^\['"$AMI_USER"'\][[:space:]]*$/,/^\[/p' /etc/asterisk/manager.conf | grep -E '^[[:space:]]*secret[[:space:]]*=' | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+if [ -f /etc/asterisk/manager_custom.conf ] && grep -q "\[$AMI_USER\]" /etc/asterisk/manager_custom.conf; then
+    # AMI user already exists in manager_custom.conf: do not rewrite; use existing secret
+    AMI_SECRET=$(sed -n '/^\['"$AMI_USER"'\][[:space:]]*$/,/^\[/p' /etc/asterisk/manager_custom.conf | grep -E '^[[:space:]]*secret[[:space:]]*=' | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
     [ -z "$AMI_SECRET" ] && AMI_SECRET=$(openssl rand -hex 4)
-    AMI_USER_EXISTING=" (existing in manager.conf)"
+    AMI_USER_EXISTING=" (existing in manager_custom.conf)"
     echo -e "${GREEN}Using existing AMI user in manager: $AMI_USER${NC}"
 else
     AMI_SECRET=$(openssl rand -hex 4)
-    if [ -f /etc/asterisk/manager.conf ]; then
-        sudo tee -a /etc/asterisk/manager.conf <<EOF
+    if [ -f /etc/asterisk/manager_custom.conf ]; then
+        sudo tee -a /etc/asterisk/manager_custom.conf <<EOF
 
 [$AMI_USER]
 secret = $AMI_SECRET

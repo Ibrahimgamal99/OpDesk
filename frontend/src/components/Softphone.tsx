@@ -9,8 +9,11 @@ import {
   Pause,
   MicOff,
   ArrowRightLeft,
+  Volume2,
+  Mic,
 } from 'lucide-react';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
+import { useAudioLevels } from '../hooks/useAudioLevels';
 
 const DIAL_PAD = [
   [['1', ''], ['2', 'ABC'], ['3', 'DEF']],
@@ -44,9 +47,14 @@ export function Softphone() {
     clearLogs,
     refetchConfig,
     remoteAudioRef,
+    localStream,
+    remoteStream,
+    isMuted,
+    toggleMute,
   } = useWebPhoneContext();
 
   const [showLog, setShowLog] = useState(false);
+  const { micLevel, speakerLevel } = useAudioLevels(localStream, remoteStream);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -149,14 +157,39 @@ export function Softphone() {
           <div className="softphone-incall-number">{inCallNumber || '—'}</div>
           <div className="softphone-incall-name">{inCallName}</div>
           <div className="softphone-incall-duration">{inCallDuration}</div>
+          <div className="softphone-audio-levels">
+            <div className="softphone-level-item" title="Speaker (incoming volume)">
+              <Volume2 size={18} className="softphone-level-icon" />
+              <div className="softphone-level-bar-wrap">
+                <div
+                  className="softphone-level-bar softphone-level-speaker"
+                  style={{ height: `${Math.round(speakerLevel * 100)}%` }}
+                />
+              </div>
+            </div>
+            <div className="softphone-level-item" title="Microphone (your voice)">
+              <Mic size={18} className="softphone-level-icon" />
+              <div className="softphone-level-bar-wrap">
+                <div
+                  className="softphone-level-bar softphone-level-mic"
+                  style={{ height: `${Math.round(micLevel * 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
           <div className="softphone-incall-grid">
             <button type="button" className="softphone-incall-btn" title="Hold">
               <Pause size={22} />
               <span>Hold</span>
             </button>
-            <button type="button" className="softphone-incall-btn" title="Mute">
-              <MicOff size={22} />
-              <span>Mute</span>
+            <button
+              type="button"
+              className={`softphone-incall-btn ${isMuted ? 'softphone-incall-btn-active' : ''}`}
+              onClick={toggleMute}
+              title={isMuted ? 'Unmute' : 'Mute'}
+            >
+              {isMuted ? <Mic size={22} /> : <MicOff size={22} />}
+              <span>{isMuted ? 'Unmute' : 'Mute'}</span>
             </button>
             <button type="button" className="softphone-incall-btn" title="Transfer">
               <ArrowRightLeft size={22} />

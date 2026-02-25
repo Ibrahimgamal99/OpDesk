@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, Headphones, MessageSquare, Radio } from 'lucide-react';
+import { X, Ear, MicVocal, UserPlus } from 'lucide-react';
 
 interface SupervisorModalProps {
   mode: 'listen' | 'whisper' | 'barge';
@@ -11,21 +11,21 @@ interface SupervisorModalProps {
 
 const modeConfig = {
   listen: {
-    icon: Headphones,
+    icon: Ear,
     title: 'Listen to Call',
     description: 'Listen silently to the call. Neither party will hear you.',
     color: 'var(--status-idle)',
     buttonText: 'Start Listening',
   },
   whisper: {
-    icon: MessageSquare,
+    icon: MicVocal,
     title: 'Whisper to Agent',
     description: 'Speak privately to the agent. The caller will not hear you.',
     color: 'var(--accent-amber)',
     buttonText: 'Start Whispering',
   },
   barge: {
-    icon: Radio,
+    icon: UserPlus,
     title: 'Barge into Call',
     description: 'Join the call as a third party. Both parties will hear you.',
     color: 'var(--accent-pink)',
