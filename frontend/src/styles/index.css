@@ -3685,7 +3685,53 @@ body::before {
   font-weight: 600;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+  margin-bottom: 10px;
+}
+
+/* Speaker & mic level indicators (MicroSIP-style, modern) */
+.softphone-audio-levels {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
   margin-bottom: 14px;
+}
+
+.softphone-level-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.softphone-level-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.softphone-level-bar-wrap {
+  width: 8px;
+  height: 32px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+
+.softphone-level-bar {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 3px;
+  transition: height 0.08s ease-out;
+}
+
+.softphone-level-speaker {
+  background: linear-gradient(to top, var(--accent-primary), #79c0ff);
+}
+
+.softphone-level-mic {
+  background: linear-gradient(to top, var(--accent-success), #6dd68a);
 }
 
 .softphone-incall-grid {
@@ -3727,6 +3773,16 @@ body::before {
 
 .softphone-incall-btn:active:not(:disabled) {
   transform: scale(0.98);
+}
+
+.softphone-incall-btn.softphone-incall-btn-active {
+  background: rgba(248, 81, 73, 0.15);
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
+}
+
+.softphone-incall-btn.softphone-incall-btn-active:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.25);
 }
 
 .softphone-btn-hangup {

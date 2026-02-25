@@ -34,6 +34,10 @@ export interface WebPhoneCallbacks {
   onRegistered?: () => void;
   onUnregistered?: () => void;
   onIncomingCall?: (info: IncomingCallInfo) => void;
+  /** Called when a call is established with the local (mic) stream for level metering. */
+  onLocalStream?: (stream: MediaStream) => void;
+  /** Called when mute state changes (true = muted). */
+  onMutedChange?: (muted: boolean) => void;
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -80,6 +84,38 @@ export class WebPhone {
 
   get hasActiveCall(): boolean {
     return this.session != null;
+  }
+
+  /** Mute/unmute the microphone for the current call. Toggles if no argument. */
+  setMuted(muted: boolean): void {
+    if (!this.localStream) return;
+    const tracks = this.localStream.getAudioTracks();
+    if (tracks.length === 0) return;
+    tracks.forEach((t) => { t.enabled = !muted; });
+    this.callbacks.onMutedChange?.(muted);
+    // Also disable the track on the peer connection senders (same track ref, but ensure no send)
+    const sdh = this.session?.sessionDescriptionHandler as { peerConnection?: RTCPeerConnection };
+    const pc = sdh?.peerConnection;
+    if (pc) {
+      pc.getSenders().forEach((sender) => {
+        if (sender.track && sender.track.kind === 'audio') sender.track.enabled = !muted;
+      });
+    }
+  }
+
+  toggleMute(): boolean {
+    if (!this.localStream) return false;
+    const tracks = this.localStream.getAudioTracks();
+    if (tracks.length === 0) return false;
+    const nextMuted = tracks[0].enabled;
+    this.setMuted(nextMuted);
+    return nextMuted;
+  }
+
+  get isMuted(): boolean {
+    if (!this.localStream) return false;
+    const tracks = this.localStream.getAudioTracks();
+    return tracks.length > 0 && !tracks[0].enabled;
   }
 
   private log(message: string, type: 'info' | 'success' | 'warn' | 'error' = 'info') {
@@ -342,6 +378,7 @@ export class WebPhone {
             this.setCallStatus(`In call with ${number}`);
             this.startCallTimer();
             this.setupRemoteMedia(inviter, onRemoteStream);
+            if (this.localStream) this.callbacks.onLocalStream?.(this.localStream);
             break;
           case SessionState.Terminated:
             this.resetCallState();
@@ -410,6 +447,7 @@ export class WebPhone {
         this.setCallStatus('In call');
         this.startCallTimer();
         if (onRemoteStream) this.setupRemoteMedia(invitation, onRemoteStream);
+        if (this.localStream) this.callbacks.onLocalStream?.(this.localStream);
       } else if (state === SessionState.Terminated) {
         this.resetCallState();
       }

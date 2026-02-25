@@ -30,6 +30,10 @@ export interface WebPhoneContextValue {
   clearLogs: () => void;
   refetchConfig: () => Promise<void>;
   remoteAudioRef: React.RefObject<HTMLAudioElement>;
+  localStream: MediaStream | null;
+  remoteStream: MediaStream | null;
+  isMuted: boolean;
+  toggleMute: () => void;
 }
 
 const WebPhoneContext = createContext<WebPhoneContextValue | null>(null);

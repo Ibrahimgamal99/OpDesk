@@ -20,6 +20,8 @@ export function useWebPhone() {
   const [activeCallRemoteNumber, setActiveCallRemoteNumber] = useState('');
   const [activeCallRemoteName, setActiveCallRemoteName] = useState('');
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
   const [dialNumber, setDialNumber] = useState('');
   const phoneRef = useRef<WebPhone | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -62,6 +64,8 @@ export function useWebPhone() {
     onCallDuration: setCallDuration,
     onRegistered: () => setStatus('connected'),
     onUnregistered: () => setStatus('disconnected'),
+    onLocalStream: setLocalStream,
+    onMutedChange: setIsMuted,
     onIncomingCall: (info) => {
       setIncomingCall({
         callerNumber: info.callerNumber,
@@ -119,6 +123,12 @@ export function useWebPhone() {
   const hangup = useCallback(() => {
     phoneRef.current?.hangup();
     setRemoteStream(null);
+    setLocalStream(null);
+    setIsMuted(false);
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    phoneRef.current?.toggleMute();
   }, []);
 
   const addDigit = useCallback((digit: string) => {
@@ -207,6 +217,8 @@ export function useWebPhone() {
       setActiveCallRemoteNumber('');
       setActiveCallRemoteName('');
       setDialNumber('');
+      setLocalStream(null);
+      setIsMuted(false);
     }
   }, [hasActiveCall]);
 
@@ -248,5 +260,9 @@ export function useWebPhone() {
     clearLogs,
     refetchConfig: fetchConfig,
     remoteAudioRef,
+    localStream,
+    remoteStream,
+    isMuted,
+    toggleMute,
   };
 }

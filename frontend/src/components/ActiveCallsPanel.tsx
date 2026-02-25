@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { PhoneCall, Headphones, MessageSquare, Radio, Phone, RefreshCw } from 'lucide-react';
+import { PhoneCall, Ear, MicVocal, UserPlus, Phone, RefreshCw } from 'lucide-react';
 import type { CallInfo } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
 
@@ -111,7 +111,7 @@ function CallRow({ call, onSupervisorAction }: CallRowProps) {
                 onClick={() => onSupervisorAction('listen', call.extension)}
                 title="Listen (Silent)"
               >
-                <Headphones size={18} />
+                <Ear size={18} />
               </button>
             )}
             {getAllowedMonitorModes().includes('whisper') && (
@@ -120,7 +120,7 @@ function CallRow({ call, onSupervisorAction }: CallRowProps) {
                 onClick={() => onSupervisorAction('whisper', call.extension)}
                 title="Whisper to Agent"
               >
-                <MessageSquare size={18} />
+                <MicVocal size={18} />
               </button>
             )}
             {getAllowedMonitorModes().includes('barge') && (
@@ -129,7 +129,7 @@ function CallRow({ call, onSupervisorAction }: CallRowProps) {
                 onClick={() => onSupervisorAction('barge', call.extension)}
                 title="Barge In"
               >
-                <Radio size={18} />
+                <UserPlus size={18} />
               </button>
             )}
           </div>
