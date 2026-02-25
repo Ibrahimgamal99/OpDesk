@@ -38,7 +38,7 @@ from db_manager import (
     get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
     set_extension_webrtc, get_extensions_with_webrtc_from_users,get_extension_secret_from_db
 )
-from qos import enable_qos, disable_qos
+from dialplan import enable_qos, disable_qos
 from call_log import call_log as get_call_log
 
 # Load environment variables
@@ -599,7 +599,7 @@ async def lifespan(app: FastAPI):
         'CRM_ENDPOINT_PATH': '/api/calls',
         'CRM_TIMEOUT': '30',
         'CRM_VERIFY_SSL': 'true',
-        'WEBRTC_PBX_SERVER': f'wss://{local_ip}:8098/ws',
+        'WEBRTC_PBX_SERVER': f'wss://{local_ip}:8089/ws',
     }
     
     for key, default_value in default_settings.items():
@@ -904,7 +904,6 @@ async def api_create_user(
     monitor_modes = body.monitor_modes if body.monitor_modes is not None else None
     if monitor_modes is None and body.monitor_mode:
         monitor_modes = [body.monitor_mode]
-    extension_secret = get_extension_secret_from_db(body.extension)
     user_id = db_create_user(
         username=username,
         password=body.password,
@@ -913,7 +912,6 @@ async def api_create_user(
         role=body.role or "supervisor",
         monitor_mode=body.monitor_mode or "listen",
         monitor_modes=monitor_modes,
-        extension_secret=extension_secret,
     )
     if not user_id:
         raise HTTPException(status_code=400, detail="Username or extension already in use")
@@ -934,7 +932,6 @@ async def api_update_user(
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    extension_secret = get_extension_secret_from_db(body.extension)
     db_update_user(
         user_id,
         name=body.name,
@@ -944,7 +941,6 @@ async def api_update_user(
         monitor_mode=body.monitor_mode,
         monitor_modes=body.monitor_modes,
         password=body.password,
-        extension_secret=extension_secret,
     )
     if body.group_ids is not None:
         set_user_groups(user_id, body.group_ids)
@@ -1037,8 +1033,12 @@ async def api_set_extension_webrtc(
     if not allowed:
         raise HTTPException(status_code=403, detail="Not allowed to change WebRTC for this extension")
 
-    if not set_extension_webrtc(extension=ext, enabled=enabled):
+    if not set_extension_webrtc(extension=ext, enabled=enabled,PBX=os.getenv('PBX')):
         raise HTTPException(status_code=404, detail="Extension not found in users")
+
+    extension_secret = get_extension_secret_from_db(ext)
+    db_update_user(extension=ext, extension_secret=extension_secret)
+    log.info(f"WebRTC enabled/disabled for extension: {ext} - {enabled} and secrets set")
     return {"ok": True, "extension": ext}
 
 

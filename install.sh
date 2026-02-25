@@ -295,15 +295,68 @@ if [ -n "$DB_EXISTING" ]; then
 elif [ -d /usr/share/issabel ]; then
     PBX="Issabel"
     echo -e "${GREEN}Detected Issabel PBX${NC}"
+    DB_USER="OpDesk"
+    _root_pass=""
     if [ -f /etc/issabel.conf ]; then
-        DB_PASS=$(grep -E "^mysqlrootpwd\s*=" /etc/issabel.conf 2>/dev/null | cut -d'=' -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
-        if [ -z "$DB_PASS" ]; then
-            DB_PASS=$(grep "mysqlrootpwd" /etc/issabel.conf 2>/dev/null | cut -d'=' -f2 | xargs 2>/dev/null || echo "")
+        _root_pass=$(grep -E "^mysqlrootpwd\s*=" /etc/issabel.conf 2>/dev/null | cut -d'=' -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+        if [ -z "$_root_pass" ]; then
+            _root_pass=$(grep "mysqlrootpwd" /etc/issabel.conf 2>/dev/null | cut -d'=' -f2 | xargs 2>/dev/null || echo "")
         fi
-        if [ -n "$DB_PASS" ]; then
+        if [ -n "$_root_pass" ]; then
             echo -e "${GREEN}Retrieved MySQL root password from Issabel config${NC}"
         else
             echo -e "${YELLOW}Could not retrieve MySQL password from Issabel config${NC}"
+        fi
+    fi
+    # Check if OpDesk user already exists in MySQL (do not overwrite)
+    _opdesk_exists=""
+    if command_exists mysql; then
+        if [ -n "$_root_pass" ]; then
+            if mysql -u root -p"$_root_pass" -e "SELECT 1 FROM mysql.user WHERE User='OpDesk' AND Host='localhost';" 2>/dev/null | grep -q 1; then
+                _opdesk_exists=1
+            fi
+        fi
+        if [ -z "$_opdesk_exists" ] && sudo mysql -e "SELECT 1 FROM mysql.user WHERE User='OpDesk' AND Host='localhost';" 2>/dev/null | grep -q 1; then
+            _opdesk_exists=1
+        fi
+    fi
+    if [ -n "$_opdesk_exists" ]; then
+        DB_EXISTING=" (existing)"
+        echo -e "${GREEN}Using existing database user in MySQL: $DB_USER${NC}"
+        if [ -f "$PROJECT_ROOT/backend/.env" ]; then
+            _existing_pass=$(grep -E '^DB_PASSWORD=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+            [ -n "$_existing_pass" ] && DB_PASS="$_existing_pass"
+        fi
+    else
+        DB_PASS=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16 2>/dev/null || echo "$(date +%s | sha256sum | base64 | head -c 16)")
+    fi
+    # Create database user only if it does not already exist
+    if [ -z "$_opdesk_exists" ]; then
+        if command_exists systemctl; then
+            if systemctl is-active --quiet mysql || systemctl is-active --quiet mariadb; then
+                echo -e "${GREEN}MySQL/MariaDB service is running${NC}"
+            else
+                echo -e "${YELLOW}MySQL/MariaDB service may not be running. Attempting to start...${NC}"
+                sudo systemctl start mysql 2>/dev/null || sudo systemctl start mariadb 2>/dev/null || true
+            fi
+        fi
+        echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
+        if command_exists mysql; then
+            if [ -n "$_root_pass" ] && mysql -u root -p"$_root_pass" -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
+                mysql -u root -p"$_root_pass" -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
+            elif sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
+                sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
+            elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
+                mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
+            else
+                echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
+                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\"${NC}"
+            fi
+        else
+            echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
         fi
     fi
 elif [ -f /etc/freepbx.conf ]; then
