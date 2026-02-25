@@ -310,7 +310,7 @@ def set_extension_webrtc(extension: str, enabled: bool, PBX: str) -> bool:
         cursor.close()
         conn.close()
         if updated and reload_asterisk_sip:
-            reload_asterisk_sip()
+            reload_asterisk_sip(PBX)
         return True
     except Error as err:
         log.warning(f"set_extension_webrtc sip/certman ({ext}): {err}")

@@ -155,26 +155,51 @@ def reload_asterisk_dialplan():
         return False
 
 
-def reload_asterisk_sip():
-    """Reload FreePBX/Asterisk config using 'fwconsole reload'."""
-    log.info("Running 'fwconsole reload' to apply SIP/WebRTC changes...")
+def reload_asterisk_sip(PBX: str | None = None):
+    """
+    Reload Asterisk SIP / configuration based on PBX type.
+    - Issabel: run '/var/lib/asterisk/bin/retrieve_conf && asterisk -rx \"core reload\"'.
+    - FreePBX/other: keep existing 'fwconsole reload' logic.
+    """
+    pbx = (PBX or os.getenv('PBX', '') or '').strip().lower()
+
     try:
-        result = subprocess.run(
-            ['sudo', 'fwconsole', 'reload'],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
+        if pbx == 'issabel':
+            log.info("PBX=Issabel detected; running 'retrieve_conf' and 'asterisk -rx \"core reload\"'...")
+            cmd = '/var/lib/asterisk/bin/retrieve_conf && asterisk -rx "core reload"'
+            result = subprocess.run(
+                ['sudo', 'bash', '-c', cmd],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        else:
+            log.info("Running 'fwconsole reload' to apply SIP/WebRTC changes...")
+            result = subprocess.run(
+                ['sudo', 'fwconsole', 'reload'],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
         if result.returncode == 0:
-            log.info("Successfully ran 'fwconsole reload'")
+            log.info("Successfully reloaded Asterisk SIP / config")
             return True
-        log.warning(f"fwconsole reload failed: {result.stderr or result.stdout}")
+
+        stderr = (result.stderr or '').strip()
+        stdout = (result.stdout or '').strip()
+        msg = stderr or stdout or 'no output'
+        log.warning(f"SIP/config reload command failed (PBX={pbx or 'unknown'}): {msg}")
         return False
+
     except subprocess.TimeoutExpired:
-        log.warning("Timeout while running 'fwconsole reload'")
+        log.warning(f"Timeout while reloading SIP/config (PBX={pbx or 'unknown'})")
+        return False
+    except FileNotFoundError as e:
+        log.warning(f"Reload command not found (PBX={pbx or 'unknown'}): {e}")
         return False
     except Exception as e:
-        log.warning(f"Error running 'fwconsole reload': {e}")
+        log.warning(f"Error reloading SIP/config (PBX={pbx or 'unknown'}): {e}")
         return False
 
 
