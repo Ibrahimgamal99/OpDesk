@@ -12,7 +12,7 @@ from typing import Any, Optional, List
 from dotenv import load_dotenv
 
 try:
-    from qos import reload_asterisk_sip
+    from dialplan import reload_asterisk_sip
 except ImportError:
     reload_asterisk_sip = None
 
@@ -204,25 +204,18 @@ def get_extensions_with_webrtc_from_users() -> list:
     return out
 
 
-def set_extension_webrtc(extension: str, enabled: bool) -> bool:
+def set_extension_webrtc(extension: str, enabled: bool, PBX: str) -> bool:
     """
     Single place for enable/disable and SIP options.
-    Backend behavior (as requested):
-      - If enabled = True  -> rtcp_mux = yes, avpf = yes, icesupport = yes, media_encryption = dtls
-      - If enabled = False -> rtcp_mux = no,  avpf = no,  icesupport = no,  media_encryption = no
+    - FreePBX: rtcp_mux, avpf, icesupport, media_encryption + certman_mapping.
+    - Issabel: allow, dtls_cert_file, dtls_private_key, dtls_verify, ice_support, media_encryption, use_avpf, rtcp_mux.
     Updates OpDesk users.webrtc and Asterisk sip accordingly. Only extensions from users (same as list) can be set.
     """
     ext = str(extension).strip()
     if not ext:
         return False
     webrtc_val = 'yes' if enabled else 'no'
-    # Map enabled flag to fixed SIP values
-    if enabled:
-        r = a = i = 'yes'
-        e = 'dtls'
-    else:
-        r = a = i = 'no'
-        e = 'no'
+    is_issabel = (PBX or '').strip().lower() == 'issabel'
 
     # Enable/disable: OpDesk users.webrtc only
     opdesk_config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
@@ -241,40 +234,84 @@ def set_extension_webrtc(extension: str, enabled: bool) -> bool:
         log.warning(f"set_extension_webrtc users ({ext}): {err}")
         return False
 
-    # Update Asterisk sip table (id, keyword, data): rtcp_mux, avpf, icesupport, media_encryption
-    # When enabled: ensure certman_mapping row (id=ext, cid=2, verify=fingerprint, setup=actpass, rekey=0, auto_generate_cert=0)
-    # When disabled: delete certman_mapping row for this extension
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_NAME', 'asterisk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         updated = 0
-        for keyword, value in [
-            ('rtcp_mux', r),
-            ('avpf', a),
-            ('icesupport', i),
-            ('media_encryption', e),
-        ]:
-            cursor.execute(
-                "UPDATE sip SET data = %s WHERE id = %s AND keyword = %s",
-                (value, ext, keyword),
-            )
-            updated += cursor.rowcount
-        if enabled:
-            cursor.execute(
-                "REPLACE INTO certman_mapping (id, cid, verify, setup, rekey, auto_generate_cert) VALUES (%s, 2, 'fingerprint', 'actpass', 0, 0)",
-                (ext,),
-            )
+
+        if is_issabel:
+            # Issabel: allow, dtls_cert_file, dtls_private_key, dtls_verify, ice_support, media_encryption, use_avpf, rtcp_mux
+            if enabled:
+                sip_pairs = [
+                    ('allow', 'ulaw,alaw,g722,gsm,vp9,vp8,h264,opus'),
+                    ('dtls_cert_file', '/etc/asterisk/keys/asterisk.pem'),
+                    ('dtls_private_key', '/etc/asterisk/keys/asterisk.pem'),
+                    ('dtls_verify', 'fingerprint'),
+                    ('ice_support', 'yes'),
+                    ('media_encryption', 'dtls'),
+                    ('use_avpf', 'yes'),
+                    ('rtcp_mux', 'yes'),
+                ]
+            else:
+                sip_pairs = [
+                    ('allow', ''),
+                    ('dtls_cert_file', ''),
+                    ('dtls_private_key', ''),
+                    ('dtls_verify', 'no'),
+                    ('ice_support', 'no'),
+                    ('media_encryption', 'no'),
+                    ('use_avpf', 'no'),
+                    ('rtcp_mux', 'no'),
+                ]
+            for keyword, value in sip_pairs:
+                cursor.execute(
+                    "UPDATE sip SET data = %s WHERE id = %s AND keyword = %s",
+                    (value, ext, keyword),
+                )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        "INSERT INTO sip (id, keyword, data) VALUES (%s, %s, %s)",
+                        (ext, keyword, value),
+                    )
+                updated += cursor.rowcount
+            if updated:
+                log.info(f"Updated WebRTC for extension {ext} (Issabel): users.webrtc={webrtc_val}")
         else:
-            cursor.execute("DELETE FROM certman_mapping WHERE id = %s", (ext,))
+            # FreePBX: rtcp_mux, avpf, icesupport, media_encryption + certman_mapping
+            if enabled:
+                r = a = i = 'yes'
+                e = 'dtls'
+            else:
+                r = a = i = 'no'
+                e = 'no'
+            for keyword, value in [
+                ('rtcp_mux', r),
+                ('avpf', a),
+                ('icesupport', i),
+                ('media_encryption', e),
+            ]:
+                cursor.execute(
+                    "UPDATE sip SET data = %s WHERE id = %s AND keyword = %s",
+                    (value, ext, keyword),
+                )
+                updated += cursor.rowcount
+            if enabled:
+                cursor.execute(
+                    "REPLACE INTO certman_mapping (id, cid, verify, setup, rekey, auto_generate_cert) VALUES (%s, 2, 'fingerprint', 'actpass', 0, 0)",
+                    (ext,),
+                )
+            else:
+                cursor.execute("DELETE FROM certman_mapping WHERE id = %s", (ext,))
+            if updated:
+                log.info(f"Updated WebRTC for extension {ext}: users.webrtc={webrtc_val}, rtcp_mux={r}, avpf={a}, icesupport={i}, media_encryption={e}")
+
         conn.commit()
         cursor.close()
         conn.close()
-        if updated:
-            log.info(f"Updated WebRTC for extension {ext}: users.webrtc={webrtc_val}, rtcp_mux={r}, avpf={a}, icesupport={i}, media_encryption={e}")
-            if reload_asterisk_sip:
-                reload_asterisk_sip()
-        return True  # Success if we at least updated users; sip rows may not exist yet
+        if updated and reload_asterisk_sip:
+            reload_asterisk_sip()
+        return True
     except Error as err:
         log.warning(f"set_extension_webrtc sip/certman ({ext}): {err}")
         return True  # users.webrtc was set
@@ -333,15 +370,22 @@ def get_call_log_from_db(limit: int = None, date: str = None,
         if date_to:
             conditions.append("DATE(c.calldate) <= %s")
             params.append(date_to)
-        # Filter by agent extension (from dstchannel: part after '/' and before '-', e.g. SIP/1001-xxx -> 1001)
+        # Filter by agent extension.
+        # Include calls where the agent is either:
+        #   - the destination leg (from dstchannel: part after '/' and before '-', e.g. SIP/1001-xxx -> 1001), OR
+        #   - the source (c.src = agent extension)
         if allowed_extensions is not None:
             if not allowed_extensions:
                 conditions.append("1 = 0")
             else:
                 placeholders = ", ".join(["%s"] * len(allowed_extensions))
                 conditions.append(
-                    "SUBSTRING_INDEX(SUBSTRING_INDEX(c.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ")"
+                    "("
+                    "SUBSTRING_INDEX(SUBSTRING_INDEX(c.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
+                    "OR c.src IN (" + placeholders + ")"
+                    ")"
                 )
+                params.extend(allowed_extensions)
                 params.extend(allowed_extensions)
         
         if conditions:
@@ -410,7 +454,10 @@ def get_call_log_count_from_db(date: str = None,
             else:
                 placeholders = ", ".join(["%s"] * len(allowed_extensions))
                 conditions.append(
-                    "SUBSTRING_INDEX(SUBSTRING_INDEX(c.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ")"
+                    "("
+                    "SUBSTRING_INDEX(SUBSTRING_INDEX(c.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
+                    "OR c.src IN (" + placeholders + ")"
+                    ")"
                 )
                 params.extend(allowed_extensions)
         if conditions:
@@ -808,10 +855,10 @@ def create_user(username: str, password: str, name: str = None, extension: str =
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO users (username, extension, password_hash, name, role, extension_secret) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO users (username, extension, password_hash, name, role) "
+            "VALUES (%s, %s, %s, %s, %s)",
             (username, (extension or '').strip() or None, password_hash, (name or '').strip() or None,
-             role if role in ('admin', 'supervisor', 'agent') else 'supervisor', extension_secret)
+             role if role in ('admin', 'supervisor', 'agent') else 'supervisor')
         )
         user_id = cursor.lastrowid
         conn.commit()
@@ -828,7 +875,7 @@ def create_user(username: str, password: str, name: str = None, extension: str =
         return None
 
 
-def update_user(user_id: int, name: str = None, extension: str = None, role: str = None,
+def update_user(user_id: int | None = None, name: str = None, extension: str = None, role: str = None,
                 is_active: bool = None, monitor_mode: str = None, monitor_modes: list = None,
                 password: str = None, extension_secret: str = None) -> bool:
     """Update user. password optional (new hash). extension_se  cret: optional (for WebRTC). monitor_modes: optional list to set multiple modes. Returns True on success."""
@@ -836,11 +883,7 @@ def update_user(user_id: int, name: str = None, extension: str = None, role: str
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
-        if not cursor.fetchone():
-            cursor.close()
-            conn.close()
-            return False
+
         updates = []
         params = []
         if name is not None:
@@ -867,9 +910,19 @@ def update_user(user_id: int, name: str = None, extension: str = None, role: str
             except Exception:
                 pass
         if updates:
-            params.append(user_id)
-            cursor.execute("UPDATE users SET " + ", ".join(updates) + " WHERE id = %s", tuple(params))
-            conn.commit()
+            where_clauses = []
+            if user_id is not None:
+                where_clauses.append("id = %s")
+                params.append(user_id)
+            if extension is not None:
+                where_clauses.append("extension = %s")
+                params.append((str(extension).strip() or None))
+            if where_clauses:
+                cursor.execute(
+                    "UPDATE users SET " + ", ".join(updates) + " WHERE " + " OR ".join(where_clauses),
+                    tuple(params),
+                )
+                conn.commit()
         if monitor_modes is not None:
             set_user_monitor_modes(user_id, monitor_modes)
         cursor.close()
