@@ -271,41 +271,6 @@ python server.py
 
 Access the application at `http://localhost:8765`
 
-## API Endpoints
-
-All API access (except login) requires a valid JWT in the `Authorization: Bearer <token>` header. Responses for extensions, calls, and queues are filtered by the current user’s role and assigned scope (supervisors see only their extensions and queues).
-
-### Auth (no token required)
-
-- `POST /api/auth/login` - Login with `{ "login": "username_or_extension", "password": "..." }`; returns `access_token` and `user` (id, username, role, extension, monitor_modes, allowed_agent_extensions, allowed_queue_names)
-- `GET /api/auth/me` - Return current user (requires valid token)
-
-### REST API (token required)
-
-- `GET /api/extensions` - List monitored extensions (filtered by user scope)
-- `GET /api/calls` - Active calls (filtered by user scope)
-- `GET /api/queues` - Queue information (filtered by user scope)
-- `GET /api/status` - Server status
-- `GET /api/call-log` - Call log/CDR history (supports `limit`, `date`, `date_from`, `date_to`)
-- `GET /api/recordings/{file_path}` - Serve call recording audio files
-- `GET /api/settings` - Application settings
-- `POST /api/settings` - Update application settings
-- **User management (admin only):** `GET/POST /api/settings/users`, `GET/PUT/DELETE /api/settings/users/{id}` - List, create, update, delete users and assign extensions, queues, and monitor modes
-
-Supervisor actions (listen, whisper, barge) are sent via WebSocket messages; the server enforces the user’s allowed monitor modes and scope.
-
-### WebSocket
-
-Connect to `ws://localhost:8765/ws?token=<JWT>` (or send `{ "token": "<JWT>" }` in the first message) for real-time updates.
-
-The WebSocket connection provides:
-- **Per-user filtered state**: Each client receives only the extensions, calls, and queues they are allowed to see (admin = full; supervisor = assigned agents and queues only)
-- Real-time extension status updates
-- Active call events
-- Queue status changes
-- System notifications
-- Client can send actions: `get_state`, `sync`, `listen`, `whisper`, `barge`, `queue_add`, `queue_remove`, `queue_pause`, `queue_unpause`, etc.
-
 
 ## CRM Integration
 
@@ -346,7 +311,12 @@ CRM integration can be configured through the web interface (Settings → CRM Se
 
 ## Contact
 
-For questions, issues, or contributions, please contact:
+**Official technical discussion group (OpDesk project):**
+
+- **Mailing list**: [opdesk-dev@googlegroups.com](mailto:opdesk-dev@googlegroups.com)
+- **Telegram**: [t.me/+i1OVDDPgGLo0MGZh](https://t.me/+i1OVDDPgGLo0MGZh)
+
+For questions, issues, or contributions, you can also contact:
 
 - **Email**: ib.gamal.a@gmail.com
 - **LinkedIn**: [Ibrahim Gamal](https://www.linkedin.com/in/ibrahim-gamal99)
