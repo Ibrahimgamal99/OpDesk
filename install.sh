@@ -512,7 +512,7 @@ else
 
     # If Asterisk is installed, install the same cert/key for it (wss://)
     if [ -d /etc/asterisk ]; then
-        AST_DIR="/etc/asterisk/key"
+        AST_DIR="/etc/asterisk/keys"
         AST_CERT="$AST_DIR/opdesk_cert.pem"
         AST_KEY="$AST_DIR/opdesk_key.pem"
         if [ "$EUID" -ne 0 ]; then
@@ -560,7 +560,6 @@ cd "$PROJECT_ROOT/frontend" && npm install || true
 # ===============================================================
 # FINAL SUMMARY REPORT
 # ===============================================================
-clear
 echo -e "\n${YELLOW}Step 9: Generating Installation Report...${NC}"
 
 echo -e "${GREEN}==============================================================="
