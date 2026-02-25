@@ -252,6 +252,7 @@ def set_extension_webrtc(extension: str, enabled: bool, PBX: str) -> bool:
                     ('media_encryption', 'dtls'),
                     ('use_avpf', 'yes'),
                     ('rtcp_mux', 'yes'),
+                    ('transport', 'transport-wss')
                 ]
             else:
                 sip_pairs = [
@@ -263,6 +264,7 @@ def set_extension_webrtc(extension: str, enabled: bool, PBX: str) -> bool:
                     ('media_encryption', 'no'),
                     ('use_avpf', 'no'),
                     ('rtcp_mux', 'no'),
+                    ('transport', 'transport-udp')
                 ]
             for keyword, value in sip_pairs:
                 cursor.execute(
