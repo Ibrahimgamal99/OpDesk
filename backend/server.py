@@ -862,6 +862,11 @@ class UpdateUserBody(BaseModel):
     group_ids: Optional[list] = None  # access via groups
 
 
+class TransferCallBody(BaseModel):
+    """Body for agent softphone call transfer."""
+    destination: str
+
+
 @app.get("/api/settings/users")
 async def api_list_users(
     current_user: dict = Depends(require_admin),
@@ -1339,7 +1344,66 @@ async def handle_client_message(websocket: WebSocket, message: dict):
                         "success": result,
                         "message": f"{'Started' if result else 'Failed to start'} barging into {target}"
                     })
-        
+
+        elif action == "hangup":
+            target = message.get("target", "")
+            if target:
+                if not _scope_can_access_extension(scope, target):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "hangup", "success": False, "message": "Not allowed to control this extension"})
+                else:
+                    result = await monitor.hangup_call(target)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "hangup",
+                        "success": result,
+                        "message": f"{'Hangup requested' if result else 'Failed to hang up'} for {target}"
+                    })
+                    if result and bridge:
+                        await bridge.broadcast_state_now()
+
+        elif action == "transfer":
+            source = message.get("source", "")
+            destination = message.get("destination", "")
+            ctx = message.get("context")
+            priority = str(message.get("priority", "1"))
+            if source and destination:
+                if not _scope_can_access_extension(scope, source):
+                    await manager.send_personal(websocket, {"type": "action_result", "action": "transfer", "success": False, "message": "Not allowed to control this extension"})
+                else:
+                    result = await monitor.transfer_call(source, destination, ctx, priority)
+                    await manager.send_personal(websocket, {
+                        "type": "action_result",
+                        "action": "transfer",
+                        "success": result,
+                        "message": f"{'Transfer requested' if result else 'Failed to transfer'} {source} to {destination}"
+                    })
+                    if result and bridge:
+                        await bridge.broadcast_state_now()
+            else:
+                await manager.send_personal(websocket, {"type": "action_result", "action": "transfer", "success": False, "message": "Source and destination required"})
+
+        elif action == "take_over":
+            source = message.get("source", "")
+            destination = (scope.get("extension") or "").strip()
+            if not source:
+                await manager.send_personal(websocket, {"type": "action_result", "action": "take_over", "success": False, "message": "Source required"})
+            elif not destination:
+                await manager.send_personal(websocket, {"type": "action_result", "action": "take_over", "success": False, "message": "No extension assigned to your user; cannot take over"})
+            elif not _scope_can_access_extension(scope, source):
+                await manager.send_personal(websocket, {"type": "action_result", "action": "take_over", "success": False, "message": "Not allowed to control this extension"})
+            else:
+                ctx = message.get("context")
+                priority = str(message.get("priority", "1"))
+                result = await monitor.transfer_call(source, destination, ctx, priority)
+                await manager.send_personal(websocket, {
+                    "type": "action_result",
+                    "action": "take_over",
+                    "success": result,
+                    "message": f"{'Call transferred to you' if result else 'Failed to take over'} ({source} → {destination})"
+                })
+                if result and bridge:
+                    await bridge.broadcast_state_now()
+
         elif action == "queue_add":
             queue = message.get("queue", "")
             interface = normalize_interface(message.get("interface", ""))
@@ -1477,6 +1541,40 @@ async def get_active_calls(current_user: dict = Depends(get_current_user)):
     ext_set = set(str(e) for e in (allowed or []))
     calls = {k: v for k, v in monitor.active_calls.items() if k in ext_set}
     return {"calls": calls}
+
+
+@app.post("/api/calls/transfer")
+async def api_transfer_call(
+    body: TransferCallBody,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Transfer the current call of the authenticated user's extension to another destination.
+
+    Intended for use by the WebRTC softphone. Uses the user's own extension as the source.
+    """
+    if not monitor:
+        raise HTTPException(status_code=503, detail="AMI not connected")
+
+    # Prefer WebRTC extension mapping; fall back to user's primary extension
+    creds = get_user_webrtc_credentials(current_user["id"])
+    source_ext = (creds or {}).get("extension") or current_user.get("extension")
+    if not source_ext:
+        raise HTTPException(status_code=400, detail="No extension associated with current user")
+
+    dest = (body.destination or "").strip()
+    if not dest:
+        raise HTTPException(status_code=400, detail="Destination is required")
+
+    ok = await monitor.transfer_call(str(source_ext), dest)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to transfer call")
+
+    # Let WebSocket bridge push updated state if available
+    if bridge:
+        await bridge.broadcast_state_now()
+
+    return {"ok": True, "source": str(source_ext), "destination": dest}
 
 
 @app.get("/api/queues")

@@ -342,40 +342,69 @@ def get_call_log_from_db(limit: int = None, date: str = None,
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
 
-        # Build the base query
+        # Build the base query: first leg (min sequence) + last leg (max sequence) per linkedid,
+        # with call_app derived from dcontext (queue/ivr/direct).
         query = """
-            SELECT 
-                c.calldate, c.src, c.dst, c.dcontext, c.channel,
-                c.dstchannel, c.lastapp, c.duration, c.billsec,
-                c.disposition, c.recordingfile,
-                c.cnam, c.linkedid, c.userfield
-            FROM cdr c
+            SELECT
+                first_leg.calldate,
+                first_leg.src,
+                first_leg.dst          AS dst,
+                first_leg.dcontext     AS dcontext,
+                last_leg.dst           AS answered_by,
+                last_leg.channel      AS channel,
+                last_leg.dstchannel    AS dstchannel,
+                last_leg.lastapp,
+                last_leg.duration,
+                last_leg.billsec,
+                last_leg.disposition,
+                first_leg.channel,
+                first_leg.recordingfile,
+                first_leg.cnam,
+                first_leg.linkedid,
+                first_leg.userfield,
+                CASE
+                    WHEN first_leg.dcontext LIKE '%queue%' THEN 'queue'
+                    WHEN first_leg.dcontext LIKE '%ivr%'   THEN 'ivr'
+                    ELSE 'direct'
+                END AS call_app
+            FROM
+                (
+                    SELECT c.*
+                    FROM cdr c
+                    JOIN (
+                        SELECT linkedid, MIN(sequence) AS min_seq
+                        FROM cdr
+                        GROUP BY linkedid
+                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.min_seq
+                ) first_leg
             JOIN (
-                SELECT linkedid, MAX(sequence) AS max_seq
-                FROM cdr
-                GROUP BY linkedid
-            ) x
-              ON c.linkedid = x.linkedid
-             AND c.sequence = x.max_seq
+                    SELECT c.*
+                    FROM cdr c
+                    JOIN (
+                        SELECT linkedid, MAX(sequence) AS max_seq
+                        FROM cdr
+                        GROUP BY linkedid
+                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.max_seq
+                ) last_leg ON first_leg.linkedid = last_leg.linkedid
         """
         
-        # Build WHERE conditions
+        # Build WHERE conditions (use first_leg for calldate/src, last_leg for dstchannel)
         conditions = []
         params = []
         
         if date:
-            conditions.append("DATE(c.calldate) = %s")
+            conditions.append("DATE(first_leg.calldate) = %s")
             params.append(date)
         if date_from:
-            conditions.append("DATE(c.calldate) >= %s")
+            conditions.append("DATE(first_leg.calldate) >= %s")
             params.append(date_from)
         if date_to:
-            conditions.append("DATE(c.calldate) <= %s")
+            conditions.append("DATE(first_leg.calldate) <= %s")
             params.append(date_to)
         # Filter by agent extension.
         # Include calls where the agent is either:
         #   - the destination leg (from dstchannel: part after '/' and before '-', e.g. SIP/1001-xxx -> 1001), OR
-        #   - the source (c.src = agent extension)
+        #   - the source (first_leg.src = agent extension)
         if allowed_extensions is not None:
             if not allowed_extensions:
                 conditions.append("1 = 0")
@@ -383,8 +412,8 @@ def get_call_log_from_db(limit: int = None, date: str = None,
                 placeholders = ", ".join(["%s"] * len(allowed_extensions))
                 conditions.append(
                     "("
-                    "SUBSTRING_INDEX(SUBSTRING_INDEX(c.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
-                    "OR c.src IN (" + placeholders + ")"
+                    "SUBSTRING_INDEX(SUBSTRING_INDEX(last_leg.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
+                    "OR first_leg.src IN (" + placeholders + ")"
                     ")"
                 )
                 params.extend(allowed_extensions)
@@ -394,7 +423,7 @@ def get_call_log_from_db(limit: int = None, date: str = None,
             query += " WHERE " + " AND ".join(conditions)
         
         # Add ordering by calldate (most recent first)
-        query += " ORDER BY c.calldate DESC"
+        query += " ORDER BY first_leg.calldate DESC"
         
         # Add limit if provided (validate it's a positive integer)
         if limit:
@@ -430,25 +459,36 @@ def get_call_log_count_from_db(date: str = None,
 
         query = """
             SELECT COUNT(*) AS cnt
-            FROM cdr c
+            FROM
+                (
+                    SELECT c.*
+                    FROM cdr c
+                    JOIN (
+                        SELECT linkedid, MIN(sequence) AS min_seq
+                        FROM cdr
+                        GROUP BY linkedid
+                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.min_seq
+                ) first_leg
             JOIN (
-                SELECT linkedid, MAX(sequence) AS max_seq
-                FROM cdr
-                GROUP BY linkedid
-            ) x
-              ON c.linkedid = x.linkedid
-             AND c.sequence = x.max_seq
+                    SELECT c.*
+                    FROM cdr c
+                    JOIN (
+                        SELECT linkedid, MAX(sequence) AS max_seq
+                        FROM cdr
+                        GROUP BY linkedid
+                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.max_seq
+                ) last_leg ON first_leg.linkedid = last_leg.linkedid
         """
         conditions = []
         params = []
         if date:
-            conditions.append("DATE(c.calldate) = %s")
+            conditions.append("DATE(first_leg.calldate) = %s")
             params.append(date)
         if date_from:
-            conditions.append("DATE(c.calldate) >= %s")
+            conditions.append("DATE(first_leg.calldate) >= %s")
             params.append(date_from)
         if date_to:
-            conditions.append("DATE(c.calldate) <= %s")
+            conditions.append("DATE(first_leg.calldate) <= %s")
             params.append(date_to)
         if allowed_extensions is not None:
             if not allowed_extensions:
@@ -457,10 +497,11 @@ def get_call_log_count_from_db(date: str = None,
                 placeholders = ", ".join(["%s"] * len(allowed_extensions))
                 conditions.append(
                     "("
-                    "SUBSTRING_INDEX(SUBSTRING_INDEX(c.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
-                    "OR c.src IN (" + placeholders + ")"
+                    "SUBSTRING_INDEX(SUBSTRING_INDEX(last_leg.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
+                    "OR first_leg.src IN (" + placeholders + ")"
                     ")"
                 )
+                params.extend(allowed_extensions)
                 params.extend(allowed_extensions)
         if conditions:
             query += " WHERE " + " AND ".join(conditions)

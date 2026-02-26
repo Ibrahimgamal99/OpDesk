@@ -22,6 +22,7 @@ export function useWebPhone() {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [isOnHold, setIsOnHold] = useState(false);
   const [dialNumber, setDialNumber] = useState('');
   const phoneRef = useRef<WebPhone | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -84,6 +85,7 @@ export function useWebPhone() {
         },
       });
     },
+    onIncomingCallEnded: () => setIncomingCall(null),
   };
 
   const connect = useCallback(async () => {
@@ -131,6 +133,31 @@ export function useWebPhone() {
     phoneRef.current?.toggleMute();
   }, []);
 
+  const holdMutedRef = useRef(false);
+
+  const toggleHold = useCallback(async () => {
+    const phone = phoneRef.current;
+    if (!phone?.hasActiveCall) return;
+    const next = !isOnHold;
+
+    // Local mic: mute when putting on hold, restore when resuming (SIP hold is sendonly; this is extra)
+    if (next) {
+      holdMutedRef.current = !isMuted;
+      if (!isMuted) phone.toggleMute();
+    } else {
+      if (holdMutedRef.current && isMuted) phone.toggleMute();
+      holdMutedRef.current = false;
+    }
+
+    try {
+      if (next) await phone.hold();
+      else await phone.unhold();
+      setIsOnHold(next);
+    } catch {
+      addLog('Hold action failed', 'error');
+    }
+  }, [isMuted, isOnHold, addLog]);
+
   const addDigit = useCallback((digit: string) => {
     setDialNumber((prev) => prev + digit);
     if (phoneRef.current?.hasActiveCall) phoneRef.current.sendDTMF(digit);
@@ -143,6 +170,17 @@ export function useWebPhone() {
   }, []);
 
   const clearLogs = useCallback(() => setLogs([]), []);
+
+  const transfer = useCallback(async (destination: string) => {
+    const dest = destination.trim();
+    if (!dest) return;
+    try {
+      await phoneRef.current?.refer(dest);
+      addLog(`Transfer to ${dest} sent`, 'success');
+    } catch {
+      addLog('Transfer failed', 'error');
+    }
+  }, [addLog]);
 
   useEffect(() => {
     if (remoteStream && remoteAudioRef.current) {
@@ -219,6 +257,8 @@ export function useWebPhone() {
       setDialNumber('');
       setLocalStream(null);
       setIsMuted(false);
+      setIsOnHold(false);
+      holdMutedRef.current = false;
     }
   }, [hasActiveCall]);
 
@@ -258,11 +298,14 @@ export function useWebPhone() {
     clearNumber,
     backspace,
     clearLogs,
+    transfer,
     refetchConfig: fetchConfig,
     remoteAudioRef,
     localStream,
     remoteStream,
     isMuted,
     toggleMute,
+    isOnHold,
+    toggleHold,
   };
 }

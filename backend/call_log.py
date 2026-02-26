@@ -81,10 +81,14 @@ def classify_cdr_direction(cdr: dict) -> str:
     return max(votes, key=votes.get)
 
 
-def convert_dstchannel_to_extension(dstchannel):
+def convert_channel_to_extension(dstchannel,channel):
     try:
         temp_ext = dstchannel.split('-')[0].split('/')[1]
-        extension = temp_ext if temp_ext.isdigit() else None
+        if temp_ext.isdigit():
+            extension = temp_ext
+        else:
+            temp_ext = channel.split('-')[0].split('/')[1]
+            extension = temp_ext
     except IndexError:
         extension = None
     return extension
@@ -108,7 +112,7 @@ def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extens
     result = []
     for cdr in call_log:
         cdr['call_type'] = classify_cdr_direction(cdr)
-        cdr['extension'] = convert_dstchannel_to_extension(cdr['dstchannel'])        
+        cdr['extension'] = convert_channel_to_extension(cdr['dstchannel'],cdr['channel'])        
         if cdr.get('recordingfile'):
             cdr['recording_path'] = get_recording_path(cdr['recordingfile'])
         else:
@@ -149,7 +153,7 @@ def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extens
             'call_type': cdr.get('call_type'),
             'recording_path': str(cdr['recording_path']) if cdr.get('recording_path') else None,
             'recording_file': cdr.get('recordingfile') or None,
-            'app': cdr.get('lastapp')  # lastapp renamed to app
+            'app': cdr.get('call_app'),  # lastapp renamed to app
         }
         
         result.append(filtered_cdr)
