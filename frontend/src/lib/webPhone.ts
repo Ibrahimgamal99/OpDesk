@@ -11,6 +11,7 @@ import {
   RegistererState,
   SessionState,
   Session,
+  Web,
 } from 'sip.js';
 import type { UserAgentOptions } from 'sip.js';
 import type { InviterOptions } from 'sip.js';
@@ -34,6 +35,8 @@ export interface WebPhoneCallbacks {
   onRegistered?: () => void;
   onUnregistered?: () => void;
   onIncomingCall?: (info: IncomingCallInfo) => void;
+  /** Called when an incoming call ends before answer (caller hung up or cancelled). */
+  onIncomingCallEnded?: () => void;
   /** Called when a call is established with the local (mic) stream for level metering. */
   onLocalStream?: (stream: MediaStream) => void;
   /** Called when mute state changes (true = muted). */
@@ -73,6 +76,8 @@ export class WebPhone {
   private domain: string = '';
   /** Pre-acquired mic stream after connect so first call skips getUserMedia delay. */
   private preacquiredStream: MediaStream | null = null;
+  /** Local hold state (SIP re-INVITE sendonly). */
+  private holdState: boolean = false;
 
   constructor(callbacks: WebPhoneCallbacks = {}) {
     this.callbacks = callbacks;
@@ -175,6 +180,7 @@ export class WebPhone {
 
   private resetCallState() {
     this.session = null;
+    this.holdState = false;
     this.setCallStatus('');
     this.stopCallTimer();
     if (this.localStream) {
@@ -183,6 +189,86 @@ export class WebPhone {
     }
     this.callbacks.onCallDuration?.('');
     if (this.isConnected) this.acquireMicrophoneForCalls();
+  }
+
+  /** True if the current call is on hold (SIP re-INVITE sendonly). */
+  get isOnHold(): boolean {
+    return this.holdState;
+  }
+
+  /**
+   * Put the current call on hold via SIP re-INVITE (sendonly), like MicroSIP.
+   * No AMI MusicOnHold; the remote party hears silence (or the SIP server may play MOH).
+   */
+  async hold(): Promise<void> {
+    const s = this.session;
+    if (!s || s.state !== SessionState.Established) {
+      this.log('No active call to hold', 'warn');
+      return;
+    }
+    try {
+      await s.invite({ sessionDescriptionHandlerModifiers: [Web.holdModifier] });
+      this.holdState = true;
+      this.log('Call on hold', 'info');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log(`Hold failed: ${message}`, 'error');
+      throw err;
+    }
+  }
+
+  /**
+   * Resume the call from hold (re-INVITE with sendrecv).
+   */
+  async unhold(): Promise<void> {
+    const s = this.session;
+    if (!s || s.state !== SessionState.Established) {
+      this.log('No active call to unhold', 'warn');
+      return;
+    }
+    try {
+      await s.invite({ sessionDescriptionHandlerModifiers: [] });
+      this.holdState = false;
+      this.log('Call resumed', 'info');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log(`Unhold failed: ${message}`, 'error');
+      throw err;
+    }
+  }
+
+  /**
+   * Blind transfer the current call via SIP REFER (like MicroSIP). No AMI Redirect.
+   * @param destination - Extension or number (e.g. "201")
+   */
+  async refer(destination: string): Promise<void> {
+    const s = this.session;
+    if (!s || s.state !== SessionState.Established) {
+      this.log('No active call to transfer', 'warn');
+      throw new Error('No active call');
+    }
+    const dest = destination.trim();
+    if (!dest) {
+      this.log('Transfer destination is required', 'warn');
+      throw new Error('Destination required');
+    }
+    const targetUri = UserAgent.makeURI(`sip:${dest}@${this.domain}`);
+    if (!targetUri) {
+      this.log('Invalid transfer destination', 'error');
+      throw new Error('Invalid destination');
+    }
+    try {
+      await s.refer(targetUri);
+      this.log(`Transfer to ${dest} sent`, 'success');
+      // Hang up our leg so the source channel is released (server may not send BYE to us).
+      // Brief delay so the REFER is processed before BYE; avoids races on some servers.
+      await new Promise((r) => setTimeout(r, 400));
+      this.hangup();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log(`Transfer failed: ${message}`, 'error');
+      throw err;
+    }
   }
 
   async connect(server: string, username: string, password: string): Promise<void> {
@@ -217,6 +303,20 @@ export class WebPhone {
           this.log('Incoming call...', 'info');
           this.session = invitation;
           this.setCallStatus('Incoming call...');
+          // When caller hangs up or cancels before we answer, clear incoming UI and stop ringtone
+          invitation.stateChange.addListener((state) => {
+            if (state === SessionState.Terminated) {
+              this.resetCallState();
+              this.callbacks.onIncomingCallEnded?.();
+            }
+          });
+          invitation.delegate = {
+            onBye: () => {
+              this.log('Incoming call ended by caller', 'info');
+              this.resetCallState();
+              this.callbacks.onIncomingCallEnded?.();
+            },
+          };
           const ri = invitation.remoteIdentity;
           const callerNumber = (ri?.uri?.user ?? ri?.uri?.toString() ?? 'Unknown').toString();
           const callerName = (ri?.displayName?.trim() || ri?.friendlyName?.trim()) ?? '';

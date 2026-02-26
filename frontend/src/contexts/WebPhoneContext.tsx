@@ -34,6 +34,9 @@ export interface WebPhoneContextValue {
   remoteStream: MediaStream | null;
   isMuted: boolean;
   toggleMute: () => void;
+  isOnHold: boolean;
+  toggleHold: () => void;
+  transfer: (destination: string) => Promise<void> | void;
 }
 
 const WebPhoneContext = createContext<WebPhoneContextValue | null>(null);

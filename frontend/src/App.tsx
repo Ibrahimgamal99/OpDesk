@@ -438,6 +438,9 @@ function App({ onLogout }: AppProps) {
           <ActiveCallsPanel 
             calls={state?.active_calls || {}}
             onSupervisorAction={handleSupervisorAction}
+            onHangup={(target) => sendAction({ action: 'hangup', target })}
+            onTransfer={(source, destination) => sendAction({ action: 'transfer', source, destination })}
+            onTakeOver={(source) => sendAction({ action: 'take_over', source })}
             onSync={() => sendAction({ action: 'sync' })}
           />
         )}

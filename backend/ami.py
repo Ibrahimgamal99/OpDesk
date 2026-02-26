@@ -2538,6 +2538,124 @@ class AMIExtensionsMonitor:
             self.running = False
 
     # ------------------------------------------------------------------
+    # Call control: transfer / hangup / music on hold
+    # ------------------------------------------------------------------
+    async def hangup_call(self, ext: str) -> bool:
+        """Hang up the current call on the given extension."""
+        if not self.connected:
+            log.error("❌ Not connected to AMI")
+            return False
+
+        await self.sync_active_calls()
+        ch = await self.get_active_channel(ext)
+        if not ch:
+            log.error(f"❌ No active call on extension {ext}")
+            return False
+
+        resp = await self._send_async('Hangup', {'Channel': ch})
+        if resp and 'Response: Success' in resp:
+            log.info(f"📴 Hangup requested for extension {ext} (channel {ch})")
+            return True
+
+        err = _parse(resp or '').get('Message', 'Unknown error')
+        log.error(f"❌ Hangup failed for {ext}: {err}")
+        return False
+
+    def _channel_for_transfer_source(self, source: str) -> Optional[str]:
+        """
+        Resolve the Asterisk channel to use for Redirect when the supervisor selects
+        a transfer source. Source can be:
+        - An extension (e.g. 1001): use that extension's active channel.
+        - The "talking to" number (e.g. phone number): use the other leg's channel
+          in the same bridge (via linkedid2channels from Bridge events).
+        """
+        source = (source or "").strip()
+        if not source:
+            return None
+        # 1) Direct: source is an extension we have in active_calls
+        ch = self.active_calls.get(source, {}).get("channel")
+        if ch:
+            return ch
+        ch = self.get_active_channel_sync(source)
+        if ch:
+            return ch
+        # 2) Other leg: find a call where the "other party" is source, then get bridge peer channel
+        def _num_match(a: str, b: str) -> bool:
+            if a == b:
+                return True
+            if not a or not b:
+                return False
+            return a.lstrip("0") == b.lstrip("0")
+
+        for ext, info in self.active_calls.items():
+            talking_to = self._display_number(info, ext)
+            if not talking_to or talking_to == "Unknown":
+                continue
+            if not _num_match(source, talking_to):
+                continue
+            agent_ch = info.get("channel")
+            if not agent_ch:
+                continue
+            linkedid = self.ch2linkedid.get(agent_ch)
+            if not linkedid:
+                continue
+            peers = self.linkedid2channels.get(linkedid, set()) - {agent_ch}
+            if len(peers) == 1:
+                return next(iter(peers))
+            if peers:
+                return next(iter(peers))
+        return None
+
+    def get_active_channel_sync(self, ext: str) -> Optional[str]:
+        """Synchronous channel lookup from cache only (no AMI query)."""
+        info = self.active_calls.get(ext)
+        if info:
+            ch = info.get("channel")
+            if ch:
+                return ch
+        for ch, e in self.ch2ext.items():
+            if e == ext:
+                return ch
+        return None
+
+    async def transfer_call(self, ext: str, destination: str, context: Optional[str] = None, priority: str = '1') -> bool:
+        """
+        Blind transfer the current call on *ext* to *destination*.
+
+        *ext* can be an extension (e.g. 1001) or the "talking to" number (other leg).
+        Uses AMI Redirect to send the channel into the specified context/exten/priority.
+        """
+        if not self.connected:
+            log.error("❌ Not connected to AMI")
+            return False
+
+        if not destination:
+            log.error("❌ No destination provided for transfer")
+            return False
+
+        await self.sync_active_calls()
+        ch = self._channel_for_transfer_source(ext)
+        if not ch:
+            log.error(f"❌ No active call on extension/number {ext}")
+            return False
+
+        ctx = context or self.context or 'default'
+        resp = await self._send_async('Redirect', {
+            'Channel':  ch,
+            'Exten':    destination,
+            'Context':  ctx,
+            'Priority': priority,
+        })
+
+        if resp and 'Response: Success' in resp:
+            log.info(f"🔁 Transfer requested: {ext} -> {destination} in {ctx} (channel {ch})")
+            return True
+
+        err = _parse(resp or '').get('Message', 'Unknown error')
+        log.error(f"❌ Transfer failed for {ext} -> {destination}: {err}")
+        return False
+
+    # ------------------------------------------------------------------
     # Supervisor: listen / whisper / barge
     # ------------------------------------------------------------------
     async def _chanspy(self, supervisor: str, target: str, options: str, label: str) -> bool:

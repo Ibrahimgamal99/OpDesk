@@ -51,9 +51,14 @@ export function Softphone() {
     remoteStream,
     isMuted,
     toggleMute,
+    isOnHold,
+    toggleHold,
+    transfer,
   } = useWebPhoneContext();
 
   const [showLog, setShowLog] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferDest, setTransferDest] = useState('');
   const { micLevel, speakerLevel } = useAudioLevels(localStream, remoteStream);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -178,9 +183,14 @@ export function Softphone() {
             </div>
           </div>
           <div className="softphone-incall-grid">
-            <button type="button" className="softphone-incall-btn" title="Hold">
+            <button
+              type="button"
+              className={`softphone-incall-btn ${isOnHold ? 'softphone-incall-btn-active' : ''}`}
+              title={isOnHold ? 'Resume' : 'Hold'}
+              onClick={toggleHold}
+            >
               <Pause size={22} />
-              <span>Hold</span>
+              <span>{isOnHold ? 'Resume' : 'Hold'}</span>
             </button>
             <button
               type="button"
@@ -191,11 +201,66 @@ export function Softphone() {
               {isMuted ? <Mic size={22} /> : <MicOff size={22} />}
               <span>{isMuted ? 'Unmute' : 'Mute'}</span>
             </button>
-            <button type="button" className="softphone-incall-btn" title="Transfer">
+            <button
+              type="button"
+              className="softphone-incall-btn"
+              title="Transfer"
+              onClick={() => setShowTransfer((prev) => !prev)}
+            >
               <ArrowRightLeft size={22} />
               <span>Transfer</span>
             </button>
           </div>
+          {showTransfer && (
+            <div
+              style={{
+                marginTop: 16,
+                padding: 12,
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                Transfer to extension
+              </span>
+              <input
+                type="text"
+                value={transferDest}
+                onChange={(e) => setTransferDest(e.target.value)}
+                placeholder="e.g. 201"
+                className="form-input"
+                style={{ maxWidth: 100 }}
+              />
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!transferDest.trim()}
+                onClick={() => {
+                  const dest = transferDest.trim();
+                  if (!dest) return;
+                  transfer(dest);
+                  setShowTransfer(false);
+                  setTransferDest('');
+                }}
+              >
+                Transfer
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setShowTransfer(false);
+                  setTransferDest('');
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
           <button
             type="button"
             className="softphone-btn-hangup"
