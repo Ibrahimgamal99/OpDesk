@@ -25,6 +25,11 @@ except ImportError:
     except ImportError:
         CRMConnector = None
 
+try:
+    from db_manager import insert_call_notification
+except ImportError:
+    insert_call_notification = None
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -188,6 +193,7 @@ class AMIExtensionsMonitor:
         self.ch2linkedid:  Dict[str, str] = {}    # channel -> linkedid (for tracking related channels)
         self.linkedid2channels: Dict[str, Set[str]] = {}  # linkedid -> set of active channels (to detect final hangup)
         self.linkedid_crm_sent: Set[str] = set()  # "linkedid:uniqueid" -> track which channel instances have already sent CRM data (prevent duplicates)
+        self._call_notification_callback: Optional[Callable[[str], None]] = None  # optional: (extension) -> None, called when a call_notification row is inserted
 
     # ------------------------------------------------------------------
     # Connection
@@ -705,6 +711,10 @@ class AMIExtensionsMonitor:
         if callback in self._event_callbacks:
             self._event_callbacks.remove(callback)
 
+    def set_call_notification_callback(self, callback: Optional[Callable[[str], None]]):
+        """Set callback invoked when a call_notification is inserted (extension str). Used by server to push WebSocket event."""
+        self._call_notification_callback = callback
+
     # ------------------------------------------------------------------
     # Individual event handlers  (prefix: _ev_)
     # ------------------------------------------------------------------
@@ -759,7 +769,18 @@ class AMIExtensionsMonitor:
             status = dial_overrides.get(dial_status, status)
         
         return status
-    
+
+    def _should_notify_missed_or_busy(self, cause: str, call_info: Optional[Dict] = None) -> bool:
+        """
+        Return True only when the hangup is a missed call, busy, no answer, or similar
+        (so we create a call_notification). Normal completed calls (cause 16) or answered
+        calls do not create a notification.
+        """
+        if call_info and call_info.get('answer_time'):
+            return False
+        status = self.map_cause_to_status(cause, None)
+        return status in ('busy', 'noanswer', 'switched_off', 'failed', 'invalid_number')
+
     async def _send_crm_data(self, ext: str, call_info: Dict, hangup_event: Dict, queue: Optional[str] = None):
         """
         Send call data to CRM after call ends.
@@ -1259,6 +1280,16 @@ class AMIExtensionsMonitor:
                                         asyncio.ensure_future(self._send_crm_data(caller_ext, caller_info, p, queue))
                                     except Exception as e:
                                         log.error(f"Could not schedule CRM send task for caller {caller_ext}: {e}")
+                            # Call notification only for missed/busy/no-answer (not normal completed)
+                            if insert_call_notification and actual_ext and self._should_notify_missed_or_busy(cause, caller_info):
+                                caller_val = caller_info.get('caller') or caller_info.get('callerid') or caller_ext or ''
+                                queue_for_notif = queue or caller_info.get('queue')
+                                insert_call_notification(extension=actual_ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                                if self._call_notification_callback:
+                                    try:
+                                        self._call_notification_callback(actual_ext)
+                                    except Exception as e:
+                                        log.debug("call_notification_callback error: %s", e)
                     
                     # This channel was part of the caller's call - log it
                     num = self._display_number(caller_info, caller_ext)
@@ -1280,6 +1311,17 @@ class AMIExtensionsMonitor:
                     else:
                         # Just clear the destchannel reference since dest hung up
                         caller_info.pop('destchannel', None)
+                        # Still notify the agent who missed the call (e.g. queue ring timeout for dest)
+                        notif_ext = ext if (ext and ext.isdigit() and 3 <= len(ext) <= 5) else None
+                        if insert_call_notification and notif_ext and self._should_notify_missed_or_busy(cause, caller_info):
+                            caller_val = caller_info.get('caller') or caller_info.get('callerid') or caller_ext or ''
+                            queue_for_notif = queue or caller_info.get('queue')
+                            insert_call_notification(extension=notif_ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                            if self._call_notification_callback:
+                                try:
+                                    self._call_notification_callback(notif_ext)
+                                except Exception as e:
+                                    log.debug("call_notification_callback error: %s", e)
         
         # Clean up the extension's active call
         if ext:
@@ -1319,8 +1361,28 @@ class AMIExtensionsMonitor:
                                     log.error(f"Could not schedule CRM send task for extension {ext}: {e}")
                         else:
                             log.warning(f"CRM connector not available - skipping CRM send for extension {ext}")
+                        # Call notification only for missed/busy/no-answer (not normal completed)
+                        if insert_call_notification and ext and self._should_notify_missed_or_busy(cause, ext_info):
+                            caller_val = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '') or ''
+                            queue_for_notif = queue or ext_info.get('queue')
+                            insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                            if self._call_notification_callback:
+                                try:
+                                    self._call_notification_callback(ext)
+                                except Exception as e:
+                                    log.debug("call_notification_callback error: %s", e)
                 else:
                     log.info(f"⏸️ Skipping CRM send for extension {ext} - other channels still active (transfer in progress)")
+                    # Still create notification for the agent who missed/was busy (e.g. queue ring timeout)
+                    if insert_call_notification and ext and self._should_notify_missed_or_busy(cause, ext_info):
+                        caller_val = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '') or ''
+                        queue_for_notif = queue or ext_info.get('queue')
+                        insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                        if self._call_notification_callback:
+                            try:
+                                self._call_notification_callback(ext)
+                            except Exception as e:
+                                log.debug("call_notification_callback error: %s", e)
                 
                 # This is the main channel for this extension - log and clean up
                 caller = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '')
@@ -1376,6 +1438,16 @@ class AMIExtensionsMonitor:
                                     log.error(f"Could not schedule CRM send task for extension {ext}: {e}")
                         else:
                             log.warning(f"CRM connector not available - skipping CRM send for extension {ext}")
+                        # Call notification only for missed/busy/no-answer
+                        if insert_call_notification and ext and self._should_notify_missed_or_busy(cause, ext_info):
+                            caller_val = ext_info.get('caller') or ext_info.get('callerid') or ''
+                            queue_for_notif = queue or ext_info.get('queue')
+                            insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                            if self._call_notification_callback:
+                                try:
+                                    self._call_notification_callback(ext)
+                                except Exception as e:
+                                    log.debug("call_notification_callback error: %s", e)
         
         # Clean up any remaining channels in ch2ext that belong to this extension
         # (in case of multiple channels per extension)

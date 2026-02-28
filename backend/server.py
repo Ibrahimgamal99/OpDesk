@@ -31,7 +31,7 @@ import uvicorn
 from ami import AMIExtensionsMonitor, _format_duration, DIALPLAN_CTX, normalize_interface
 from db_manager import (
     get_extensions_from_db, get_extension_names_from_db, get_queue_names_from_db, init_settings_table,
-    get_setting, set_setting, get_all_settings, ensure_user_monitor_modes_table, authenticate_user,get_call_log_count_from_db,
+    get_setting, set_setting, get_all_settings, authenticate_user, get_call_log_count_from_db, get_call_notifications_from_db, get_call_notification_by_id, update_call_notification_status,
     get_all_users, get_user_by_id, get_user_webrtc_credentials, create_user as db_create_user, update_user as db_update_user,
     delete_user as db_delete_user, get_user_agents_and_queues,get_user_group_ids, set_user_groups,get_groups_list, get_group, 
     create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
@@ -586,7 +586,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize settings table
     init_settings_table()
-    ensure_user_monitor_modes_table()
+
 
     # Detect local IP for WebRTC default (can be overridden via settings/UI)
     local_ip = detect_local_ip()
@@ -651,7 +651,15 @@ async def lifespan(app: FastAPI):
         await monitor._send_async('Events', {'EventMask': 'on'})
         monitor.running = True
         monitor._event_task = asyncio.create_task(monitor._read_events_async())
-        
+
+        def _on_call_notification_new(ext: str):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(manager.broadcast({"type": "call_notification_new", "extension": ext}))
+            except RuntimeError:
+                pass
+        monitor.set_call_notification_callback(_on_call_notification_new)
+
         # Start event bridge
         bridge = AMIEventBridge(manager, monitor)
         await bridge.start()
@@ -1825,6 +1833,71 @@ async def get_call_log_endpoint(
     except Exception as e:
         log.error(f"Error fetching call log: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch call log: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Call Notifications (read/archive)
+# ---------------------------------------------------------------------------
+@app.get("/api/call-notifications")
+async def get_call_notifications_endpoint(
+    extension: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 200,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    List call notifications. Agents see only their extension; admin/supervisor see all (optional ?extension= filter).
+    status: new | read | archived (optional filter).
+    """
+    # Notifications: only show the logged-in user's own extension (so each user sees only their missed calls)
+    user_ext = current_user.get("extension")
+    if user_ext:
+        extension = user_ext
+    allowed = current_user.get("allowed_agent_extensions")
+    if current_user.get("role") != "admin":
+        if not allowed and current_user.get("role") == "agent" and user_ext:
+            allowed = [user_ext]
+        if not allowed:
+            return {"notifications": [], "total": 0}
+        if extension and extension not in allowed:
+            raise HTTPException(status_code=403, detail="Not allowed to view this extension")
+        if not extension and len(allowed) == 1:
+            extension = allowed[0]
+    if status and status not in ("new", "read", "archived"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    try:
+        notifications = get_call_notifications_from_db(extension=extension, status_flag=status, limit=limit)
+        if current_user.get("role") != "admin" and allowed and not extension:
+            notifications = [n for n in notifications if n.get("extension") in allowed]
+        return {"notifications": notifications, "total": len(notifications)}
+    except Exception as e:
+        log.error(f"Error fetching call notifications: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch call notifications")
+
+
+class CallNotificationUpdate(BaseModel):
+    status_flag: str
+
+
+@app.patch("/api/call-notifications/{notification_id}")
+async def update_call_notification_endpoint(
+    notification_id: int,
+    body: CallNotificationUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Mark a notification as read or archived. Allowed only for notifications for the user's extension(s)."""
+    if body.status_flag not in ("read", "archived"):
+        raise HTTPException(status_code=400, detail="status_flag must be 'read' or 'archived'")
+    notification = get_call_notification_by_id(notification_id)
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    allowed = current_user.get("allowed_agent_extensions")
+    if current_user.get("role") != "admin" and (not allowed or notification.get("extension") not in allowed):
+        raise HTTPException(status_code=403, detail="Not allowed to update this notification")
+    ok = update_call_notification_status(notification_id, body.status_flag)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Update failed")
+    return {"ok": True, "id": notification_id, "status_flag": body.status_flag}
 
 
 @app.get("/api/recordings/{file_path:path}")

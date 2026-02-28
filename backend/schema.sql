@@ -37,6 +37,36 @@ CREATE TABLE users (
     INDEX idx_active (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Call notifications: one row per call hangup for an extension (created in AMI _ev_Hangup).
+-- UI can mark as read or archived.
+CREATE TABLE IF NOT EXISTS call_notifications (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    extension VARCHAR(20) NOT NULL,
+    caller_from VARCHAR(50) NULL,
+    queue VARCHAR(100) NULL,
+    status_flag ENUM('new', 'read', 'archived') DEFAULT 'new',
+    reason VARCHAR(255) NULL,
+    event_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    call_id VARCHAR(255) NULL,
+    INDEX idx_extension (extension),
+    INDEX idx_status (status_flag),
+    INDEX idx_event_time (event_time),
+    INDEX idx_caller_from (caller_from)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Delete read call_notifications older than 7 days (runs daily via MySQL event scheduler).
+-- Privilege: user needs EVENT on this database; SET GLOBAL requires SUPER (or set event_scheduler=ON in my.cnf).
+SET GLOBAL event_scheduler = ON;
+
+DROP EVENT IF EXISTS evt_cleanup_read_call_notifications;
+CREATE EVENT evt_cleanup_read_call_notifications
+ON SCHEDULE EVERY 1 DAY
+STARTS CURRENT_TIMESTAMP
+DO
+  DELETE FROM call_notifications
+  WHERE status_flag = 'read'
+    AND event_time < DATE_SUB(NOW(), INTERVAL 7 DAY);
+
 -- Default admin user (password is bcrypt hash; use INSERT IGNORE so existing DB is not broken)
 -- Monitor modes are stored in user_monitor_modes (admin gets all by backfill).
 INSERT IGNORE INTO users (username, password_hash, name, role) VALUES
