@@ -516,6 +516,116 @@ def get_call_log_count_from_db(date: str = None,
         return 0
 
 
+def insert_call_notification(
+    extension: str,
+    caller_from: Optional[str] = None,
+    queue: Optional[str] = None,
+    call_id: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Optional[int]:
+    """
+    Insert a call notification (OpDesk DB). Called from AMI on hangup.
+    reason: e.g. busy, noanswer, failed. Returns new id or None on error.
+    """
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO call_notifications (extension, caller_from, queue, call_id, reason)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (extension, caller_from or None, queue or None, call_id or None, reason or None),
+        )
+        conn.commit()
+        nid = cursor.lastrowid
+        cursor.close()
+        conn.close()
+        return nid
+    except Error as e:
+        log.warning(f"⚠️  Database error inserting call notification: {e}")
+        return None
+
+
+def get_call_notifications_from_db(
+    extension: Optional[str] = None,
+    status_flag: Optional[str] = None,
+    limit: int = 200,
+) -> List[dict]:
+    """
+    Get call notifications from OpDesk DB. Filter by extension and/or status (new, read, archived).
+    """
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    data = []
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        conditions = []
+        params: List[Any] = []
+        if extension is not None:
+            conditions.append("extension = %s")
+            params.append(extension)
+        if status_flag is not None:
+            conditions.append("status_flag = %s")
+            params.append(status_flag)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        query = f"SELECT id, extension, caller_from, queue, status_flag, event_time, call_id, reason FROM call_notifications{where} ORDER BY event_time DESC LIMIT %s"
+        params.append(limit)
+        cursor.execute(query, tuple(params))
+        data = cursor.fetchall()
+        if data:
+            for row in data:
+                if row.get("event_time"):
+                    row["event_time"] = row["event_time"].isoformat() if hasattr(row["event_time"], "isoformat") else str(row["event_time"])
+        cursor.close()
+        conn.close()
+    except Error as e:
+        log.warning(f"⚠️  Database error getting call notifications: {e}")
+    return data
+
+
+def get_call_notification_by_id(notification_id: int) -> Optional[dict]:
+    """Get a single call notification by id. Returns None if not found."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT id, extension, caller_from, queue, status_flag, event_time, call_id, reason FROM call_notifications WHERE id = %s",
+            (notification_id,),
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if row and row.get("event_time"):
+            row["event_time"] = row["event_time"].isoformat() if hasattr(row["event_time"], "isoformat") else str(row["event_time"])
+        return row
+    except Error as e:
+        log.warning(f"⚠️  Database error getting call notification: {e}")
+        return None
+
+
+def update_call_notification_status(notification_id: int, status_flag: str) -> bool:
+    """Update a call notification's status (read or archived). Returns True on success."""
+    if status_flag not in ("new", "read", "archived"):
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE call_notifications SET status_flag = %s WHERE id = %s",
+            (status_flag, notification_id),
+        )
+        conn.commit()
+        ok = cursor.rowcount > 0
+        cursor.close()
+        conn.close()
+        return ok
+    except Error as e:
+        log.warning(f"⚠️  Database error updating call notification: {e}")
+        return False
+
+
 def check_database_exists(db_name: str) -> bool:
     """Check if a database exists."""
     config_no_db = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk')).copy()
@@ -998,42 +1108,6 @@ def delete_user(user_id: int) -> bool:
 
 
 VALID_MONITOR_MODES = ('listen', 'whisper', 'barge')
-
-
-def ensure_user_monitor_modes_table():
-    """Create user_monitor_modes table if missing and backfill users that have no modes (by role)."""
-    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
-    try:
-        conn = mysql.connector.connect(**config)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_monitor_modes (
-                user_id INT NOT NULL,
-                mode VARCHAR(20) NOT NULL,
-                PRIMARY KEY (user_id, mode),
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                INDEX idx_user (user_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-        conn.commit()
-        # Backfill: users with no rows get default modes (admin = all three, others = listen)
-        cursor.execute("SELECT id, role FROM users")
-        users = cursor.fetchall()
-        for (uid, role) in users:
-            cursor.execute("SELECT 1 FROM user_monitor_modes WHERE user_id = %s LIMIT 1", (uid,))
-            if cursor.fetchone():
-                continue
-            modes = list(VALID_MONITOR_MODES) if role == 'admin' else ([] if role == 'agent' else ['listen'])
-            for m in modes:
-                try:
-                    cursor.execute("INSERT IGNORE INTO user_monitor_modes (user_id, mode) VALUES (%s, %s)", (uid, m))
-                except Error:
-                    pass
-        conn.commit()
-        cursor.close()
-        conn.close()
-    except Error as e:
-        log.warning(f"⚠️  ensure_user_monitor_modes_table: {e}")
 
 
 def get_user_monitor_modes(user_id: int) -> list:

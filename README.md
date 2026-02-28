@@ -17,6 +17,7 @@ A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but
 - **CRM Integration**: Send call data to external CRM systems with support for multiple authentication methods (API Key, Basic Auth, Bearer Token, OAuth2)
 - **QoS Data**: View Quality of Service metrics for calls
 - **Web call (Softphone)**: Make and receive calls from the browser via WebRTC; in-call controls (hold, mute, transfer, keypad); redirect to softphone and browser notifications on incoming call
+- **Call notifications**: Missed and busy-call alerts in a header bell; each user sees only their own extension; queue and reason (e.g. No answer, Busy) shown; mark as read or archive; read notifications auto-deleted after 7 days
 - **WebSocket-based**: Event-driven architecture for instant updates; state is filtered per user (admin vs supervisor scope)
 
 ## Screenshots
@@ -70,6 +71,31 @@ OpDesk includes a **WebRTC softphone** so you can make and receive calls directl
 2. **Make a call**: Go to the **Softphone** tab (or click the headset icon in the header), enter the number or extension, and click the green call button.
 3. **Incoming call**: The app opens the Softphone tab and shows the incoming screen; if you allowed notifications, a system notification appears. Click **Answer** or **Decline**.
 4. **During the call**: Use Hold, Mute, Keypad, etc., and click the red **End call** button to hang up.
+
+## Call notifications
+
+OpDesk records **missed and busy calls** (no answer, busy, failed, etc.) and shows them in a **bell icon** in the header.
+
+### What you get
+
+- **Bell + count**: Click the bell in the header to open a dropdown. The badge shows how many new (unread) notifications you have. The count updates in real time when new missed/busy calls occur (WebSocket).
+- **Your extension only**: Each user sees only notifications for their **own extension** (the extension assigned to their account). Supervisors and agents do not see other extensions’ missed calls.
+- **Details per notification**: Each item shows extension, caller (From), **queue** (if it was a queue call), **reason** (e.g. No answer, Busy, Failed), and time (e.g. “Just now”, “5m ago”).
+- **Read / Archive**: Use **Read** to mark as read (badge count decreases) or **Archive** to hide the notification from the list. Archived and read items are kept in the database; only **read** notifications are automatically deleted after **7 days** (via a daily MySQL event).
+
+### When notifications are created
+
+Notifications are created only for **missed or busy** outcomes (not for normal completed calls), including:
+
+- Queue ring timeout (agent did not answer)
+- No answer, busy, failed, and similar hangup causes
+
+Queue name is stored when the call was a queue call, so you can see which queue the missed call came from.
+
+### Database
+
+- Table: `call_notifications` in the OpDesk database (see `backend/schema.sql`).
+- Automatic cleanup: a MySQL event `evt_cleanup_read_call_notifications` runs daily and deletes read notifications older than 7 days. The event scheduler must be enabled (`SET GLOBAL event_scheduler = ON` or `event_scheduler=ON` in `my.cnf`).
 
 ## Authentication & User Management
 

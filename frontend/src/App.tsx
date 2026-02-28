@@ -15,6 +15,7 @@ import { Softphone } from './components/Softphone';
 import { 
   Phone, 
   PhoneCall, 
+  User,
   Users, 
   Radio,
   Activity,
@@ -27,10 +28,39 @@ import {
   Monitor,
   Group,
   Headphones,
+  Bell,
+  PhoneMissed,
+  Clock,
+  Check,
+  Archive,
 } from 'lucide-react';
 import { getAuthHeaders } from './auth';
 
 type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'phone';
+
+function formatNotifTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sec = Math.floor((now.getTime() - d.getTime()) / 1000);
+  if (sec < 60) return 'Just now';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  if (sec < 172800) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function reasonLabel(reason: string | null): string {
+  if (!reason) return '';
+  const labels: Record<string, string> = {
+    busy: 'Busy',
+    noanswer: 'No answer',
+    failed: 'Failed',
+    switched_off: 'Unavailable',
+    invalid_number: 'Invalid number',
+    completed: 'Completed',
+  };
+  return labels[reason] || reason;
+}
 
 /** Snapshot of user form when opening "Create new group" from Users tab (preserved in memory, no API). */
 export interface PendingUserFormSnapshot {
@@ -78,8 +108,16 @@ function App({ onLogout }: AppProps) {
     onLogout();
   }, [onLogout]);
 
+  const fetchNewNotifCount = useCallback(() => {
+    fetch('/api/call-notifications?status=new&limit=100', { headers: getAuthHeaders() })
+      .then((r) => r.ok ? r.json() : { notifications: [] })
+      .then((data) => setNewNotifCount((data.notifications || []).length))
+      .catch(() => setNewNotifCount(0));
+  }, []);
+
   const { state, connected, lastUpdate, notifications, sendAction } = useWebSocket(token, {
     onAuthFailure: handleLogout,
+    onCallNotificationNew: fetchNewNotifCount,
   });
   const [activeTab, setActiveTab] = useState<TabType>('extensions');
   /** User form preserved when switching to Groups to create a new group (no API call). */
@@ -93,6 +131,11 @@ function App({ onLogout }: AppProps) {
   }>({ isOpen: false, mode: 'listen', target: '' });
   const [crmSettingsOpen, setCrmSettingsOpen] = useState(false);
   const [webrtcExtensions, setWebrtcExtensions] = useState<{ extension: string; name?: string; webrtc?: string }[]>([]);
+  const [newNotifCount, setNewNotifCount] = useState(0);
+  const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
+  const [notifList, setNotifList] = useState<{ id: number; extension: string; caller_from: string | null; queue: string | null; status_flag: string; event_time: string; reason: string | null }[]>([]);
+  const [notifUpdatingId, setNotifUpdatingId] = useState<number | null>(null);
+  const notifDropdownRef = useRef<HTMLDivElement>(null);
 
   // Refresh user (role, extension, scope) from server so scope is up to date
   useEffect(() => {
@@ -113,6 +156,42 @@ function App({ onLogout }: AppProps) {
       .then((data) => setWebrtcExtensions(data.extensions || []))
       .catch(() => setWebrtcExtensions([]));
   }, [activeTab, token]);
+
+  useEffect(() => { fetchNewNotifCount(); }, [fetchNewNotifCount]);
+
+  useEffect(() => {
+    if (!notifDropdownOpen) return;
+    fetch('/api/call-notifications?status=new&limit=20', { headers: getAuthHeaders() })
+      .then((r) => r.ok ? r.json() : { notifications: [] })
+      .then((data) => setNotifList(data.notifications || []))
+      .catch(() => setNotifList([]));
+  }, [notifDropdownOpen]);
+
+  useEffect(() => {
+    const onOutside = (e: MouseEvent) => {
+      if (notifDropdownRef.current && !notifDropdownRef.current.contains(e.target as Node)) setNotifDropdownOpen(false);
+    };
+    if (notifDropdownOpen) {
+      document.addEventListener('click', onOutside, true);
+      return () => document.removeEventListener('click', onOutside, true);
+    }
+  }, [notifDropdownOpen]);
+
+  const updateNotifStatus = useCallback(async (id: number, status: 'read' | 'archived') => {
+    setNotifUpdatingId(id);
+    try {
+      const res = await fetch(`/api/call-notifications/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ status_flag: status }),
+      });
+      if (!res.ok) return;
+      setNotifList((prev) => prev.filter((n) => n.id !== id));
+      fetchNewNotifCount();
+    } finally {
+      setNotifUpdatingId(null);
+    }
+  }, [fetchNewNotifCount]);
 
   // Auto-connect softphone when logged in and config is ready
   useEffect(() => {
@@ -282,6 +361,81 @@ function App({ onLogout }: AppProps) {
                 <div className="stat-label">Waiting</div>
               </div>
             </div>
+          </div>
+
+          <div className="header-bell-wrap" ref={notifDropdownRef}>
+            <button
+              type="button"
+              className="btn header-bell-btn"
+              onClick={() => setNotifDropdownOpen((o) => !o)}
+              title="Call notifications"
+              aria-label={newNotifCount ? `${newNotifCount} new notifications` : 'Notifications'}
+            >
+              <Bell size={18} />
+              {newNotifCount > 0 && <span className="header-bell-badge">{newNotifCount > 99 ? '99+' : newNotifCount}</span>}
+            </button>
+            {notifDropdownOpen && (
+              <div className="header-bell-dropdown">
+                <div className="header-bell-dropdown-header">
+                  <PhoneMissed size={16} />
+                  <span>Missed &amp; busy calls</span>
+                  {newNotifCount > 0 && <span className="header-bell-dropdown-count">{newNotifCount}</span>}
+                </div>
+                {notifList.length === 0 ? (
+                  <div className="header-bell-dropdown-empty">
+                    <Phone size={20} />
+                    <span>No new notifications</span>
+                  </div>
+                ) : (
+                  <ul className="header-bell-list">
+                    {notifList.map((n) => (
+                      <li key={n.id} className="header-bell-item" role="listitem">
+                        <div className="header-bell-item-details">
+                          <div className="header-bell-item-row">
+                            <Phone size={12} className="header-bell-item-icon" aria-hidden />
+                            <span className="header-bell-item-label">Ext</span>
+                            <span className="header-bell-item-value" title={n.extension}>{n.extension}</span>
+                          </div>
+                          {n.caller_from != null && n.caller_from !== '' && (
+                            <div className="header-bell-item-row">
+                              <User size={12} className="header-bell-item-icon" aria-hidden />
+                              <span className="header-bell-item-label">From</span>
+                              <span className="header-bell-item-value" title={n.caller_from}>{n.caller_from}</span>
+                            </div>
+                          )}
+                          {n.queue != null && n.queue !== '' && (
+                            <div className="header-bell-item-row">
+                              <Users size={12} className="header-bell-item-icon" aria-hidden />
+                              <span className="header-bell-item-label">Queue</span>
+                              <span className="header-bell-item-value" title={n.queue}>{n.queue}</span>
+                            </div>
+                          )}
+                          <div className="header-bell-item-row header-bell-item-meta">
+                            <Clock size={12} className="header-bell-item-icon" aria-hidden />
+                            <span className="header-bell-item-time">{formatNotifTime(n.event_time)}</span>
+                            {n.reason && (
+                              <span className={`header-bell-reason header-bell-reason-${String(n.reason).replace(/\s+/g, '_')}`} title={reasonLabel(n.reason)}>
+                                {reasonLabel(n.reason)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="header-bell-item-actions">
+                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'read')} disabled={notifUpdatingId === n.id} title="Mark read">
+                            <Check size={14} />
+                            <span>Read</span>
+                          </button>
+                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'archived')} disabled={notifUpdatingId === n.id} title="Archive">
+                            <Archive size={14} />
+                            <span>Archive</span>
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
 
           {getUser()?.role !== 'agent' && (

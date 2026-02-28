@@ -9,6 +9,8 @@ const WS_CLOSE_AUTH_FAILED = 4001;
 export type UseWebSocketOptions = {
   /** Called when server closes with auth failure (e.g. 4001). Use to clear token and redirect to login. */
   onAuthFailure?: () => void;
+  /** Called when server pushes a new call notification (so UI can refresh count). */
+  onCallNotificationNew?: () => void;
 };
 
 /** In dev, set VITE_API_ORIGIN (e.g. http://172.16.11.65:8765) to connect WS directly to backend when proxy fails. */
@@ -29,7 +31,7 @@ function getWsUrl(token: string | null): string | null {
 }
 
 export function useWebSocket(token: string | null, options: UseWebSocketOptions = {}) {
-  const { onAuthFailure } = options;
+  const { onAuthFailure, onCallNotificationNew } = options;
   const [state, setState] = useState<AppState | null>(null);
   const [connected, setConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -70,6 +72,8 @@ export function useWebSocket(token: string | null, options: UseWebSocketOptions 
               setState(message.data);
               setLastUpdate(new Date());
             }
+          } else if (message.type === 'call_notification_new') {
+            onCallNotificationNew?.();
           } else if (message.type === 'action_result') {
             if (message.message) {
               addNotification(message.success ? `✓ ${message.message}` : `✗ ${message.message}`);
@@ -107,7 +111,7 @@ export function useWebSocket(token: string | null, options: UseWebSocketOptions 
     } catch (e) {
       console.error('Failed to create WebSocket:', e);
     }
-  }, [token, addNotification, onAuthFailure]);
+  }, [token, addNotification, onAuthFailure, onCallNotificationNew]);
 
   const sendAction = useCallback((action: ActionMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

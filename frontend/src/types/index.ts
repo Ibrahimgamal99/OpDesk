@@ -70,7 +70,7 @@ export interface AppState {
 }
 
 export interface WebSocketMessage {
-  type: 'state_update' | 'initial_state' | 'action_result' | 'error';
+  type: 'state_update' | 'initial_state' | 'action_result' | 'error' | 'call_notification_new';
   data?: AppState;
   timestamp?: string;
   action?: string;
