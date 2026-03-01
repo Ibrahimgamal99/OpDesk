@@ -318,6 +318,29 @@ def set_extension_webrtc(extension: str, enabled: bool, PBX: str) -> bool:
         log.warning(f"set_extension_webrtc sip/certman ({ext}): {err}")
         return True  # users.webrtc was set
 
+def get_cdr_by_linkedid(linkedid):
+    """
+    Fetch CDR rows for a given linkedid. Returns list of dicts or [] on error.
+    """
+    conn = None
+    config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_CDR', ''))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        query = """
+        SELECT calldate, billsec, duration, disposition, src, dst, dcontext, channel, dstchannel, lastapp
+        FROM cdr
+        WHERE linkedid = %s
+        """
+        cursor.execute(query, (linkedid,))
+        return cursor.fetchall()
+    except mysql.connector.Error as e:
+        print(f"Database error: {e}")
+        return []
+    finally:
+        if conn is not None and conn.is_connected():
+            cursor.close()
+            conn.close()
 
 def get_call_log_from_db(limit: int = None, date: str = None,
                          date_from: str = None, date_to: str = None,
@@ -343,7 +366,7 @@ def get_call_log_from_db(limit: int = None, date: str = None,
         cursor = conn.cursor(dictionary=True)
 
         # Build the base query: first leg (min sequence) + last leg (max sequence) per linkedid,
-        # with call_app derived from dcontext (queue/ivr/direct).
+        # with call_app derived from dcontext (queue/ivr/direct) and leg count for call journey.
         query = """
             SELECT
                 first_leg.calldate,
@@ -361,7 +384,8 @@ def get_call_log_from_db(limit: int = None, date: str = None,
                 first_leg.recordingfile,
                 first_leg.cnam,
                 first_leg.linkedid,
-                first_leg.userfield,
+                last_leg.userfield,
+                leg_count.total_legs AS call_journey_count,
                 CASE
                     WHEN first_leg.dcontext LIKE '%queue%' THEN 'queue'
                     WHEN first_leg.dcontext LIKE '%ivr%'   THEN 'ivr'
@@ -386,6 +410,11 @@ def get_call_log_from_db(limit: int = None, date: str = None,
                         GROUP BY linkedid
                     ) x ON c.linkedid = x.linkedid AND c.sequence = x.max_seq
                 ) last_leg ON first_leg.linkedid = last_leg.linkedid
+            JOIN (
+                SELECT linkedid, COUNT(*) AS total_legs
+                FROM cdr
+                GROUP BY linkedid
+            ) leg_count ON first_leg.linkedid = leg_count.linkedid
         """
         
         # Build WHERE conditions (use first_leg for calldate/src, last_leg for dstchannel)
@@ -478,6 +507,11 @@ def get_call_log_count_from_db(date: str = None,
                         GROUP BY linkedid
                     ) x ON c.linkedid = x.linkedid AND c.sequence = x.max_seq
                 ) last_leg ON first_leg.linkedid = last_leg.linkedid
+            JOIN (
+                SELECT linkedid, COUNT(*) AS total_legs
+                FROM cdr
+                GROUP BY linkedid
+            ) leg_count ON first_leg.linkedid = leg_count.linkedid
         """
         conditions = []
         params = []

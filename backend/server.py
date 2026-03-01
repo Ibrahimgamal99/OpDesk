@@ -32,6 +32,7 @@ from ami import AMIExtensionsMonitor, _format_duration, DIALPLAN_CTX, normalize_
 from db_manager import (
     get_extensions_from_db, get_extension_names_from_db, get_queue_names_from_db, init_settings_table,
     get_setting, set_setting, get_all_settings, authenticate_user, get_call_log_count_from_db, get_call_notifications_from_db, get_call_notification_by_id, update_call_notification_status,
+    get_cdr_by_linkedid,
     get_all_users, get_user_by_id, get_user_webrtc_credentials, create_user as db_create_user, update_user as db_update_user,
     delete_user as db_delete_user, get_user_agents_and_queues,get_user_group_ids, set_user_groups,get_groups_list, get_group, 
     create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
@@ -39,7 +40,7 @@ from db_manager import (
     set_extension_webrtc, get_extensions_with_webrtc_from_users,get_extension_secret_from_db
 )
 from dialplan import enable_qos, disable_qos
-from call_log import call_log as get_call_log
+from call_log import call_log as get_call_log, build_call_journey_from_cdr
 
 # Load environment variables
 load_dotenv()
@@ -732,7 +733,7 @@ security = HTTPBearer(auto_error=False)
 
 
 def _get_user_scope(user_id: int) -> dict:
-    """Load user extension, monitor_modes (list), and allowed agents/queues. Admin gets None for allowed_* (see all). Agent sees only their extension."""
+    """Load user extension, monitor_modes (list), and allowed agents/queues. Admin: allowed_* = None. All roles: monitor_modes from DB (or default listen)."""
     user = get_user_by_id(user_id)
     if not user:
         return {"role": "supervisor", "extension": None, "monitor_modes": ["listen"], "allowed_agent_extensions": [], "allowed_queue_names": []}
@@ -742,7 +743,6 @@ def _get_user_scope(user_id: int) -> dict:
     if role == "admin":
         return {"role": "admin", "extension": extension, "monitor_modes": monitor_modes, "allowed_agent_extensions": None, "allowed_queue_names": None}
     if role == "agent":
-        # Agent sees only their own extension and no queues
         agent_exts = [extension] if extension else []
         return {"role": "agent", "extension": extension, "monitor_modes": [], "allowed_agent_extensions": agent_exts, "allowed_queue_names": []}
     agents, queues = get_user_agents_and_queues(user_id)
@@ -914,15 +914,18 @@ async def api_create_user(
         raise HTTPException(status_code=400, detail="Username required")
     if not (body.password or "").strip():
         raise HTTPException(status_code=400, detail="Password required")
+    role = body.role or "supervisor"
     monitor_modes = body.monitor_modes if body.monitor_modes is not None else None
     if monitor_modes is None and body.monitor_mode:
         monitor_modes = [body.monitor_mode]
+    if role == "admin":
+        monitor_modes = ["listen", "whisper", "barge"]  # Admin: auto-fill full modes in DB
     user_id = db_create_user(
         username=username,
         password=body.password,
         name=body.name,
         extension=body.extension,
-        role=body.role or "supervisor",
+        role=role,
         monitor_mode=body.monitor_mode or "listen",
         monitor_modes=monitor_modes,
     )
@@ -945,6 +948,10 @@ async def api_update_user(
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    effective_role = body.role if body.role is not None else user.get("role")
+    monitor_modes = body.monitor_modes
+    if effective_role == "admin":
+        monitor_modes = ["listen", "whisper", "barge"]  # Admin: auto-fill full modes in DB
     db_update_user(
         user_id,
         name=body.name,
@@ -952,7 +959,7 @@ async def api_update_user(
         role=body.role,
         is_active=body.is_active,
         monitor_mode=body.monitor_mode,
-        monitor_modes=body.monitor_modes,
+        monitor_modes=monitor_modes,
         password=body.password,
     )
     if body.group_ids is not None:
@@ -1833,6 +1840,28 @@ async def get_call_log_endpoint(
     except Exception as e:
         log.error(f"Error fetching call log: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch call log: {str(e)}")
+
+
+@app.get("/api/call-log/journey")
+async def get_call_journey_endpoint(
+    linkedid: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Get call journey (event timeline) for a call by linkedid.
+    Returns a list of events: INBOUND/OUTBOUND, QUEUE_ENTER, RING, ANSWER, TRANSFER, HANGUP, etc.
+    """
+    if not linkedid or linkedid.strip() == "":
+        raise HTTPException(status_code=400, detail="linkedid is required")
+    try:
+        cdr_rows = get_cdr_by_linkedid(linkedid.strip())
+        if not cdr_rows:
+            return {"journey": []}
+        journey = build_call_journey_from_cdr(cdr_rows)
+        return {"journey": journey}
+    except Exception as e:
+        log.error(f"Error fetching call journey: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch call journey: {str(e)}")
 
 
 # ---------------------------------------------------------------------------

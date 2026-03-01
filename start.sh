@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # OpDesk start script: -d dev (backend + Vite dev server) | -p production (backend only, serves built frontend)
-# Usage: ./start.sh [-d|--dev]   or   ./start.sh [-p|--production]
-# Default: dev
+# Usage: ./start.sh [-p|--production]   or   ./start.sh [-d|--dev]
+# Default: production
 
 # UI Colors
 GREEN='\033[0;32m'
@@ -11,7 +11,7 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-MODE="dev"
+MODE="production"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d|--dev)
@@ -23,9 +23,9 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo -e "${RED}Usage: $0 [-d|--dev] | [-p|--production]${NC}"
-      echo "  -d, --dev         Development: backend + Vite dev server (default)"
-      echo "  -p, --production  Production: backend only (serves built frontend)"
+      echo -e "${RED}Usage: $0 [-p|--production] | [-d|--dev]${NC}"
+      echo "  -p, --production  Production: backend only (serves built frontend) (default)"
+      echo "  -d, --dev         Development: backend + Vite dev server"
       exit 1
       ;;
   esac

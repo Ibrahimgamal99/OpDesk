@@ -129,8 +129,8 @@ CREATE TABLE IF NOT EXISTS user_monitor_modes (
 CREATE TABLE user_groups (
     user_id INT,
     group_id INT,
-    -- NULL = use user's default monitor_mode; otherwise overrides for this group
-    monitor_mode ENUM('listen', 'whisper', 'full') NULL DEFAULT NULL,
+    -- NULL = use user's default monitor_mode; otherwise overrides for this group. Values must match user_monitor_modes: listen, whisper, barge.
+    monitor_mode ENUM('listen', 'whisper', 'barge') NULL DEFAULT NULL,
     PRIMARY KEY (user_id, group_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,

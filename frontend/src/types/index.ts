@@ -100,6 +100,21 @@ export interface CallLogRecord {
   recording_path: string | null;
   recording_file: string | null;
   app: string;
+  call_journey_count?: number | null;
+  linkedid?: string | null;
+}
+
+// Call journey event (from API)
+export interface CallJourneyEvent {
+  event: string;
+  time: string;
+  agent?: string;
+  duration?: number;
+  reason?: string;
+  from_number?: string;
+  to_number?: string;
+  queue?: string;
+  [key: string]: unknown;
 }
 
 export interface QoSData {

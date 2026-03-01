@@ -1,7 +1,8 @@
 import os
 import re
 from pathlib import Path
-from db_manager import get_call_log_from_db
+from db_manager import get_call_log_from_db, get_cdr_by_linkedid
+from datetime import datetime, timedelta
 
 
 # Get root directory for Asterisk recordings from environment variable
@@ -153,9 +154,148 @@ def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extens
             'call_type': cdr.get('call_type'),
             'recording_path': str(cdr['recording_path']) if cdr.get('recording_path') else None,
             'recording_file': cdr.get('recordingfile') or None,
-            'app': cdr.get('call_app'),  # lastapp renamed to app
+            'app': cdr.get('call_app'),  
+            'call_journey_count':cdr.get('call_journey_count'),
+            'linkedid':cdr.get('linkedid'),
         }
         
         result.append(filtered_cdr)
-    
+
     return result
+
+
+def build_call_journey_from_cdr(cdr_rows: list) -> list:
+    """
+    Build call journey from queue-based CDR rows
+    """
+
+    if not cdr_rows:
+        return []
+
+    # Always sort by time
+    cdr_rows = sorted(cdr_rows, key=lambda x: x["calldate"])
+
+    journey = []
+    def get_answer_time(row):
+        """
+        Calculate answer time from FreePBX CDR row
+        """
+        if row["billsec"] and row["billsec"] > 0:
+            return row["calldate"] + timedelta(
+                seconds=(row["duration"] - row["billsec"])
+            )
+        return None
+    
+    def add(event, time: datetime, **data):
+        e = {
+            "event": event,
+            "time": time.strftime("%H:%M:%S"),
+            "_dt": time,  # kept for duration calculation
+        }
+        e.update(data)
+        journey.append(e)
+
+    first = cdr_rows[0]
+    last = cdr_rows[-1]
+
+    def add_transfers_and_hangup():
+        """Block 2 tail: TRANSFER events for cdr_rows[1:] then HANGUP. Reused by Dial and callable from Queue."""
+        for row in cdr_rows[1:]:
+            agent = convert_channel_to_extension(
+                row.get("dstchannel"), row.get("channel")
+            )
+            if not agent:
+                continue
+            add("TRANSFER", row["calldate"], agent=agent)
+        add(
+            "HANGUP",
+            last["calldate"] + timedelta(seconds=last["duration"]),
+            reason=last.get("disposition"),
+        )
+
+    def build_dial_block():
+        """Block 2: full Dial flow (ANSWER + transfers + HANGUP). Call this from Block 1 when you want Dial logic."""
+        first_agent = convert_channel_to_extension(
+            first.get("dstchannel"), first.get("channel")
+        )
+        answer_time = get_answer_time(first) or first["calldate"]
+        add("ANSWER", answer_time, agent=first_agent)
+        add_transfers_and_hangup()
+
+    # 1️⃣ INBOUND (common)
+    if classify_cdr_direction(first) == "IN":
+        add(
+            "INBOUND",
+            first["calldate"],
+            from_number=first["src"],
+        )
+    else:
+        add(
+            "OUTBOUND",
+            first["calldate"],
+            to_number=first["dst"],
+        )
+
+    # ——— Block 1: Queue ———
+    if first["lastapp"] == "Queue":
+        add("QUEUE_ENTER", first["calldate"], queue=first["dst"])
+
+        for i, row in enumerate(cdr_rows):
+            agent = convert_channel_to_extension(
+                row.get("dstchannel"), row.get("channel")
+            )
+            if not agent:
+                continue
+            # TRANSFER before RING for each leg after the first
+            if i > 0:
+                add("TRANSFER", row["calldate"], agent=agent)
+            add("RING", row["calldate"], agent=agent)
+
+            if row["disposition"] == "NO ANSWER":
+                add(
+                    "NO_ANSWER",
+                    row["calldate"] + timedelta(seconds=row["duration"]),
+                    agent=agent,
+                )
+            elif row["disposition"] == "ANSWERED":
+                answer_time = get_answer_time(row)
+                if answer_time:
+                    add("ANSWER", answer_time, agent=agent)
+
+        add(
+            "HANGUP",
+            last["calldate"] + timedelta(seconds=last["duration"]),
+            reason=last.get("disposition"),
+        )
+
+    # ——— Block 2: Dial ———
+    elif first["lastapp"] == "Dial":
+        build_dial_block()
+
+    # Sort by time, then by logical event order for same-second events
+    _event_order = {
+        "INBOUND": 0,
+        "QUEUE_ENTER": 1,
+        "TRANSFER": 2,
+        "RING": 3,
+        "ANSWER": 4,
+        "NO_ANSWER": 4,
+        "HANGUP": 5,
+    }
+    journey.sort(key=lambda e: (e["time"], _event_order.get(e["event"], 99)))
+
+    # Add duration (seconds) for each event: time until next event; last event = 0
+    for i, e in enumerate(journey):
+        if i + 1 < len(journey):
+            secs = round(
+                (journey[i + 1]["_dt"] - e["_dt"]).total_seconds(), 1
+            )
+            if secs != 0:
+                e["duration"] = secs
+        del e["_dt"]
+
+    return journey
+if __name__ == "__main__":
+    linkedid = 1772366689.422
+    data = get_cdr_by_linkedid(linkedid)
+    print(build_call_journey_from_cdr(data))

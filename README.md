@@ -1,111 +1,94 @@
-# Operator Panel Desk (OpDesk)
+# OpDesk — Operator Panel for Asterisk
 
-A modern, real-time operator panel for Asterisk PBX systems, similar to FOP2 but built with modern technologies.
- 
-## Features
+A real-time operator panel for **Asterisk PBX** (Issabel / FreePBX). Monitor extensions and queues, manage active calls, view CDR and recordings, and use a built-in WebRTC softphone—all in one web app.
 
-- **Authentication & User Management**: Login by username or extension with password; JWT-based auth; admin and supervisor roles
-- **Role-based Access**: Admins see all extensions and queues; supervisors see only their assigned extensions and queues (filter by role, extension, and queue)
-- **Monitor Modes (multi-select)**: Per-user selection of Listen, Whisper, and/or Barge; only allowed actions are shown in the UI
-- **Real-time Extension Monitoring**: Live status updates for extensions (filtered by user scope)
-- **Active Call Tracking**: See who's talking to whom with duration and talk time tracking
-- **Call Duration & Talk Time**: Track total call duration and actual conversation time separately
-- **Call Log/CDR History**: View historical call records with filtering and search capabilities
-- **Call Recording Playback**: Listen to recorded calls directly from the web interface
-- **Queue Management**: Monitor and manage call queues (filtered by user scope for supervisors)
-- **Supervisor Features**: Listen, whisper, and barge into calls (according to each user’s allowed monitor modes)
-- **CRM Integration**: Send call data to external CRM systems with support for multiple authentication methods (API Key, Basic Auth, Bearer Token, OAuth2)
-- **QoS Data**: View Quality of Service metrics for calls
-- **Web call (Softphone)**: Make and receive calls from the browser via WebRTC; in-call controls (hold, mute, transfer, keypad); redirect to softphone and browser notifications on incoming call
-- **Call notifications**: Missed and busy-call alerts in a header bell; each user sees only their own extension; queue and reason (e.g. No answer, Busy) shown; mark as read or archive; read notifications auto-deleted after 7 days
-- **WebSocket-based**: Event-driven architecture for instant updates; state is filtered per user (admin vs supervisor scope)
+| | |
+|---|---|
+| **Stack** | React + TypeScript (frontend), FastAPI + WebSockets (backend), MySQL/MariaDB |
+| **Compatible with** | Issabel, FreePBX; Asterisk with AMI enabled |
+
+---
+
+## At a glance
+
+- **Roles**: Admin (full access) and Supervisor (scoped to assigned extensions/queues).
+- **Real-time**: Extension status, active calls, queue state, and call notifications via WebSocket.
+- **Supervision**: Listen, Whisper, Barge (per-user configurable).
+- **Call management**: CDR/call log, filtering, search, recording playback, QoS, **Call Journey** (timeline for multi-leg calls in the call log).
+- **Web softphone**: Make/receive calls in the browser (WebRTC); hold, mute, transfer.
+- **Notifications**: Missed/busy calls in a header bell; per-extension; mark read/archive; 7-day auto-cleanup of read items.
+- **CRM**: Push call data to external CRMs (API Key, Basic Auth, Bearer, OAuth2).
+
+---
+
+## Prerequisites
+
+- Linux (Debian/Ubuntu, CentOS/RHEL/Fedora, or Arch)
+- Issabel or FreePBX with Asterisk and **AMI** enabled
+- **WSS (WebSocket Secure)** enabled on FreePBX/Issabel for the WebRTC softphone
+- MySQL/MariaDB (for FreePBX extension list)
+- `sudo` and `curl` (for the installer)
+
+The installer can install Python 3.11+, Node.js 24 (via nvm), git, lsof, and curl if missing.
+
+---
+
+## Installation
+
+**One-liner:**
+
+```bash
+curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh && chmod +x install.sh && ./install.sh
+```
+
+**From repo:**
+
+```bash
+chmod +x install.sh && ./install.sh
+```
+
+The script clones to `/opt/OpDesk`, installs dependencies, detects Issabel/FreePBX, configures DB and AMI user `OpDesk`, creates `backend/.env`, and prints a summary.
+
+**Default login after install:** Username **admin**, password as shown by the installer (e.g. `OpDesk@2026`). Change the password after your first login.
+
+---
+
+## Running
+
+```bash
+./start.sh
+```
+
+- Serves API + frontend at **https://&lt;server-ip&gt;:8443** (HTTPS). Change the port via **OPDESK_HTTPS_PORT** in `backend/.env`.
+- Dev mode with hot reload: `./start.sh -d`.
+
+---
+
+## Quick reference
+
+| Topic | Summary |
+|-------|--------|
+| **Auth** | Username or extension + password; JWT. Admin sees all; Supervisor sees only assigned extensions/queues. |
+| **Softphone** | Enable **WSS** in FreePBX/Issabel. Requires HTTPS. `WEBRTC_PBX_SERVER` is set automatically (e.g. `wss://<server-ip>:8089/ws`); adjust in Settings if needed. |
+| **Call Journey** | In Call Log: open the journey button (route icon) on a row to see the event timeline (queue, ring, answer, transfer, etc.). |
+| **Call notifications** | Stored in `call_notifications`; MySQL event cleans read notifications after 7 days. |
+| **CRM** | Settings → CRM Settings; configure URL and auth (API Key, Basic, Bearer, OAuth2). |
+
+---
 
 ## Screenshots
 
-### Main Dashboard
-![Main Dashboard](screenshots/extensions_dashboard.png)
-*Real-time extension monitoring and active call tracking*
+| Active calls | Call Journey | Call log | Dashboard | Notifications | QoS |
+|--------------|--------------|----------|-----------|---------------|-----|
+| [![Active calls](screenshots/active_calls.png)](screenshots/active_calls.png) | [![Call Journey](screenshots/call_journey.png)](screenshots/call_journey.png) | [![Call log](screenshots/call_history.png)](screenshots/call_history.png) | [![Dashboard](screenshots/extensions_dashboard.png)](screenshots/extensions_dashboard.png) | [![Notifications](screenshots/notfication.png)](screenshots/notfication.png) | [![QoS](screenshots/qos.png)](screenshots/qos.png) |
 
-### Active Calls Panel
-![Active Calls](screenshots/active_calls.png)
-*View active calls with duration and talk time tracking*
+| Queue | Softphone | Softphone (in-call) | Softphone (ringing) |
+|-------|-----------|---------------------|---------------------|
+| [![Queue](screenshots/queue.png)](screenshots/queue.png) | [![Softphone](screenshots/softphone.png)](screenshots/softphone.png) | [![Softphone in-call](screenshots/softphone_incall.png)](screenshots/softphone_incall.png) | [![Softphone ringing](screenshots/softphone_rining.png)](screenshots/softphone_rining.png) |
 
-### Call Log/CDR History
-![Call Log](screenshots/call_history.png)
-*Historical call records with filtering and search capabilities*
+*QoS verified on FreePBX.*
 
-### Queue Management
-![Queue Management](screenshots/queue.png)
-*Monitor and manage call queues in real-time*
-
-### QoS Data
-![QoS Data](screenshots/qos.png)
-*View Quality of Service metrics for calls*
-
-**Note:** QoS functionality has been tested and verified on FreePBX systems.
-
-### Settings
-![Settings](screenshots/setting.png)
-*Configure CRM integration and application settings*
-
-## Web call (Softphone)
-
-OpDesk includes a **WebRTC softphone** so you can make and receive calls directly in the browser—no desk phone required.
-
-### What you get
-
-- **Make calls**: Open the Softphone tab, enter a number or extension, and click Call. The app uses your extension and secret to register with the PBX over WebRTC (SIP over WebSocket).
-- **Receive calls**: Incoming calls show an answer/decline screen. The app switches to the Softphone tab automatically and can show a **browser (system) notification** so you’re alerted even if the tab is in the background. Allow notifications when prompted (or when opening the Softphone tab) for the best experience.
-- **In-call**: Once the call is answered, an in-call view shows the other party’s number/name, call duration, and controls: Hold, Mute, New call, Conference, Transfer, Attended Transfer, Record, Keypad, and Video. The red **End call** button hangs up.
-- **Sounds**: Ringtone for incoming calls, dial tone for outgoing (while ringing), and a short hangup sound when the call ends.
-
-### Requirements
-
-- **HTTPS**: Browsers allow microphone access only on **HTTPS** or **localhost**. See [HTTPS (for WebRTC Softphone / Microphone)](#https-for-webrtc-softphone--microphone) below for dev and production setup.
-- **PBX WebSocket**: Asterisk must expose a **wss://** endpoint for WebRTC. In OpDesk **Settings**, set **WEBRTC_PBX_SERVER** to that URL (e.g. `wss://your-pbx-ip:8089/ws`). Using **ws://** on a TLS port can cause Asterisk “Internal SSL error”; see [Asterisk "Internal SSL error" (WebRTC / wss://)](#asterisk-internal-ssl-error-webrtc--wss) if you see that.
-- **Extension and secret**: Each user needs an **extension** and **extension secret** (WebRTC registration). Configure the extension in the Extensions panel and set the secret via the key icon in the Extensions tab or in Settings.
-
-### Using the Softphone
-
-1. Log in and ensure the Softphone is **registered** (green indicator in the header or Softphone tab).
-2. **Make a call**: Go to the **Softphone** tab (or click the headset icon in the header), enter the number or extension, and click the green call button.
-3. **Incoming call**: The app opens the Softphone tab and shows the incoming screen; if you allowed notifications, a system notification appears. Click **Answer** or **Decline**.
-4. **During the call**: Use Hold, Mute, Keypad, etc., and click the red **End call** button to hang up.
-
-## Call notifications
-
-OpDesk records **missed and busy calls** (no answer, busy, failed, etc.) and shows them in a **bell icon** in the header.
-
-### What you get
-
-- **Bell + count**: Click the bell in the header to open a dropdown. The badge shows how many new (unread) notifications you have. The count updates in real time when new missed/busy calls occur (WebSocket).
-- **Your extension only**: Each user sees only notifications for their **own extension** (the extension assigned to their account). Supervisors and agents do not see other extensions’ missed calls.
-- **Details per notification**: Each item shows extension, caller (From), **queue** (if it was a queue call), **reason** (e.g. No answer, Busy, Failed), and time (e.g. “Just now”, “5m ago”).
-- **Read / Archive**: Use **Read** to mark as read (badge count decreases) or **Archive** to hide the notification from the list. Archived and read items are kept in the database; only **read** notifications are automatically deleted after **7 days** (via a daily MySQL event).
-
-### When notifications are created
-
-Notifications are created only for **missed or busy** outcomes (not for normal completed calls), including:
-
-- Queue ring timeout (agent did not answer)
-- No answer, busy, failed, and similar hangup causes
-
-Queue name is stored when the call was a queue call, so you can see which queue the missed call came from.
-
-### Database
-
-- Table: `call_notifications` in the OpDesk database (see `backend/schema.sql`).
-- Automatic cleanup: a MySQL event `evt_cleanup_read_call_notifications` runs daily and deletes read notifications older than 7 days. The event scheduler must be enabled (`SET GLOBAL event_scheduler = ON` or `event_scheduler=ON` in `my.cnf`).
-
-## Authentication & User Management
-
-- **Login**: Use extension or username plus password. Tokens are JWT; the frontend stores the token and user info (role, extension, monitor modes, assigned scope).
-- **Roles**:
-  - **Admin**: Full access; sees all extensions, queues, and calls; can manage users (Settings → Users).
-  - **Supervisor**: Sees only extensions and queues assigned to them; can use only the monitor actions (Listen / Whisper / Barge) enabled for their account.
-- **User scope**: Admins assign each supervisor a set of **extensions (agents)** and **queues**. The panel and API return only data within that scope.
-- **Monitor modes**: Each user can have one or more of **Listen**, **Whisper**, and **Barge**. Only those options appear as actions in the Extensions and Active Calls panels. Configured in Settings → Users (admin only).
-- **Default account**: After install, log in with username `admin` and the password set by the installer (e.g. `OpDesk@2026`). Change the password after first login.
+---
 
 ## Architecture
 
@@ -116,251 +99,20 @@ Queue name is stored when the call was a queue call, so you can see which queue 
 └─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
-## HTTPS (for WebRTC Softphone / Microphone)
+---
 
-Browsers allow microphone access only on **HTTPS** or **localhost**. To use the Softphone from other machines (e.g. over the LAN), serve the app over HTTPS.
+## Tech stack
 
+- **Backend**: Python 3.11+, FastAPI, WebSockets, asyncio, MySQL/MariaDB  
+- **Frontend**: React 24, TypeScript, Vite, Framer Motion, Lucide React  
 
+---
 
-## Prerequisites
-
-- Linux system (Debian/Ubuntu, CentOS/RHEL/Fedora, or Arch Linux)
-- Issabel or FreePBX system installed
-- Asterisk PBX with AMI enabled
-- MySQL/MariaDB (for FreePBX extension list)
-- sudo access (for installing system packages)
-- **curl** (required for downloading nvm during installation)
-
-**Note:** The installation script will automatically install:
-- Python 3.11+ and pip
-- Node.js 24+ (via nvm)
-- git, lsof, and curl (if not already installed)
-
-## Installation
-
-### Automated Installation (Recommended)
-
-Use the provided installation script for a complete automated setup:
-
-**One-liner (download and run):**
-```bash
-curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh && chmod +x install.sh && ./install.sh
-```
-
-**Or if you already have the repository:**
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-The script will:
-1. Detect your OS and install git, lsof, and curl (if not already installed)
-2. Clone the repository to `/opt/OpDesk` (if not already present)
-3. Install nvm (Node Version Manager) and Node.js 24
-4. Install Python 3.11+ and pip
-5. Auto-detect Issabel or FreePBX installation
-6. Auto-configure database credentials:
-   - **Issabel**: Retrieves MySQL root password from `/etc/issabel.conf`
-   - **FreePBX**: Creates database user `OpDesk` with auto-generated password
-7. Auto-configure AMI user `OpDesk` with random secret in `/etc/asterisk/manager.conf`
-8. Create `backend/.env` file with all settings
-9. Install Python dependencies (with `--break-system-packages` on Debian/Ubuntu)
-10. Install Node.js dependencies
-11. Display installation summary report
-
-**Note:** The script automatically configures:
-- Database connection (auto-detects credentials for Issabel/FreePBX)
-- AMI user and secret (auto-generated and added to Asterisk config)
-- CDR database name (`asteriskcdrdb`)
-- Recording root directory (`/var/spool/asterisk/monitor/`)
-
-### Manual Installation
-
-If you prefer manual installation:
-
-#### Backend
-
-1. Install Python dependencies (system-wide, no virtual environment required):
-
-```bash
-cd backend
-pip3 install --break-system-packages -r requirements.txt
-```
-
-**Note:** This project does not use a virtual environment. Dependencies are installed directly to your Python environment. The `--break-system-packages` flag is required for newer pip versions when installing system-wide.
-
-2. Configure environment variables in `backend/.env`:
-
-```env
-# Operating System
-OS=debian
-
-# PBX System
-PBX=FreePBX
-
-# Database Configuration (for extensions list and CDR)
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=asteriskuser
-DB_PASSWORD=your_db_password
-DB_NAME=asterisk
-DB_CDR=asteriskcdrdb
-
-# Asterisk Recording Root Directory
-ASTERISK_RECORDING_ROOT_DIR=/var/spool/asterisk/monitor/
-
-# AMI Configuration
-AMI_HOST=127.0.0.1
-AMI_PORT=5038
-AMI_USERNAME=OpDesk
-AMI_SECRET=your_ami_secret
-```
-
-**Note:** The installation script automatically creates this file with appropriate values for your system.
-
-#### Frontend
-
-1. Install Node.js 24 (if not already installed):
-
-```bash
-# Install nvm
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source ~/.nvm/nvm.sh
-nvm install 24
-nvm use 24
-```
-
-2. Install Node.js dependencies:
-
-```bash
-cd frontend
-npm install
-```
-
-## Running
-
-### Quick Start (Recommended)
-
-After running the installation script (`./install.sh`), start the application:
-
-```bash
-./start.sh
-```
-
-This will start both backend and frontend services with logging. Press `Ctrl+C` to stop.
-
-**Default login:** Username `admin` with the password configured during installation (e.g. `OpDesk@2026`). Change it after first login.
-
-### Development Mode
-
-#### Option 1: Using the start script (recommended)
-
-```bash
-./start.sh
-```
-
-#### Option 2: Manual start
-
-Start the backend server:
-
-```bash
-cd backend
-python server.py
-```
-
-The server will run on `http://localhost:8765`
-
-Start the frontend development server (in a separate terminal):
-
-```bash
-cd frontend
-npm run dev
-```
-
-The frontend will run on `http://localhost:5173` with hot reload.
-
-### Production Mode
-
-1. Build the frontend:
-
-```bash
-cd frontend
-npm run build
-```
-
-2. Start the server (serves both API and frontend):
-
-```bash
-cd backend
-python server.py
-```
-
-Access the application at `http://localhost:8765`
-
-
-## CRM Integration
-
-OpDesk supports integration with external CRM systems to automatically send call data after each call ends.
-
-### Supported Authentication Methods
-
-- **API Key**: Custom header authentication
-- **Basic Auth**: Username/password authentication
-- **Bearer Token**: Token-based authentication
-- **OAuth2**: OAuth2 flow with client credentials
-
-### Configuration
-
-CRM integration can be configured through the web interface (Settings → CRM Settings) or via the database settings table:
-
-- `CRM_ENABLED`: Set to `true` or `1` to enable
-- `CRM_SERVER_URL`: Your CRM server URL
-- `CRM_AUTH_TYPE`: `api_key`, `basic_auth`, `bearer_token`, or `oauth2`
-- Additional fields based on selected authentication type
-
-
-## Technology Stack
-
-### Backend
-- **Python 3.11+**
-- **FastAPI** - Modern async web framework
-- **WebSockets** - Real-time communication
-- **asyncio** - Async I/O for AMI communication
-- **MySQL/MariaDB** - Database for extensions and CDR
-
-### Frontend
-- **React 24** - UI framework
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **Framer Motion** - Animations
-- **Lucide React** - Icons
-
-## Contact
-
-**Official technical discussion group (OpDesk project):**
+## Community & support
 
 - **Mailing list**: [opdesk-dev@googlegroups.com](mailto:opdesk-dev@googlegroups.com)
 - **Telegram**: [t.me/+i1OVDDPgGLo0MGZh](https://t.me/+i1OVDDPgGLo0MGZh)
+- **Issues & contributions**: [GitHub Issues](https://github.com/Ibrahimgamal99/OpDesk/issues)
+- **Author**: [Ibrahim Gamal](https://github.com/Ibrahimgamal99) — [LinkedIn](https://www.linkedin.com/in/ibrahim-gamal99) · ib.gamal.a@gmail.com
 
-For questions, issues, or contributions, you can also contact:
-
-- **Email**: ib.gamal.a@gmail.com
-- **LinkedIn**: [Ibrahim Gamal](https://www.linkedin.com/in/ibrahim-gamal99)
-- **GitHub**: [Ibrahimgamal99](https://github.com/Ibrahimgamal99)
-
-## Development Note
-
-This project was entirely developed by Ibrahim Gamal, with AI tools assisting in generating repetitive code (boilerplate) and speeding up development.
-
-## License
-
-This project is open source and available under the MIT License.
-
-## Support
-
-OpDesk is free and open source. If you find it useful, please consider:
-
-- ⭐ **Starring this repository** – it helps with visibility
-- 🐛 **Reporting bugs or suggesting features** via [Issues](https://github.com/Ibrahimgamal99/OpDesk/issues)
-- 💬 **Contributing** to the project
-
+If OpDesk is useful to you: star the repo, report bugs, or contribute. The project is **MIT** licensed; developed by Ibrahim Gamal with AI-assisted tooling for boilerplate and acceleration.
