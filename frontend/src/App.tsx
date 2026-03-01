@@ -324,7 +324,7 @@ function App({ onLogout }: AppProps) {
           </div>
           <div>
             <h1 className="header-title">OpDesk</h1>
-            <p className="header-subtitle">Asterisk Real-time Monitor</p>
+            <p className="header-subtitle">Asterisk PBX Real-time Monitor</p>
           </div>
         </div>
 
