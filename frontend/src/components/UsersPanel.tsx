@@ -355,7 +355,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             name: form.name || null,
             extension: form.extension || null,
             role: form.role,
-            monitor_modes: form.role === 'agent' ? [] : form.monitor_modes,
+            monitor_modes: form.role === 'agent' ? [] : form.role === 'admin' ? ['listen', 'whisper', 'barge'] : form.monitor_modes,
             password: form.password || undefined,
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
@@ -375,7 +375,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             name: form.name || null,
             extension: form.extension || null,
             role: form.role,
-            monitor_modes: form.role === 'agent' ? [] : (form.monitor_modes.length ? form.monitor_modes : ['listen']),
+            monitor_modes: form.role === 'agent' ? [] : form.role === 'admin' ? ['listen', 'whisper', 'barge'] : (form.monitor_modes.length ? form.monitor_modes : ['listen']),
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
@@ -573,7 +573,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   <option value="admin">Admin</option>
                 </select>
               </div>
-              {form.role !== 'agent' && (
+              {form.role === 'supervisor' && (
                 <div className="up-form-group">
                   <label>Monitor modes (select one or more)</label>
                   <MultiSelectDropdown
@@ -589,8 +589,15 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   />
                 </div>
               )}
+              {form.role === 'admin' && (
+                <div className="up-form-group">
+                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Admin has full monitor access (Listen, Whisper, Barge).</p>
+                </div>
+              )}
               {form.role === 'agent' && (
-                <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Agent sees only their extension, active call, and call history.</p>
+                <div className="up-form-group">
+                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Agent sees only their extension, active call, and call history.</p>
+                </div>
               )}
             </div>
 
@@ -631,7 +638,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                             name: form.name,
                             extension: form.extension,
                             role: form.role,
-                            monitor_modes: form.monitor_modes,
+                            monitor_modes: form.role === 'admin' ? ['listen', 'whisper', 'barge'] : form.monitor_modes,
                             group_ids: form.group_ids,
                           },
                           newGroupNameForCreate.trim() || undefined

@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ArrowUpDown, Search, Phone, X, Download, Play, Pause, 
-  ChevronLeft, ChevronRight, Loader2, BarChart3
+  ChevronLeft, ChevronRight, Loader2, BarChart3, Route,
+  PhoneIncoming, PhoneOutgoing, ListOrdered, PhoneCall, Share2, PhoneOff, PhoneMissed
 } from 'lucide-react';
-import type { CallLogRecord, QoSData } from '../types';
+import type { CallLogRecord, QoSData, CallJourneyEvent } from '../types';
 import { getAuthHeaders } from '../auth';
 
 // ---------------------------------------------------------------------------
@@ -395,6 +396,124 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Call Journey Modal — timeline, icons, structured details
+// ---------------------------------------------------------------------------
+const JOURNEY_EVENT_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+  INBOUND:      { label: 'Inbound',    icon: <PhoneIncoming size={16} />, color: 'var(--journey-inbound)' },
+  OUTBOUND:     { label: 'Outbound',   icon: <PhoneOutgoing size={16} />, color: 'var(--journey-outbound)' },
+  QUEUE_ENTER:  { label: 'Queue',      icon: <ListOrdered size={16} />,   color: 'var(--journey-queue)' },
+  RING:         { label: 'Ringing',    icon: <Phone size={16} />,         color: 'var(--journey-ring)' },
+  ANSWER:       { label: 'Answered',  icon: <PhoneCall size={16} />,   color: 'var(--journey-answer)' },
+  NO_ANSWER:    { label: 'No Answer', icon: <PhoneMissed size={16} />, color: 'var(--journey-no-answer)' },
+  TRANSFER:     { label: 'Transfer',   icon: <Share2 size={16} />,       color: 'var(--journey-transfer)' },
+  HANGUP:       { label: 'Hangup',    icon: <PhoneOff size={16} />,     color: 'var(--journey-hangup)' },
+};
+
+interface CallJourneyModalProps {
+  call: CallLogRecord;
+  journey: CallJourneyEvent[];
+  onClose: () => void;
+}
+
+function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', handler);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [onClose]);
+
+  const summary = formatCallDate(call.calldate);
+  const config = (eventType: string) =>
+    JOURNEY_EVENT_CONFIG[eventType] ?? { label: eventType.replace(/_/g, ' '), icon: <Route size={16} />, color: 'var(--text-muted)' };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="cl-qos-modal cl-journey-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header cl-journey-header">
+          <div className="cl-journey-header-top">
+            <h3 className="modal-title">Call Journey</h3>
+            <span className="cl-journey-step-count">{journey.length} step{journey.length !== 1 ? 's' : ''}</span>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="modal-body cl-journey-body">
+          <div className="cl-journey-summary">
+            <div className="cl-journey-summary-row">
+              <span className="cl-journey-summary-label">Contact</span>
+              <span className="cl-journey-summary-value cl-journey-phone">{call.phone_number || call.src || '—'}</span>
+            </div>
+            <div className="cl-journey-summary-meta">
+              <span className="cl-journey-date">{summary.date}</span>
+              <span className="cl-journey-dot" aria-hidden>·</span>
+              <span className="cl-journey-time-summary">{summary.time}</span>
+              {call.talk != null && call.talk > 0 && (
+                <>
+                  <span className="cl-journey-dot" aria-hidden>·</span>
+                  <span className="cl-journey-duration">Talk {formatDuration(call.talk)}</span>
+                </>
+              )}
+            </div>
+            <div className="cl-journey-badges">
+              <span className={`cl-journey-direction cl-direction-${(call.call_type || '').toLowerCase()}`}>
+                {call.call_type || '—'}
+              </span>
+              {call.extension && (
+                <span className="cl-journey-agent-badge">Agent {call.extension}</span>
+              )}
+            </div>
+          </div>
+
+          <div className="cl-journey-timeline-wrap">
+            {journey.length === 0 ? (
+              <p className="cl-journey-empty">No journey data for this call.</p>
+            ) : (
+              <ul className="cl-journey-timeline" role="list">
+                {journey.map((e, i) => {
+                  const cf = config(e.event);
+                  const isLast = i === journey.length - 1;
+                  return (
+                    <li key={i} className="cl-journey-timeline-item" style={{ '--journey-color': cf.color } as React.CSSProperties}>
+                      <div className="cl-journey-timeline-marker">
+                        <span className="cl-journey-dot-icon" style={{ color: cf.color }}>{cf.icon}</span>
+                        {!isLast && <span className="cl-journey-timeline-line" />}
+                      </div>
+                      <div className="cl-journey-timeline-content">
+                        <div className="cl-journey-event-time">{e.time}</div>
+                        <div className="cl-journey-event-card">
+                          <span className="cl-journey-event-name" style={{ color: cf.color }}>{cf.label}</span>
+                          <div className="cl-journey-event-details">
+                            {e.agent != null && <span className="cl-journey-detail-pill">Agent {e.agent}</span>}
+                            {e.queue != null && <span className="cl-journey-detail-pill">Queue {e.queue}</span>}
+                            {e.duration != null && e.duration > 0 && <span className="cl-journey-detail-pill">{e.duration}s</span>}
+                            {e.reason != null && <span className="cl-journey-detail-pill">{e.reason}</span>}
+                            {e.from_number != null && <span className="cl-journey-detail-pill">From {e.from_number}</span>}
+                            {e.to_number != null && <span className="cl-journey-detail-pill">To {e.to_number}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main CallLogPanel Component
 // ---------------------------------------------------------------------------
 export function CallLogPanel() {
@@ -418,6 +537,9 @@ export function CallLogPanel() {
 
   // QOS modal
   const [qosModal, setQosModal] = useState<{ qos: QoSData; call: CallLogRecord } | null>(null);
+  // Call Journey modal
+  const [journeyModal, setJourneyModal] = useState<{ call: CallLogRecord; journey: CallJourneyEvent[] } | null>(null);
+  const [journeyLoadingLinkedid, setJourneyLoadingLinkedid] = useState<string | null>(null);
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -479,6 +601,23 @@ export function CallLogPanel() {
   const handleOpenQos = (call: CallLogRecord) => {
     const qos = parseQoS(call.QoS);
     if (qos) setQosModal({ qos, call });
+  };
+
+  const handleOpenJourney = async (call: CallLogRecord) => {
+    const linkedid = call.linkedid;
+    if (!linkedid) return;
+    setJourneyLoadingLinkedid(linkedid);
+    try {
+      const res = await fetch(`/api/call-log/journey?linkedid=${encodeURIComponent(linkedid)}`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const journey = (json.journey || []) as CallJourneyEvent[];
+      setJourneyModal({ call, journey });
+    } catch {
+      setJourneyModal({ call, journey: [] });
+    } finally {
+      setJourneyLoadingLinkedid(null);
+    }
   };
 
   return (
@@ -611,6 +750,7 @@ export function CallLogPanel() {
                 <th>Talk</th>
                 <th>Recording</th>
                 <th>Date & Time</th>
+                <th>Call Journey</th>
                 <th>QOS</th>
               </tr>
             </thead>
@@ -661,6 +801,21 @@ export function CallLogPanel() {
                         <span className="cl-date">{dt.date}</span>
                         <span className="cl-time">{dt.time}</span>
                       </div>
+                    </td>
+                    <td>
+                      {(call.call_journey_count != null && call.call_journey_count > 1) ? (
+                        <button
+                          className="cl-qos-btn cl-journey-btn"
+                          onClick={() => handleOpenJourney(call)}
+                          disabled={journeyLoadingLinkedid !== null}
+                          title="Show call journey"
+                        >
+                          {journeyLoadingLinkedid === call.linkedid ? <Loader2 size={16} className="spinner" /> : <Route size={16} />}
+                          <span className="cl-journey-count">{call.call_journey_count}</span>
+                        </button>
+                      ) : (
+                        <span className="cl-no-qos">—</span>
+                      )}
                     </td>
                     <td>
                       {hasQos ? (
@@ -717,6 +872,15 @@ export function CallLogPanel() {
           qos={qosModal.qos}
           call={qosModal.call}
           onClose={() => setQosModal(null)}
+        />,
+        document.body
+      )}
+
+      {journeyModal && createPortal(
+        <CallJourneyModal
+          call={journeyModal.call}
+          journey={journeyModal.journey}
+          onClose={() => setJourneyModal(null)}
         />,
         document.body
       )}

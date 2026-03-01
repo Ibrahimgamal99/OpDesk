@@ -3138,6 +3138,24 @@ body::before {
   box-shadow: 0 0 10px rgba(165, 165, 255, 0.3);
 }
 
+/* Call Journey button (reuses cl-qos-btn) */
+.cl-journey-btn {
+  gap: 4px;
+  color: var(--accent-teal, #2dd4bf);
+}
+.cl-journey-btn:hover {
+  border-color: var(--accent-teal, #2dd4bf);
+  box-shadow: 0 0 10px rgba(45, 212, 191, 0.3);
+}
+.cl-journey-btn .cl-journey-count {
+  font-size: 11px;
+  font-weight: 700;
+}
+.cl-journey-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 /* ------- Audio Player Controls ------- */
 .cl-audio-player {
   display: flex;
@@ -3331,6 +3349,211 @@ body::before {
 .cl-qos-overall {
   font-size: 14px;
   color: var(--text-secondary);
+}
+
+/* ------- Call Journey Modal ------- */
+.cl-journey-modal {
+  --journey-inbound:    #22c55e;
+  --journey-outbound:   #3b82f6;
+  --journey-queue:      #8b5cf6;
+  --journey-ring:       #f59e0b;
+  --journey-answer:     #06b6d4;
+  --journey-no-answer:  #ef4444;
+  --journey-transfer:   #f97316;
+  --journey-hangup:     #64748b;
+  max-width: 480px;
+}
+
+.cl-journey-header {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cl-journey-header-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cl-journey-step-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.cl-journey-body {
+  padding: 0;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cl-journey-summary {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+.cl-journey-summary-row {
+  margin-bottom: 6px;
+}
+.cl-journey-summary-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.cl-journey-summary-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cl-journey-summary-value.cl-journey-phone {
+  font-variant-numeric: tabular-nums;
+}
+.cl-journey-summary-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+.cl-journey-date,
+.cl-journey-time-summary,
+.cl-journey-duration {
+  font-variant-numeric: tabular-nums;
+}
+.cl-journey-dot {
+  margin: 0 6px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+.cl-journey-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.cl-journey-direction {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.cl-journey-direction.cl-direction-in {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+}
+.cl-journey-direction.cl-direction-out {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+}
+.cl-journey-direction.cl-direction-internal {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+}
+.cl-journey-agent-badge {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.cl-journey-timeline-wrap {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.cl-journey-empty {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 24px 16px;
+  margin: 0;
+}
+.cl-journey-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cl-journey-timeline-item {
+  display: flex;
+  gap: 14px;
+  position: relative;
+  padding-bottom: 4px;
+}
+.cl-journey-timeline-item:last-child .cl-journey-timeline-line {
+  display: none;
+}
+.cl-journey-timeline-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+.cl-journey-dot-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.cl-journey-timeline-line {
+  width: 2px;
+  flex: 1;
+  min-height: 12px;
+  margin-top: 4px;
+  background: var(--border-subtle);
+  border-radius: 1px;
+}
+.cl-journey-timeline-content {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+.cl-journey-event-time {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.cl-journey-event-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+.cl-journey-event-name {
+  font-size: 13px;
+  font-weight: 700;
+  display: block;
+  margin-bottom: 6px;
+}
+.cl-journey-event-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cl-journey-detail-pill {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* QOS metrics table */
