@@ -30,7 +30,6 @@ Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled
 
 ## Prerequisites
 
-- Linux (Debian/Ubuntu, CentOS/RHEL/Fedora, or Arch)
 - Issabel or FreePBX with Asterisk and **AMI** enabled
 - **WSS (WebSocket Secure)** enabled on FreePBX/Issabel for the WebRTC softphone
 - MySQL/MariaDB (for FreePBX extension list)
