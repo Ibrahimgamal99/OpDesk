@@ -37,8 +37,8 @@ export interface WebPhoneCallbacks {
   onIncomingCall?: (info: IncomingCallInfo) => void;
   /** Called when an incoming call ends before answer (caller hung up or cancelled). */
   onIncomingCallEnded?: () => void;
-  /** Called when a call is established with the local (mic) stream for level metering. */
-  onLocalStream?: (stream: MediaStream) => void;
+  /** Called when a call is established with the local (mic) stream, or with null when the call ends (so UI stops showing mic in use). */
+  onLocalStream?: (stream: MediaStream | null) => void;
   /** Called when mute state changes (true = muted). */
   onMutedChange?: (muted: boolean) => void;
 }
@@ -187,6 +187,7 @@ export class WebPhone {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
     }
+    this.callbacks.onLocalStream?.(null);
     this.callbacks.onCallDuration?.('');
     if (this.isConnected) this.acquireMicrophoneForCalls();
   }

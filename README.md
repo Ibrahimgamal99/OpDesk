@@ -1,15 +1,22 @@
 # OpDesk — Operator Panel for Asterisk
 
-A real-time operator panel for **Asterisk PBX** (Issabel / FreePBX). Monitor extensions and queues, manage active calls, view CDR and recordings, and use a built-in WebRTC softphone—all in one web app.
+A real-time operator panel for **Asterisk PBX** (Issabel / FreePBX), similar to **FOP2** but built with a modern React + FastAPI stack. Monitor extensions and queues, manage active calls, view CDR and recordings, and use a built-in WebRTC softphone—all in one web app.
 
-| | |
-|---|---|
-| **Stack** | React + TypeScript (frontend), FastAPI + WebSockets (backend), MySQL/MariaDB |
-| **Compatible with** | Issabel, FreePBX; Asterisk with AMI enabled |
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-24%2B-43853d.svg)](https://nodejs.org/)
+[![React](https://img.shields.io/badge/React-24%2B-61dafb.svg)](https://reactjs.org/)
+[![OS](https://img.shields.io/badge/OS-Debian%2012%2B%20%7C%20Linux-orange.svg)](https://www.debian.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+[Features](#-features) • [Installation](#installation) • [Running](#running) • [Screenshots](#screenshots) • [Architecture](#architecture) • [Community](#community--support)
+
+Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled.
 
 ---
 
-## At a glance
+## 🚀 Features
+
+### Core functionality
 
 - **Roles**: Admin (full access) and Supervisor (scoped to assigned extensions/queues).
 - **Real-time**: Extension status, active calls, queue state, and call notifications via WebSocket.
@@ -97,8 +104,47 @@ The script clones to `/opt/OpDesk`, installs dependencies, detects Issabel/FreeP
 │  React Frontend │◄───►│  FastAPI Server  │◄───►│  Asterisk AMI   │
 │  (WebSocket)    │     │  (WebSocket)     │     │                 │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
+                                ▲
+                                │ SQL (read/write)
+                                │
+                                ▼
+                        ┌────────────────────────┐
+                        │   MySQL / MariaDB DB   │
+                        └────────────────────────┘
 ```
 
+**High level:**
+
+- **React frontend (Vite + TS)**:
+  - Renders the operator panel UI (extensions, queues, dashboards, softphone).
+  - Opens a **WebSocket** to the FastAPI backend for real‑time updates (extension presence, active calls, queue stats, notifications).
+  - Uses **REST APIs** for slower‑changing data (user profile, configuration, historical CDR, CRM settings).
+
+- **FastAPI backend**:
+  - Maintains a long‑lived **AMI connection** to Asterisk.
+  - Subscribes to AMI events (Newchannel, QueueMemberStatus, AgentConnect, Hangup, etc.) and normalizes them into:
+    - **Presence events** (extension ringing / in‑call / idle).
+    - **Queue events** (agents logged in, waiting calls, SLAs).
+    - **Call Journey events** (legs, transfers, queue hops).
+  - Pushes those events over **WebSocket** to all connected browser clients with the correct permissions (Admin vs Supervisor).
+  - Exposes REST endpoints for:
+    - CDR / call log queries and filtering.
+    - Recordings and QoS information.
+    - CRM webhooks / outbound HTTP calls.
+    - Authentication and authorization (JWT).
+
+- **Database (MySQL / MariaDB)**:
+  - Stores:
+    - User accounts, roles, and assignments (which extensions/queues a supervisor can see).
+    - Cached **extension / queue** metadata (synced from FreePBX/Issabel).
+    - CDR snapshots and **Call Journey** timelines.
+    - **Notifications** (`call_notifications` table with auto‑cleanup via MySQL event).
+    - CRM configuration and audit fields.
+
+- **Asterisk / PBX integration**:
+  - Uses **AMI** for signaling, monitoring, and call control (originate, spy/whisper/barge, transfers).
+  - Uses **WSS** (`wss://<server-ip>:8089/ws`) for WebRTC media when the built‑in softphone is enabled.
+  - OpDesk does **not** replace the PBX dialplan; it observes and controls calls through AMI while FreePBX/Issabel continues to own dialplan logic.
 ---
 
 ## Tech stack
