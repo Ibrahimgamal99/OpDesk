@@ -161,3 +161,56 @@ The script clones to `/opt/OpDesk`, installs dependencies, detects Issabel/FreeP
 - **Author**: [Ibrahim Gamal](https://github.com/Ibrahimgamal99) — [LinkedIn](https://www.linkedin.com/in/ibrahim-gamal99) · ib.gamal.a@gmail.com
 
 If OpDesk is useful to you: star the repo, report bugs, or contribute. The project is **MIT** licensed; developed by Ibrahim Gamal with AI-assisted tooling for boilerplate and acceleration.
+
+
+---
+
+## 🐳 Docker Installation (Recommended)
+
+For the most reliable and consistent deployment, especially on systems like Sangoma 7 / CentOS 7, it is highly recommended to use the official Docker container. This method avoids host system dependency issues.
+
+### Prerequisites
+
+- **Docker**: [Install Docker](https://docs.docker.com/engine/install/)
+- **Docker Compose**: [Install Docker Compose](https://docs.docker.com/compose/install/)
+
+### Quick Start
+
+1.  **Clone the Repository**
+
+    ```bash
+    git clone https://github.com/Ibrahimgamal99/OpDesk.git
+    cd OpDesk
+    ```
+
+2.  **Configure Environment**
+
+    Copy the example environment file and edit it with your PBX details.
+
+    ```bash
+    cp .env.example .env
+    nano .env
+    ```
+
+    **Important**: If your PBX (Asterisk, MySQL) is running on the same machine as Docker, set `DB_HOST` and `AMI_HOST` to `host.docker.internal`.
+
+3.  **Generate SSL Certificate**
+
+    The application requires an SSL certificate. If you don't have one, you can generate a self-signed certificate for testing:
+
+    ```bash
+    mkdir -p cert
+    openssl req -x509 -newkey rsa:4096 -keyout cert/opdesk_key.pem -out cert/opdesk_cert.pem -days 365 -nodes -subj "/CN=localhost"
+    ```
+
+4.  **Build and Run**
+
+    Use Docker Compose to build and start the OpDesk container in the background.
+
+    ```bash
+    docker compose up --build -d
+    ```
+
+5.  **Access OpDesk**
+
+    Open your web browser and navigate to `https://<your-server-ip>:8443`.
