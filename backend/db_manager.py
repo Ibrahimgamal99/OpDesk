@@ -745,7 +745,7 @@ def init_settings_table():
                 log.info("📋 Creating OpDesk_settings table...")
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS OpDesk_settings (
-                        setting_key VARCHAR(255) PRIMARY KEY,
+                        setting_key VARCHAR(191) PRIMARY KEY,
                         setting_value TEXT,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -777,7 +777,7 @@ def init_settings_table():
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS OpDesk_settings (
-                    setting_key VARCHAR(255) PRIMARY KEY,
+                    setting_key VARCHAR(191) PRIMARY KEY,
                     setting_value TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
