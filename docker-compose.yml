@@ -1,0 +1,20 @@
+
+version: "3.8"
+
+services:
+  opdesk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opdesk
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    env_file:
+      - .env
+    volumes:
+      # Persist certs on the host
+      - ./cert:/opt/opdesk/cert:rw
+    extra_hosts:
+      # Lets host.docker.internal resolve on Linux (Docker 20.10+)
+      - "host.docker.internal:host-gateway"
