@@ -54,6 +54,23 @@ export function useWebPhone() {
     fetchConfig();
   }, [fetchConfig]);
 
+  // Auto-connect once config is available and we are not already connected/connecting
+  const canConnectRef = useRef(false);
+  useEffect(() => {
+    if (
+      !configLoading &&
+      !configError &&
+      config?.server?.trim() &&
+      config?.extension?.trim() &&
+      config?.extension_secret?.trim() &&
+      status === 'disconnected' &&
+      !canConnectRef.current
+    ) {
+      canConnectRef.current = true;
+      connect();
+    }
+  }, [configLoading, configError, config, status, connect]);
+
   const addLog = useCallback((message: string, type: 'info' | 'success' | 'warn' | 'error') => {
     setLogs((prev) => [...prev.slice(-99), { message, type, time: new Date().toLocaleTimeString() }]);
   }, []);
