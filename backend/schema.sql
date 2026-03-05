@@ -87,7 +87,7 @@ DO
 -- Default admin user (password is bcrypt hash; use INSERT IGNORE so existing DB is not broken)
 -- Monitor modes are stored in user_monitor_modes (admin gets all by backfill).
 INSERT IGNORE INTO users (username, password_hash, name, role) VALUES
-('admin', '$2b$12$iAHttCYzFV2H4oZEiTiNe.2eQSQDgcKWMf4ghLmieuoect13ISWju', 'Admin', 'admin');
+('admin', '$2b$12$6sibCF.6VJMs0jSrxr47U.zH4n6Ehma7lKHhbv2qwPsg7Yan89RTS', 'Admin', 'admin');
 
 -- Agents table
 CREATE TABLE IF NOT EXISTS agents (
