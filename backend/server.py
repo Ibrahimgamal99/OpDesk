@@ -1828,8 +1828,18 @@ async def get_call_log_endpoint(
         date: Filter by exact date in 'YYYY-MM-DD' format (optional)
         date_from: Filter from this date inclusive, 'YYYY-MM-DD' (optional)
         date_to: Filter up to this date inclusive, 'YYYY-MM-DD' (optional)
+
+    Performance note: on large CDR tables (100 K+ rows, e.g. MariaDB 5.5) a
+    full-table scan is very slow.  When no date filter is supplied we default
+    to the last 30 days as a safety net so the query stays fast.  The frontend
+    also sets this default, so normal usage is unaffected.
     """
     try:
+        # Safety net: default to last 30 days when no date filter is provided.
+        # Prevents accidental full-table scans on large CDR databases.
+        if not date and not date_from and not date_to:
+            date_from = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d')
+
         allowed_ext = None if current_user.get("role") == "admin" else (current_user.get("allowed_agent_extensions") or [])
         data = get_call_log(limit=limit, date=date,
                             date_from=date_from, date_to=date_to,
