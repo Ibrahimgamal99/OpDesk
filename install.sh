@@ -25,12 +25,21 @@ command_exists() {
 PROJECT_ROOT="/opt/OpDesk"
 if [ -d "$PROJECT_ROOT/.git" ]; then
     IS_UPDATE=true
-    echo -e "${BLUE}=== OpDesk System Update ===${NC}"
-    echo -e "${YELLOW}Existing installation detected — skipping completed steps.${NC}"
 else
     IS_UPDATE=false
-    echo -e "${BLUE}=== OpDesk System Installation ===${NC}"
 fi
+
+echo -e "${BLUE}=================================================================${NC}"
+echo -e "${BLUE}              OpDesk System Setup                               ${NC}"
+echo -e "${BLUE}=================================================================${NC}"
+if [ "$IS_UPDATE" == "true" ]; then
+    echo -e "  Mode:    ${YELLOW}UPDATE${NC}  — existing installation found, pulling latest code"
+else
+    echo -e "  Mode:    ${GREEN}FRESH INSTALL${NC}  — no existing installation found"
+fi
+echo -e "  Target:  $PROJECT_ROOT"
+echo -e "${BLUE}=================================================================${NC}"
+echo ""
 
 # --- Step 1: OS Detection ---
 echo -e "\n${YELLOW}Step 1: Detecting Operating System...${NC}"
@@ -63,8 +72,7 @@ if [ -d "$PROJECT_ROOT/.git" ]; then
     cd "$PROJECT_ROOT"
     git fetch origin
     BEFORE=$(git rev-parse HEAD)
-    # Reset local changes so install.sh (or any edited file) never blocks the pull
-    git reset --hard origin/"$(git rev-parse --abbrev-ref HEAD)" || { echo -e "${RED}git reset failed. Check connectivity.${NC}"; exit 1; }
+    git pull origin "$(git rev-parse --abbrev-ref HEAD)" || { echo -e "${RED}git pull failed. Check connectivity or resolve conflicts manually.${NC}"; exit 1; }
     AFTER=$(git rev-parse HEAD)
     if [ "$BEFORE" != "$AFTER" ]; then
         echo -e "${GREEN}Code updated: $BEFORE -> $AFTER${NC}"
