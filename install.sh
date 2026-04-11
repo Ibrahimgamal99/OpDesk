@@ -15,12 +15,22 @@ BLUE='\033[0;34m'
 NC='\033[0m' 
 
 clear
-echo -e "${BLUE}=== OpDesk System Installation ===${NC}"
 
 # Function to check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
+
+# --- Detect mode: fresh install vs update ---
+PROJECT_ROOT="/opt/OpDesk"
+if [ -d "$PROJECT_ROOT/.git" ]; then
+    IS_UPDATE=true
+    echo -e "${BLUE}=== OpDesk System Update ===${NC}"
+    echo -e "${YELLOW}Existing installation detected — skipping completed steps.${NC}"
+else
+    IS_UPDATE=false
+    echo -e "${BLUE}=== OpDesk System Installation ===${NC}"
+fi
 
 # --- Step 1: OS Detection ---
 echo -e "\n${YELLOW}Step 1: Detecting Operating System...${NC}"
@@ -34,19 +44,32 @@ echo -e "${GREEN}Detected OS: $OS${NC}"
 
 # --- Step 2: Install Git & Required Tools ---
 echo -e "\n${YELLOW}Step 2: Installing Git & Required Tools...${NC}"
-if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
-    sudo apt-get update && sudo apt-get install -y git lsof curl openssl
-elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
-    sudo dnf install -y git lsof curl openssl || sudo yum install -y git lsof curl openssl
+if command_exists git && command_exists lsof && command_exists curl && command_exists openssl; then
+    echo -e "${GREEN}All required tools already installed — skipping.${NC}"
+else
+    if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
+        sudo apt-get update && sudo apt-get install -y git lsof curl openssl
+    elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
+        sudo dnf install -y git lsof curl openssl || sudo yum install -y git lsof curl openssl
+    fi
 fi
 
 # --- Step 3: Repository Setup ---
 echo -e "\n${YELLOW}Step 3: Setting Up Repository...${NC}"
-PROJECT_ROOT="/opt/OpDesk"
 REPO_URL="https://github.com/Ibrahimgamal99/OpDesk.git"
 
 if [ -d "$PROJECT_ROOT/.git" ]; then
-    cd "$PROJECT_ROOT" && git pull || true
+    echo -e "${YELLOW}Pulling latest code from GitHub...${NC}"
+    cd "$PROJECT_ROOT"
+    git fetch origin
+    BEFORE=$(git rev-parse HEAD)
+    git pull origin "$(git rev-parse --abbrev-ref HEAD)" || { echo -e "${RED}git pull failed. Check connectivity or resolve conflicts manually.${NC}"; exit 1; }
+    AFTER=$(git rev-parse HEAD)
+    if [ "$BEFORE" != "$AFTER" ]; then
+        echo -e "${GREEN}Code updated: $BEFORE -> $AFTER${NC}"
+    else
+        echo -e "${GREEN}Already up to date.${NC}"
+    fi
 else
     sudo rm -rf "$PROJECT_ROOT"
     sudo mkdir -p "$(dirname "$PROJECT_ROOT")"
@@ -59,10 +82,20 @@ fi
 echo -e "\n${YELLOW}Step 4: Installing NVM & Node.js 24...${NC}"
 export NVM_DIR="$HOME/.nvm"
 if [ ! -d "$NVM_DIR" ]; then
+    echo -e "${YELLOW}Installing NVM...${NC}"
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+else
+    echo -e "${GREEN}NVM already installed — skipping.${NC}"
 fi
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-nvm install 24 && nvm use 24 && nvm alias default 24
+CURRENT_NODE=$(node --version 2>/dev/null | grep -oE '^v24\.' || true)
+if [ -n "$CURRENT_NODE" ]; then
+    echo -e "${GREEN}Node.js 24 already active ($(node --version)) — skipping install.${NC}"
+    nvm use 24 2>/dev/null || true
+else
+    echo -e "${YELLOW}Installing Node.js 24...${NC}"
+    nvm install 24 && nvm use 24 && nvm alias default 24
+fi
 
 # --- Step 5: ORIGINAL PYTHON LOGIC ---
 echo -e "\n${YELLOW}Step 5: Installing Python ...${NC}"
@@ -557,10 +590,56 @@ OPDESK_HTTPS_PORT=$OPDESK_HTTPS_PORT
 EOF
 cd "$PROJECT_ROOT/frontend" && npm install || true
 
+# --- Step 9: systemd Service ---
+echo -e "\n${YELLOW}Step 9: Configuring OpDesk systemd service...${NC}"
+
+SERVICE_USER="${SUDO_USER:-$USER}"
+SERVICE_HOME=$(eval echo ~"$SERVICE_USER" 2>/dev/null || echo "$HOME")
+
+if [ ! -f /etc/systemd/system/opdesk.service ]; then
+    echo -e "${YELLOW}Creating systemd service...${NC}"
+    sudo tee /etc/systemd/system/opdesk.service > /dev/null <<EOF
+[Unit]
+Description=OpDesk - IP PBX Management System
+Documentation=https://github.com/Ibrahimgamal99/OpDesk
+After=network.target mysqld.service mariadb.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$PROJECT_ROOT
+Environment=HOME=$SERVICE_HOME
+ExecStart=/bin/bash $PROJECT_ROOT/start.sh
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=opdesk
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable opdesk.service
+    echo -e "${GREEN}OpDesk service installed and enabled to start on boot.${NC}"
+else
+    echo -e "${GREEN}systemd service already exists — skipping creation.${NC}"
+    if ! systemctl is-enabled --quiet opdesk.service 2>/dev/null; then
+        sudo systemctl enable opdesk.service
+        echo -e "${GREEN}OpDesk service re-enabled.${NC}"
+    fi
+    if [ "$IS_UPDATE" == "true" ] && systemctl is-active --quiet opdesk.service 2>/dev/null; then
+        echo -e "${YELLOW}Restarting OpDesk service to apply update...${NC}"
+        sudo systemctl restart opdesk.service
+        echo -e "${GREEN}OpDesk service restarted.${NC}"
+    fi
+fi
+
 # ===============================================================
 # FINAL SUMMARY REPORT
 # ===============================================================
-echo -e "\n${YELLOW}Step 9: Generating Installation Report...${NC}"
+echo -e "\n${YELLOW}Step 10: Generating Installation Report...${NC}"
 
 echo -e "${GREEN}==============================================================="
 echo "                  OpDesk INSTALLATION REPORT"
@@ -578,7 +657,6 @@ echo -e "  Password:      $DB_PASS"
 echo -e "  Database:      $DB_NAME"
 echo ""
 echo -e "${BLUE}ASTERISK AMI DETAILS:${NC}"
-# Check if AMI Port is listening
 AMI_STATUS=$(lsof -i :$AMI_PORT > /dev/null && echo -e "${GREEN}Active${NC}" || echo -e "${RED}Inactive (Check Asterisk)${NC}")
 echo -e "  Status:        $AMI_STATUS"
 echo -e "  Host/Port:     $AMI_HOST:$AMI_PORT"
@@ -589,8 +667,21 @@ echo -e "${BLUE}RUNTIME VERSIONS:${NC}"
 echo -e "  Node.js:       $(node -v)"
 echo -e "  Python:        $(python --version)"
 echo ""
+echo -e "${BLUE}SYSTEMD SERVICE:${NC}"
+echo -e "  Auto-start:    ${GREEN}Enabled${NC}"
+echo -e "  Start:         ${YELLOW}sudo systemctl start opdesk${NC}"
+echo -e "  Stop:          ${YELLOW}sudo systemctl stop opdesk${NC}"
+echo -e "  Restart:       ${YELLOW}sudo systemctl restart opdesk${NC}"
+echo -e "  Logs:          ${YELLOW}sudo journalctl -u opdesk -f${NC}"
+echo ""
 echo -e "${BLUE}COMMANDS:${NC}"
 echo -e "  Run App:       ${YELLOW}./start.sh${NC}"
 echo -e "  Config File:   ${YELLOW}cat $PROJECT_ROOT/backend/.env${NC}"
 echo -e "==============================================================="
-echo -e "Installation finished. You can now start the system using ${GREEN}./start.sh${NC}\n"
+if [ "$IS_UPDATE" == "true" ]; then
+    echo -e "Update finished. OpDesk has been restarted if it was already running."
+    echo -e "Start / restart: ${GREEN}sudo systemctl restart opdesk${NC}\n"
+else
+    echo -e "Installation finished. OpDesk will start automatically on boot."
+    echo -e "Start it now with: ${GREEN}sudo systemctl start opdesk${NC}\n"
+fi
