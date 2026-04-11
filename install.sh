@@ -63,7 +63,8 @@ if [ -d "$PROJECT_ROOT/.git" ]; then
     cd "$PROJECT_ROOT"
     git fetch origin
     BEFORE=$(git rev-parse HEAD)
-    git pull origin "$(git rev-parse --abbrev-ref HEAD)" || { echo -e "${RED}git pull failed. Check connectivity or resolve conflicts manually.${NC}"; exit 1; }
+    # Reset local changes so install.sh (or any edited file) never blocks the pull
+    git reset --hard origin/"$(git rev-parse --abbrev-ref HEAD)" || { echo -e "${RED}git reset failed. Check connectivity.${NC}"; exit 1; }
     AFTER=$(git rev-parse HEAD)
     if [ "$BEFORE" != "$AFTER" ]; then
         echo -e "${GREEN}Code updated: $BEFORE -> $AFTER${NC}"
