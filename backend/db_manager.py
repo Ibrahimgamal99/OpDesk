@@ -153,6 +153,7 @@ def get_queue_names_from_db() -> dict:
 def get_extension_secret_from_db(extension):
     """Get extension secret from the database."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_NAME', 'asterisk'))
+    secret = None
 
     try:
         conn = mysql.connector.connect(**config)
@@ -160,8 +161,8 @@ def get_extension_secret_from_db(extension):
 
         try:
             cursor.execute("SELECT data FROM sip WHERE id = %s and keyword = 'secret'", (extension,))
-            secret = cursor.fetchall()
-            secret = secret[0]['data']
+            rows = cursor.fetchall()
+            secret = rows[0]['data'] if rows else None
         except Error as e:
             log.debug(f"Could not get extension secret from database: {e}")
 
@@ -458,7 +459,8 @@ def get_call_log_from_db(limit: int = None, date: str = None,
         if limit:
             if not isinstance(limit, int) or limit <= 0:
                 raise ValueError("limit must be a positive integer")
-            query += f" LIMIT {limit}"
+            query += " LIMIT %s"
+            params.append(limit)
 
         # Execute query with parameters
         cursor.execute(query, tuple(params) if params else None)
@@ -1106,7 +1108,7 @@ def update_user(user_id: int | None = None, name: str = None, extension: str = N
                 params.append((str(extension).strip() or None))
             if where_clauses:
                 cursor.execute(
-                    "UPDATE users SET " + ", ".join(updates) + " WHERE " + " OR ".join(where_clauses),
+                    "UPDATE users SET " + ", ".join(updates) + " WHERE " + " AND ".join(where_clauses),
                     tuple(params),
                 )
                 conn.commit()

@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Users, 
-  UserPlus, 
-  UserMinus, 
-  Pause, 
-  Play, 
+import {
+  Users,
+  UserPlus,
+  UserMinus,
+  Pause,
+  Play,
   Phone,
   Clock,
   RefreshCw
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Queue, QueueMember, QueueEntry, ActionMessage } from '../types';
 
 interface QueuesPanelProps {
@@ -21,6 +22,7 @@ interface QueuesPanelProps {
 }
 
 export function QueuesPanel({ queues, members, entries, sendAction, onSync }: QueuesPanelProps) {
+  const { t } = useTranslation();
   const [showAddMember, setShowAddMember] = useState<string | null>(null);
   const [newMemberInterface, setNewMemberInterface] = useState('');
   const [newMemberName, setNewMemberName] = useState('');
@@ -60,15 +62,15 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
     if (processingPause.has(memberKey)) {
       return; // Already processing
     }
-    
+
     setProcessingPause(prev => new Set(prev).add(memberKey));
-    
+
     sendAction({
       action: member.paused ? 'queue_unpause' : 'queue_pause',
       queue: member.queue,
       interface: member.interface,
     });
-    
+
     // Clear processing state after a delay (state update will come from WebSocket)
     setTimeout(() => {
       setProcessingPause(prev => {
@@ -102,12 +104,12 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
       <div className="panel-header">
         <h2 className="panel-title">
           <Users size={18} className="panel-title-icon" />
-          Queues ({queueList.length})
+          {t('queues.title')} ({queueList.length})
         </h2>
         {onSync && (
-          <button type="button" className="btn btn-panel-sync" onClick={onSync} title="Sync all data">
+          <button type="button" className="btn btn-panel-sync" onClick={onSync} title={t('queues.syncAll')}>
             <RefreshCw size={14} />
-            Sync
+            {t('queues.sync')}
           </button>
         )}
       </div>
@@ -115,7 +117,7 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
         {queueList.length === 0 ? (
           <div className="empty-state">
             <Users size={48} className="empty-state-icon" />
-            <p className="empty-state-text">No queues configured</p>
+            <p className="empty-state-text">{t('queues.noQueues')}</p>
           </div>
         ) : (
           <div className="queues-grid">
@@ -138,20 +140,20 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                     </span>
                     <span className={`queue-waiting ${queue.calls_waiting === 0 ? 'empty' : ''}`}>
                       <Phone size={14} />
-                      {queue.calls_waiting} waiting
+                      {t('queues.waiting', { count: queue.calls_waiting })}
                     </span>
                   </div>
 
                   {/* Queue entries (callers waiting) */}
                   {entriesByQueue[queueExt] && entriesByQueue[queueExt].length > 0 && (
-                    <div style={{ 
-                      padding: '12px 16px', 
+                    <div style={{
+                      padding: '12px 16px',
                       borderBottom: '1px solid var(--border-primary)',
                       background: 'rgba(245, 158, 11, 0.05)'
                     }}>
-                      <div style={{ 
-                        fontSize: 11, 
-                        color: 'var(--status-ringing)', 
+                      <div style={{
+                        fontSize: 11,
+                        color: 'var(--status-ringing)',
                         fontWeight: 600,
                         marginBottom: 8,
                         textTransform: 'uppercase',
@@ -161,7 +163,7 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                         gap: 6
                       }}>
                         <Clock size={14} />
-                        Callers Waiting
+                        {t('queues.callersWaiting')}
                       </div>
                       {entriesByQueue[queueExt]
                         .sort((a, b) => a.position - b.position)
@@ -184,24 +186,24 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
 
                   {/* Queue members */}
                   <div className="queue-members">
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
                       justifyContent: 'space-between',
                       marginBottom: 12
                     }}>
-                      <span style={{ 
-                        fontSize: 11, 
-                        color: 'var(--text-muted)', 
+                      <span style={{
+                        fontSize: 11,
+                        color: 'var(--text-muted)',
                         textTransform: 'uppercase',
                         letterSpacing: '0.05em'
                       }}>
-                        Members ({membersByQueue[queueExt]?.length || 0})
+                        {t('queues.members', { count: membersByQueue[queueExt]?.length || 0 })}
                       </span>
-                      <button 
+                      <button
                         className="btn btn-icon"
                         onClick={() => setShowAddMember(showAddMember === queueExt ? null : queueExt)}
-                        title="Add Member"
+                        title={t('queues.addMember')}
                       >
                         <UserPlus size={18} />
                       </button>
@@ -214,7 +216,7 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
                           exit={{ opacity: 0, height: 0 }}
-                          style={{ 
+                          style={{
                             marginBottom: 12,
                             padding: 12,
                             background: 'var(--bg-tertiary)',
@@ -226,7 +228,7 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                             <input
                               type="text"
                               className="form-input"
-                              placeholder="Extension (e.g., 100)"
+                              placeholder={t('queues.extensionPlaceholder')}
                               value={newMemberInterface}
                               onChange={(e) => setNewMemberInterface(e.target.value)}
                             />
@@ -235,20 +237,20 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                             <input
                               type="text"
                               className="form-input"
-                              placeholder="Name (optional)"
+                              placeholder={t('queues.namePlaceholder')}
                               value={newMemberName}
                               onChange={(e) => setNewMemberName(e.target.value)}
                             />
                           </div>
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button 
+                            <button
                               className="btn btn-primary"
                               onClick={() => handleAddMember(queueExt)}
                               style={{ flex: 1 }}
                             >
-                              Add
+                              {t('queues.add')}
                             </button>
-                            <button 
+                            <button
                               className="btn"
                               onClick={() => {
                                 setShowAddMember(null);
@@ -256,7 +258,7 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                                 setNewMemberName('');
                               }}
                             >
-                              Cancel
+                              {t('queues.cancel')}
                             </button>
                           </div>
                         </motion.div>
@@ -265,13 +267,13 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
 
                     {/* Members list */}
                     {membersByQueue[queueExt]?.length === 0 && !showAddMember && (
-                      <div style={{ 
-                        textAlign: 'center', 
+                      <div style={{
+                        textAlign: 'center',
                         padding: '20px 0',
                         color: 'var(--text-muted)',
                         fontSize: 13
                       }}>
-                        No members in queue
+                        {t('queues.noMembers')}
                       </div>
                     )}
 
@@ -279,15 +281,15 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                       <div key={member.interface} className="queue-member">
                         <div className="queue-member-info">
                           <div className={`queue-member-status ${
-                            member.paused ? 'paused' : 
+                            member.paused ? 'paused' :
                             (member.status?.toLowerCase() === 'unavailable' ||
                              member.status?.toLowerCase() === 'invalid' ||
                              member.status === '4' ||
                              member.status === '5') ? 'unavailable' :
-                            (member.status?.toLowerCase() === 'in use' || 
+                            (member.status?.toLowerCase() === 'in use' ||
                              member.status?.toLowerCase() === 'busy' ||
                              member.status?.toLowerCase() === 'ring+in use' ||
-                             member.status === '2' || 
+                             member.status === '2' ||
                              member.status === '3') ? 'busy' : ''
                           }`} />
                           <div>
@@ -300,24 +302,24 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                           </div>
                         </div>
                         <div className="queue-member-actions">
-                          <button 
+                          <button
                             className={`btn btn-icon ${member.paused ? 'btn-listen' : ''}`}
                             onClick={() => handleTogglePause(member)}
                             disabled={processingPause.has(`${member.queue}:${member.interface}`)}
-                            title={member.paused ? 'Unpause' : 'Pause'}
+                            title={member.paused ? t('queues.unpause') : t('queues.pause')}
                             style={processingPause.has(`${member.queue}:${member.interface}`) ? { opacity: 0.6, cursor: 'wait' } : {}}
                           >
                             {member.paused ? <Play size={18} /> : <Pause size={18} />}
                           </button>
-                          <button 
+                          <button
                             className="btn btn-icon btn-barge"
                             onClick={() => handleRemoveMember(queueExt, member.interface)}
                             disabled={member.dynamic === false}
-                            title={member.dynamic === false 
-                              ? "Cannot remove: Member is statically configured in queues.conf. Edit config and reload Asterisk to remove." 
+                            title={member.dynamic === false
+                              ? t('queues.removeStatic')
                               : member.dynamic === true
-                              ? "Remove from Queue (Dynamic member)"
-                              : "Remove from Queue (Will check if removable)"}
+                              ? t('queues.removeDynamic')
+                              : t('queues.removeCheck')}
                             style={member.dynamic === false ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
                           >
                             <UserMinus size={18} />
@@ -336,4 +338,3 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
     </div>
   );
 }
-

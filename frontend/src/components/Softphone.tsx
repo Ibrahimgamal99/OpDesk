@@ -12,6 +12,7 @@ import {
   Volume2,
   Mic,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { useAudioLevels } from '../hooks/useAudioLevels';
 
@@ -23,6 +24,7 @@ const DIAL_PAD = [
 ];
 
 export function Softphone() {
+  const { t } = useTranslation();
   const {
     config,
     configLoading,
@@ -84,20 +86,20 @@ export function Softphone() {
 
   const statusLabel =
     status === 'connecting'
-      ? 'Connecting...'
+      ? t('softphone.status.connecting')
       : status === 'connected'
-        ? 'Registered'
+        ? t('softphone.status.registered')
         : status === 'error'
-          ? 'Error'
-          : 'Not registered';
+          ? t('softphone.status.error')
+          : t('softphone.status.notRegistered');
 
-  // Incoming call screen (like reference image 2)
+  // Incoming call screen
   if (incomingCall) {
     return (
       <div className="softphone-panel softphone-incoming">
         <div className="softphone-header">
           <Phone size={18} className="softphone-header-icon" />
-          <span className="softphone-header-title">Softphone</span>
+          <span className="softphone-header-title">{t('softphone.title')}</span>
           <div className="softphone-header-right">
             <span
               className={`softphone-status-dot ${isConnected ? 'registered' : ''}`}
@@ -107,7 +109,7 @@ export function Softphone() {
         </div>
         <div className="softphone-incoming-body">
           <div className="softphone-caller-number">{incomingCall.callerNumber}</div>
-          <div className="softphone-caller-name">{incomingCall.callerName || 'Incoming call'}</div>
+          <div className="softphone-caller-name">{incomingCall.callerName || t('softphone.incomingCall')}</div>
           <div className="softphone-status-row">
             <button type="button" className="softphone-status-badge" disabled>
               {statusLabel}
@@ -118,7 +120,7 @@ export function Softphone() {
               type="button"
               className="softphone-btn-decline"
               onClick={() => incomingCall.reject()}
-              title="Decline"
+              title={t('softphone.decline')}
             >
               <PhoneOff size={24} />
             </button>
@@ -126,7 +128,7 @@ export function Softphone() {
               type="button"
               className="softphone-btn-answer"
               onClick={() => incomingCall.accept()}
-              title="Answer"
+              title={t('softphone.answer')}
             >
               <Phone size={24} />
             </button>
@@ -137,12 +139,12 @@ export function Softphone() {
     );
   }
 
-  // In-call view (when call is answered, or when outgoing is ringing)
+  // In-call view
   const inCallNumber =
     activeCallRemoteNumber ||
     (callStatus.startsWith('In call with ') ? callStatus.slice('In call with '.length) : '') ||
     (isOutgoingRinging ? dialNumber : '');
-  const inCallName = activeCallRemoteName || (isOutgoingRinging ? 'Ringing' : 'In call');
+  const inCallName = activeCallRemoteName || (isOutgoingRinging ? t('softphone.status.connecting') : t('softphone.incomingCall'));
   const inCallDuration = callDuration || '00:00';
 
   if (isCallAnswered || isOutgoingRinging) {
@@ -150,7 +152,7 @@ export function Softphone() {
       <div className="softphone-panel softphone-incall">
         <div className="softphone-header">
           <Phone size={18} className="softphone-header-icon" />
-          <span className="softphone-header-title">Softphone</span>
+          <span className="softphone-header-title">{t('softphone.title')}</span>
           <div className="softphone-header-right">
             <span
               className={`softphone-status-dot ${isConnected ? 'registered' : ''}`}
@@ -186,29 +188,29 @@ export function Softphone() {
             <button
               type="button"
               className={`softphone-incall-btn ${isOnHold ? 'softphone-incall-btn-active' : ''}`}
-              title={isOnHold ? 'Resume' : 'Hold'}
+              title={isOnHold ? t('softphone.resume') : t('softphone.hold')}
               onClick={toggleHold}
             >
               <Pause size={22} />
-              <span>{isOnHold ? 'Resume' : 'Hold'}</span>
+              <span>{isOnHold ? t('softphone.resume') : t('softphone.hold')}</span>
             </button>
             <button
               type="button"
               className={`softphone-incall-btn ${isMuted ? 'softphone-incall-btn-active' : ''}`}
               onClick={toggleMute}
-              title={isMuted ? 'Unmute' : 'Mute'}
+              title={isMuted ? t('softphone.unmute') : t('softphone.mute')}
             >
               {isMuted ? <Mic size={22} /> : <MicOff size={22} />}
-              <span>{isMuted ? 'Unmute' : 'Mute'}</span>
+              <span>{isMuted ? t('softphone.unmute') : t('softphone.mute')}</span>
             </button>
             <button
               type="button"
               className="softphone-incall-btn"
-              title="Transfer"
+              title={t('softphone.transfer')}
               onClick={() => setShowTransfer((prev) => !prev)}
             >
               <ArrowRightLeft size={22} />
-              <span>Transfer</span>
+              <span>{t('softphone.transfer')}</span>
             </button>
           </div>
           {showTransfer && (
@@ -225,13 +227,13 @@ export function Softphone() {
               }}
             >
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                Transfer to extension
+                {t('softphone.transferToExtension')}
               </span>
               <input
                 type="text"
                 value={transferDest}
                 onChange={(e) => setTransferDest(e.target.value)}
-                placeholder="e.g. 201"
+                placeholder={t('softphone.transferPlaceholder')}
                 className="form-input"
                 style={{ maxWidth: 100 }}
               />
@@ -247,7 +249,7 @@ export function Softphone() {
                   setTransferDest('');
                 }}
               >
-                Transfer
+                {t('softphone.transfer')}
               </button>
               <button
                 type="button"
@@ -257,7 +259,7 @@ export function Softphone() {
                   setTransferDest('');
                 }}
               >
-                Cancel
+                {t('softphone.cancel')}
               </button>
             </div>
           )}
@@ -265,7 +267,7 @@ export function Softphone() {
             type="button"
             className="softphone-btn-hangup"
             onClick={hangup}
-            title="End call"
+            title={t('softphone.endCall')}
           >
             <PhoneOff size={24} />
           </button>
@@ -275,12 +277,12 @@ export function Softphone() {
     );
   }
 
-  // Dialpad view (like reference image 1)
+  // Dialpad view
   return (
     <div className="softphone-panel">
       <div className="softphone-header">
         <Phone size={18} className="softphone-header-icon" />
-        <span className="softphone-header-title">Softphone</span>
+        <span className="softphone-header-title">{t('softphone.title')}</span>
         <div className="softphone-header-right">
           <span
             className={`softphone-status-dot ${isConnected ? 'registered' : ''}`}
@@ -291,7 +293,7 @@ export function Softphone() {
             className="softphone-header-btn"
             onClick={refetchConfig}
             disabled={configLoading}
-            title="Refresh"
+            title={t('softphone.refresh')}
           >
             <RefreshCw size={14} />
           </button>
@@ -304,13 +306,13 @@ export function Softphone() {
           <input
             type="text"
             className="softphone-search-input"
-            placeholder="Enter the Number"
+            placeholder={t('softphone.enterNumber')}
             value={dialNumber}
             onChange={(e) => setDialNumber(e.target.value.replace(/[^0-9*#+\-\s()]/g, ''))}
             onKeyDown={handleKeyDown}
             disabled={!!incomingCall}
           />
-          <span className="softphone-call-using-label">Browser</span>
+          <span className="softphone-call-using-label">{t('softphone.browser')}</span>
         </div>
 
         <div className="softphone-dialpad">
@@ -338,7 +340,7 @@ export function Softphone() {
             className="softphone-bottom-btn softphone-call-btn"
             onClick={hasActiveCall ? hangup : makeCall}
             disabled={!isConnected || (!hasActiveCall && !dialNumber.trim())}
-            title={hasActiveCall ? 'Hang up' : 'Call'}
+            title={hasActiveCall ? t('softphone.endCall') : t('softphone.answer')}
           >
             <Phone size={26} />
           </button>
@@ -347,7 +349,7 @@ export function Softphone() {
             className="softphone-bottom-btn"
             onClick={backspace}
             disabled={!dialNumber}
-            title="Backspace"
+            title={t('softphone.backspace')}
           >
             <Delete size={20} />
           </button>
@@ -396,12 +398,12 @@ export function Softphone() {
           className="softphone-log-toggle"
           onClick={() => setShowLog(!showLog)}
         >
-          Log {showLog ? '▼' : '▶'}
+          {t('softphone.log')} {showLog ? '▼' : '▶'}
         </button>
         {showLog && (
           <div className="softphone-log-box">
             <div className="softphone-log-header">
-              <span>Log</span>
+              <span>{t('softphone.log')}</span>
               {logs.length > 0 && (
                 <button type="button" className="btn" onClick={clearLogs} style={{ padding: '4px 8px', fontSize: 11 }}>
                   <Trash2 size={12} />
@@ -410,7 +412,7 @@ export function Softphone() {
             </div>
             <div className="softphone-log-content">
               {logs.length === 0 ? (
-                <span className="text-muted">No entries</span>
+                <span className="text-muted">{t('softphone.noEntries')}</span>
               ) : (
                 logs.map((entry, i) => (
                   <div

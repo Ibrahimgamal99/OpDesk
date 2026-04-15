@@ -85,6 +85,10 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+html[lang='ar'] body {
+  font-family: 'Noto Sans Arabic', 'Tajawal', 'Cairo', 'Segoe UI', 'Inter', 'Roboto', sans-serif;
+}
+
 /* Modern background pattern with subtle gradients */
 body::before {
   content: '';

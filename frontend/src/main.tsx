@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import { Login } from './components/Login'
 import { getToken, removeToken } from './auth'
+import './i18n'
 import './styles/index.css'
 
 function Root() {

@@ -1,8 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { setLanguage } from './i18n';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWebPhone } from './hooks/useWebPhone';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
-import { getToken, setUser, getUser, getMonitorModesLabel } from './auth';
+import { getToken, setUser, getUser } from './auth';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
@@ -12,11 +14,11 @@ import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
 import { CRMSettingsModal } from './components/CRMSettingsModal';
 import { Softphone } from './components/Softphone';
-import { 
-  Phone, 
-  PhoneCall, 
+import {
+  Phone,
+  PhoneCall,
   User,
-  Users, 
+  Users,
   Radio,
   Activity,
   Wifi,
@@ -33,33 +35,30 @@ import {
   Clock,
   Check,
   Archive,
+  Globe,
 } from 'lucide-react';
 import { getAuthHeaders } from './auth';
 
 type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'phone';
+const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
 
-function formatNotifTime(iso: string): string {
+function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const d = new Date(iso);
   const now = new Date();
   const sec = Math.floor((now.getTime() - d.getTime()) / 1000);
-  if (sec < 60) return 'Just now';
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  if (sec < 172800) return 'Yesterday';
+  if (sec < 60) return t('time.justNow');
+  if (sec < 3600) return t('time.minutesAgo', { count: Math.floor(sec / 60) });
+  if (sec < 86400) return t('time.hoursAgo', { count: Math.floor(sec / 3600) });
+  if (sec < 172800) return t('time.yesterday');
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function reasonLabel(reason: string | null): string {
+function reasonLabel(reason: string | null, t: (key: string) => string): string {
   if (!reason) return '';
-  const labels: Record<string, string> = {
-    busy: 'Busy',
-    noanswer: 'No answer',
-    failed: 'Failed',
-    switched_off: 'Unavailable',
-    invalid_number: 'Invalid number',
-    completed: 'Completed',
-  };
-  return labels[reason] || reason;
+  const key = `reason.${reason}`;
+  const translated = t(key);
+  // If no translation found, return the raw reason
+  return translated !== key ? translated : reason;
 }
 
 /** Snapshot of user form when opening "Create new group" from Users tab (preserved in memory, no API). */
@@ -76,6 +75,7 @@ export interface PendingUserFormSnapshot {
 type AppProps = { onLogout: () => void };
 
 function App({ onLogout }: AppProps) {
+  const { t, i18n } = useTranslation();
   const token = getToken();
   const webPhone = useWebPhone();
   const { connect, disconnect, canConnect, isConnected, configLoading, incomingCall } = webPhone;
@@ -135,7 +135,9 @@ function App({ onLogout }: AppProps) {
   const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
   const [notifList, setNotifList] = useState<{ id: number; extension: string; caller_from: string | null; queue: string | null; status_flag: string; event_time: string; reason: string | null }[]>([]);
   const [notifUpdatingId, setNotifUpdatingId] = useState<number | null>(null);
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
   const notifDropdownRef = useRef<HTMLDivElement>(null);
+  const langMenuRef = useRef<HTMLDivElement>(null);
 
   // Refresh user (role, extension, scope) from server so scope is up to date
   useEffect(() => {
@@ -170,12 +172,13 @@ function App({ onLogout }: AppProps) {
   useEffect(() => {
     const onOutside = (e: MouseEvent) => {
       if (notifDropdownRef.current && !notifDropdownRef.current.contains(e.target as Node)) setNotifDropdownOpen(false);
+      if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) setLangMenuOpen(false);
     };
-    if (notifDropdownOpen) {
+    if (notifDropdownOpen || langMenuOpen) {
       document.addEventListener('click', onOutside, true);
       return () => document.removeEventListener('click', onOutside, true);
     }
-  }, [notifDropdownOpen]);
+  }, [notifDropdownOpen, langMenuOpen]);
 
   const updateNotifStatus = useCallback(async (id: number, status: 'read' | 'archived') => {
     setNotifUpdatingId(id);
@@ -216,7 +219,7 @@ function App({ onLogout }: AppProps) {
     setActiveTab('phone');
     let notification: Notification | null = null;
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      const title = 'Incoming call';
+      const title = t('common.incomingCall');
       const body = incomingCall.callerName
         ? `${incomingCall.callerName} (${incomingCall.callerNumber})`
         : incomingCall.callerNumber;
@@ -237,7 +240,7 @@ function App({ onLogout }: AppProps) {
     return () => {
       notification?.close();
     };
-  }, [incomingCall]);
+  }, [incomingCall, t]);
 
   // Play ringtone when incoming call is ringing (uses AudioContext unlocked by user gesture)
   useEffect(() => {
@@ -284,7 +287,7 @@ function App({ onLogout }: AppProps) {
   }, [userRole, activeTab]);
 
   const handleSupervisorAction = useCallback((
-    mode: 'listen' | 'whisper' | 'barge', 
+    mode: 'listen' | 'whisper' | 'barge',
     target: string
   ) => {
     setSupervisorModal({ isOpen: true, mode, target });
@@ -313,6 +316,11 @@ function App({ onLogout }: AppProps) {
     }
   }, []);
 
+  const handleLangSwitch = (lang: string) => {
+    setLanguage(lang);
+    setLangMenuOpen(false);
+  };
+
   return (
     <WebPhoneProvider value={webPhone}>
     <div className="app">
@@ -323,8 +331,8 @@ function App({ onLogout }: AppProps) {
             <Radio size={20} />
           </div>
           <div>
-            <h1 className="header-title">OpDesk</h1>
-            <p className="header-subtitle">Asterisk PBX Real-time Monitor</p>
+            <h1 className="header-title">{t('app.title')}</h1>
+            <p className="header-subtitle">{t('app.subtitle')}</p>
           </div>
         </div>
 
@@ -333,32 +341,32 @@ function App({ onLogout }: AppProps) {
               type="button"
               className={`header-softphone-btn ${isConnected ? 'registered' : 'not-registered'}`}
               onClick={openSoftphone}
-              title={isConnected ? 'Softphone (registered)' : 'Softphone (not registered)'}
-              aria-label="Open Softphone"
+              title={isConnected ? t('header.softphoneRegistered') : t('header.softphoneNotRegistered')}
+              aria-label={t('header.openSoftphone')}
             >
               <Headphones size={18} />
-              <span>Softphone</span>
+              <span>{t('nav.softphone')}</span>
             </button>
             <div className="stats-bar">
               <div className="stat-item">
                 <Phone size={16} className="stat-icon" />
               <div>
                 <div className="stat-value">{stats.total_extensions}</div>
-                <div className="stat-label">Extensions</div>
+                <div className="stat-label">{t('stats.extensions')}</div>
               </div>
             </div>
             <div className="stat-item">
               <PhoneCall size={16} className="stat-icon" />
               <div>
                 <div className="stat-value">{stats.active_calls_count}</div>
-                <div className="stat-label">Active Calls</div>
+                <div className="stat-label">{t('stats.activeCalls')}</div>
               </div>
             </div>
             <div className="stat-item">
               <Users size={16} className="stat-icon" />
               <div>
                 <div className="stat-value">{stats.total_waiting}</div>
-                <div className="stat-label">Waiting</div>
+                <div className="stat-label">{t('stats.waiting')}</div>
               </div>
             </div>
           </div>
@@ -368,8 +376,8 @@ function App({ onLogout }: AppProps) {
               type="button"
               className="btn header-bell-btn"
               onClick={() => setNotifDropdownOpen((o) => !o)}
-              title="Call notifications"
-              aria-label={newNotifCount ? `${newNotifCount} new notifications` : 'Notifications'}
+              title={t('header.callNotifications')}
+              aria-label={newNotifCount ? t('header.newNotifications', { count: newNotifCount }) : t('header.notifications')}
             >
               <Bell size={18} />
               {newNotifCount > 0 && <span className="header-bell-badge">{newNotifCount > 99 ? '99+' : newNotifCount}</span>}
@@ -378,13 +386,13 @@ function App({ onLogout }: AppProps) {
               <div className="header-bell-dropdown">
                 <div className="header-bell-dropdown-header">
                   <PhoneMissed size={16} />
-                  <span>Missed &amp; busy calls</span>
+                  <span>{t('header.missedBusyCalls')}</span>
                   {newNotifCount > 0 && <span className="header-bell-dropdown-count">{newNotifCount}</span>}
                 </div>
                 {notifList.length === 0 ? (
                   <div className="header-bell-dropdown-empty">
                     <Phone size={20} />
-                    <span>No new notifications</span>
+                    <span>{t('header.noNewNotifications')}</span>
                   </div>
                 ) : (
                   <ul className="header-bell-list">
@@ -393,41 +401,41 @@ function App({ onLogout }: AppProps) {
                         <div className="header-bell-item-details">
                           <div className="header-bell-item-row">
                             <Phone size={12} className="header-bell-item-icon" aria-hidden />
-                            <span className="header-bell-item-label">Ext</span>
+                            <span className="header-bell-item-label">{t('header.ext')}</span>
                             <span className="header-bell-item-value" title={n.extension}>{n.extension}</span>
                           </div>
                           {n.caller_from != null && n.caller_from !== '' && (
                             <div className="header-bell-item-row">
                               <User size={12} className="header-bell-item-icon" aria-hidden />
-                              <span className="header-bell-item-label">From</span>
+                              <span className="header-bell-item-label">{t('header.from')}</span>
                               <span className="header-bell-item-value" title={n.caller_from}>{n.caller_from}</span>
                             </div>
                           )}
                           {n.queue != null && n.queue !== '' && (
                             <div className="header-bell-item-row">
                               <Users size={12} className="header-bell-item-icon" aria-hidden />
-                              <span className="header-bell-item-label">Queue</span>
+                              <span className="header-bell-item-label">{t('header.queue')}</span>
                               <span className="header-bell-item-value" title={n.queue}>{n.queue}</span>
                             </div>
                           )}
                           <div className="header-bell-item-row header-bell-item-meta">
                             <Clock size={12} className="header-bell-item-icon" aria-hidden />
-                            <span className="header-bell-item-time">{formatNotifTime(n.event_time)}</span>
+                            <span className="header-bell-item-time">{formatNotifTime(n.event_time, t)}</span>
                             {n.reason && (
-                              <span className={`header-bell-reason header-bell-reason-${String(n.reason).replace(/\s+/g, '_')}`} title={reasonLabel(n.reason)}>
-                                {reasonLabel(n.reason)}
+                              <span className={`header-bell-reason header-bell-reason-${String(n.reason).replace(/\s+/g, '_')}`} title={reasonLabel(n.reason, t)}>
+                                {reasonLabel(n.reason, t)}
                               </span>
                             )}
                           </div>
                         </div>
                         <div className="header-bell-item-actions">
-                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'read')} disabled={notifUpdatingId === n.id} title="Mark read">
+                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'read')} disabled={notifUpdatingId === n.id} title={t('header.markRead')}>
                             <Check size={14} />
-                            <span>Read</span>
+                            <span>{t('header.read')}</span>
                           </button>
-                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'archived')} disabled={notifUpdatingId === n.id} title="Archive">
+                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'archived')} disabled={notifUpdatingId === n.id} title={t('header.archive')}>
                             <Archive size={14} />
-                            <span>Archive</span>
+                            <span>{t('header.archive')}</span>
                           </button>
                         </div>
                       </li>
@@ -438,15 +446,21 @@ function App({ onLogout }: AppProps) {
             )}
           </div>
 
-          {getUser()?.role !== 'agent' && (
-            <span
-              className="header-monitor-mode"
-              title={`Monitor: ${getMonitorModesLabel(getUser()?.monitor_modes)}`}
-            >
-              <Monitor size={16} className="header-monitor-icon" />
-              <span className="header-monitor-label">{getMonitorModesLabel(getUser()?.monitor_modes)}</span>
-            </span>
-          )}
+          {getUser()?.role !== 'agent' && (() => {
+            const modes = getUser()?.monitor_modes;
+            const modesLabel = (modes && modes.length > 0 ? modes : ['listen'])
+              .map(m => t(`users.monitor.${m}`, { defaultValue: m }))
+              .join(', ');
+            return (
+              <span
+                className="header-monitor-mode"
+                title={`${t('header.monitor')}: ${modesLabel}`}
+              >
+                <Monitor size={16} className="header-monitor-icon" />
+                <span className="header-monitor-label">{modesLabel}</span>
+              </span>
+            );
+          })()}
 
           <div className={`connection-status ${connected ? 'connected' : ''}`}>
             <span className="connection-icon" aria-hidden>
@@ -457,27 +471,76 @@ function App({ onLogout }: AppProps) {
               )}
             </span>
             <span className="connection-text">
-              {connected ? 'Connected' : 'Disconnected'}
+              {connected ? t('header.connected') : t('header.disconnected')}
             </span>
           </div>
 
+          {/* Language switcher */}
+          <div ref={langMenuRef} style={{ position: 'relative' }}>
+            <button
+              className="btn"
+              onClick={() => setLangMenuOpen(o => !o)}
+              title={t('language.select')}
+              aria-label={t('language.select')}
+            >
+              <Globe size={14} />
+            </button>
+            {langMenuOpen && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                insetInlineEnd: 0,
+                marginTop: 4,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-primary)',
+                borderRadius: 'var(--radius-md)',
+                boxShadow: 'var(--shadow-lg)',
+                zIndex: 1000,
+                minWidth: 110,
+                overflow: 'hidden',
+              }}>
+                {LANGUAGE_OPTIONS.map(lang => (
+                  <button
+                    key={lang}
+                    type="button"
+                    onClick={() => handleLangSwitch(lang)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: '8px 14px',
+                      textAlign: 'start',
+                      background: i18n.language === lang ? 'var(--bg-hover)' : 'transparent',
+                      border: 'none',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      fontWeight: i18n.language === lang ? 600 : 400,
+                    }}
+                  >
+                    {t(`language.${lang}`)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {(getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && (
-            <button 
-              className="btn" 
+            <button
+              className="btn"
               onClick={() => setCrmSettingsOpen(true)}
-              title="Settings"
+              title={t('header.settings')}
             >
               <Settings size={14} />
             </button>
           )}
 
-          <button 
-            className="btn" 
+          <button
+            className="btn"
             onClick={handleLogout}
-            title="Sign out"
+            title={t('header.signOut')}
           >
             <LogOut size={14} />
-            Logout
+            {t('header.logout')}
           </button>
         </div>
       </header>
@@ -486,81 +549,81 @@ function App({ onLogout }: AppProps) {
       <main className="main-content">
         {/* Tabs */}
         <div className="tabs">
-          <button 
+          <button
             className={`tab ${activeTab === 'extensions' ? 'active' : ''}`}
             onClick={() => setActiveTab('extensions')}
           >
             <Phone size={16} />
-            Extensions
+            {t('nav.extensions')}
           </button>
-          <button 
+          <button
             className={`tab ${activeTab === 'calls' ? 'active' : ''}`}
             onClick={() => setActiveTab('calls')}
           >
             <PhoneCall size={16} />
-            Active Calls
+            {t('nav.activeCalls')}
             {stats.active_calls_count > 0 && (
-              <span style={{ 
+              <span style={{
                 background: 'var(--status-call)',
                 padding: '2px 8px',
                 borderRadius: 10,
                 fontSize: 11,
-                marginLeft: 4,
+                marginInlineStart: 4,
               }}>
                 {stats.active_calls_count}
               </span>
             )}
           </button>
           {getUser()?.role !== 'agent' && (
-            <button 
+            <button
               className={`tab ${activeTab === 'queues' ? 'active' : ''}`}
               onClick={() => setActiveTab('queues')}
             >
               <Users size={16} />
-              Queues
+              {t('nav.queues')}
               {stats.total_waiting > 0 && (
-                <span style={{ 
+                <span style={{
                   background: 'var(--status-ringing)',
                   padding: '2px 8px',
                   borderRadius: 10,
                   fontSize: 11,
-                  marginLeft: 4,
+                  marginInlineStart: 4,
                 }}>
                   {stats.total_waiting}
                 </span>
               )}
             </button>
           )}
-          <button 
+          <button
             className={`tab ${activeTab === 'call-log' ? 'active' : ''}`}
             onClick={() => setActiveTab('call-log')}
           >
             <History size={16} />
-            Call History
+            {t('nav.callHistory')}
           </button>
-          <button 
+          <button
             className={`tab ${activeTab === 'phone' ? 'active' : ''}`}
             onClick={openSoftphone}
             title="WebRTC Softphone"
           >
             <Headphones size={16} />
-            Softphone
+            {t('nav.softphone')}
           </button>
           {getUser()?.role === 'admin' && (
             <>
-              <button 
+              <button
                 className={`tab ${activeTab === 'groups' ? 'active' : ''}`}
                 onClick={() => setActiveTab('groups')}
               >
                 <Group size={16} />
-                Groups
+                {t('nav.groups')}
               </button>
-              <button 
+              <button
                 className={`tab ${activeTab === 'users' ? 'active' : ''}`}
                 onClick={() => setActiveTab('users')}
               >
                 <UserCog size={16} />
-                Users
+                {t('nav.users')}
               </button>
             </>
           )}
@@ -589,7 +652,7 @@ function App({ onLogout }: AppProps) {
         )}
 
         {activeTab === 'calls' && (
-          <ActiveCallsPanel 
+          <ActiveCallsPanel
             calls={state?.active_calls || {}}
             onSupervisorAction={handleSupervisorAction}
             onHangup={(target) => sendAction({ action: 'hangup', target })}
@@ -600,7 +663,7 @@ function App({ onLogout }: AppProps) {
         )}
 
         {activeTab === 'queues' && (
-          <QueuesPanel 
+          <QueuesPanel
             queues={state?.queues || {}}
             members={state?.queue_members || {}}
             entries={state?.queue_entries || {}}
@@ -640,9 +703,9 @@ function App({ onLogout }: AppProps) {
 
         {/* Last update timestamp */}
         {lastUpdate && (
-          <div style={{ 
-            textAlign: 'center', 
-            fontSize: 12, 
+          <div style={{
+            textAlign: 'center',
+            fontSize: 12,
             color: 'var(--text-muted)',
             fontFamily: 'JetBrains Mono, monospace',
             display: 'flex',
@@ -651,7 +714,7 @@ function App({ onLogout }: AppProps) {
             gap: 6,
           }}>
             <Activity size={12} />
-            Last update: {lastUpdate.toLocaleTimeString()}
+            {t('header.lastUpdate')}: {lastUpdate.toLocaleTimeString()}
           </div>
         )}
       </main>
@@ -686,4 +749,3 @@ function App({ onLogout }: AppProps) {
 }
 
 export default App;
-

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PhoneCall, Ear, MicVocal, UserPlus, Phone, RefreshCw, PhoneOff, ArrowRightLeft, User } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { CallInfo } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
 
@@ -14,7 +15,8 @@ interface ActiveCallsPanelProps {
 }
 
 export function ActiveCallsPanel({ calls, onSupervisorAction, onHangup, onTransfer, onTakeOver, onSync }: ActiveCallsPanelProps) {
-  const callList = Object.values(calls).sort((a, b) => 
+  const { t } = useTranslation();
+  const callList = Object.values(calls).sort((a, b) =>
     a.extension.localeCompare(b.extension, undefined, { numeric: true })
   );
 
@@ -23,12 +25,12 @@ export function ActiveCallsPanel({ calls, onSupervisorAction, onHangup, onTransf
       <div className="panel-header">
         <h2 className="panel-title">
           <PhoneCall size={18} className="panel-title-icon" />
-          Active Calls ({callList.length})
+          {t('activeCalls.title')} ({callList.length})
         </h2>
         {onSync && (
-          <button type="button" className="btn btn-panel-sync" onClick={onSync} title="Sync all data">
+          <button type="button" className="btn btn-panel-sync" onClick={onSync} title={t('activeCalls.syncAll')}>
             <RefreshCw size={14} />
-            Sync
+            {t('activeCalls.sync')}
           </button>
         )}
       </div>
@@ -36,18 +38,18 @@ export function ActiveCallsPanel({ calls, onSupervisorAction, onHangup, onTransf
         {callList.length === 0 ? (
           <div className="empty-state">
             <Phone size={48} className="empty-state-icon" />
-            <p className="empty-state-text">No active calls</p>
+            <p className="empty-state-text">{t('activeCalls.noActiveCalls')}</p>
           </div>
         ) : (
           <table className="calls-table">
             <thead>
               <tr>
-                <th>Extension</th>
-                <th>State</th>
-                <th>Talking To</th>
-                <th>Duration</th>
-                <th>Talk Time</th>
-                {getUser()?.role !== 'agent' && <th>Actions</th>}
+                <th>{t('activeCalls.table.extension')}</th>
+                <th>{t('activeCalls.table.state')}</th>
+                <th>{t('activeCalls.table.talkingTo')}</th>
+                <th>{t('activeCalls.table.duration')}</th>
+                <th>{t('activeCalls.table.talkTime')}</th>
+                {getUser()?.role !== 'agent' && <th>{t('activeCalls.table.actions')}</th>}
               </tr>
             </thead>
             <tbody>
@@ -79,23 +81,19 @@ interface CallRowProps {
   onTakeOver?: (source: string) => void;
 }
 
-/** Build the two legs of a call for transfer source selection. */
-function getCallLegs(call: CallInfo): Array<{ value: string; label: string }> {
-  const legs: Array<{ value: string; label: string }> = [
-    { value: call.extension, label: `Extension (${call.extension})` },
-  ];
-  if (call.talking_to?.trim()) {
-    legs.push({ value: call.talking_to.trim(), label: `Talking to (${call.talking_to.trim()})` });
-  }
-  return legs;
-}
-
 function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }: CallRowProps) {
+  const { t } = useTranslation();
   const stateClass = call.state.toLowerCase().replace(/\s+/g, '_');
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferSource, setTransferSource] = useState('');
   const [transferDest, setTransferDest] = useState('');
-  const callLegs = getCallLegs(call);
+
+  const callLegs = [
+    { value: call.extension, label: t('activeCalls.transfer.legExtension', { ext: call.extension }) },
+    ...(call.talking_to?.trim()
+      ? [{ value: call.talking_to.trim(), label: t('activeCalls.transfer.legTalkingTo', { ext: call.talking_to.trim() }) }]
+      : []),
+  ];
 
   const openTransfer = () => {
     setShowTransfer(true);
@@ -144,28 +142,28 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
           <div className="call-actions" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {getAllowedMonitorModes().includes('listen') && (
-                <button 
+                <button
                   className="btn btn-icon btn-listen"
                   onClick={() => onSupervisorAction('listen', call.extension)}
-                  title="Listen (Silent)"
+                  title={t('activeCalls.actions.listen')}
                 >
                   <Ear size={18} />
                 </button>
               )}
               {getAllowedMonitorModes().includes('whisper') && (
-                <button 
+                <button
                   className="btn btn-icon btn-whisper"
                   onClick={() => onSupervisorAction('whisper', call.extension)}
-                  title="Whisper to Agent"
+                  title={t('activeCalls.actions.whisper')}
                 >
                   <MicVocal size={18} />
                 </button>
               )}
               {getAllowedMonitorModes().includes('barge') && (
-                <button 
+                <button
                   className="btn btn-icon btn-barge"
                   onClick={() => onSupervisorAction('barge', call.extension)}
-                  title="Barge In"
+                  title={t('activeCalls.actions.barge')}
                 >
                   <UserPlus size={18} />
                 </button>
@@ -174,7 +172,7 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
                 <button
                   className="btn btn-icon"
                   onClick={() => (showTransfer ? closeTransfer() : openTransfer())}
-                  title="Transfer Call"
+                  title={t('activeCalls.actions.transfer')}
                 >
                   <ArrowRightLeft size={18} />
                 </button>
@@ -183,7 +181,7 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
                 <button
                   className="btn btn-icon btn-danger"
                   onClick={() => onHangup(call.extension)}
-                  title="End Call"
+                  title={t('activeCalls.actions.endCall')}
                 >
                   <PhoneOff size={18} />
                 </button>
@@ -204,7 +202,7 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <label style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    Source
+                    {t('activeCalls.transfer.source')}
                   </label>
                   <select
                     value={transferSource}
@@ -220,13 +218,13 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
                   </select>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Option 1:</span>
-                  <span style={{ fontSize: 11 }}>Transfer to</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('activeCalls.transfer.option1')}</span>
+                  <span style={{ fontSize: 11 }}>{t('activeCalls.transfer.transferTo')}</span>
                   <input
                     type="text"
                     value={transferDest}
                     onChange={(e) => setTransferDest(e.target.value)}
-                    placeholder="Ext or number"
+                    placeholder={t('activeCalls.transfer.extOrNumber')}
                     className="form-input"
                     style={{ maxWidth: 100, fontSize: 12, padding: '4px 6px' }}
                   />
@@ -242,12 +240,12 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
                       closeTransfer();
                     }}
                   >
-                    Transfer
+                    {t('activeCalls.transfer.transfer')}
                   </button>
                 </div>
                 {onTakeOver && getUser()?.extension && call.talking_to?.trim() && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Option 2:</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('activeCalls.transfer.option2')}</span>
                     <button
                       type="button"
                       className="btn"
@@ -258,8 +256,8 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
                       }}
                       title={`Transfer caller (${call.talking_to?.trim()}) to your extension (${getUser()?.extension})`}
                     >
-                      <User size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
-                      Take over
+                      <User size={14} style={{ verticalAlign: -2, marginInlineEnd: 4 }} />
+                      {t('activeCalls.transfer.takeOver')}
                     </button>
                   </div>
                 )}
@@ -269,7 +267,7 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
                   style={{ fontSize: 11, padding: '4px 8px', alignSelf: 'flex-start' }}
                   onClick={closeTransfer}
                 >
-                  Cancel
+                  {t('activeCalls.transfer.cancel')}
                 </button>
               </div>
             )}
@@ -279,4 +277,3 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
     </motion.tr>
   );
 }
-

@@ -1,5 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { Radio, LogIn } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { setToken, setUser } from '../auth';
 
 type Props = {
@@ -7,6 +8,7 @@ type Props = {
 };
 
 export function Login({ onSuccess }: Props) {
+  const { t } = useTranslation();
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -16,7 +18,7 @@ export function Login({ onSuccess }: Props) {
     e.preventDefault();
     setError(null);
     if (!login.trim() || !password) {
-      setError('Enter extension/username and password');
+      setError(t('login.errorEmpty'));
       return;
     }
     setLoading(true);
@@ -28,7 +30,7 @@ export function Login({ onSuccess }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.detail || 'Invalid extension/username or password');
+        setError(data.detail || t('login.errorInvalid'));
         return;
       }
       if (data.access_token) {
@@ -36,10 +38,10 @@ export function Login({ onSuccess }: Props) {
         if (data.user) setUser(data.user);
         onSuccess();
       } else {
-        setError('Invalid response from server');
+        setError(t('login.errorInvalidResponse'));
       }
     } catch (err) {
-      setError('Network error. Please try again.');
+      setError(t('login.errorNetwork'));
     } finally {
       setLoading(false);
     }
@@ -52,16 +54,16 @@ export function Login({ onSuccess }: Props) {
           <div className="login-logo">
             <Radio size={32} />
           </div>
-          <h1 className="login-title">OpDesk</h1>
-          <p className="login-subtitle">Asterisk Operator Panel</p>
+          <h1 className="login-title">{t('login.title')}</h1>
+          <p className="login-subtitle">{t('login.subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
-          <label className="login-label">Extension or username</label>
+          <label className="login-label">{t('login.extensionLabel')}</label>
           <input
             type="text"
             className="login-input"
-            placeholder="e.g. 1001 or admin"
+            placeholder={t('login.extensionPlaceholder')}
             value={login}
             onChange={(e) => setLogin(e.target.value)}
             autoComplete="username"
@@ -69,11 +71,11 @@ export function Login({ onSuccess }: Props) {
             disabled={loading}
           />
 
-          <label className="login-label">Password</label>
+          <label className="login-label">{t('login.passwordLabel')}</label>
           <input
             type="password"
             className="login-input"
-            placeholder="Password"
+            placeholder={t('login.passwordPlaceholder')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
@@ -84,11 +86,11 @@ export function Login({ onSuccess }: Props) {
 
           <button type="submit" className="login-submit" disabled={loading}>
             {loading ? (
-              <span className="login-spinner">Signing in…</span>
+              <span className="login-spinner">{t('login.signingIn')}</span>
             ) : (
               <>
                 <LogIn size={18} />
-                Sign in
+                {t('login.signIn')}
               </>
             )}
           </button>
