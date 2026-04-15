@@ -104,6 +104,23 @@ export function useWebPhone() {
     await phone.connect(config.server, config.extension, config.extension_secret);
   }, [config, addLog]);
 
+  // Auto-connect once config is available and we are not already connected/connecting
+  const canConnectRef = useRef(false);
+  useEffect(() => {
+    if (
+      !configLoading &&
+      !configError &&
+      config?.server?.trim() &&
+      config?.extension?.trim() &&
+      config?.extension_secret?.trim() &&
+      status === 'disconnected' &&
+      !canConnectRef.current
+    ) {
+      canConnectRef.current = true;
+      connect();
+    }
+  }, [configLoading, configError, config, status, connect]);
+
   const disconnect = useCallback(() => {
     if (phoneRef.current) {
       phoneRef.current.disconnect();

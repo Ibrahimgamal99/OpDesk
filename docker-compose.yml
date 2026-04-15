@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  opdesk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opdesk
+    restart: unless-stopped
+    # host network mode: the container shares the host's network stack directly.
+    # This means the app connects to MariaDB and Asterisk AMI via 127.0.0.1
+    # (localhost) just like a native install — no bridge subnet, no NAT, and
+    # no need to add Docker IP ranges to the Asterisk manager.conf permit lines.
+    # The app binds directly to the host's port 8443; the 'ports' directive is
+    # not used in host mode but is kept as a comment for documentation.
+    network_mode: host
+    # ports:
+    #   - "8443:8443"   # not needed with network_mode: host
+    env_file:
+      - .env
+    volumes:
+      # Persist TLS certificates on the host
+      - ./cert:/opt/opdesk/cert:rw
