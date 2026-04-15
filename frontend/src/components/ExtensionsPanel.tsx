@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Extension, ExtensionStatus } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
 
@@ -15,13 +16,13 @@ interface ExtensionsPanelProps {
   onWebrtcToggle?: (extension: string, enabled: boolean) => Promise<void>;
 }
 
-const statusConfig: Record<ExtensionStatus, { icon: typeof Phone; label: string }> = {
-  idle: { icon: Phone, label: 'Idle' },
-  ringing: { icon: PhoneIncoming, label: 'Ringing' },
-  in_call: { icon: PhoneCall, label: 'In Call' },
-  dialing: { icon: PhoneCall, label: 'Dialing' },
-  unavailable: { icon: PhoneOff, label: 'Unavailable' },
-  on_hold: { icon: Pause, label: 'On Hold' },
+const STATUS_ICONS: Record<ExtensionStatus, typeof Phone> = {
+  idle: Phone,
+  ringing: PhoneIncoming,
+  in_call: PhoneCall,
+  dialing: PhoneCall,
+  unavailable: PhoneOff,
+  on_hold: Pause,
 };
 
 export function ExtensionsPanel({
@@ -32,6 +33,7 @@ export function ExtensionsPanel({
   allowedWebrtcExtensions = new Set(),
   onWebrtcToggle,
 }: ExtensionsPanelProps) {
+  const { t } = useTranslation();
   const extensionList = Object.values(extensions).sort((a, b) =>
     a.extension.localeCompare(b.extension, undefined, { numeric: true })
   );
@@ -41,12 +43,12 @@ export function ExtensionsPanel({
       <div className="panel-header">
         <h2 className="panel-title">
           <Phone size={18} className="panel-title-icon" />
-          Extensions ({extensionList.length})
+          {t('extensions.title')} ({extensionList.length})
         </h2>
         {onSync && (
-          <button type="button" className="btn btn-panel-sync" onClick={onSync} title="Sync all data">
+          <button type="button" className="btn btn-panel-sync" onClick={onSync} title={t('extensions.syncAll')}>
             <RefreshCw size={14} />
-            Sync
+            {t('extensions.sync')}
           </button>
         )}
       </div>
@@ -54,7 +56,7 @@ export function ExtensionsPanel({
         {extensionList.length === 0 ? (
           <div className="empty-state">
             <Phone size={48} className="empty-state-icon" />
-            <p className="empty-state-text">No extensions being monitored</p>
+            <p className="empty-state-text">{t('extensions.noExtensions')}</p>
           </div>
         ) : (
           <div className="extensions-grid">
@@ -86,9 +88,10 @@ interface ExtensionCardProps {
 }
 
 function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggleWebrtc, onWebrtcToggle }: ExtensionCardProps) {
+  const { t } = useTranslation();
   const [webrtcSaving, setWebrtcSaving] = useState(false);
-  const config = statusConfig[extension.status] || statusConfig.unavailable;
-  const StatusIcon = config.icon;
+  const StatusIcon = STATUS_ICONS[extension.status] || PhoneOff;
+  const statusLabel = t(`extensions.status.${extension.status}`, { defaultValue: extension.status });
   const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
   const isRinging = extension.status === 'ringing';
 
@@ -123,9 +126,9 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
             className="btn btn-icon"
             onClick={(e) => { e.stopPropagation(); handleWebrtcClick(); }}
             disabled={webrtcSaving}
-            title={webrtcEnabled ? 'WebRTC enabled (click to disable)' : 'WebRTC disabled (click to enable)'}
+            title={webrtcEnabled ? t('extensions.webrtcEnabled') : t('extensions.webrtcDisabled')}
             style={{ flexShrink: 0, padding: 4 }}
-            aria-label={webrtcEnabled ? 'WebRTC on' : 'WebRTC off'}
+            aria-label={webrtcEnabled ? t('extensions.webrtcOn') : t('extensions.webrtcOff')}
           >
             {webrtcSaving ? (
               <Loader2 size={18} className="spinner" />
@@ -140,7 +143,7 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
 
       <div className={`extension-status ${extension.status}`}>
         <StatusIcon size={16} />
-        {config.label}
+        {statusLabel}
       </div>
 
       {extension.call_info && (isInCall || isRinging) && (
@@ -162,44 +165,44 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
       {isInCall && getUser()?.role !== 'agent' && (() => {
         const allowed = getAllowedMonitorModes();
         return (
-          <div style={{ 
-            display: 'flex', 
-            gap: 8, 
+          <div style={{
+            display: 'flex',
+            gap: 8,
             marginTop: 16,
             justifyContent: 'center',
           }}>
             {allowed.includes('listen') && (
-              <button 
+              <button
                 className="btn btn-icon btn-listen"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSupervisorAction('listen', extension.extension);
                 }}
-                title="Listen (Silent)"
+                title={t('activeCalls.actions.listen')}
               >
                 <Ear size={18} />
               </button>
             )}
             {allowed.includes('whisper') && (
-              <button 
+              <button
                 className="btn btn-icon btn-whisper"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSupervisorAction('whisper', extension.extension);
                 }}
-                title="Whisper to Agent"
+                title={t('activeCalls.actions.whisper')}
               >
                 <MicVocal size={18} />
               </button>
             )}
             {allowed.includes('barge') && (
-              <button 
+              <button
                 className="btn btn-icon btn-barge"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSupervisorAction('barge', extension.extension);
                 }}
-                title="Barge In"
+                title={t('activeCalls.actions.barge')}
               >
                 <UserPlus size={18} />
               </button>
@@ -210,4 +213,3 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
     </motion.div>
   );
 }
-

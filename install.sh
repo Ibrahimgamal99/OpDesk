@@ -385,17 +385,17 @@ elif [ -d /usr/share/issabel ]; then
         echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
         if command_exists mysql; then
             if [ -n "$_root_pass" ] && mysql -u root -p"$_root_pass" -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                mysql -u root -p"$_root_pass" -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                mysql -u root -p"$_root_pass" -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             elif sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                sudo mysql -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                mysql -u root -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             else
                 echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
-                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\"${NC}"
+                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;\"${NC}"
             fi
         else
             echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
@@ -439,14 +439,14 @@ elif [ -f /etc/freepbx.conf ]; then
         echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
         if command_exists mysql; then
             if sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                sudo mysql -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" 2>/dev/null
+                mysql -u root -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             else
                 echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
-                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON *.* TO '$DB_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;\"${NC}"
+                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;\"${NC}"
             fi
         else
             echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
@@ -592,10 +592,11 @@ AMI_PORT=$AMI_PORT
 AMI_USERNAME=$AMI_USER
 AMI_SECRET=$AMI_SECRET
 DB_OpDesk=OpDesk
-JWT_SECRET=OpDesk
+JWT_SECRET=$(openssl rand -hex 32)
 HTTPS_CERT=$HTTPS_CERT
 HTTPS_KEY=$HTTPS_KEY
 OPDESK_HTTPS_PORT=$OPDESK_HTTPS_PORT
+CORS_ALLOWED_ORIGINS=https://$(hostname -I | awk '{print $1}'):${OPDESK_HTTPS_PORT:-8443}
 EOF
 cd "$PROJECT_ROOT/frontend" && npm install || true
 
@@ -662,7 +663,7 @@ echo -e "${BLUE}DATABASE DETAILS:${NC}"
 echo -e "  Status:        $(([ -n "$DB_PASS" ] && mysqladmin -u$DB_USER -p"$DB_PASS" ping 2>/dev/null || mysqladmin -u$DB_USER ping 2>/dev/null) | grep -q "alive" && echo -e "${GREEN}Connected${NC}" || echo -e "${RED}Failed${NC}")"
 echo -e "  Host/Port:     $DB_HOST:$DB_PORT"
 echo -e "  Username:      $DB_USER$DB_EXISTING"
-echo -e "  Password:      $DB_PASS"
+echo -e "  Password:      (saved to $PROJECT_ROOT/backend/.env)"
 echo -e "  Database:      $DB_NAME"
 echo ""
 echo -e "${BLUE}ASTERISK AMI DETAILS:${NC}"
@@ -670,7 +671,7 @@ AMI_STATUS=$(lsof -i :$AMI_PORT > /dev/null && echo -e "${GREEN}Active${NC}" || 
 echo -e "  Status:        $AMI_STATUS"
 echo -e "  Host/Port:     $AMI_HOST:$AMI_PORT"
 echo -e "  Username:      $AMI_USER$AMI_USER_EXISTING"
-echo -e "  Secret:        $AMI_SECRET"
+echo -e "  Secret:        (saved to $PROJECT_ROOT/backend/.env)"
 echo ""
 echo -e "${BLUE}RUNTIME VERSIONS:${NC}"
 echo -e "  Node.js:       $(node -v)"

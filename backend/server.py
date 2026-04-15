@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import socket
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote
 from typing import Dict, Set, Optional
 from contextlib import asynccontextmanager
@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 import jwt
 from pydantic import BaseModel
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Body, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -181,7 +181,7 @@ class AMIEventBridge:
         self._running = False
         self._event_task: Optional[asyncio.Task] = None
         self._broadcast_task: Optional[asyncio.Task] = None
-        self._state_queue: asyncio.Queue = asyncio.Queue()
+        self._state_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._extension_names: Dict[str, str] = {}  # Cache extension names
     
     async def start(self):
@@ -219,8 +219,15 @@ class AMIEventBridge:
     
     async def _on_ami_event(self, event: Dict[str, str]):
         """Handle AMI event - queue for broadcast."""
-        # Queue state update
-        await self._state_queue.put(event)
+        try:
+            self._state_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # Drop oldest event to make room for the new one
+            try:
+                self._state_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            self._state_queue.put_nowait(event)
     
     async def _broadcast_state_loop(self):
         """Periodically broadcast state and process event queue."""
@@ -690,10 +697,12 @@ app = FastAPI(
 )
 
 # CORS for React development
+_cors_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=(_cors_origins != ["*"]),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -716,8 +725,8 @@ def create_access_token(user: dict) -> str:
         "sub": str(user["id"]),
         "username": user["username"],
         "role": user["role"],
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS),
-        "iat": datetime.utcnow(),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS),
+        "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
@@ -780,25 +789,73 @@ async def get_current_user(
 # ---------------------------------------------------------------------------
 # Auth API (public)
 # ---------------------------------------------------------------------------
+
+# Brute-force protection: track failed attempts per IP
+_LOGIN_MAX_ATTEMPTS = 10   # failures before lockout
+_LOGIN_WINDOW_SECS = 300   # sliding window (5 min)
+_LOCKOUT_SECS = 600        # lockout duration (10 min)
+_login_attempts: Dict[str, list] = {}   # ip -> [timestamp, ...]
+_login_locked: Dict[str, float] = {}    # ip -> lockout_until
+
+
+def _check_login_rate_limit(ip: str) -> None:
+    now = datetime.now(timezone.utc).timestamp()
+    # Check active lockout
+    if ip in _login_locked:
+        if now < _login_locked[ip]:
+            retry_after = int(_login_locked[ip] - now)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed login attempts. Try again in {retry_after}s.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        else:
+            del _login_locked[ip]
+            _login_attempts.pop(ip, None)
+    # Prune old attempts outside window
+    attempts = _login_attempts.get(ip, [])
+    attempts = [t for t in attempts if now - t < _LOGIN_WINDOW_SECS]
+    _login_attempts[ip] = attempts
+
+
+def _record_login_failure(ip: str) -> None:
+    now = datetime.now(timezone.utc).timestamp()
+    attempts = _login_attempts.setdefault(ip, [])
+    attempts.append(now)
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        _login_locked[ip] = now + _LOCKOUT_SECS
+        _login_attempts.pop(ip, None)
+        log.warning(f"Login rate limit: {ip} locked out for {_LOCKOUT_SECS}s")
+
+
+def _clear_login_failures(ip: str) -> None:
+    _login_attempts.pop(ip, None)
+    _login_locked.pop(ip, None)
+
+
 class LoginBody(BaseModel):
     login: str
     password: str
 
 
 @app.post("/api/auth/login")
-async def auth_login(body: LoginBody):
+async def auth_login(body: LoginBody, request: Request):
     """
     Login with extension or username and password.
     Body: { "login": "ext_or_username", "password": "..." }
     Returns: { "access_token": "...", "token_type": "bearer", "user": { id, username, name, role } }
     """
+    client_ip = request.client.host if request.client else "unknown"
+    _check_login_rate_limit(client_ip)
     login = (body.login or "").strip()
     password = body.password or ""
     if not login or not password:
         raise HTTPException(status_code=400, detail="Login and password required")
     user = authenticate_user(login, password)
     if not user:
+        _record_login_failure(client_ip)
         raise HTTPException(status_code=401, detail="Invalid extension/username or password")
+    _clear_login_failures(client_ip)
     token = create_access_token(user)
     scope = _get_user_scope(user["id"])
     return {
@@ -1637,7 +1694,7 @@ async def get_qos_status(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/crm/config")
-async def get_crm_config(current_user: dict = Depends(get_current_user)):
+async def get_crm_config(current_user: dict = Depends(require_admin)):
     """Get current CRM configuration from database."""
     # Build config from database (fallback to env)
     crm_enabled_str = get_setting('CRM_ENABLED', os.getenv('CRM_ENABLED', ''))
@@ -1687,7 +1744,7 @@ def save_qos_status_to_db(enabled: bool):
 
 
 @app.post("/api/qos/enable")
-async def enable_qos_endpoint(current_user: dict = Depends(get_current_user)):
+async def enable_qos_endpoint(current_user: dict = Depends(require_admin)):
     """
     Enable QoS (Quality of Service) configuration.
     This will:
@@ -1713,7 +1770,7 @@ async def enable_qos_endpoint(current_user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/qos/disable")
-async def disable_qos_endpoint(current_user: dict = Depends(get_current_user)):
+async def disable_qos_endpoint(current_user: dict = Depends(require_admin)):
     """
     Disable QoS (Quality of Service) configuration.
     This will:
@@ -1739,7 +1796,7 @@ async def disable_qos_endpoint(current_user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/crm/config")
-async def save_crm_config(config_data: dict, current_user: dict = Depends(get_current_user)):
+async def save_crm_config(config_data: dict, current_user: dict = Depends(require_admin)):
     """
     Save CRM configuration to database.
     Note: This requires server restart to take effect.
@@ -1947,16 +2004,14 @@ async def serve_recording(
     # Security: only allow serving files from the recording root directory
     root_dir = os.getenv('ASTERISK_RECORDING_ROOT_DIR')
     
-    # Normalize paths
-    requested_path = os.path.normpath(file_path)
-    root_normalized = os.path.normpath(root_dir)
-    
-    # If file_path is not absolute, treat as relative to root_dir
-    if not os.path.isabs(requested_path):
-        requested_path = os.path.normpath(os.path.join(root_dir, requested_path))
-    
-    # Security check: ensure the path is within the recording root
-    if not requested_path.startswith(root_normalized):
+    # Normalize paths, resolving symlinks to prevent traversal
+    if not os.path.isabs(file_path):
+        file_path = os.path.join(root_dir, file_path)
+    requested_path = os.path.realpath(file_path)
+    root_real = os.path.realpath(root_dir)
+
+    # Security check: ensure the resolved path is within the recording root
+    if not requested_path.startswith(root_real + os.sep) and requested_path != root_real:
         raise HTTPException(status_code=403, detail="Access denied")
     
     if not os.path.exists(requested_path) or not os.path.isfile(requested_path):
@@ -1978,7 +2033,7 @@ async def serve_recording(
 # Settings Management Endpoints
 # ---------------------------------------------------------------------------
 @app.post("/api/settings")
-async def save_settings(settings_data: dict, current_user: dict = Depends(get_current_user)):
+async def save_settings(settings_data: dict, current_user: dict = Depends(require_admin)):
     """
     Save settings to database.
     Accepts a dictionary of key-value pairs to save.
@@ -2011,7 +2066,7 @@ async def save_settings(settings_data: dict, current_user: dict = Depends(get_cu
 
 
 @app.get("/api/settings")
-async def get_settings(current_user: dict = Depends(get_current_user)):
+async def get_settings(current_user: dict = Depends(require_admin)):
     """Get all settings from database."""
     try:
         settings = get_all_settings()
@@ -2025,7 +2080,7 @@ async def get_settings(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/settings/{key}")
-async def get_setting_by_key(key: str, current_user: dict = Depends(get_current_user)):
+async def get_setting_by_key(key: str, current_user: dict = Depends(require_admin)):
     """Get a specific setting by key."""
     try:
         value = get_setting(key)
@@ -2037,6 +2092,15 @@ async def get_setting_by_key(key: str, current_user: dict = Depends(get_current_
     except Exception as e:
         log.error(f"Failed to get setting {key}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get setting: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Health check (public, no auth required)
+# ---------------------------------------------------------------------------
+@app.get("/health")
+async def health_check():
+    """Public health endpoint for load balancers and monitoring."""
+    return {"status": "ok", "ami_connected": bool(monitor and getattr(monitor, "connected", False))}
 
 
 # ---------------------------------------------------------------------------
@@ -2052,8 +2116,11 @@ if os.path.exists(frontend_path):
     async def serve_frontend(full_path: str):
         """Serve React frontend."""
         file_path = os.path.join(frontend_path, full_path)
-        if os.path.exists(file_path) and os.path.isfile(file_path):
-            return FileResponse(file_path)
+        resolved = os.path.realpath(file_path)
+        if not resolved.startswith(os.path.realpath(frontend_path)):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if os.path.exists(resolved) and os.path.isfile(resolved):
+            return FileResponse(resolved)
         return FileResponse(os.path.join(frontend_path, "index.html"))
 
 

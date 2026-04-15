@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { 
-  ArrowUpDown, Search, Phone, X, Download, Play, Pause, 
+import { useTranslation } from 'react-i18next';
+import {
+  ArrowUpDown, Search, Phone, X, Download, Play, Pause,
   ChevronLeft, ChevronRight, Loader2, BarChart3, Route,
   PhoneIncoming, PhoneOutgoing, ListOrdered, PhoneCall, Share2, PhoneOff, PhoneMissed
 } from 'lucide-react';
@@ -11,6 +12,8 @@ import { getAuthHeaders } from '../auth';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+type TFunction = (key: string, options?: Record<string, unknown>) => string;
 
 function formatDuration(seconds: number): string {
   if (!seconds || seconds <= 0) return '0s';
@@ -27,7 +30,7 @@ function formatAudioTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function formatCallDate(dateStr: string): { date: string; time: string } {
+function formatCallDate(dateStr: string, t: TFunction): { date: string; time: string } {
   const d = new Date(dateStr);
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -37,15 +40,15 @@ function formatCallDate(dateStr: string): { date: string; time: string } {
 
   let dateLabel: string;
   if (callDay.getTime() === today.getTime()) {
-    dateLabel = 'Today';
+    dateLabel = t('callLog.today');
   } else if (callDay.getTime() === yesterday.getTime()) {
-    dateLabel = 'Yesterday';
+    dateLabel = t('callLog.yesterday');
   } else {
-    dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
-  const timeLabel = d.toLocaleTimeString('en-US', { 
-    hour: '2-digit', minute: '2-digit', hour12: false 
+  const timeLabel = d.toLocaleTimeString(undefined, {
+    hour: '2-digit', minute: '2-digit', hour12: false
   });
 
   return { date: dateLabel, time: timeLabel };
@@ -58,7 +61,7 @@ function parseQoS(raw: string | null): QoSData | null {
     const parts = raw.split(',');
     const qosPart = parts[0].replace('QoS:', '');
     const callerPart = parts.find(p => p.startsWith('Caller:'));
-    
+
     const metrics: Record<string, string> = {};
     qosPart.split(';').forEach(pair => {
       const [k, v] = pair.split('=');
@@ -86,18 +89,16 @@ function parseQoS(raw: string | null): QoSData | null {
 // Normalize MES to ensure it's within 0-100 range
 function normalizeMesTo100(mes: number | null): number | null {
   if (mes === null) return null;
-  // Use raw value, just ensure it's within 0-100 range
   return Math.max(0, Math.min(100, mes));
 }
 
-function getMesLabel(mes: number | null): { emoji: string; label: string; color: string } {
+function getMesLabel(mes: number | null, t: TFunction): { emoji: string; label: string; color: string } {
   const normalized = normalizeMesTo100(mes);
-  if (normalized === null) return { emoji: '—', label: 'N/A', color: 'var(--text-muted)' };
-  // 0-100 scale thresholds
-  if (normalized >= 80) return { emoji: '⭐', label: 'EXCELLENT', color: '#10b981' };
-  if (normalized >= 72) return { emoji: '✅', label: 'GOOD', color: '#22c55e' };
-  if (normalized >= 60) return { emoji: '⚠️', label: 'FAIR', color: '#f59e0b' };
-  return { emoji: '❌', label: 'POOR', color: '#ef4444' };
+  if (normalized === null) return { emoji: '—', label: t('callLog.na'), color: 'var(--text-muted)' };
+  if (normalized >= 80) return { emoji: '⭐', label: t('callLog.audioQuality.excellent'), color: '#10b981' };
+  if (normalized >= 72) return { emoji: '✅', label: t('callLog.audioQuality.good'), color: '#22c55e' };
+  if (normalized >= 60) return { emoji: '⚠️', label: t('callLog.audioQuality.fair'), color: '#f59e0b' };
+  return { emoji: '❌', label: t('callLog.audioQuality.poor'), color: '#ef4444' };
 }
 
 function getJitterColor(jitter: number | null): string {
@@ -119,40 +120,40 @@ function calculateLostPackets(lossPercent: number | null, totalPackets: number |
   return Math.round((lossPercent / 100) * totalPackets);
 }
 
-function getOverallScore(qos: QoSData): { label: string; color: string } {
+function getOverallScore(qos: QoSData, t: TFunction): { label: string; color: string } {
   const scores: number[] = [];
   const rxNormalized = normalizeMesTo100(qos.rxMes);
   const txNormalized = normalizeMesTo100(qos.txMes);
   if (rxNormalized !== null) scores.push(rxNormalized);
   if (txNormalized !== null) scores.push(txNormalized);
-  if (scores.length === 0) return { label: 'N/A', color: 'var(--text-muted)' };
+  if (scores.length === 0) return { label: t('callLog.na'), color: 'var(--text-muted)' };
   const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
-  // Use same thresholds as getMesLabel (0-100 scale)
-  if (avg >= 80) return { label: 'High', color: '#10b981' };
-  if (avg >= 60) return { label: 'Medium', color: '#f59e0b' };
-  return { label: 'Low', color: '#ef4444' };
+  if (avg >= 80) return { label: t('callLog.score.high'), color: '#10b981' };
+  if (avg >= 60) return { label: t('callLog.score.medium'), color: '#f59e0b' };
+  return { label: t('callLog.score.low'), color: '#ef4444' };
 }
 
-function getAudioSummary(qos: QoSData): string {
-  const describe = (mes: number | null, direction: string) => {
+function getAudioSummary(qos: QoSData, t: TFunction): string {
+  const describe = (mes: number | null, directionKey: 'incoming' | 'outgoing') => {
     const normalized = normalizeMesTo100(mes);
     if (normalized === null) return '';
-    if (normalized >= 80) return `${direction} audio is perfect`;
-    if (normalized >= 72) return `${direction} audio is very good`;
-    if (normalized >= 60) return `${direction} audio is fair`;
-    return `${direction} audio is poor`;
+    const direction = t(`callLog.direction.${directionKey}`);
+    if (normalized >= 80) return t('callLog.audioDesc.perfect', { direction });
+    if (normalized >= 72) return t('callLog.audioDesc.veryGood', { direction });
+    if (normalized >= 60) return t('callLog.audioDesc.fair', { direction });
+    return t('callLog.audioDesc.poor', { direction });
   };
-  const parts = [describe(qos.rxMes, 'Incoming'), describe(qos.txMes, 'outgoing')].filter(Boolean);
-  return parts.join('; ') || 'No audio quality data available';
+  const parts = [describe(qos.rxMes, 'incoming'), describe(qos.txMes, 'outgoing')].filter(Boolean);
+  return parts.join('; ') || t('callLog.audioDesc.noData');
 }
 
-const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  completed:  { label: 'Completed',    color: '#3fb950', bg: 'rgba(63,185,80,0.12)' },
-  failed:     { label: 'Failed',       color: '#f85149', bg: 'rgba(248,81,73,0.12)' },
-  no_answer:  { label: 'No Answer',    color: '#d29922', bg: 'rgba(210,153,34,0.12)' },
-  in_progress:{ label: 'In Progress',  color: '#58a6ff', bg: 'rgba(88,166,255,0.12)' },
-  busy:       { label: 'Busy',         color: '#f0883e', bg: 'rgba(240,136,62,0.12)' },
-  switched_off:{ label: 'Switched Off', color: '#6e7681', bg: 'rgba(110,118,129,0.12)' },
+const STATUS_CONFIG: Record<string, { color: string; bg: string }> = {
+  completed:   { color: '#3fb950', bg: 'rgba(63,185,80,0.12)' },
+  failed:      { color: '#f85149', bg: 'rgba(248,81,73,0.12)' },
+  no_answer:   { color: '#d29922', bg: 'rgba(210,153,34,0.12)' },
+  in_progress: { color: '#58a6ff', bg: 'rgba(88,166,255,0.12)' },
+  busy:        { color: '#f0883e', bg: 'rgba(240,136,62,0.12)' },
+  switched_off:{ color: '#6e7681', bg: 'rgba(110,118,129,0.12)' },
 };
 
 const ITEMS_PER_PAGE = 25;
@@ -166,6 +167,7 @@ interface AudioPlayerProps {
 }
 
 function AudioPlayer({ recordingPath, recordingFile }: AudioPlayerProps) {
+  const { t } = useTranslation();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -175,7 +177,7 @@ function AudioPlayer({ recordingPath, recordingFile }: AudioPlayerProps) {
 
   if (!recordingPath || errored) {
     return (
-      <span className="cl-no-recording">🎵 No recording</span>
+      <span className="cl-no-recording">🎵 {t('callLog.noRecording')}</span>
     );
   }
 
@@ -233,14 +235,14 @@ function AudioPlayer({ recordingPath, recordingFile }: AudioPlayerProps) {
         onPause={handlePause}
         onError={handleError}
       />
-      <button className="cl-audio-btn cl-audio-play" onClick={togglePlay} title={playing ? 'Pause' : 'Play'}>
+      <button className="cl-audio-btn cl-audio-play" onClick={togglePlay} title={playing ? t('callLog.pause') : t('callLog.play')}>
         {playing ? <Pause size={14} /> : <Play size={14} />}
       </button>
       <a
         className="cl-audio-btn cl-audio-download"
         href={audioUrl}
         download={recordingFile || 'recording'}
-        title="Download"
+        title={t('callLog.download')}
         onClick={e => e.stopPropagation()}
       >
         <Download size={14} />
@@ -272,19 +274,16 @@ interface QoSModalProps {
 }
 
 function QoSModal({ qos, call, onClose }: QoSModalProps) {
-  const overall = getOverallScore(qos);
-  const txMesInfo = getMesLabel(qos.txMes);
-  const rxMesInfo = getMesLabel(qos.rxMes);
+  const { t } = useTranslation();
+  const overall = getOverallScore(qos, t);
+  const txMesInfo = getMesLabel(qos.txMes, t);
+  const rxMesInfo = getMesLabel(qos.rxMes, t);
 
-  // Close on escape and prevent body scroll
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
-    
-    // Prevent body scroll when modal is open
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    
     return () => {
       window.removeEventListener('keydown', handler);
       document.body.style.overflow = originalOverflow;
@@ -296,7 +295,7 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
       <div className="cl-qos-modal" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header">
-          <h3 className="modal-title">📊 Quality of Service Report</h3>
+          <h3 className="modal-title">{t('callLog.qos.title')}</h3>
           <button className="modal-close" onClick={onClose}>
             <X size={20} />
           </button>
@@ -306,18 +305,18 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
         <div className="modal-body" style={{ padding: 0 }}>
           {/* Summary Section */}
           <div className="cl-qos-summary">
-            <p className="cl-qos-text">{getAudioSummary(qos)}</p>
+            <p className="cl-qos-text">{getAudioSummary(qos, t)}</p>
             <div className="cl-qos-participants">
               <span className="cl-qos-badge agent">
-                {call.extension || 'Agent'}
+                {call.extension || t('callLog.qos.agent')}
               </span>
               <span className="cl-qos-arrow">↔</span>
               <span className="cl-qos-badge customer">
-                {qos.caller || call.phone_number || 'Customer'}
+                {qos.caller || call.phone_number || t('callLog.qos.customer')}
               </span>
             </div>
             <div className="cl-qos-overall">
-              Overall Score:{' '}
+              {t('callLog.qos.overallScore')}{' '}
               <span style={{ color: overall.color, fontWeight: 700 }}>{overall.label}</span>
             </div>
           </div>
@@ -327,19 +326,19 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
             <table className="cl-qos-table">
               <thead>
                 <tr>
-                  <th>Metric</th>
-                  <th>Audio from system (TX)</th>
-                  <th>Audio to system (RX)</th>
+                  <th>{t('callLog.qos.metric')}</th>
+                  <th>{t('callLog.qos.audioFromSystem')}</th>
+                  <th>{t('callLog.qos.audioToSystem')}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>Total Packets</td>
+                  <td>{t('callLog.qos.totalPackets')}</td>
                   <td>{qos.txPackets ?? '—'}</td>
                   <td>{qos.rxPackets ?? '—'}</td>
                 </tr>
                 <tr>
-                  <td>Jitter (Timing)</td>
+                  <td>{t('callLog.qos.jitter')}</td>
                   <td style={{ color: getJitterColor(qos.txJitter) }}>
                     {qos.txJitter !== null ? `${qos.txJitter.toFixed(2)} ms` : '—'}
                   </td>
@@ -348,22 +347,22 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
                   </td>
                 </tr>
                 <tr>
-                  <td>Data Loss</td>
+                  <td>{t('callLog.qos.dataLoss')}</td>
                   <td style={{ color: getLossColor(qos.txLoss) }}>
                     {(() => {
                       const lostPackets = calculateLostPackets(qos.txLoss, qos.txPackets);
-                      return lostPackets !== null ? `${lostPackets} packets` : '—';
+                      return lostPackets !== null ? t('callLog.qos.packets', { count: lostPackets }) : '—';
                     })()}
                   </td>
                   <td style={{ color: getLossColor(qos.rxLoss) }}>
                     {(() => {
                       const lostPackets = calculateLostPackets(qos.rxLoss, qos.rxPackets);
-                      return lostPackets !== null ? `${lostPackets} packets` : '—';
+                      return lostPackets !== null ? t('callLog.qos.packets', { count: lostPackets }) : '—';
                     })()}
                   </td>
                 </tr>
                 <tr>
-                  <td>Audio Score (MES)</td>
+                  <td>{t('callLog.qos.audioScore')}</td>
                   <td style={{ color: txMesInfo.color }}>
                     {qos.txMes !== null ? (
                       <>{txMesInfo.emoji} {normalizeMesTo100(qos.txMes)?.toFixed(2) ?? '—'} — {txMesInfo.label}</>
@@ -376,7 +375,7 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
                   </td>
                 </tr>
                 <tr>
-                  <td>RTT (Round Trip Time)</td>
+                  <td>{t('callLog.qos.rtt')}</td>
                   <td colSpan={2} style={{ textAlign: 'center' }}>
                     {qos.rtt !== null ? `${qos.rtt.toFixed(2)} ms` : '—'}
                   </td>
@@ -388,7 +387,7 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
 
         {/* Footer */}
         <div className="modal-footer">
-          <button className="btn" onClick={onClose}>Close</button>
+          <button className="btn" onClick={onClose}>{t('callLog.qos.close')}</button>
         </div>
       </div>
     </div>
@@ -398,15 +397,15 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
 // ---------------------------------------------------------------------------
 // Call Journey Modal — timeline, icons, structured details
 // ---------------------------------------------------------------------------
-const JOURNEY_EVENT_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  INBOUND:      { label: 'Inbound',    icon: <PhoneIncoming size={16} />, color: 'var(--journey-inbound)' },
-  OUTBOUND:     { label: 'Outbound',   icon: <PhoneOutgoing size={16} />, color: 'var(--journey-outbound)' },
-  QUEUE_ENTER:  { label: 'Queue',      icon: <ListOrdered size={16} />,   color: 'var(--journey-queue)' },
-  RING:         { label: 'Ringing',    icon: <Phone size={16} />,         color: 'var(--journey-ring)' },
-  ANSWER:       { label: 'Answered',  icon: <PhoneCall size={16} />,   color: 'var(--journey-answer)' },
-  NO_ANSWER:    { label: 'No Answer', icon: <PhoneMissed size={16} />, color: 'var(--journey-no-answer)' },
-  TRANSFER:     { label: 'Transfer',   icon: <Share2 size={16} />,       color: 'var(--journey-transfer)' },
-  HANGUP:       { label: 'Hangup',    icon: <PhoneOff size={16} />,     color: 'var(--journey-hangup)' },
+const JOURNEY_EVENT_CONFIG: Record<string, { icon: React.ReactNode; color: string }> = {
+  INBOUND:     { icon: <PhoneIncoming size={16} />, color: 'var(--journey-inbound)' },
+  OUTBOUND:    { icon: <PhoneOutgoing size={16} />, color: 'var(--journey-outbound)' },
+  QUEUE_ENTER: { icon: <ListOrdered size={16} />,   color: 'var(--journey-queue)' },
+  RING:        { icon: <Phone size={16} />,         color: 'var(--journey-ring)' },
+  ANSWER:      { icon: <PhoneCall size={16} />,     color: 'var(--journey-answer)' },
+  NO_ANSWER:   { icon: <PhoneMissed size={16} />,   color: 'var(--journey-no-answer)' },
+  TRANSFER:    { icon: <Share2 size={16} />,        color: 'var(--journey-transfer)' },
+  HANGUP:      { icon: <PhoneOff size={16} />,      color: 'var(--journey-hangup)' },
 };
 
 interface CallJourneyModalProps {
@@ -416,6 +415,8 @@ interface CallJourneyModalProps {
 }
 
 function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
+  const { t } = useTranslation();
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
@@ -427,17 +428,22 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
     };
   }, [onClose]);
 
-  const summary = formatCallDate(call.calldate);
-  const config = (eventType: string) =>
-    JOURNEY_EVENT_CONFIG[eventType] ?? { label: eventType.replace(/_/g, ' '), icon: <Route size={16} />, color: 'var(--text-muted)' };
+  const summary = formatCallDate(call.calldate, t);
+  const getEventConfig = (eventType: string) =>
+    JOURNEY_EVENT_CONFIG[eventType] ?? { icon: <Route size={16} />, color: 'var(--text-muted)' };
+  const getEventLabel = (eventType: string) =>
+    t(`callLog.journey.events.${eventType}`, { defaultValue: eventType.replace(/_/g, ' ') });
+
+  const stepCount = journey.length;
+  const stepsLabel = t(stepCount === 1 ? 'callLog.journey.steps' : 'callLog.journey.stepsPlural', { count: stepCount });
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="cl-qos-modal cl-journey-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header cl-journey-header">
           <div className="cl-journey-header-top">
-            <h3 className="modal-title">Call Journey</h3>
-            <span className="cl-journey-step-count">{journey.length} step{journey.length !== 1 ? 's' : ''}</span>
+            <h3 className="modal-title">{t('callLog.journey.title')}</h3>
+            <span className="cl-journey-step-count">{stepsLabel}</span>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close">
             <X size={20} />
@@ -446,7 +452,7 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
         <div className="modal-body cl-journey-body">
           <div className="cl-journey-summary">
             <div className="cl-journey-summary-row">
-              <span className="cl-journey-summary-label">Contact</span>
+              <span className="cl-journey-summary-label">{t('callLog.journey.contact')}</span>
               <span className="cl-journey-summary-value cl-journey-phone">{call.phone_number || call.src || '—'}</span>
             </div>
             <div className="cl-journey-summary-meta">
@@ -456,7 +462,7 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
               {call.talk != null && call.talk > 0 && (
                 <>
                   <span className="cl-journey-dot" aria-hidden>·</span>
-                  <span className="cl-journey-duration">Talk {formatDuration(call.talk)}</span>
+                  <span className="cl-journey-duration">{t('callLog.journey.talkDuration', { duration: formatDuration(call.talk) })}</span>
                 </>
               )}
             </div>
@@ -465,18 +471,18 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
                 {call.call_type || '—'}
               </span>
               {call.extension && (
-                <span className="cl-journey-agent-badge">Agent {call.extension}</span>
+                <span className="cl-journey-agent-badge">{t('callLog.journey.agent', { id: call.extension })}</span>
               )}
             </div>
           </div>
 
           <div className="cl-journey-timeline-wrap">
             {journey.length === 0 ? (
-              <p className="cl-journey-empty">No journey data for this call.</p>
+              <p className="cl-journey-empty">{t('callLog.journey.noData')}</p>
             ) : (
               <ul className="cl-journey-timeline" role="list">
                 {journey.map((e, i) => {
-                  const cf = config(e.event);
+                  const cf = getEventConfig(e.event);
                   const isLast = i === journey.length - 1;
                   return (
                     <li key={i} className="cl-journey-timeline-item" style={{ '--journey-color': cf.color } as React.CSSProperties}>
@@ -487,14 +493,14 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
                       <div className="cl-journey-timeline-content">
                         <div className="cl-journey-event-time">{e.time}</div>
                         <div className="cl-journey-event-card">
-                          <span className="cl-journey-event-name" style={{ color: cf.color }}>{cf.label}</span>
+                          <span className="cl-journey-event-name" style={{ color: cf.color }}>{getEventLabel(e.event)}</span>
                           <div className="cl-journey-event-details">
-                            {e.agent != null && <span className="cl-journey-detail-pill">Agent {e.agent}</span>}
-                            {e.queue != null && <span className="cl-journey-detail-pill">Queue {e.queue}</span>}
+                            {e.agent != null && <span className="cl-journey-detail-pill">{t('callLog.journey.agent', { id: e.agent })}</span>}
+                            {e.queue != null && <span className="cl-journey-detail-pill">{t('callLog.journey.queue', { id: e.queue })}</span>}
                             {e.duration != null && e.duration > 0 && <span className="cl-journey-detail-pill">{e.duration}s</span>}
                             {e.reason != null && <span className="cl-journey-detail-pill">{e.reason}</span>}
-                            {e.from_number != null && <span className="cl-journey-detail-pill">From {e.from_number}</span>}
-                            {e.to_number != null && <span className="cl-journey-detail-pill">To {e.to_number}</span>}
+                            {e.from_number != null && <span className="cl-journey-detail-pill">{t('callLog.journey.from', { number: e.from_number })}</span>}
+                            {e.to_number != null && <span className="cl-journey-detail-pill">{t('callLog.journey.to', { number: e.to_number })}</span>}
                           </div>
                         </div>
                       </div>
@@ -506,7 +512,7 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
           </div>
         </div>
         <div className="modal-footer">
-          <button className="btn" onClick={onClose}>Close</button>
+          <button className="btn" onClick={onClose}>{t('callLog.qos.close')}</button>
         </div>
       </div>
     </div>
@@ -517,6 +523,8 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
 // Main CallLogPanel Component
 // ---------------------------------------------------------------------------
 export function CallLogPanel() {
+  const { t } = useTranslation();
+
   // Data
   const [calls, setCalls] = useState<CallLogRecord[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -625,21 +633,21 @@ export function CallLogPanel() {
       {/* Header */}
       <div className="cl-header">
         <div className="cl-header-left">
-          <h2 className="cl-title">📈 Call History</h2>
-          <p className="cl-subtitle">View and manage call records</p>
+          <h2 className="cl-title">📈 {t('callLog.title')}</h2>
+          <p className="cl-subtitle">{t('callLog.viewManage')}</p>
         </div>
         <div className="cl-header-right">
-          <button 
-            className="btn" 
-            onClick={() => setSortAsc(!sortAsc)} 
-            title={sortAsc ? 'Sort: Oldest First' : 'Sort: Newest First'}
+          <button
+            className="btn"
+            onClick={() => setSortAsc(!sortAsc)}
+            title={sortAsc ? t('callLog.sortOldest') : t('callLog.sortNewest')}
           >
             <ArrowUpDown size={14} />
-            {sortAsc ? 'Oldest First' : 'Newest First'}
+            {sortAsc ? t('callLog.sortOldestBtn') : t('callLog.sortNewestBtn')}
           </button>
           <div className="cl-stats-card">
             <span className="cl-stats-count">{totalCount}</span>
-            <span className="cl-stats-label">Total Calls</span>
+            <span className="cl-stats-label">{t('callLog.totalCalls')}</span>
           </div>
         </div>
       </div>
@@ -651,7 +659,7 @@ export function CallLogPanel() {
           <input
             className="cl-filter-input"
             type="text"
-            placeholder="Search by src or dest..."
+            placeholder={t('callLog.searchPlaceholder')}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
@@ -667,10 +675,10 @@ export function CallLogPanel() {
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
           >
-            <option value="">All Statuses</option>
+            <option value="">{t('callLog.allStatuses')}</option>
             {statusOptions.map(s => (
               <option key={s} value={s}>
-                {STATUS_CONFIG[s]?.label || s}
+                {t(`callLog.status.${s}`, { defaultValue: s })}
               </option>
             ))}
           </select>
@@ -681,9 +689,9 @@ export function CallLogPanel() {
             value={callTypeFilter}
             onChange={e => setCallTypeFilter(e.target.value)}
           >
-            <option value="">All Directions</option>
-            {callTypeOptions.map(t => (
-              <option key={t} value={t}>{t}</option>
+            <option value="">{t('callLog.allDirections')}</option>
+            {callTypeOptions.map(ct => (
+              <option key={ct} value={ct}>{ct}</option>
             ))}
           </select>
         </div>
@@ -693,7 +701,7 @@ export function CallLogPanel() {
             value={appFilter}
             onChange={e => setAppFilter(e.target.value)}
           >
-            <option value="">All Apps</option>
+            <option value="">{t('callLog.allApps')}</option>
             {appOptions.map(a => (
               <option key={a} value={a}>{a}</option>
             ))}
@@ -705,7 +713,7 @@ export function CallLogPanel() {
             type="date"
             value={dateFrom}
             onChange={e => setDateFrom(e.target.value)}
-            title="Date From"
+            title={t('callLog.dateFrom')}
           />
         </div>
         <div className="cl-filter-item">
@@ -714,7 +722,7 @@ export function CallLogPanel() {
             type="date"
             value={dateTo}
             onChange={e => setDateTo(e.target.value)}
-            title="Date To"
+            title={t('callLog.dateTo')}
           />
         </div>
       </div>
@@ -724,40 +732,41 @@ export function CallLogPanel() {
         {loading ? (
           <div className="cl-loading">
             <Loader2 size={32} className="spinner" />
-            <p>Loading call history...</p>
+            <p>{t('callLog.loading')}</p>
           </div>
         ) : error ? (
           <div className="cl-error">
             <p>⚠️ {error}</p>
-            <button className="btn btn-primary" onClick={fetchData}>Retry</button>
+            <button className="btn btn-primary" onClick={fetchData}>{t('callLog.retry')}</button>
           </div>
         ) : pageItems.length === 0 ? (
           <div className="cl-empty">
             <Phone size={48} />
-            <p>📞 No calls found</p>
+            <p>📞 {t('callLog.noCallsFound')}</p>
           </div>
         ) : (
           <table className="cl-table">
             <thead>
               <tr>
-                <th>Src</th>
-                <th>Dest</th>
-                <th>App</th>
-                <th>Direction</th>
-                <th>Status</th>
-                <th>Agent</th>
-                <th>Duration</th>
-                <th>Talk</th>
-                <th>Recording</th>
-                <th>Date & Time</th>
-                <th>Call Journey</th>
-                <th>QOS</th>
+                <th>{t('callLog.table.src')}</th>
+                <th>{t('callLog.table.dest')}</th>
+                <th>{t('callLog.table.app')}</th>
+                <th>{t('callLog.table.direction')}</th>
+                <th>{t('callLog.table.status')}</th>
+                <th>{t('callLog.table.agent')}</th>
+                <th>{t('callLog.table.duration')}</th>
+                <th>{t('callLog.table.talk')}</th>
+                <th>{t('callLog.table.recording')}</th>
+                <th>{t('callLog.table.dateTime')}</th>
+                <th>{t('callLog.table.callJourney')}</th>
+                <th>{t('callLog.table.qos')}</th>
               </tr>
             </thead>
             <tbody>
               {pageItems.map((call, idx) => {
-                const st = STATUS_CONFIG[call.status] || { label: call.status, color: '#6e7681', bg: 'rgba(110,118,129,0.12)' };
-                const dt = formatCallDate(call.calldate);
+                const st = STATUS_CONFIG[call.status] || { color: '#6e7681', bg: 'rgba(110,118,129,0.12)' };
+                const stLabel = t(`callLog.status.${call.status}`, { defaultValue: call.status });
+                const dt = formatCallDate(call.calldate, t);
                 const hasQos = !!parseQoS(call.QoS);
 
                 return (
@@ -783,7 +792,7 @@ export function CallLogPanel() {
                         onClick={() => { if (call.status === 'completed' && hasQos) handleOpenQos(call); }}
                         role={call.status === 'completed' && hasQos ? 'button' : undefined}
                       >
-                        {st.label}
+                        {stLabel}
                       </span>
                     </td>
                     <td>{call.extension || '—'}</td>
@@ -808,7 +817,7 @@ export function CallLogPanel() {
                           className="cl-qos-btn cl-journey-btn"
                           onClick={() => handleOpenJourney(call)}
                           disabled={journeyLoadingLinkedid !== null}
-                          title="Show call journey"
+                          title={t('callLog.showJourney')}
                         >
                           {journeyLoadingLinkedid === call.linkedid ? <Loader2 size={16} className="spinner" /> : <Route size={16} />}
                           <span className="cl-journey-count">{call.call_journey_count}</span>
@@ -822,7 +831,7 @@ export function CallLogPanel() {
                         <button
                           className="cl-qos-btn"
                           onClick={() => handleOpenQos(call)}
-                          title="View QOS Report"
+                          title={t('callLog.viewQoS')}
                         >
                           <BarChart3 size={16} />
                         </button>
@@ -842,7 +851,7 @@ export function CallLogPanel() {
       {!loading && sorted.length > 0 && (
         <div className="cl-pagination">
           <span className="cl-pagination-info">
-            Showing {startIdx + 1} to {Math.min(startIdx + ITEMS_PER_PAGE, sorted.length)} of {sorted.length} calls
+            {t('callLog.showing', { start: startIdx + 1, end: Math.min(startIdx + ITEMS_PER_PAGE, sorted.length), total: sorted.length })}
           </span>
           <div className="cl-pagination-controls">
             <button
@@ -851,7 +860,7 @@ export function CallLogPanel() {
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
             >
               <ChevronLeft size={16} />
-              Previous
+              {t('callLog.previous')}
             </button>
             <span className="cl-page-current">{safeCurrentPage}</span>
             <button
@@ -859,7 +868,7 @@ export function CallLogPanel() {
               disabled={safeCurrentPage >= totalPages}
               onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
             >
-              Next
+              {t('callLog.next')}
               <ChevronRight size={16} />
             </button>
           </div>
@@ -887,4 +896,3 @@ export function CallLogPanel() {
     </div>
   );
 }
-

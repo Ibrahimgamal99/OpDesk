@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus, Phone,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { getAuthHeaders, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
 
@@ -228,6 +229,7 @@ function MultiSelectDropdown({
 }
 
 export function UsersPanel(props: UsersPanelProps = {}) {
+  const { t } = useTranslation();
   const { pendingUserForm = null, onClearPendingUserForm, onOpenCreateGroup } = props;
   const currentUser = getUser();
   const isAdmin = currentUser?.role === 'admin';
@@ -288,11 +290,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         setAgents(d.agents || []);
       }
       if (!usersRes.ok && usersRes.status === 403) {
-        setMessage({ type: 'error', text: 'Admin access required to manage users.' });
+        setMessage({ type: 'error', text: t('users.adminRequired') });
       }
     } catch (e) {
       console.error(e);
-      setMessage({ type: 'error', text: 'Failed to load users or groups' });
+      setMessage({ type: 'error', text: t('users.loadError') });
     } finally {
       setLoading(false);
     }
@@ -339,11 +341,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     e.preventDefault();
     setMessage(null);
     if (!form.username.trim()) {
-      setMessage({ type: 'error', text: 'Username is required' });
+      setMessage({ type: 'error', text: t('users.usernameRequired') });
       return;
     }
     if (!editingUser && !form.password) {
-      setMessage({ type: 'error', text: 'Password is required for new user' });
+      setMessage({ type: 'error', text: t('users.passwordRequired') });
       return;
     }
     try {
@@ -364,7 +366,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           const err = await res.json();
           throw new Error(err.detail || 'Update failed');
         }
-        setMessage({ type: 'success', text: 'User updated' });
+        setMessage({ type: 'success', text: t('users.userUpdated') });
       } else {
         const res = await fetch('/api/settings/users', {
           method: 'POST',
@@ -383,7 +385,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           const err = await res.json();
           throw new Error(err.detail || 'Create failed');
         }
-        setMessage({ type: 'success', text: 'User created' });
+        setMessage({ type: 'success', text: t('users.userCreated') });
       }
       resetForm();
       loadData();
@@ -395,10 +397,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
 
   const handleDelete = async (user: OpDeskUser) => {
     if (user.id === currentUser?.id) {
-      setMessage({ type: 'error', text: 'You cannot delete yourself' });
+      setMessage({ type: 'error', text: t('users.cannotDeleteSelf') });
       return;
     }
-    if (!window.confirm(`Delete user "${user.username}"?`)) return;
+    if (!window.confirm(t('users.deleteConfirm', { username: user.username }))) return;
     setMessage(null);
     try {
       const res = await fetch(`/api/settings/users/${user.id}`, {
@@ -409,7 +411,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         const err = await res.json();
         throw new Error(err.detail || 'Delete failed');
       }
-      setMessage({ type: 'success', text: 'User deleted' });
+      setMessage({ type: 'success', text: t('users.userDeleted') });
       resetForm();
       loadData();
     } catch (err: unknown) {
@@ -423,7 +425,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         <div className="panel-content">
           <div className="settings-section" style={{ textAlign: 'center', padding: 48 }}>
             <Shield size={48} style={{ marginBottom: 20, opacity: 0.6, color: 'var(--text-muted)' }} />
-            <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>Only administrators can manage users.</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>{t('users.adminOnly')}</p>
           </div>
         </div>
       </div>
@@ -435,7 +437,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       <div className="panel">
         <div className="panel-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 64 }}>
           <Loader2 size={32} className="spinner" />
-          <p style={{ marginTop: 20, color: 'var(--text-secondary)', fontSize: 14 }}>Loading users...</p>
+          <p style={{ marginTop: 20, color: 'var(--text-secondary)', fontSize: 14 }}>{t('users.loading')}</p>
         </div>
       </div>
     );
@@ -447,8 +449,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     const groupNames = (u.group_ids || [])
       .map(gid => groups.find(g => g.id === gid)?.name)
       .filter(Boolean) as string[];
-    if (n === 0) return { short: 'No groups', title: 'No groups assigned', full: [] as string[] };
-    const short = n === 1 ? '1 group' : `${n} groups`;
+    if (n === 0) return { short: t('users.noGroups'), title: t('users.noGroups'), full: [] as string[] };
+    const short = n === 1 ? t('users.oneGroup') : t('users.manyGroups', { count: n });
     const title = groupNames.length ? groupNames.join(', ') : short;
     const full = groupNames.length ? groupNames : [short];
     return { short, title, full };
@@ -474,7 +476,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             onClick={() => setUsersSubTab('create')}
           >
             <UserPlus size={18} />
-            Create / Edit user
+            {t('users.createEdit')}
           </button>
           <button
             type="button"
@@ -482,7 +484,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             onClick={() => setUsersSubTab('list')}
           >
             <Users size={18} />
-            All users
+            {t('users.title')}
           </button>
         </div>
 
@@ -493,55 +495,55 @@ export function UsersPanel(props: UsersPanelProps = {}) {
               {editingUser ? <Pencil size={24} /> : <UserPlus size={24} />}
             </div>
             <div>
-              <h2 className="up-add-title">{editingUser ? 'Edit user' : 'Add new user'}</h2>
+              <h2 className="up-add-title">{editingUser ? t('users.editUser') : t('users.addNewUser')}</h2>
               <p className="up-add-desc">
-                Create or update OpDesk users and assign roles, extensions, and queues.
+                {t('users.adminMonitorDesc')}
               </p>
             </div>
           </div>
 
           <form onSubmit={handleCreateOrUpdate} className="up-add-body">
-            <div className="up-form-divider">Account</div>
+            <div className="up-form-divider">{t('users.account')}</div>
             <div className="up-form-row">
               <div className="up-form-group">
-                <label>Username *</label>
+                <label>{t('users.username')}</label>
                 <input
                   type="text"
                   className="form-input"
                   value={form.username}
                   onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                  placeholder="Username"
+                  placeholder={t('users.username')}
                   disabled={!!editingUser}
                 />
               </div>
               <div className="up-form-group">
-                <label>{editingUser ? 'New password (leave blank to keep)' : 'Password *'}</label>
+                <label>{editingUser ? t('users.newPassword') : t('users.password')}</label>
                 <input
                   type="password"
                   className="form-input"
                   value={form.password}
                   onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  placeholder={editingUser ? 'Leave blank to keep' : 'Password'}
+                  placeholder={editingUser ? t('users.keepBlank') : t('users.password')}
                 />
               </div>
             </div>
 
-            <div className="up-form-divider">Profile</div>
+            <div className="up-form-divider">{t('users.profile')}</div>
             <div className="up-form-row">
               <div className="up-form-group">
-                <label>Display name</label>
+                <label>{t('users.displayName')}</label>
                 <input
                   type="text"
                   className="form-input"
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="Full name"
+                  placeholder={t('users.fullName')}
                 />
               </div>
               <div className="up-form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Phone size={14} />
-                  Extension (optional)
+                  {t('users.extension')}
                 </label>
                 <select
                   className="form-input"
@@ -556,66 +558,66 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   ))}
                 </select>
                 {agents.length === 0 && (
-                  <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>No extensions in system</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>{t('users.noExtensions')}</p>
                 )}
               </div>
             </div>
             <div className="up-form-row">
               <div className="up-form-group">
-                <label>Role</label>
+                <label>{t('users.role')}</label>
                 <select
                   className="form-input"
                   value={form.role}
                   onChange={e => setForm(f => ({ ...f, role: e.target.value as 'admin' | 'supervisor' | 'agent' }))}
                 >
-                  <option value="supervisor">Supervisor</option>
-                  <option value="agent">Agent</option>
-                  <option value="admin">Admin</option>
+                  <option value="supervisor">{t('users.roles.supervisor')}</option>
+                  <option value="agent">{t('users.roles.agent')}</option>
+                  <option value="admin">{t('users.roles.admin')}</option>
                 </select>
               </div>
               {form.role === 'supervisor' && (
                 <div className="up-form-group">
-                  <label>Monitor modes (select one or more)</label>
+                  <label>{t('users.monitorModes')}</label>
                   <MultiSelectDropdown
                     options={[
-                      { value: 'listen', label: 'Listen' },
-                      { value: 'whisper', label: 'Whisper' },
-                      { value: 'barge', label: 'Barge' },
+                      { value: 'listen', label: t('users.monitor.listen') },
+                      { value: 'whisper', label: t('users.monitor.whisper') },
+                      { value: 'barge', label: t('users.monitor.barge') },
                     ]}
                     value={form.monitor_modes}
                     onChange={monitor_modes => setForm(f => ({ ...f, monitor_modes: monitor_modes.length ? monitor_modes : ['listen'] }))}
-                    placeholder="Select modes..."
-                    emptyMessage="Select at least one"
+                    placeholder={t('users.selectModes')}
+                    emptyMessage={t('users.selectAtLeastOne')}
                   />
                 </div>
               )}
               {form.role === 'admin' && (
                 <div className="up-form-group">
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Admin has full monitor access (Listen, Whisper, Barge).</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>{t('users.adminMonitorDesc')}</p>
                 </div>
               )}
               {form.role === 'agent' && (
                 <div className="up-form-group">
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Agent sees only their extension, active call, and call history.</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>{t('users.agentDesc')}</p>
                 </div>
               )}
             </div>
 
             {form.role !== 'agent' && (
             <>
-            <div className="up-form-divider">Access (via groups)</div>
+            <div className="up-form-divider">{t('users.access')}</div>
             <div className="up-form-row single">
               <div className="up-form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Users size={14} />
-                  Groups (user gets access to agents and queues from selected groups)
+                  {t('users.groupsLabel')}
                 </label>
                 <MultiSelectDropdown
                   options={groups.map(g => ({ value: String(g.id), label: g.name }))}
                   value={form.group_ids}
                   onChange={group_ids => setForm(f => ({ ...f, group_ids }))}
-                  placeholder="Select groups..."
-                  emptyMessage="No groups. Create groups in the Groups tab first."
+                  placeholder={t('users.selectGroups')}
+                  emptyMessage={t('users.noGroupsMessage')}
                 />
                 {onOpenCreateGroup && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
@@ -624,7 +626,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                       className="form-input"
                       value={newGroupNameForCreate}
                       onChange={e => setNewGroupNameForCreate(e.target.value)}
-                      placeholder="New group name (optional)"
+                      placeholder={t('users.newGroupNamePlaceholder')}
                       style={{ width: 200, flex: '0 0 auto' }}
                     />
                     <button
@@ -648,7 +650,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                     >
                       <Plus size={14} />
                       <Group size={14} />
-                      Create new group
+                      {t('users.createNewGroup')}
                     </button>
                   </div>
                 )}
@@ -660,11 +662,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             <div className="up-actions">
               <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Save size={16} />
-                {editingUser ? 'Update user' : 'Add user'}
+                {editingUser ? t('users.updateUser') : t('users.addUser')}
               </button>
               {editingUser && (
                 <button type="button" className="btn" onClick={resetForm}>
-                  Cancel
+                  {t('users.cancel')}
                 </button>
               )}
             </div>
@@ -679,13 +681,13 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             <Users size={22} />
           </div>
           <div>
-            <h2 className="up-list-title">All users</h2>
-            <p className="up-list-desc">View and manage OpDesk user accounts, roles, and access.</p>
+            <h2 className="up-list-title">{t('users.title')}</h2>
+            <p className="up-list-desc">{t('users.adminOnly')}</p>
           </div>
         </div>
 
         {users.length === 0 ? (
-          <div className="up-empty">No users yet. Add one above.</div>
+          <div className="up-empty">{t('users.noUsers')}</div>
         ) : (
           <div className="up-users-list">
             {users.map(u => {
@@ -699,7 +701,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                     <div className="up-user-meta">{[u.name, u.extension].filter(Boolean).join(' · ')}</div>
                   )}
                   <div className="up-user-badges">
-                    <span className={`up-role-badge ${u.role}`}>{u.role}</span>
+                    <span className={`up-role-badge ${u.role}`}>{t(`users.roles.${u.role}`, { defaultValue: u.role })}</span>
                     <button
                       type="button"
                       className="up-access-tag up-access-tag-btn"
@@ -720,11 +722,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   )}
                 </div>
                 <div className="up-user-actions">
-                  <button type="button" className="btn btn-edit" onClick={() => startEdit(u)} title="Edit user">
+                  <button type="button" className="btn btn-edit" onClick={() => startEdit(u)} title={t('users.editUser')}>
                     <Pencil size={14} />
                   </button>
                   {u.id !== currentUser?.id && (
-                    <button type="button" className="btn btn-delete" onClick={() => handleDelete(u)} title="Delete user">
+                    <button type="button" className="btn btn-delete" onClick={() => handleDelete(u)} title={t('users.deleteConfirm', { username: u.username })}>
                       <Trash2 size={14} />
                     </button>
                   )}

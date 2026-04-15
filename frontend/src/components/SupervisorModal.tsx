@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Ear, MicVocal, UserPlus } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface SupervisorModalProps {
   mode: 'listen' | 'whisper' | 'barge';
@@ -9,34 +10,23 @@ interface SupervisorModalProps {
   onSubmit: (supervisor: string) => void;
 }
 
-const modeConfig = {
-  listen: {
-    icon: Ear,
-    title: 'Listen to Call',
-    description: 'Listen silently to the call. Neither party will hear you.',
-    color: 'var(--status-idle)',
-    buttonText: 'Start Listening',
-  },
-  whisper: {
-    icon: MicVocal,
-    title: 'Whisper to Agent',
-    description: 'Speak privately to the agent. The caller will not hear you.',
-    color: 'var(--accent-amber)',
-    buttonText: 'Start Whispering',
-  },
-  barge: {
-    icon: UserPlus,
-    title: 'Barge into Call',
-    description: 'Join the call as a third party. Both parties will hear you.',
-    color: 'var(--accent-pink)',
-    buttonText: 'Barge In',
-  },
+const MODE_ICONS = {
+  listen: Ear,
+  whisper: MicVocal,
+  barge: UserPlus,
+};
+
+const MODE_COLORS = {
+  listen: 'var(--status-idle)',
+  whisper: 'var(--accent-amber)',
+  barge: 'var(--accent-pink)',
 };
 
 export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorModalProps) {
+  const { t } = useTranslation();
   const [supervisor, setSupervisor] = useState('');
-  const config = modeConfig[mode];
-  const Icon = config.icon;
+  const Icon = MODE_ICONS[mode];
+  const color = MODE_COLORS[mode];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,8 +47,8 @@ export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorM
       >
         <div className="modal-header">
           <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Icon size={20} style={{ color: config.color }} />
-            {config.title}
+            <Icon size={20} style={{ color }} />
+            {t(`supervisor.${mode}.title`)}
           </h3>
           <button className="modal-close" onClick={onClose}>
             <X size={20} />
@@ -67,13 +57,13 @@ export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorM
 
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
-            <p style={{ 
-              color: 'var(--text-secondary)', 
+            <p style={{
+              color: 'var(--text-secondary)',
               fontSize: 14,
               marginBottom: 20,
               lineHeight: 1.6
             }}>
-              {config.description}
+              {t(`supervisor.${mode}.description`)}
             </p>
 
             <div style={{
@@ -83,19 +73,19 @@ export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorM
               marginBottom: 20,
               border: '1px solid var(--border-primary)'
             }}>
-              <div style={{ 
-                fontSize: 11, 
+              <div style={{
+                fontSize: 11,
                 color: 'var(--text-muted)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.05em',
                 marginBottom: 6
               }}>
-                Target Extension
+                {t('supervisor.targetExtension')}
               </div>
               <div style={{
                 fontSize: 24,
                 fontWeight: 700,
-                color: config.color,
+                color,
                 fontFamily: 'JetBrains Mono, monospace'
               }}>
                 {target}
@@ -103,11 +93,11 @@ export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorM
             </div>
 
             <div className="form-group">
-              <label className="form-label">Your Extension (Supervisor)</label>
+              <label className="form-label">{t('supervisor.yourExtension')}</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="Enter your extension (e.g., 200)"
+                placeholder={t('supervisor.extensionPlaceholder')}
                 value={supervisor}
                 onChange={(e) => setSupervisor(e.target.value)}
                 autoFocus
@@ -117,20 +107,20 @@ export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorM
 
           <div className="modal-footer">
             <button type="button" className="btn" onClick={onClose}>
-              Cancel
+              {t('supervisor.cancel')}
             </button>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="btn btn-primary"
               disabled={!supervisor.trim()}
-              style={{ 
-                background: config.color,
-                borderColor: config.color,
+              style={{
+                background: color,
+                borderColor: color,
                 opacity: !supervisor.trim() ? 0.5 : 1
               }}
             >
               <Icon size={14} />
-              {config.buttonText}
+              {t(`supervisor.${mode}.buttonText`)}
             </button>
           </div>
         </form>
@@ -138,4 +128,3 @@ export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorM
     </div>
   );
 }
-

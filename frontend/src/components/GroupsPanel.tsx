@@ -4,6 +4,7 @@ import {
   X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield,
   Phone, List, ChevronDown, Group,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { getAuthHeaders, getUser } from '../auth';
 
 export interface OpDeskGroup {
@@ -223,6 +224,7 @@ export interface GroupsPanelProps {
 }
 
 export function GroupsPanel(props: GroupsPanelProps) {
+  const { t } = useTranslation();
   const { initialGroupName, onConsumeIntent } = props;
   const currentUser = getUser();
   const isAdmin = currentUser?.role === 'admin';
@@ -278,11 +280,11 @@ export function GroupsPanel(props: GroupsPanelProps) {
         setUsers((d.users || []).map((u: { id: number; username: string }) => ({ id: u.id, username: u.username })));
       }
       if (!groupsRes.ok && groupsRes.status === 403) {
-        setMessage({ type: 'error', text: 'Admin access required to manage groups.' });
+        setMessage({ type: 'error', text: t('groups.adminRequired') });
       }
     } catch (e) {
       console.error(e);
-      setMessage({ type: 'error', text: 'Failed to load groups or options' });
+      setMessage({ type: 'error', text: t('groups.loadError') });
     } finally {
       setLoading(false);
     }
@@ -319,7 +321,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
     e.preventDefault();
     setMessage(null);
     if (!form.name.trim()) {
-      setMessage({ type: 'error', text: 'Group name is required' });
+      setMessage({ type: 'error', text: t('groups.groupNameRequired') });
       return;
     }
     try {
@@ -338,7 +340,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
           const err = await res.json();
           throw new Error(err.detail || 'Update failed');
         }
-        setMessage({ type: 'success', text: 'Group updated' });
+        setMessage({ type: 'success', text: t('groups.groupUpdated') });
       } else {
         const res = await fetch('/api/settings/groups', {
           method: 'POST',
@@ -354,7 +356,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
           const err = await res.json();
           throw new Error(err.detail || 'Create failed');
         }
-        setMessage({ type: 'success', text: 'Group created' });
+        setMessage({ type: 'success', text: t('groups.groupCreated') });
       }
       resetForm();
       loadData();
@@ -365,7 +367,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
   };
 
   const handleDelete = async (g: OpDeskGroup) => {
-    if (!window.confirm(`Delete group "${g.name}"? Users will lose access to this group's agents and queues.`)) return;
+    if (!window.confirm(t('groups.deleteConfirm', { name: g.name }))) return;
     setMessage(null);
     try {
       const res = await fetch(`/api/settings/groups/${g.id}`, {
@@ -376,7 +378,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
         const err = await res.json();
         throw new Error(err.detail || 'Delete failed');
       }
-      setMessage({ type: 'success', text: 'Group deleted' });
+      setMessage({ type: 'success', text: t('groups.groupDeleted') });
       resetForm();
       loadData();
     } catch (err: unknown) {
@@ -390,7 +392,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
         <div className="panel-content">
           <div className="settings-section" style={{ textAlign: 'center', padding: 48 }}>
             <Shield size={48} style={{ marginBottom: 20, opacity: 0.6, color: 'var(--text-muted)' }} />
-            <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>Only administrators can manage groups.</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>{t('groups.adminOnly')}</p>
           </div>
         </div>
       </div>
@@ -402,7 +404,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
       <div className="panel">
         <div className="panel-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 64 }}>
           <Loader2 size={32} className="spinner" />
-          <p style={{ marginTop: 20, color: 'var(--text-secondary)', fontSize: 14 }}>Loading groups...</p>
+          <p style={{ marginTop: 20, color: 'var(--text-secondary)', fontSize: 14 }}>{t('groups.loading')}</p>
         </div>
       </div>
     );
@@ -435,7 +437,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             onClick={() => setGroupsSubTab('create')}
           >
             <UserPlus size={18} />
-            Create / Edit group
+            {t('groups.createEdit')}
           </button>
           <button
             type="button"
@@ -443,7 +445,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             onClick={() => setGroupsSubTab('list')}
           >
             <Group size={18} />
-            All groups
+            {t('groups.title')}
           </button>
         </div>
 
@@ -454,41 +456,39 @@ export function GroupsPanel(props: GroupsPanelProps) {
                 {editingGroup ? <Pencil size={24} /> : <Group size={24} />}
               </div>
               <div>
-                <h2 className="up-add-title">{editingGroup ? 'Edit group' : 'Add new group'}</h2>
-                <p className="up-add-desc">
-                  Create access groups: name, agents (extensions), queues, and assign users. User access is derived from their groups.
-                </p>
+                <h2 className="up-add-title">{editingGroup ? t('groups.editGroup') : t('groups.addNewGroup')}</h2>
+                <p className="up-add-desc">{t('groups.description')}</p>
               </div>
             </div>
 
             <form onSubmit={handleCreateOrUpdate} className="up-add-body">
-              <div className="up-form-divider">Group</div>
+              <div className="up-form-divider">{t('groups.groupSection')}</div>
               <div className="up-form-row">
                 <div className="up-form-group">
-                  <label>Group name *</label>
+                  <label>{t('groups.groupName')}</label>
                   <input
                     type="text"
                     className="form-input"
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    placeholder="e.g. Sales, Support"
+                    placeholder={t('groups.namePlaceholder')}
                   />
                 </div>
               </div>
 
-              <div className="up-form-divider">Agents &amp; Queues</div>
+              <div className="up-form-divider">{t('groups.agentsQueues')}</div>
               <div className="up-form-row single">
                 <div className="up-form-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Phone size={14} />
-                    Agents (extensions this group can access)
+                    {t('groups.agents')}
                   </label>
                   <MultiSelectDropdown
                     options={agentOptions}
                     value={form.agent_extensions}
                     onChange={agent_extensions => setForm(f => ({ ...f, agent_extensions }))}
-                    placeholder="Select agents..."
-                    emptyMessage="No agents in system"
+                    placeholder={t('groups.selectAgents')}
+                    emptyMessage={t('groups.noAgents')}
                   />
                 </div>
               </div>
@@ -496,31 +496,31 @@ export function GroupsPanel(props: GroupsPanelProps) {
                 <div className="up-form-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <List size={14} />
-                    Queues (queues this group can access)
+                    {t('groups.queues')}
                   </label>
                   <MultiSelectDropdown
                     options={queueOptions}
                     value={form.queue_extensions}
                     onChange={queue_extensions => setForm(f => ({ ...f, queue_extensions }))}
-                    placeholder="Select queues..."
-                    emptyMessage="No queues in system"
+                    placeholder={t('groups.selectQueues')}
+                    emptyMessage={t('groups.noQueues')}
                   />
                 </div>
               </div>
 
-              <div className="up-form-divider">Users</div>
+              <div className="up-form-divider">{t('groups.usersSection')}</div>
               <div className="up-form-row single">
                 <div className="up-form-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Users size={14} />
-                    Users in this group (they get access to the agents and queues above)
+                    {t('groups.usersInGroup')}
                   </label>
                   <MultiSelectDropdown
                     options={userOptions}
                     value={form.user_ids}
                     onChange={user_ids => setForm(f => ({ ...f, user_ids }))}
-                    placeholder="Select users..."
-                    emptyMessage="No users"
+                    placeholder={t('groups.selectUsers')}
+                    emptyMessage={t('groups.noUsers')}
                   />
                 </div>
               </div>
@@ -528,11 +528,11 @@ export function GroupsPanel(props: GroupsPanelProps) {
               <div className="up-actions">
                 <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Save size={16} />
-                  {editingGroup ? 'Update group' : 'Add group'}
+                  {editingGroup ? t('groups.updateGroup') : t('groups.addGroup')}
                 </button>
                 {editingGroup && (
                   <button type="button" className="btn" onClick={resetForm}>
-                    Cancel
+                    {t('groups.cancel')}
                   </button>
                 )}
               </div>
@@ -547,13 +547,13 @@ export function GroupsPanel(props: GroupsPanelProps) {
                 <Group size={22} />
               </div>
               <div>
-                <h2 className="up-list-title">All groups</h2>
-                <p className="up-list-desc">Manage access groups: agents, queues, and users.</p>
+                <h2 className="up-list-title">{t('groups.title')}</h2>
+                <p className="up-list-desc">{t('groups.description')}</p>
               </div>
             </div>
 
             {groups.length === 0 ? (
-              <div className="up-empty">No groups yet. Create one above.</div>
+              <div className="up-empty">{t('groups.noGroups')}</div>
             ) : (
               <div className="up-users-list">
                 {groups.map(g => {
@@ -593,9 +593,9 @@ export function GroupsPanel(props: GroupsPanelProps) {
                               />
                             </div>
                             <div className="up-user-badges">
-                              <span className="up-access-tag">{g.agent_extensions?.length ?? 0} agents</span>
-                              <span className="up-access-tag">{g.queues?.length ?? 0} queues</span>
-                              <span className="up-access-tag">{g.user_ids?.length ?? 0} users</span>
+                              <span className="up-access-tag">{t('groups.agentsCount', { count: g.agent_extensions?.length ?? 0 })}</span>
+                              <span className="up-access-tag">{t('groups.queuesCount', { count: g.queues?.length ?? 0 })}</span>
+                              <span className="up-access-tag">{t('groups.usersCount', { count: g.user_ids?.length ?? 0 })}</span>
                             </div>
                             {isExpanded && (
                               <div className="gp-expanded">
@@ -603,34 +603,34 @@ export function GroupsPanel(props: GroupsPanelProps) {
                                   <div className="gp-detail-section">
                                     <div className="gp-detail-label">
                                       <Phone size={12} />
-                                      Agents <span>({agentLabels.length})</span>
+                                      {t('groups.agentsLabel')} <span>({agentLabels.length})</span>
                                     </div>
                                     <div className="gp-chips">
                                       {agentLabels.length ? agentLabels.map((label, i) => (
                                         <span key={i} className="gp-chip gp-chip-agent" title={label}>{label}</span>
-                                      )) : <span className="gp-empty-hint">None</span>}
+                                      )) : <span className="gp-empty-hint">{t('groups.none')}</span>}
                                     </div>
                                   </div>
                                   <div className="gp-detail-section">
                                     <div className="gp-detail-label">
                                       <List size={12} />
-                                      Queues <span>({queueLabels.length})</span>
+                                      {t('groups.queuesLabel')} <span>({queueLabels.length})</span>
                                     </div>
                                     <div className="gp-chips">
                                       {queueLabels.length ? queueLabels.map((label, i) => (
                                         <span key={i} className="gp-chip gp-chip-queue" title={label}>{label}</span>
-                                      )) : <span className="gp-empty-hint">None</span>}
+                                      )) : <span className="gp-empty-hint">{t('groups.none')}</span>}
                                     </div>
                                   </div>
                                   <div className="gp-detail-section">
                                     <div className="gp-detail-label">
                                       <Users size={12} />
-                                      Users <span>({userLabels.length})</span>
+                                      {t('groups.usersLabel')} <span>({userLabels.length})</span>
                                     </div>
                                     <div className="gp-chips">
                                       {userLabels.length ? userLabels.map((label, i) => (
                                         <span key={i} className="gp-chip gp-chip-user" title={label}>{label}</span>
-                                      )) : <span className="gp-empty-hint">None</span>}
+                                      )) : <span className="gp-empty-hint">{t('groups.none')}</span>}
                                     </div>
                                   </div>
                                 </div>
@@ -640,10 +640,10 @@ export function GroupsPanel(props: GroupsPanelProps) {
                         </div>
                       </div>
                       <div className="up-user-actions">
-                        <button type="button" className="btn btn-edit" onClick={e => { e.stopPropagation(); startEdit(g); }} title="Edit group">
+                        <button type="button" className="btn btn-edit" onClick={e => { e.stopPropagation(); startEdit(g); }} title={t('groups.editGroup')}>
                           <Pencil size={14} />
                         </button>
-                        <button type="button" className="btn btn-delete" onClick={e => { e.stopPropagation(); handleDelete(g); }} title="Delete group">
+                        <button type="button" className="btn btn-delete" onClick={e => { e.stopPropagation(); handleDelete(g); }} title={t('groups.deleteConfirm', { name: g.name })}>
                           <Trash2 size={14} />
                         </button>
                       </div>

@@ -104,8 +104,6 @@ def _meaningful(value: str) -> bool:
         return False
     if v.lower() in DIALPLAN_CTX or len(v) <= 2:
         return False
-    if len(v) == 4 and v.startswith('5'):   # dialplan priority artefact
-        return False
     return True
 
 
