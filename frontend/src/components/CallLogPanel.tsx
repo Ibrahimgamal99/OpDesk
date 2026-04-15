@@ -524,11 +524,17 @@ export function CallLogPanel() {
   const [error, setError] = useState<string | null>(null);
 
   // Filters
+  // Default dateFrom to 30 days ago to avoid loading the full CDR history on
+  // first render (can be very slow on large databases, e.g. 400 K+ records).
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [callTypeFilter, setCallTypeFilter] = useState('');
   const [appFilter, setAppFilter] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
+  const [dateFrom, setDateFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  });
   const [dateTo, setDateTo] = useState('');
 
   // Sort & pagination
