@@ -17,7 +17,8 @@
     "callHistory": "سجل المكالمات",
     "softphone": "الهاتف",
     "groups": "المجموعات",
-    "users": "المستخدمون"
+    "users": "المستخدمون",
+    "analytics": "التحليلات"
   },
   "header": {
     "softphoneRegistered": "الهاتف (مسجّل)",
@@ -464,5 +465,119 @@
   "common": {
     "incomingCall": "مكالمة واردة",
     "noRecording": "لا يوجد تسجيل"
+  },
+  "analytics": {
+    "title": "التحليلات",
+    "subtitle": "مؤشرات أداء مركز الاتصال",
+    "loading": "جارٍ تحميل التحليلات...",
+    "error": "فشل تحميل بيانات التحليلات",
+    "empty": "لا توجد بيانات لهذه الفترة",
+    "nav": {
+      "overview": "نظرة عامة",
+      "queues": "أداء الطوابير",
+      "agents": "أداء الموظف",
+      "drilldown": "استعراض تفصيلي"
+    },
+    "period": {
+      "today": "اليوم",
+      "yesterday": "أمس",
+      "last7": "آخر 7 أيام",
+      "last30": "آخر 30 يومًا",
+      "thisMonth": "هذا الشهر",
+      "custom": "مخصص"
+    },
+    "kpi": {
+      "sla": "مستوى الخدمة",
+      "slaDesc": "المكالمات المجابة ضمن الحد الزمني",
+      "fcr": "معدل الحل من أول اتصال",
+      "fcrDesc": "حل المشكلة من أول اتصال",
+      "abandonment": "معدل التخلي",
+      "abandonmentDesc": "نسبة المكالمات المتخلى عنها",
+      "aht": "متوسط وقت المعالجة",
+      "ahtDesc": "متوسط مدة المكالمة",
+      "volume": "إجمالي المكالمات",
+      "answeredCalls": "مُجابة",
+      "abandonedCalls": "متخلى عنها",
+      "answerRate": "معدل الإجابة",
+      "avgWait": "متوسط الانتظار",
+      "na": "غير متاح",
+      "outboundCalls": "صادرة",
+      "outboundVolume": "المكالمات الصادرة",
+      "outboundAnswerRate": "معدل إجابة الصادرة",
+      "outboundAht": "متوسط مدة الصادرة",
+      "outboundTrend": "صادرة",
+      "inboundAnswerRate": "معدل إجابة الواردة",
+      "inboundAnswerRateDesc": "المكالمات الواردة المُجابة",
+      "avgWaitKpi": "متوسط وقت الانتظار",
+      "avgWaitDesc": "متوسط وقت الانتظار في الطابور",
+      "shortAbandon": "التخلي السريع",
+      "shortAbandonDesc": "مكالمات أُغلقت قبل الحد الزمني",
+      "market": "وقت التحدث للسوق",
+      "marketDesc": "إجمالي وقت المكالمات الصادرة"
+    },
+    "delta": {
+      "vsPrevPeriod": "مقارنةً بالفترة السابقة"
+    },
+    "queues": {
+      "title": "أداء الطوابير",
+      "queue": "الطابور",
+      "total": "الإجمالي",
+      "answered": "مُجابة",
+      "abandoned": "متخلى عنها",
+      "sla": "مستوى الخدمة %",
+      "aht": "متوسط وقت المعالجة",
+      "avgWait": "متوسط الانتظار",
+      "peakHour": "ساعة الذروة",
+      "heatmapLow": "منخفض",
+      "heatmapHigh": "مرتفع",
+      "queues": "طوابير",
+      "heatmapTitle": "حجم المكالمات حسب الساعة واليوم"
+    },
+    "agents": {
+      "title": "أداء الموظفين",
+      "rank": "#",
+      "agent": "الموظف",
+      "answered": "مُجابة",
+      "aht": "متوسط وقت المعالجة",
+      "slaContrib": "مستوى الخدمة %",
+      "trend7d": "اتجاه 7 أيام",
+      "agents": "وكلاء"
+    },
+    "drilldown": {
+      "title": "استعراض تفصيلي",
+      "filterQueue": "الطابور...",
+      "filterAgent": "الموظف...",
+      "allDirections": "جميع الاتجاهات",
+      "allDispositions": "جميع الحالات",
+      "records": "سجلات",
+      "date": "التاريخ",
+      "direction": "الاتجاه",
+      "src": "المتصل",
+      "dst": "الوجهة",
+      "queue": "الطابور",
+      "agent": "الموظف",
+      "duration": "المدة",
+      "talk": "وقت التحدث",
+      "waitTime": "الانتظار",
+      "disposition": "الحالة",
+      "slaMet": "مستوف للمعيار",
+      "slaFailed": "غير مستوفٍ",
+      "page": "صفحة",
+      "exportCsv": "تصدير CSV",
+      "exportXlsx": "تصدير XLSX",
+      "exporting": "جارٍ التصدير...",
+      "clearFilters": "مسح"
+    },
+    "settings": {
+      "title": "التحليلات",
+      "slaSection": "حدود مستوى الخدمة",
+      "slaPerQueue": "ثوانٍ للإجابة — تجاوز لكل طابور (يستخدم الافتراضي العام إن لم يُحدد)",
+      "slaDefault": "الحد الافتراضي",
+      "fcrSection": "إعدادات الحل من أول اتصال والتخلي",
+      "fcrWindow": "نافذة إعادة الاتصال",
+      "shortAbandon": "حد التخلي السريع",
+      "save": "حفظ إعدادات التحليلات",
+      "saved": "تم الحفظ!"
+    }
   }
 }

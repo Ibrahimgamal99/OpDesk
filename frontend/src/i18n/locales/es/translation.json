@@ -17,7 +17,8 @@
     "callHistory": "Historial de llamadas",
     "softphone": "Softphone",
     "groups": "Grupos",
-    "users": "Usuarios"
+    "users": "Usuarios",
+    "analytics": "Analíticas"
   },
   "header": {
     "softphoneRegistered": "Softphone (registrado)",
@@ -464,5 +465,117 @@
   "common": {
     "incomingCall": "Llamada entrante",
     "noRecording": "Sin grabación"
+  },
+  "analytics": {
+    "title": "Analíticas",
+    "subtitle": "Métricas de rendimiento del centro de llamadas",
+    "loading": "Cargando analíticas...",
+    "error": "Error al cargar los datos de analíticas",
+    "empty": "Sin datos para este período",
+    "nav": {
+      "overview": "Resumen",
+      "queues": "Rendimiento de colas",
+      "agents": "Rendimiento de agentes",
+      "drilldown": "Explorador"
+    },
+    "period": {
+      "today": "Hoy",
+      "yesterday": "Ayer",
+      "last7": "Últimos 7 días",
+      "last30": "Últimos 30 días",
+      "thisMonth": "Este mes",
+      "custom": "Personalizado"
+    },
+    "kpi": {
+      "sla": "SLA",
+      "slaDesc": "Llamadas respondidas dentro del umbral",
+      "fcr": "FCR",
+      "fcrDesc": "Resolución en el primer contacto",
+      "abandonment": "Abandono",
+      "abandonmentDesc": "Tasa de llamadas abandonadas",
+      "aht": "TMO",
+      "ahtDesc": "Tiempo medio de operación",
+      "volume": "Total llamadas",
+      "answeredCalls": "Respondidas",
+      "abandonedCalls": "Abandonadas",
+      "answerRate": "Tasa de respuesta",
+      "avgWait": "Espera media",
+      "na": "N/D",
+      "outboundCalls": "Saliente",
+      "outboundVolume": "Llamadas salientes",
+      "outboundAnswerRate": "Tasa de respuesta saliente",
+      "outboundAht": "TMO saliente",
+      "outboundTrend": "Saliente",
+      "inboundAnswerRate": "Tasa de respuesta entrante",
+      "inboundAnswerRateDesc": "Llamadas entrantes respondidas",
+      "avgWaitKpi": "Espera media",
+      "avgWaitDesc": "Tiempo medio de espera en cola",
+      "shortAbandon": "Abandono rápido",
+      "shortAbandonDesc": "Abandonadas antes del umbral",
+      "market": "Tiempo de mercado",
+      "marketDesc": "Tiempo total de llamadas salientes"
+    },
+    "delta": {
+      "vsPrevPeriod": "vs período anterior"
+    },
+    "queues": {
+      "title": "Rendimiento de colas",
+      "queue": "Cola",
+      "total": "Total",
+      "answered": "Respondidas",
+      "abandoned": "Abandonadas",
+      "sla": "SLA %",
+      "aht": "TMO",
+      "avgWait": "Espera media",
+      "peakHour": "Hora pico",
+      "heatmapLow": "Bajo",
+      "heatmapHigh": "Alto",
+      "queues": "colas",
+      "heatmapTitle": "Volumen de llamadas por hora y día"
+    },
+    "agents": {
+      "title": "Rendimiento de agentes",
+      "rank": "#",
+      "agent": "Agente",
+      "answered": "Respondidas",
+      "aht": "TMO",
+      "slaContrib": "SLA %",
+      "trend7d": "Tendencia 7d",
+      "agents": "agentes"
+    },
+    "drilldown": {
+      "title": "Explorador detallado",
+      "filterQueue": "Cola...",
+      "filterAgent": "Agente...",
+      "allDirections": "Todas las direcciones",
+      "allDispositions": "Todas las disposiciones",
+      "records": "registros",
+      "date": "Fecha",
+      "src": "Llamante",
+      "queue": "Cola",
+      "agent": "Agente",
+      "duration": "Duración",
+      "talk": "Conversación",
+      "waitTime": "Espera",
+      "disposition": "Disposición",
+      "slaMet": "SLA cumplido",
+      "slaFailed": "SLA incumplido",
+      "page": "Página",
+      "exportCsv": "Exportar CSV",
+      "exportXlsx": "Exportar XLSX",
+      "exporting": "Exportando...",
+      "clearFilters": "Limpiar"
+    },
+    "settings": {
+      "title": "Analíticas",
+      "slaSection": "Umbrales de SLA",
+      "slaPerQueue": "Segundos para responder — anulación por cola (usa el predeterminado global si no se establece)",
+      "slaDefault": "Umbral predeterminado",
+      "fcrSection": "Configuración de FCR y abandono",
+      "fcrWindow": "Ventana de rellamada FCR",
+      "shortAbandon": "Umbral de abandono corto",
+      "save": "Guardar configuración de analíticas",
+      "saved": "¡Guardado!"
+    }
   }
 }

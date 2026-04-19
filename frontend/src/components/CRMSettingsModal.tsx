@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   X, Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff, Settings,
-  ChevronDown, ChevronRight, Plug, Server,
+  ChevronDown, ChevronRight, Plug, Server, BarChart3, KeyRound,
 } from 'lucide-react';
+import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
 import { getAuthHeaders } from '../auth';
+import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
 
-export type SettingsTab = 'integrations' | 'qos' | 'webrtc';
+export type SettingsTab = 'integrations' | 'qos' | 'webrtc' | 'analytics';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -255,6 +257,14 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
             <Server size={16} />
             {t('settings.webrtc')}
           </button>
+          <button
+            type="button"
+            className={`settings-tab ${activeTab === 'analytics' ? 'active' : ''}`}
+            onClick={() => setActiveTab('analytics')}
+          >
+            <BarChart3 size={16} />
+            {t('analytics.settings.title')}
+          </button>
         </div>
 
         {activeTab === 'webrtc' && (
@@ -416,17 +426,18 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
 
                       <div className="form-group">
                         <label className="form-label">{t('settings.crm.authType')}</label>
-                        <select
-                          className="form-input"
+                        <FilterSelect
+                          size="md"
                           value={config.auth_type}
-                          onChange={(e) => updateConfig({ auth_type: e.target.value as CRMConfig['auth_type'] })}
-                          required
-                        >
-                          <option value="api_key">API Key</option>
-                          <option value="basic_auth">Basic Auth</option>
-                          <option value="bearer_token">Bearer Token</option>
-                          <option value="oauth2">OAuth2</option>
-                        </select>
+                          onChange={v => updateConfig({ auth_type: v as CRMConfig['auth_type'] })}
+                          icon={KeyRound}
+                          options={[
+                            { value: 'api_key',       label: 'API Key',       dot: 'blue'    },
+                            { value: 'basic_auth',    label: 'Basic Auth',    dot: 'neutral' },
+                            { value: 'bearer_token',  label: 'Bearer Token',  dot: 'green'   },
+                            { value: 'oauth2',        label: 'OAuth2',        dot: 'orange'  },
+                          ]}
+                        />
                       </div>
 
                       {config.auth_type === 'api_key' && (
@@ -617,6 +628,11 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
               </div>
             </form>
           )
+        )}
+        {activeTab === 'analytics' && (
+          <div className="settings-body">
+            <AnalyticsSettingsPanel />
+          </div>
         )}
       </motion.div>
     </div>

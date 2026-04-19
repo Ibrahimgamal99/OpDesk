@@ -41,6 +41,7 @@ from db_manager import (
 )
 from dialplan import enable_qos, disable_qos
 from call_log import call_log as get_call_log, build_call_journey_from_cdr
+import analytics as analytics_module
 
 # Load environment variables
 load_dotenv()
@@ -671,7 +672,10 @@ async def lifespan(app: FastAPI):
         # Start event bridge
         bridge = AMIEventBridge(manager, monitor)
         await bridge.start()
-        
+
+        # Start analytics pre-aggregation background task
+        asyncio.create_task(analytics_module.start_aggregation_loop())
+
         log.info("🎯 Server ready - tracking realtime AMI events")
     else:
         log.error("Failed to connect to AMI")
@@ -2107,6 +2111,284 @@ async def get_setting_by_key(key: str, current_user: dict = Depends(require_admi
 # ---------------------------------------------------------------------------
 # Health check (public, no auth required)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Analytics Endpoints
+# ---------------------------------------------------------------------------
+
+def _analytics_scope(current_user: dict):
+    """Return (allowed_queues, allowed_agents) based on role."""
+    role = current_user.get("role")
+    if role == "agent":
+        raise HTTPException(status_code=403, detail="Agents do not have access to analytics")
+    if role == "admin":
+        return None, None
+    allowed_queues = current_user.get("allowed_queue_names") or []
+    allowed_agents = current_user.get("allowed_agent_extensions") or []
+    return allowed_queues, allowed_agents
+
+
+@app.get("/api/analytics/overview")
+async def analytics_overview(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Executive KPI overview: SLA%, FCR%, abandonment, AHT, volume with prev-period deltas.
+    Roles: admin, supervisor.
+    """
+    try:
+        allowed_queues, allowed_agents = _analytics_scope(current_user)
+        thresholds = analytics_module.get_sla_thresholds()
+        fcr_cfg = analytics_module.get_fcr_settings()
+        return analytics_module.compute_executive_kpis(
+            date_from, date_to, allowed_queues, allowed_agents, thresholds, fcr_cfg
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics overview error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/queue-performance")
+async def analytics_queue_performance(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-queue KPI table. Roles: admin, supervisor."""
+    try:
+        allowed_queues, _ = _analytics_scope(current_user)
+        thresholds = analytics_module.get_sla_thresholds()
+        fcr_cfg = analytics_module.get_fcr_settings()
+        return {"queues": analytics_module.compute_queue_performance(
+            date_from, date_to, allowed_queues, thresholds, fcr_cfg
+        )}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics queue performance error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/agent-performance")
+async def analytics_agent_performance(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-agent KPI table with 7-day trend. Roles: admin, supervisor."""
+    try:
+        _, allowed_agents = _analytics_scope(current_user)
+        thresholds = analytics_module.get_sla_thresholds()
+        return {"agents": analytics_module.compute_agent_performance(
+            date_from, date_to, allowed_agents, thresholds
+        )}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics agent performance error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/heatmap")
+async def analytics_heatmap(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """7×24 call volume heatmap matrix. Roles: admin, supervisor."""
+    try:
+        allowed_queues, _ = _analytics_scope(current_user)
+        return analytics_module.compute_hourly_heatmap(date_from, date_to, allowed_queues)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics heatmap error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/trend")
+async def analytics_trend(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Daily volume trend (total / answered / abandoned). Roles: admin, supervisor."""
+    try:
+        allowed_queues, allowed_agents = _analytics_scope(current_user)
+        return {"trend": analytics_module.compute_volume_trend(date_from, date_to, allowed_queues, allowed_agents)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics trend error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/drilldown")
+async def analytics_drilldown(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    queue: Optional[str] = None,
+    agent: Optional[str] = None,
+    direction: Optional[str] = None,
+    disposition: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    current_user: dict = Depends(get_current_user),
+):
+    """Paginated drilldown with analytics fields (wait_secs, sla_met). Roles: admin, supervisor."""
+    try:
+        allowed_queues, allowed_agents = _analytics_scope(current_user)
+        thresholds = analytics_module.get_sla_thresholds()
+        return analytics_module.compute_drilldown(
+            date_from, date_to,
+            queue_ext=queue,
+            agent_ext=agent,
+            direction=direction,
+            disposition_filter=disposition,
+            page=max(1, page),
+            page_size=min(200, max(1, page_size)),
+            allowed_queues=allowed_queues,
+            allowed_agents=allowed_agents,
+            sla_thresholds=thresholds,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics drilldown error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/export")
+async def analytics_export(
+    format: str = "csv",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    queue: Optional[str] = None,
+    agent: Optional[str] = None,
+    direction: Optional[str] = None,
+    disposition: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Export drilldown data as CSV or XLSX. Roles: admin, supervisor."""
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO, StringIO
+
+    try:
+        allowed_queues, allowed_agents = _analytics_scope(current_user)
+        thresholds = analytics_module.get_sla_thresholds()
+        result = analytics_module.compute_drilldown(
+            date_from, date_to,
+            queue_ext=queue,
+            agent_ext=agent,
+            direction=direction,
+            disposition_filter=disposition,
+            page=1,
+            page_size=100000,
+            allowed_queues=allowed_queues,
+            allowed_agents=allowed_agents,
+            sla_thresholds=thresholds,
+        )
+        calls = result.get('calls', [])
+        date_label = f"{date_from or 'all'}_{date_to or 'all'}"
+
+        headers_row = ['Date', 'Src', 'Queue', 'Agent', 'Duration(s)', 'Talk(s)',
+                       'Wait(s)', 'Disposition', 'SLA Met']
+
+        def row_values(r):
+            return [
+                r.get('calldate', ''),
+                r.get('src', ''),
+                r.get('queue_extension', ''),
+                r.get('agent_extension', ''),
+                r.get('duration', ''),
+                r.get('talk', ''),
+                r.get('wait_secs', ''),
+                r.get('disposition', ''),
+                'Yes' if r.get('sla_met') else 'No',
+            ]
+
+        if format.lower() == 'xlsx':
+            try:
+                import openpyxl
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "Analytics Export"
+                ws.append(headers_row)
+                for r in calls:
+                    ws.append(row_values(r))
+                buf = BytesIO()
+                wb.save(buf)
+                buf.seek(0)
+                return StreamingResponse(
+                    buf,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="analytics_{date_label}.xlsx"'}
+                )
+            except ImportError:
+                raise HTTPException(status_code=500, detail="openpyxl not installed; use CSV export")
+        else:
+            # CSV with UTF-8 BOM for Excel compatibility
+            buf = StringIO()
+            buf.write('\ufeff')  # BOM
+            buf.write(','.join(headers_row) + '\r\n')
+            for r in calls:
+                vals = [str(v).replace('"', '""') for v in row_values(r)]
+                buf.write(','.join(f'"{v}"' for v in vals) + '\r\n')
+            csv_bytes = buf.getvalue().encode('utf-8')
+            return StreamingResponse(
+                BytesIO(csv_bytes),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="analytics_{date_label}.csv"'}
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics export error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/settings")
+async def get_analytics_settings(current_user: dict = Depends(get_current_user)):
+    """Get SLA thresholds and FCR config. Roles: admin only."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return {
+        "sla_thresholds": analytics_module.get_sla_thresholds(),
+        "sla_default_secs": analytics_module.get_sla_default_secs(),
+        "fcr_window_days": analytics_module.get_fcr_settings().get('window_days', 7),
+        "short_abandon_secs": analytics_module.get_fcr_settings().get('short_abandon_secs', 5),
+    }
+
+
+@app.post("/api/analytics/settings")
+async def save_analytics_settings(
+    body: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Save SLA thresholds and/or FCR config. Roles: admin only."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    try:
+        if 'sla_thresholds' in body:
+            analytics_module.save_sla_thresholds(body['sla_thresholds'])
+        if 'sla_default_secs' in body:
+            from db_manager import set_setting as db_set_setting
+            db_set_setting('SLA_DEFAULT_SECS', str(int(body['sla_default_secs'])))
+        if 'fcr_window_days' in body or 'short_abandon_secs' in body:
+            cur = analytics_module.get_fcr_settings()
+            analytics_module.save_fcr_settings(
+                window_days=int(body.get('fcr_window_days', cur['window_days'])),
+                short_abandon_secs=int(body.get('short_abandon_secs', cur['short_abandon_secs'])),
+            )
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"analytics settings save error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 async def health_check():
     """Public health endpoint for load balancers and monitoring."""

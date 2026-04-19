@@ -17,7 +17,8 @@
     "callHistory": "Call History",
     "softphone": "Softphone",
     "groups": "Groups",
-    "users": "Users"
+    "users": "Users",
+    "analytics": "Analytics"
   },
   "header": {
     "softphoneRegistered": "Softphone (registered)",
@@ -464,5 +465,119 @@
   "common": {
     "incomingCall": "Incoming call",
     "noRecording": "No recording"
+  },
+  "analytics": {
+    "title": "Analytics",
+    "subtitle": "Call center performance metrics",
+    "loading": "Loading analytics...",
+    "error": "Failed to load analytics data",
+    "empty": "No data for this period",
+    "nav": {
+      "overview": "Overview",
+      "queues": "Queue Performance",
+      "agents": "Agent Performance",
+      "drilldown": "Drilldown"
+    },
+    "period": {
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "last7": "Last 7 Days",
+      "last30": "Last 30 Days",
+      "thisMonth": "This Month",
+      "custom": "Custom"
+    },
+    "kpi": {
+      "sla": "SLA",
+      "slaDesc": "Calls answered within threshold",
+      "fcr": "FCR",
+      "fcrDesc": "First Contact Resolution",
+      "abandonment": "Abandonment",
+      "abandonmentDesc": "Abandoned calls rate",
+      "aht": "AHT",
+      "ahtDesc": "Average Handle Time",
+      "volume": "Total Calls",
+      "answeredCalls": "Answered",
+      "abandonedCalls": "Abandoned",
+      "answerRate": "Answer Rate",
+      "avgWait": "Avg Wait",
+      "na": "N/A",
+      "outboundCalls": "Outbound",
+      "outboundVolume": "Outbound Calls",
+      "outboundAnswerRate": "Outbound Answer Rate",
+      "outboundAht": "Outbound AHT",
+      "outboundTrend": "Outbound",
+      "inboundAnswerRate": "Inbound Answer Rate",
+      "inboundAnswerRateDesc": "Inbound calls answered",
+      "avgWaitKpi": "Avg Wait Time",
+      "avgWaitDesc": "Average queue wait time",
+      "shortAbandon": "Short Abandon",
+      "shortAbandonDesc": "Abandoned before wait threshold",
+      "market": "Market Talk Time",
+      "marketDesc": "Total outbound talk time"
+    },
+    "delta": {
+      "vsPrevPeriod": "vs prior period"
+    },
+    "queues": {
+      "title": "Queue Performance",
+      "queue": "Queue",
+      "total": "Total",
+      "answered": "Answered",
+      "abandoned": "Abandoned",
+      "sla": "SLA %",
+      "aht": "AHT",
+      "avgWait": "Avg Wait",
+      "peakHour": "Peak Hour",
+      "heatmapTitle": "Call Volume by Hour & Day",
+      "heatmapLow": "Low",
+      "heatmapHigh": "High",
+      "queues": "queues"
+    },
+    "agents": {
+      "title": "Agent Performance",
+      "rank": "#",
+      "agent": "Agent",
+      "answered": "Answered",
+      "aht": "AHT",
+      "slaContrib": "SLA %",
+      "trend7d": "7d Trend",
+      "agents": "agents"
+    },
+    "drilldown": {
+      "title": "Drilldown Explorer",
+      "filterQueue": "Queue...",
+      "filterAgent": "Agent...",
+      "allDirections": "All Directions",
+      "allDispositions": "All Dispositions",
+      "records": "records",
+      "date": "Date",
+      "direction": "Direction",
+      "src": "Caller",
+      "dst": "Destination",
+      "queue": "Queue",
+      "agent": "Agent",
+      "duration": "Duration",
+      "talk": "Talk",
+      "waitTime": "Wait",
+      "disposition": "Disposition",
+      "slaMet": "SLA Met",
+      "slaFailed": "SLA Miss",
+      "page": "Page",
+      "exportCsv": "Export CSV",
+      "exportXlsx": "Export XLSX",
+      "exporting": "Exporting...",
+      "clearFilters": "Clear"
+    },
+    "settings": {
+      "title": "Analytics",
+      "slaSection": "SLA Thresholds",
+      "slaPerQueue": "Seconds to answer — per queue override (uses global default if not set)",
+      "slaDefault": "Default threshold",
+      "fcrSection": "FCR & Abandon Settings",
+      "fcrWindow": "FCR callback window",
+      "shortAbandon": "Short abandon threshold",
+      "save": "Save Analytics Settings",
+      "saved": "Saved!"
+    }
   }
 }

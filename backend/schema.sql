@@ -154,3 +154,91 @@ CREATE TABLE IF NOT EXISTS user_groups (
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
     INDEX idx_group (group_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- Analytics Module
+-- =============================================================================
+
+-- Per-queue SLA threshold configuration.
+-- If a queue has no row here, the backend falls back to OpDesk_settings 'SLA_DEFAULT_SECS'.
+-- FIX: FOREIGN KEY omitted intentionally — queues table is populated lazily from FreePBX;
+--      a FK would block saving SLA settings before the queue extension appears in OpDesk.queues.
+CREATE TABLE IF NOT EXISTS analytics_sla_settings (
+    queue_extension  VARCHAR(20) PRIMARY KEY,
+    threshold_secs   SMALLINT UNSIGNED NOT NULL DEFAULT 20,
+    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Global FCR and short-abandon configuration (singleton row, id=1).
+-- INSERT IGNORE ensures only one row is ever created.
+-- FIX: DATETIME → TIMESTAMP for MariaDB 5.5 compatibility.
+CREATE TABLE IF NOT EXISTS analytics_fcr_settings (
+    id                  TINYINT PRIMARY KEY DEFAULT 1,
+    window_days         TINYINT UNSIGNED NOT NULL DEFAULT 7,
+    short_abandon_secs  SMALLINT UNSIGNED NOT NULL DEFAULT 5,
+    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+INSERT IGNORE INTO analytics_fcr_settings (id, window_days, short_abandon_secs)
+VALUES (1, 7, 5);
+
+-- Pre-aggregated hourly metrics per queue (populated by Python background task every 15 min).
+-- UNIQUE KEY on (hour_bucket, queue_extension) allows INSERT ... ON DUPLICATE KEY UPDATE.
+-- FIX: hour_bucket is DATETIME (not TIMESTAMP) because timestamps beyond 2038 are valid here.
+CREATE TABLE IF NOT EXISTS analytics_hourly (
+    id              INT PRIMARY KEY AUTO_INCREMENT,
+    hour_bucket     DATETIME NOT NULL,
+    queue_extension VARCHAR(20) NOT NULL,
+    total_calls     MEDIUMINT UNSIGNED DEFAULT 0,
+    answered_calls  MEDIUMINT UNSIGNED DEFAULT 0,
+    abandoned_calls MEDIUMINT UNSIGNED DEFAULT 0,
+    short_abandoned MEDIUMINT UNSIGNED DEFAULT 0,
+    sum_wait_secs   INT UNSIGNED DEFAULT 0,
+    sum_billsec     INT UNSIGNED DEFAULT 0,
+    sla_met_calls   MEDIUMINT UNSIGNED DEFAULT 0,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_hour_queue (hour_bucket, queue_extension),
+    INDEX idx_hour (hour_bucket),
+    INDEX idx_queue (queue_extension)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pre-aggregated daily metrics per queue.
+-- unique_callers / fcr_callbacks support FCR computation without a full CDR scan.
+CREATE TABLE IF NOT EXISTS analytics_daily (
+    id              INT PRIMARY KEY AUTO_INCREMENT,
+    day_bucket      DATE NOT NULL,
+    queue_extension VARCHAR(20) NOT NULL,
+    total_calls     MEDIUMINT UNSIGNED DEFAULT 0,
+    answered_calls  MEDIUMINT UNSIGNED DEFAULT 0,
+    abandoned_calls MEDIUMINT UNSIGNED DEFAULT 0,
+    short_abandoned MEDIUMINT UNSIGNED DEFAULT 0,
+    sum_wait_secs   INT UNSIGNED DEFAULT 0,
+    sum_billsec     INT UNSIGNED DEFAULT 0,
+    sla_met_calls   MEDIUMINT UNSIGNED DEFAULT 0,
+    unique_callers  MEDIUMINT UNSIGNED DEFAULT 0,
+    fcr_callbacks   MEDIUMINT UNSIGNED DEFAULT 0,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_day_queue (day_bucket, queue_extension),
+    INDEX idx_day (day_bucket),
+    INDEX idx_queue (queue_extension)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pre-aggregated daily metrics per agent (and optionally per queue).
+-- Empty-string queue_extension = across all queues for that agent.
+CREATE TABLE IF NOT EXISTS analytics_agent_daily (
+    id              INT PRIMARY KEY AUTO_INCREMENT,
+    day_bucket      DATE NOT NULL,
+    agent_extension VARCHAR(20) NOT NULL,
+    queue_extension VARCHAR(20) NOT NULL DEFAULT '',
+    answered_calls  MEDIUMINT UNSIGNED DEFAULT 0,
+    sum_billsec     INT UNSIGNED DEFAULT 0,
+    sla_met_calls   MEDIUMINT UNSIGNED DEFAULT 0,
+    computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_day_agent_queue (day_bucket, agent_extension, queue_extension),
+    INDEX idx_day (day_bucket),
+    INDEX idx_agent (agent_extension)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Default analytics settings
+INSERT IGNORE INTO OpDesk_settings (setting_key, setting_value) VALUES
+('SLA_DEFAULT_SECS', '20'),
+('ANALYTICS_ENABLED', 'true');

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PhoneCall, Ear, MicVocal, UserPlus, Phone, RefreshCw, PhoneOff, ArrowRightLeft, User } from 'lucide-react';
+import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
 import type { CallInfo } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
@@ -204,18 +205,13 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
                   <label style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                     {t('activeCalls.transfer.source')}
                   </label>
-                  <select
+                  <FilterSelect
                     value={transferSource}
-                    onChange={(e) => setTransferSource(e.target.value)}
-                    className="form-input"
-                    style={{ minWidth: 120, fontSize: 12, padding: '4px 6px' }}
-                  >
-                    {callLegs.map((leg) => (
-                      <option key={leg.value} value={leg.value}>
-                        {leg.label}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setTransferSource}
+                    options={callLegs.map(leg => ({ value: leg.value, label: leg.label }))}
+                    minWidth={120}
+                    style={{ fontSize: 12 }}
+                  />
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('activeCalls.transfer.option1')}</span>
