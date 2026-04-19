@@ -74,8 +74,6 @@ export class WebPhone {
   private callbacks: WebPhoneCallbacks;
   private serverUrl: string = '';
   private domain: string = '';
-  /** Pre-acquired mic stream after connect so first call skips getUserMedia delay. */
-  private preacquiredStream: MediaStream | null = null;
   /** Local hold state (SIP re-INVITE sendonly). */
   private holdState: boolean = false;
 
@@ -189,7 +187,6 @@ export class WebPhone {
     }
     this.callbacks.onLocalStream?.(null);
     this.callbacks.onCallDuration?.('');
-    if (this.isConnected) this.acquireMicrophoneForCalls();
   }
 
   /** True if the current call is on hold (SIP re-INVITE sendonly). */
@@ -339,7 +336,6 @@ export class WebPhone {
           this.updateStatus('connected');
           this.log('Registered successfully', 'success');
           this.callbacks.onRegistered?.();
-          this.acquireMicrophoneForCalls();
         } else if (state === RegistererState.Unregistered) {
           this.updateStatus('disconnected');
           this.callbacks.onUnregistered?.();
@@ -355,28 +351,8 @@ export class WebPhone {
     }
   }
 
-  /** Pre-acquire microphone so first outgoing/incoming call does not wait for getUserMedia. */
-  private acquireMicrophoneForCalls(): void {
-    if (!navigator.mediaDevices?.getUserMedia || this.preacquiredStream?.active) return;
-    navigator.mediaDevices
-      .getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      })
-      .then((stream) => {
-        if (this.preacquiredStream) {
-          this.preacquiredStream.getTracks().forEach((t) => t.stop());
-        }
-        this.preacquiredStream = stream;
-      })
-      .catch(() => {});
-  }
-
   disconnect(): void {
     if (this.session) this.hangup();
-    if (this.preacquiredStream) {
-      this.preacquiredStream.getTracks().forEach((t) => t.stop());
-      this.preacquiredStream = null;
-    }
     if (this.registerer) {
       this.registerer.unregister().catch(() => {});
       this.registerer = null;
@@ -424,19 +400,10 @@ export class WebPhone {
       return;
     }
 
-    const usePreacquired =
-      this.preacquiredStream?.active &&
-      this.preacquiredStream.getAudioTracks().some((t) => t.readyState === 'live');
     try {
-      this.localStream = usePreacquired
-        ? this.preacquiredStream
-        : await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          });
-      if (!usePreacquired && this.preacquiredStream) {
-        this.preacquiredStream.getTracks().forEach((t) => t.stop());
-      }
-      if (usePreacquired) this.preacquiredStream = null;
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
     } catch (e) {
       this.log('Microphone access denied', 'error');
       this.setCallStatus('Error');
@@ -507,19 +474,10 @@ export class WebPhone {
       this.resetCallState();
       return;
     }
-    const usePreacquired =
-      this.preacquiredStream?.active &&
-      this.preacquiredStream.getAudioTracks().some((t) => t.readyState === 'live');
     try {
-      this.localStream = usePreacquired
-        ? this.preacquiredStream
-        : await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          });
-      if (!usePreacquired && this.preacquiredStream) {
-        this.preacquiredStream.getTracks().forEach((t) => t.stop());
-      }
-      if (usePreacquired) this.preacquiredStream = null;
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
     } catch {
       invitation.reject();
       this.resetCallState();

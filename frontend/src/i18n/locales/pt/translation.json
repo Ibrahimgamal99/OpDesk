@@ -17,7 +17,8 @@
     "callHistory": "Histórico de chamadas",
     "softphone": "Softphone",
     "groups": "Grupos",
-    "users": "Usuários"
+    "users": "Usuários",
+    "analytics": "Análises"
   },
   "header": {
     "softphoneRegistered": "Softphone (registrado)",
@@ -464,5 +465,117 @@
   "common": {
     "incomingCall": "Chamada recebida",
     "noRecording": "Sem gravação"
+  },
+  "analytics": {
+    "title": "Análises",
+    "subtitle": "Métricas de desempenho do call center",
+    "loading": "Carregando análises...",
+    "error": "Falha ao carregar dados de análises",
+    "empty": "Sem dados para este período",
+    "nav": {
+      "overview": "Visão geral",
+      "queues": "Desempenho de filas",
+      "agents": "Desempenho de agentes",
+      "drilldown": "Explorador"
+    },
+    "period": {
+      "today": "Hoje",
+      "yesterday": "Ontem",
+      "last7": "Últimos 7 dias",
+      "last30": "Últimos 30 dias",
+      "thisMonth": "Este mês",
+      "custom": "Personalizado"
+    },
+    "kpi": {
+      "sla": "SLA",
+      "slaDesc": "Chamadas atendidas dentro do limite",
+      "fcr": "FCR",
+      "fcrDesc": "Resolução no primeiro contato",
+      "abandonment": "Abandono",
+      "abandonmentDesc": "Taxa de chamadas abandonadas",
+      "aht": "TMA",
+      "ahtDesc": "Tempo médio de atendimento",
+      "volume": "Total de chamadas",
+      "answeredCalls": "Atendidas",
+      "abandonedCalls": "Abandonadas",
+      "answerRate": "Taxa de atendimento",
+      "avgWait": "Espera média",
+      "na": "N/D",
+      "outboundCalls": "Sainte",
+      "outboundVolume": "Chamadas saintes",
+      "outboundAnswerRate": "Taxa de atendimento sainte",
+      "outboundAht": "TMA sainte",
+      "outboundTrend": "Sainte",
+      "inboundAnswerRate": "Taxa de atendimento entrante",
+      "inboundAnswerRateDesc": "Chamadas entrantes atendidas",
+      "avgWaitKpi": "Espera média",
+      "avgWaitDesc": "Tempo médio de espera na fila",
+      "shortAbandon": "Abandono rápido",
+      "shortAbandonDesc": "Abandonadas antes do limite",
+      "market": "Tempo de mercado",
+      "marketDesc": "Tempo total de chamadas saintes"
+    },
+    "delta": {
+      "vsPrevPeriod": "vs período anterior"
+    },
+    "queues": {
+      "title": "Desempenho de filas",
+      "queue": "Fila",
+      "total": "Total",
+      "answered": "Atendidas",
+      "abandoned": "Abandonadas",
+      "sla": "SLA %",
+      "aht": "TMA",
+      "avgWait": "Espera média",
+      "peakHour": "Hora de pico",
+      "heatmapLow": "Baixo",
+      "heatmapHigh": "Alto",
+      "queues": "filas",
+      "heatmapTitle": "Volume de chamadas por hora e dia"
+    },
+    "agents": {
+      "title": "Desempenho de agentes",
+      "rank": "#",
+      "agent": "Agente",
+      "answered": "Atendidas",
+      "aht": "TMA",
+      "slaContrib": "SLA %",
+      "trend7d": "Tendência 7d",
+      "agents": "agentes"
+    },
+    "drilldown": {
+      "title": "Explorador detalhado",
+      "filterQueue": "Fila...",
+      "filterAgent": "Agente...",
+      "allDirections": "Todas as direções",
+      "allDispositions": "Todas as disposições",
+      "records": "registros",
+      "date": "Data",
+      "src": "Chamante",
+      "queue": "Fila",
+      "agent": "Agente",
+      "duration": "Duração",
+      "talk": "Conversa",
+      "waitTime": "Espera",
+      "disposition": "Disposição",
+      "slaMet": "SLA cumprido",
+      "slaFailed": "SLA não cumprido",
+      "page": "Página",
+      "exportCsv": "Exportar CSV",
+      "exportXlsx": "Exportar XLSX",
+      "exporting": "Exportando...",
+      "clearFilters": "Limpar"
+    },
+    "settings": {
+      "title": "Análises",
+      "slaSection": "Limites de SLA",
+      "slaPerQueue": "Segundos para atender — substituição por fila (usa o padrão global se não definido)",
+      "slaDefault": "Limite padrão",
+      "fcrSection": "Configurações de FCR e abandono",
+      "fcrWindow": "Janela de retorno FCR",
+      "shortAbandon": "Limite de abandono curto",
+      "save": "Salvar configurações de análises",
+      "saved": "Salvo!"
+    }
   }
 }

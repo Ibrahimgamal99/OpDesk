@@ -9,6 +9,7 @@ import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
 import { CallLogPanel } from './components/CallLogPanel';
+import { AnalyticsPanel } from './components/AnalyticsPanel';
 import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
@@ -36,10 +37,14 @@ import {
   Check,
   Archive,
   Globe,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { getAuthHeaders } from './auth';
+import { quickRanges, type DateRange } from './components/analyticsUtils';
 
-type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'phone';
+type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'phone' | 'analytics';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
 
 function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unknown>) => string): string {
@@ -120,6 +125,8 @@ function App({ onLogout }: AppProps) {
     onCallNotificationNew: fetchNewNotifCount,
   });
   const [activeTab, setActiveTab] = useState<TabType>('extensions');
+  const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['30d']);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   /** User form preserved when switching to Groups to create a new group (no API call). */
   const [pendingUserForm, setPendingUserForm] = useState<PendingUserFormSnapshot | null>(null);
   /** When set, Groups tab opens create form with this name pre-filled; consumed after applied. */
@@ -324,12 +331,11 @@ function App({ onLogout }: AppProps) {
   return (
     <WebPhoneProvider value={webPhone}>
     <div className="app">
-      {/* Header */}
+
+      {/* ── Header: 56px compact bar ── */}
       <header className="header">
         <div className="header-brand">
-          <div className="header-logo">
-            <Radio size={20} />
-          </div>
+          <div className="header-logo"><Radio size={20} /></div>
           <div>
             <h1 className="header-title">{t('app.title')}</h1>
             <p className="header-subtitle">{t('app.subtitle')}</p>
@@ -337,40 +343,7 @@ function App({ onLogout }: AppProps) {
         </div>
 
         <div className="header-status">
-            <button
-              type="button"
-              className={`header-softphone-btn ${isConnected ? 'registered' : 'not-registered'}`}
-              onClick={openSoftphone}
-              title={isConnected ? t('header.softphoneRegistered') : t('header.softphoneNotRegistered')}
-              aria-label={t('header.openSoftphone')}
-            >
-              <Headphones size={18} />
-              <span>{t('nav.softphone')}</span>
-            </button>
-            <div className="stats-bar">
-              <div className="stat-item">
-                <Phone size={16} className="stat-icon" />
-              <div>
-                <div className="stat-value">{stats.total_extensions}</div>
-                <div className="stat-label">{t('stats.extensions')}</div>
-              </div>
-            </div>
-            <div className="stat-item">
-              <PhoneCall size={16} className="stat-icon" />
-              <div>
-                <div className="stat-value">{stats.active_calls_count}</div>
-                <div className="stat-label">{t('stats.activeCalls')}</div>
-              </div>
-            </div>
-            <div className="stat-item">
-              <Users size={16} className="stat-icon" />
-              <div>
-                <div className="stat-value">{stats.total_waiting}</div>
-                <div className="stat-label">{t('stats.waiting')}</div>
-              </div>
-            </div>
-          </div>
-
+          {/* Notifications bell */}
           <div className="header-bell-wrap" ref={notifDropdownRef}>
             <button
               type="button"
@@ -430,12 +403,10 @@ function App({ onLogout }: AppProps) {
                         </div>
                         <div className="header-bell-item-actions">
                           <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'read')} disabled={notifUpdatingId === n.id} title={t('header.markRead')}>
-                            <Check size={14} />
-                            <span>{t('header.read')}</span>
+                            <Check size={14} /><span>{t('header.read')}</span>
                           </button>
                           <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'archived')} disabled={notifUpdatingId === n.id} title={t('header.archive')}>
-                            <Archive size={14} />
-                            <span>{t('header.archive')}</span>
+                            <Archive size={14} /><span>{t('header.archive')}</span>
                           </button>
                         </div>
                       </li>
@@ -446,77 +417,29 @@ function App({ onLogout }: AppProps) {
             )}
           </div>
 
+          {/* Monitor mode badge */}
           {getUser()?.role !== 'agent' && (() => {
             const modes = getUser()?.monitor_modes;
             const modesLabel = (modes && modes.length > 0 ? modes : ['listen'])
-              .map(m => t(`users.monitor.${m}`, { defaultValue: m }))
-              .join(', ');
+              .map(m => t(`users.monitor.${m}`, { defaultValue: m })).join(', ');
             return (
-              <span
-                className="header-monitor-mode"
-                title={`${t('header.monitor')}: ${modesLabel}`}
-              >
+              <span className="header-monitor-mode" title={`${t('header.monitor')}: ${modesLabel}`}>
                 <Monitor size={16} className="header-monitor-icon" />
                 <span className="header-monitor-label">{modesLabel}</span>
               </span>
             );
           })()}
 
-          <div className={`connection-status ${connected ? 'connected' : ''}`}>
-            <span className="connection-icon" aria-hidden>
-              {connected ? (
-                <Wifi size={16} />
-              ) : (
-                <WifiOff size={16} />
-              )}
-            </span>
-            <span className="connection-text">
-              {connected ? t('header.connected') : t('header.disconnected')}
-            </span>
-          </div>
-
           {/* Language switcher */}
           <div ref={langMenuRef} style={{ position: 'relative' }}>
-            <button
-              className="btn"
-              onClick={() => setLangMenuOpen(o => !o)}
-              title={t('language.select')}
-              aria-label={t('language.select')}
-            >
+            <button className="btn" onClick={() => setLangMenuOpen(o => !o)} title={t('language.select')} aria-label={t('language.select')}>
               <Globe size={14} />
             </button>
             {langMenuOpen && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                insetInlineEnd: 0,
-                marginTop: 4,
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border-primary)',
-                borderRadius: 'var(--radius-md)',
-                boxShadow: 'var(--shadow-lg)',
-                zIndex: 1000,
-                minWidth: 110,
-                overflow: 'hidden',
-              }}>
+              <div style={{ position: 'absolute', top: '100%', insetInlineEnd: 0, marginTop: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 1000, minWidth: 110, overflow: 'hidden' }}>
                 {LANGUAGE_OPTIONS.map(lang => (
-                  <button
-                    key={lang}
-                    type="button"
-                    onClick={() => handleLangSwitch(lang)}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      padding: '8px 14px',
-                      textAlign: 'start',
-                      background: i18n.language === lang ? 'var(--bg-hover)' : 'transparent',
-                      border: 'none',
-                      color: 'var(--text-primary)',
-                      cursor: 'pointer',
-                      fontSize: 13,
-                      fontWeight: i18n.language === lang ? 600 : 400,
-                    }}
-                  >
+                  <button key={lang} type="button" onClick={() => handleLangSwitch(lang)}
+                    style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'start', background: i18n.language === lang ? 'var(--bg-hover)' : 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: i18n.language === lang ? 600 : 400 }}>
                     {t(`language.${lang}`)}
                   </button>
                 ))}
@@ -524,202 +447,190 @@ function App({ onLogout }: AppProps) {
             )}
           </div>
 
+          {/* Settings */}
           {(getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && (
-            <button
-              className="btn"
-              onClick={() => setCrmSettingsOpen(true)}
-              title={t('header.settings')}
-            >
+            <button className="btn" onClick={() => setCrmSettingsOpen(true)} title={t('header.settings')}>
               <Settings size={14} />
             </button>
           )}
 
-          <button
-            className="btn"
-            onClick={handleLogout}
-            title={t('header.signOut')}
-          >
+          {/* Logout */}
+          <button className="btn" onClick={handleLogout} title={t('header.signOut')}>
             <LogOut size={14} />
             {t('header.logout')}
           </button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="main-content">
-        {/* Tabs */}
-        <div className="tabs">
-          <button
-            className={`tab ${activeTab === 'extensions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('extensions')}
-          >
-            <Phone size={16} />
-            {t('nav.extensions')}
-          </button>
-          <button
-            className={`tab ${activeTab === 'calls' ? 'active' : ''}`}
-            onClick={() => setActiveTab('calls')}
-          >
-            <PhoneCall size={16} />
-            {t('nav.activeCalls')}
-            {stats.active_calls_count > 0 && (
-              <span style={{
-                background: 'var(--status-call)',
-                padding: '2px 8px',
-                borderRadius: 10,
-                fontSize: 11,
-                marginInlineStart: 4,
-              }}>
-                {stats.active_calls_count}
-              </span>
-            )}
-          </button>
-          {getUser()?.role !== 'agent' && (
+      {/* ── Body: sidebar + content ── */}
+      <div className="body-layout">
+
+        {/* ── Sidebar ── */}
+        <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
+          <nav className="sidebar-nav">
+
+            {/* Softphone */}
             <button
-              className={`tab ${activeTab === 'queues' ? 'active' : ''}`}
-              onClick={() => setActiveTab('queues')}
+              type="button"
+              className={`sidebar-item ${activeTab === 'phone' ? 'active' : ''} ${isConnected ? 'registered' : 'not-registered'}`}
+              onClick={openSoftphone}
+              title={isConnected ? t('header.softphoneRegistered') : t('header.softphoneNotRegistered')}
             >
-              <Users size={16} />
-              {t('nav.queues')}
-              {stats.total_waiting > 0 && (
-                <span style={{
-                  background: 'var(--status-ringing)',
-                  padding: '2px 8px',
-                  borderRadius: 10,
-                  fontSize: 11,
-                  marginInlineStart: 4,
-                }}>
-                  {stats.total_waiting}
-                </span>
+              <Headphones size={16} />
+              {!sidebarCollapsed && t('nav.softphone')}
+            </button>
+
+            <div className="sidebar-divider" />
+
+            <button className={`sidebar-item${activeTab === 'extensions' ? ' active' : ''}`} onClick={() => setActiveTab('extensions')} title={sidebarCollapsed ? t('nav.extensions') : undefined}>
+              <Phone size={16} />{!sidebarCollapsed && t('nav.extensions')}
+            </button>
+
+            <button className={`sidebar-item${activeTab === 'calls' ? ' active' : ''}`} onClick={() => setActiveTab('calls')} title={sidebarCollapsed ? t('nav.activeCalls') : undefined}>
+              <PhoneCall size={16} />{!sidebarCollapsed && t('nav.activeCalls')}
+              {stats.active_calls_count > 0 && (
+                <span className="sidebar-badge" style={{ background: 'var(--status-call)', color: '#fff' }}>{stats.active_calls_count}</span>
               )}
             </button>
-          )}
-          <button
-            className={`tab ${activeTab === 'call-log' ? 'active' : ''}`}
-            onClick={() => setActiveTab('call-log')}
-          >
-            <History size={16} />
-            {t('nav.callHistory')}
-          </button>
-          <button
-            className={`tab ${activeTab === 'phone' ? 'active' : ''}`}
-            onClick={openSoftphone}
-            title="WebRTC Softphone"
-          >
-            <Headphones size={16} />
-            {t('nav.softphone')}
-          </button>
-          {getUser()?.role === 'admin' && (
-            <>
-              <button
-                className={`tab ${activeTab === 'groups' ? 'active' : ''}`}
-                onClick={() => setActiveTab('groups')}
-              >
-                <Group size={16} />
-                {t('nav.groups')}
+
+            {getUser()?.role !== 'agent' && (
+              <button className={`sidebar-item${activeTab === 'queues' ? ' active' : ''}`} onClick={() => setActiveTab('queues')} title={sidebarCollapsed ? t('nav.queues') : undefined}>
+                <Users size={16} />{!sidebarCollapsed && t('nav.queues')}
+                {stats.total_waiting > 0 && (
+                  <span className="sidebar-badge" style={{ background: 'var(--status-ringing)', color: '#fff' }}>{stats.total_waiting}</span>
+                )}
               </button>
-              <button
-                className={`tab ${activeTab === 'users' ? 'active' : ''}`}
-                onClick={() => setActiveTab('users')}
-              >
-                <UserCog size={16} />
-                {t('nav.users')}
+            )}
+
+            <button className={`sidebar-item${activeTab === 'call-log' ? ' active' : ''}`} onClick={() => setActiveTab('call-log')} title={sidebarCollapsed ? t('nav.callHistory') : undefined}>
+              <History size={16} />{!sidebarCollapsed && t('nav.callHistory')}
+            </button>
+
+            {getUser()?.role !== 'agent' && (
+              <button className={`sidebar-item${activeTab === 'analytics' ? ' active' : ''}`} onClick={() => setActiveTab('analytics')} title={sidebarCollapsed ? t('nav.analytics') : undefined}>
+                <BarChart3 size={16} />{!sidebarCollapsed && t('nav.analytics')}
               </button>
-            </>
+            )}
+
+            {getUser()?.role === 'admin' && (
+              <>
+                <div className="sidebar-divider" />
+                {!sidebarCollapsed && <span className="sidebar-section-label">{t('nav.admin', 'Admin')}</span>}
+                <button className={`sidebar-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => setActiveTab('groups')} title={sidebarCollapsed ? t('nav.groups') : undefined}>
+                  <Group size={16} />{!sidebarCollapsed && t('nav.groups')}
+                </button>
+                <button className={`sidebar-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => setActiveTab('users')} title={sidebarCollapsed ? t('nav.users') : undefined}>
+                  <UserCog size={16} />{!sidebarCollapsed && t('nav.users')}
+                </button>
+              </>
+            )}
+          </nav>
+
+          {/* ── Sidebar bottom: stats + connection + toggle ── */}
+          <div className="sidebar-bottom">
+            <div className="sidebar-stats">
+              <div className="sidebar-stat-item" title={sidebarCollapsed ? t('stats.extensions') : undefined}>
+                <Phone size={14} className="sidebar-stat-icon" />
+                {!sidebarCollapsed && <div><div className="sidebar-stat-value">{stats.total_extensions}</div><div className="sidebar-stat-label">{t('stats.extensions')}</div></div>}
+                {sidebarCollapsed && <div className="sidebar-stat-value">{stats.total_extensions}</div>}
+              </div>
+              <div className="sidebar-stat-item" title={sidebarCollapsed ? t('stats.activeCalls') : undefined}>
+                <PhoneCall size={14} className="sidebar-stat-icon" />
+                {!sidebarCollapsed && <div><div className="sidebar-stat-value">{stats.active_calls_count}</div><div className="sidebar-stat-label">{t('stats.activeCalls')}</div></div>}
+                {sidebarCollapsed && <div className="sidebar-stat-value">{stats.active_calls_count}</div>}
+              </div>
+              <div className="sidebar-stat-item" title={sidebarCollapsed ? t('stats.waiting') : undefined}>
+                <Users size={14} className="sidebar-stat-icon" />
+                {!sidebarCollapsed && <div><div className="sidebar-stat-value">{stats.total_waiting}</div><div className="sidebar-stat-label">{t('stats.waiting')}</div></div>}
+                {sidebarCollapsed && <div className="sidebar-stat-value">{stats.total_waiting}</div>}
+              </div>
+            </div>
+            <div className={`sidebar-connection${connected ? ' connected' : ''}`} title={sidebarCollapsed ? (connected ? t('header.connected') : t('header.disconnected')) : undefined}>
+              {connected ? <Wifi size={14} /> : <WifiOff size={14} />}
+              {!sidebarCollapsed && <span>{connected ? t('header.connected') : t('header.disconnected')}</span>}
+            </div>
+            {!sidebarCollapsed && lastUpdate && (
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5, padding: '0 2px' }}>
+                <Activity size={10} />
+                {lastUpdate.toLocaleTimeString()}
+              </div>
+            )}
+            {/* Toggle button */}
+            <button
+              className="sidebar-toggle"
+              onClick={() => setSidebarCollapsed(c => !c)}
+              title={sidebarCollapsed ? t('nav.expandSidebar', 'Expand sidebar') : t('nav.collapseSidebar', 'Collapse sidebar')}
+            >
+              {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+              {!sidebarCollapsed && <span>{t('nav.collapseSidebar', 'Collapse')}</span>}
+            </button>
+          </div>
+        </aside>
+
+        {/* ── Main content (scrollable) ── */}
+        <main className="main-content">
+          {activeTab === 'extensions' && (
+            <ExtensionsPanel
+              extensions={state?.extensions || {}}
+              onSupervisorAction={handleSupervisorAction}
+              onSync={() => sendAction({ action: 'sync' })}
+              webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
+              allowedWebrtcExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
+              onWebrtcToggle={async (ext, enabled) => {
+                const res = await fetch(`/api/settings/extensions/${ext}/webrtc`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                  body: JSON.stringify({ enabled }),
+                });
+                if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+                const list = await fetch('/api/settings/extensions/webrtc', { headers: getAuthHeaders() });
+                const data = await list.json();
+                setWebrtcExtensions(data.extensions || []);
+              }}
+            />
           )}
-        </div>
+          {activeTab === 'calls' && (
+            <ActiveCallsPanel
+              calls={state?.active_calls || {}}
+              onSupervisorAction={handleSupervisorAction}
+              onHangup={(target) => sendAction({ action: 'hangup', target })}
+              onTransfer={(source, destination) => sendAction({ action: 'transfer', source, destination })}
+              onTakeOver={(source) => sendAction({ action: 'take_over', source })}
+              onSync={() => sendAction({ action: 'sync' })}
+            />
+          )}
+          {activeTab === 'queues' && (
+            <QueuesPanel
+              queues={state?.queues || {}}
+              members={state?.queue_members || {}}
+              entries={state?.queue_entries || {}}
+              sendAction={sendAction}
+              onSync={() => sendAction({ action: 'sync' })}
+            />
+          )}
+          {activeTab === 'call-log' && <CallLogPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
+          {activeTab === 'analytics' && <AnalyticsPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
+          {activeTab === 'phone' && <div className="softphone-wrap"><Softphone /></div>}
+          {activeTab === 'groups' && (
+            <GroupsPanel
+              initialGroupName={groupsTabIntent?.prefillGroupName ?? undefined}
+              onConsumeIntent={groupsTabIntent ? () => setGroupsTabIntent(null) : undefined}
+            />
+          )}
+          {activeTab === 'users' && (
+            <UsersPanel
+              pendingUserForm={pendingUserForm}
+              onClearPendingUserForm={() => setPendingUserForm(null)}
+              onOpenCreateGroup={(formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => {
+                setPendingUserForm(formSnapshot);
+                setGroupsTabIntent({ prefillGroupName: prefillGroupName ?? '' });
+                setActiveTab('groups');
+              }}
+            />
+          )}
+        </main>
+      </div>
 
-        {/* Tab Content */}
-        {activeTab === 'extensions' && (
-          <ExtensionsPanel
-            extensions={state?.extensions || {}}
-            onSupervisorAction={handleSupervisorAction}
-            onSync={() => sendAction({ action: 'sync' })}
-            webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
-            allowedWebrtcExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
-            onWebrtcToggle={async (ext, enabled) => {
-              const res = await fetch(`/api/settings/extensions/${ext}/webrtc`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ enabled }),
-              });
-              if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-              const list = await fetch('/api/settings/extensions/webrtc', { headers: getAuthHeaders() });
-              const data = await list.json();
-              setWebrtcExtensions(data.extensions || []);
-            }}
-          />
-        )}
-
-        {activeTab === 'calls' && (
-          <ActiveCallsPanel
-            calls={state?.active_calls || {}}
-            onSupervisorAction={handleSupervisorAction}
-            onHangup={(target) => sendAction({ action: 'hangup', target })}
-            onTransfer={(source, destination) => sendAction({ action: 'transfer', source, destination })}
-            onTakeOver={(source) => sendAction({ action: 'take_over', source })}
-            onSync={() => sendAction({ action: 'sync' })}
-          />
-        )}
-
-        {activeTab === 'queues' && (
-          <QueuesPanel
-            queues={state?.queues || {}}
-            members={state?.queue_members || {}}
-            entries={state?.queue_entries || {}}
-            sendAction={sendAction}
-            onSync={() => sendAction({ action: 'sync' })}
-          />
-        )}
-
-        {activeTab === 'call-log' && (
-          <CallLogPanel />
-        )}
-
-        {activeTab === 'phone' && (
-          <div className="softphone-wrap">
-            <Softphone />
-          </div>
-        )}
-
-        {activeTab === 'groups' && (
-          <GroupsPanel
-            initialGroupName={groupsTabIntent?.prefillGroupName ?? undefined}
-            onConsumeIntent={groupsTabIntent ? () => setGroupsTabIntent(null) : undefined}
-          />
-        )}
-
-        {activeTab === 'users' && (
-          <UsersPanel
-            pendingUserForm={pendingUserForm}
-            onClearPendingUserForm={() => setPendingUserForm(null)}
-            onOpenCreateGroup={(formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => {
-              setPendingUserForm(formSnapshot);
-              setGroupsTabIntent({ prefillGroupName: prefillGroupName ?? '' });
-              setActiveTab('groups');
-            }}
-          />
-        )}
-
-        {/* Last update timestamp */}
-        {lastUpdate && (
-          <div style={{
-            textAlign: 'center',
-            fontSize: 12,
-            color: 'var(--text-muted)',
-            fontFamily: 'JetBrains Mono, monospace',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-          }}>
-            <Activity size={12} />
-            {t('header.lastUpdate')}: {lastUpdate.toLocaleTimeString()}
-          </div>
-        )}
-      </main>
-
-      {/* Supervisor Modal */}
       {supervisorModal.isOpen && (
         <SupervisorModal
           mode={supervisorModal.mode}
@@ -728,19 +639,10 @@ function App({ onLogout }: AppProps) {
           onSubmit={executeSupervisorAction}
         />
       )}
-
-      {/* CRM Settings Modal */}
-      <CRMSettingsModal
-        isOpen={crmSettingsOpen}
-        onClose={() => setCrmSettingsOpen(false)}
-      />
-
-      {/* Notifications */}
+      <CRMSettingsModal isOpen={crmSettingsOpen} onClose={() => setCrmSettingsOpen(false)} />
       <div className="notifications">
         {notifications.map((notification, index) => (
-          <div key={index} className="notification">
-            {notification}
-          </div>
+          <div key={index} className="notification">{notification}</div>
         ))}
       </div>
     </div>

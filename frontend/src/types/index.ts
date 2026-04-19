@@ -132,3 +132,112 @@ export interface QoSData {
   raw: string;
 }
 
+// ---------------------------------------------------------------------------
+// Analytics types
+// ---------------------------------------------------------------------------
+
+export interface AnalyticsPeriod {
+  from: string;
+  to: string;
+}
+
+export interface OutboundKpis {
+  total_calls: number;
+  answered_calls: number;
+  failed_calls: number;
+  no_answer_calls: number;
+  busy_calls: number;
+  aht_secs: number | null;
+  answer_rate: number | null;
+  sum_billsec: number;
+}
+
+export interface CombinedKpis {
+  total_calls: number;
+  answered_calls: number;
+  aht_secs: number | null;
+}
+
+export interface KpiSummary {
+  sla_pct: number | null;
+  fcr_pct: number | null;
+  abandonment_rate: number | null;
+  short_abandon_rate: number | null;
+  aht_secs: number | null;
+  total_calls: number;
+  answered_calls: number;
+  abandoned_calls: number;
+  avg_wait_secs: number | null;
+  outbound?: OutboundKpis;
+  combined?: CombinedKpis;
+}
+
+export interface ExecutiveKPIResponse {
+  period: AnalyticsPeriod;
+  current: KpiSummary;
+  prev_period: KpiSummary;
+}
+
+export interface QueueKPIRow {
+  queue_extension: string;
+  queue_name: string;
+  total_calls: number;
+  answered_calls: number;
+  abandoned_calls: number;
+  sla_pct: number | null;
+  aht_secs: number | null;
+  avg_wait_secs: number | null;
+  peak_hour: number | null;
+}
+
+export interface AgentKPIRow {
+  rank: number;
+  agent_extension: string;
+  agent_name: string;
+  total_calls: number;
+  answered_calls: number;
+  inbound_calls: number;
+  outbound_calls: number;
+  aht_secs: number | null;
+  sla_contribution_pct: number | null;
+  daily_trend: number[];
+}
+
+export interface HeatmapData {
+  matrix: number[][];
+  abandoned_matrix: number[][];
+  labels: { days: string[]; hours: string[] };
+}
+
+export interface VolumeTrendPoint {
+  date: string;
+  total_calls: number;        // inbound total
+  answered_calls: number;     // inbound answered
+  abandoned_calls: number;    // inbound abandoned
+  outbound_total: number;     // outbound total
+  outbound_answered: number;  // outbound answered
+}
+
+export interface AnalyticsDrilldownRecord {
+  calldate: string | null;
+  src: string;
+  dst: string;
+  queue_extension: string;
+  agent_extension: string;
+  duration: number;
+  talk: number;
+  disposition: string;
+  status: string;
+  wait_secs: number;
+  sla_met: boolean;
+  linkedid: string;
+  direction?: string;
+}
+
+export interface AnalyticsSettings {
+  sla_thresholds: Record<string, number>;
+  sla_default_secs: number;
+  fcr_window_days: number;
+  short_abandon_secs: number;
+}
+

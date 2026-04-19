@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus, Phone,
 } from 'lucide-react';
+import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
 import { getAuthHeaders, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
@@ -545,18 +546,19 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   <Phone size={14} />
                   {t('users.extension')}
                 </label>
-                <select
-                  className="form-input"
-                  value={form.extension}
-                  onChange={e => setForm(f => ({ ...f, extension: e.target.value }))}
-                >
-                  <option value="">None</option>
-                  {agents.map(a => (
-                    <option key={a.extension} value={a.extension}>
-                      {`${a.extension} ${a.name !== a.extension ? a.name : ''}`.trim() || a.extension}
-                    </option>
-                  ))}
-                </select>
+                <FilterSelect
+                  size="md"
+                  value={form.extension ?? ''}
+                  onChange={v => setForm(f => ({ ...f, extension: v }))}
+                  icon={Phone}
+                  options={[
+                    { value: '', label: t('users.none', 'None') },
+                    ...agents.map(a => ({
+                      value: a.extension,
+                      label: `${a.extension}${a.name !== a.extension ? ' — ' + a.name : ''}`,
+                    })),
+                  ]}
+                />
                 {agents.length === 0 && (
                   <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>{t('users.noExtensions')}</p>
                 )}
@@ -565,15 +567,17 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             <div className="up-form-row">
               <div className="up-form-group">
                 <label>{t('users.role')}</label>
-                <select
-                  className="form-input"
+                <FilterSelect
+                  size="md"
                   value={form.role}
-                  onChange={e => setForm(f => ({ ...f, role: e.target.value as 'admin' | 'supervisor' | 'agent' }))}
-                >
-                  <option value="supervisor">{t('users.roles.supervisor')}</option>
-                  <option value="agent">{t('users.roles.agent')}</option>
-                  <option value="admin">{t('users.roles.admin')}</option>
-                </select>
+                  onChange={v => setForm(f => ({ ...f, role: v as 'admin' | 'supervisor' | 'agent' }))}
+                  icon={Shield}
+                  options={[
+                    { value: 'supervisor', label: t('users.roles.supervisor'), dot: 'blue'    },
+                    { value: 'agent',      label: t('users.roles.agent'),      dot: 'green'   },
+                    { value: 'admin',      label: t('users.roles.admin'),      dot: 'orange'  },
+                  ]}
+                />
               </div>
               {form.role === 'supervisor' && (
                 <div className="up-form-group">
