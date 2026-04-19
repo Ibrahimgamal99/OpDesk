@@ -24,6 +24,7 @@ def classify_cdr_direction(cdr: dict) -> str:
     # Patterns
     is_ext = lambda n: bool(re.match(r"^[1-9]\d{1,4}$", n))
     is_pstn = lambda n: bool(re.match(r"^\+?\d{7,15}$", n))
+    is_feature = lambda n: bool(re.match(r"^\*\d+$", n))
     
     src_ext, dst_ext = is_ext(src), is_ext(dst)
     src_pstn, dst_pstn = is_pstn(src), is_pstn(dst)
@@ -53,6 +54,9 @@ def classify_cdr_direction(cdr: dict) -> str:
         votes["IN"] += 3
     elif src_ext and dst_ext:
         votes["INTERNAL"] += 5
+    elif src_ext and is_feature(dst):
+        # Extension dialing a feature code (*43, *97, etc.) — treated as OUT
+        votes["OUT"] += 3
     
     # Vote 3: Channels (weight 2)
     trunk_indicators = ["trunk", "gw", "provider", "peer", "dahdi"]
@@ -73,6 +77,9 @@ def classify_cdr_direction(cdr: dict) -> str:
     # Return max votes
     max_votes = max(votes.values())
     if max_votes == 0:
+        # Feature codes from extensions → OUT
+        if src_ext and (is_feature(dst) or dst_ext is False):
+            return "OUT"
         return "INTERNAL" if src_ext else "UNKNOWN"
     
     # Tie breaker: IN vs OUT

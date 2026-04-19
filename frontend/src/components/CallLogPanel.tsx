@@ -4,10 +4,13 @@ import { useTranslation } from 'react-i18next';
 import {
   ArrowUpDown, Search, Phone, X, Download, Play, Pause,
   ChevronLeft, ChevronRight, Loader2, BarChart3, Route,
-  PhoneIncoming, PhoneOutgoing, ListOrdered, PhoneCall, Share2, PhoneOff, PhoneMissed
+  PhoneIncoming, PhoneOutgoing, ListOrdered, PhoneCall, Share2, PhoneOff, PhoneMissed,
 } from 'lucide-react';
+import { FilterSelect, type SelectOption } from './FilterSelect';
 import type { CallLogRecord, QoSData, CallJourneyEvent } from '../types';
 import { getAuthHeaders } from '../auth';
+import { PeriodPicker } from './AnalyticsPanel';
+import type { DateRange } from './analyticsUtils';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -468,7 +471,10 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
             </div>
             <div className="cl-journey-badges">
               <span className={`cl-journey-direction cl-direction-${(call.call_type || '').toLowerCase()}`}>
-                {call.call_type || '—'}
+                {call.call_type === 'IN' ? '📥 IN' :
+                 call.call_type === 'OUT' ? '📤 OUT' :
+                 call.call_type === 'INTERNAL' ? '🔄 INT' :
+                 call.call_type || '—'}
               </span>
               {call.extension && (
                 <span className="cl-journey-agent-badge">{t('callLog.journey.agent', { id: call.extension })}</span>
@@ -522,7 +528,12 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
 // ---------------------------------------------------------------------------
 // Main CallLogPanel Component
 // ---------------------------------------------------------------------------
-export function CallLogPanel() {
+interface CallLogPanelProps {
+  dateRange: DateRange;
+  onDateRangeChange: (r: DateRange) => void;
+}
+
+export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps) {
   const { t } = useTranslation();
 
   // Data
@@ -532,18 +543,10 @@ export function CallLogPanel() {
   const [error, setError] = useState<string | null>(null);
 
   // Filters
-  // Default dateFrom to 30 days ago to avoid loading the full CDR history on
-  // first render (can be very slow on large databases, e.g. 400 K+ records).
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [callTypeFilter, setCallTypeFilter] = useState('');
   const [appFilter, setAppFilter] = useState('');
-  const [dateFrom, setDateFrom] = useState<string>(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
-  });
-  const [dateTo, setDateTo] = useState('');
 
   // Sort & pagination
   const [sortAsc, setSortAsc] = useState(false);
@@ -562,8 +565,8 @@ export function CallLogPanel() {
     try {
       const params = new URLSearchParams();
       params.set('limit', '500');
-      if (dateFrom) params.set('date_from', dateFrom);
-      if (dateTo) params.set('date_to', dateTo);
+      params.set('date_from', dateRange.from);
+      params.set('date_to', dateRange.to);
       const res = await fetch(`/api/call-log?${params.toString()}`, { headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
@@ -574,7 +577,7 @@ export function CallLogPanel() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [dateRange]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -582,6 +585,19 @@ export function CallLogPanel() {
   const statusOptions = Array.from(new Set(calls.map(c => c.status))).filter(Boolean).sort();
   const callTypeOptions = Array.from(new Set(calls.map(c => c.call_type))).filter(Boolean).sort();
   const appOptions = Array.from(new Set(calls.map(c => c.app))).filter(Boolean).sort();
+
+  function statusDot(s: string): SelectOption['dot'] {
+    if (s === 'ANSWERED') return 'green';
+    if (s === 'NO ANSWER' || s === 'BUSY') return 'orange';
+    if (s === 'FAILED') return 'red';
+    return 'neutral';
+  }
+
+  function callTypeDot(ct: string): SelectOption['dot'] {
+    if (ct === 'IN') return 'green';
+    if (ct === 'OUT') return 'blue';
+    return 'neutral';
+  }
 
   // Filtered + sorted
   const filtered = calls.filter(c => {
@@ -610,7 +626,7 @@ export function CallLogPanel() {
   const pageItems = sorted.slice(startIdx, startIdx + ITEMS_PER_PAGE);
 
   // Reset page on filter change
-  useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, callTypeFilter, appFilter, dateFrom, dateTo]);
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, callTypeFilter, appFilter, dateRange]);
 
   const handleOpenQos = (call: CallLogRecord) => {
     const qos = parseQoS(call.QoS);
@@ -676,61 +692,48 @@ export function CallLogPanel() {
           )}
         </div>
         <div className="cl-filter-item">
-          <select
-            className="cl-filter-select"
+          <FilterSelect
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-          >
-            <option value="">{t('callLog.allStatuses')}</option>
-            {statusOptions.map(s => (
-              <option key={s} value={s}>
-                {t(`callLog.status.${s}`, { defaultValue: s })}
-              </option>
-            ))}
-          </select>
+            onChange={setStatusFilter}
+            style={{ width: '100%' }}
+            options={[
+              { value: '', label: t('callLog.allStatuses') },
+              ...statusOptions.map(s => ({
+                value: s,
+                label: t(`callLog.status.${s}`, { defaultValue: s }),
+                dot: statusDot(s),
+              })),
+            ]}
+          />
         </div>
         <div className="cl-filter-item">
-          <select
-            className="cl-filter-select"
+          <FilterSelect
             value={callTypeFilter}
-            onChange={e => setCallTypeFilter(e.target.value)}
-          >
-            <option value="">{t('callLog.allDirections')}</option>
-            {callTypeOptions.map(ct => (
-              <option key={ct} value={ct}>{ct}</option>
-            ))}
-          </select>
+            onChange={setCallTypeFilter}
+            icon={ArrowUpDown}
+            style={{ width: '100%' }}
+            options={[
+              { value: '', label: t('callLog.allDirections') },
+              ...callTypeOptions.map(ct => ({
+                value: ct,
+                label: ct,
+                dot: callTypeDot(ct),
+              })),
+            ]}
+          />
         </div>
         <div className="cl-filter-item">
-          <select
-            className="cl-filter-select"
+          <FilterSelect
             value={appFilter}
-            onChange={e => setAppFilter(e.target.value)}
-          >
-            <option value="">{t('callLog.allApps')}</option>
-            {appOptions.map(a => (
-              <option key={a} value={a}>{a}</option>
-            ))}
-          </select>
-        </div>
-        <div className="cl-filter-item">
-          <input
-            className="cl-filter-input cl-filter-date"
-            type="date"
-            value={dateFrom}
-            onChange={e => setDateFrom(e.target.value)}
-            title={t('callLog.dateFrom')}
+            onChange={setAppFilter}
+            style={{ width: '100%' }}
+            options={[
+              { value: '', label: t('callLog.allApps') },
+              ...appOptions.map(a => ({ value: a, label: a })),
+            ]}
           />
         </div>
-        <div className="cl-filter-item">
-          <input
-            className="cl-filter-input cl-filter-date"
-            type="date"
-            value={dateTo}
-            onChange={e => setDateTo(e.target.value)}
-            title={t('callLog.dateTo')}
-          />
-        </div>
+        <PeriodPicker value={dateRange} onChange={onDateRangeChange} />
       </div>
 
       {/* Table */}
@@ -788,7 +791,10 @@ export function CallLogPanel() {
                     <td>{call.app || '—'}</td>
                     <td>
                       <span className={`cl-direction cl-direction-${call.call_type?.toLowerCase()}`}>
-                        {call.call_type || '—'}
+                        {call.call_type === 'IN' ? '📥 IN' :
+                         call.call_type === 'OUT' ? '📤 OUT' :
+                         call.call_type === 'INTERNAL' ? '🔄 INT' :
+                         call.call_type || '—'}
                       </span>
                     </td>
                     <td>
