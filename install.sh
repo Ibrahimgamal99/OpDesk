@@ -577,6 +577,65 @@ else
     fi
 fi
 
+# --- Admin Password Setup (fresh install only) ---
+ADMIN_INIT_PASSWORD_HASH=""
+if [ "$IS_UPDATE" != "true" ]; then
+    echo -e "\n${YELLOW}Admin Panel Setup:${NC}"
+    echo -e "  ${BLUE}Press Enter to keep the default password.${NC}"
+    read -s -p "  Enter the password for Admin Panel: " ADMIN_PASSWORD
+    echo ""
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        echo -e "${GREEN}  Using default admin password (from schema.sql).${NC}"
+    else
+        while true; do
+            read -s -p "  Confirm password: " ADMIN_PASSWORD_CONFIRM
+            echo ""
+            if [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
+                echo -e "${YELLOW}  Passwords do not match. Please re-enter.${NC}"
+                read -s -p "  Admin password: " ADMIN_PASSWORD
+                echo ""
+                if [ -z "$ADMIN_PASSWORD" ]; then
+                    break
+                fi
+            else
+                break
+            fi
+        done
+        if [ -n "$ADMIN_PASSWORD" ]; then
+            ADMIN_INIT_PASSWORD_HASH=$(python3 -c "
+import sys, bcrypt
+pw = sys.argv[1].encode()
+print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())
+" "$ADMIN_PASSWORD" 2>/dev/null || python -c "
+import sys, bcrypt
+pw = sys.argv[1].encode()
+print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())
+" "$ADMIN_PASSWORD" 2>/dev/null || echo "")
+            if [ -z "$ADMIN_INIT_PASSWORD_HASH" ]; then
+                echo -e "${YELLOW}  Warning: Could not generate password hash (bcrypt missing?). Default password will be used.${NC}"
+            else
+                python3 -c "
+import sys, re
+# Match any bcrypt hash pattern (\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}) in the admin INSERT line
+with open(sys.argv[1]) as f:
+    content = f.read()
+new_content = re.sub(
+    r\"(INSERT\s+IGNORE\s+INTO\s+users\s+\(username,\s*password_hash,\s*name,\s*role\)\s+VALUES\s*\(\s*'admin'\s*,\s*')\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}('\s*,\s*'Admin'\s*,\s*'admin'\s*\))\",
+    r'\1' + sys.argv[2] + r'\2',
+    content
+)
+if new_content == content:
+    # Fallback: replace any bcrypt hash in the file
+    new_content = re.sub(r'\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}', sys.argv[2], content)
+with open(sys.argv[1], 'w') as f:
+    f.write(new_content)
+" "$PROJECT_ROOT/backend/schema.sql" "$ADMIN_INIT_PASSWORD_HASH" 2>/dev/null || true
+                echo -e "${GREEN}  Admin password configured successfully.${NC}"
+            fi
+        fi
+    fi
+fi
+
 cat > .env <<EOF
 OS=$OS
 PBX=$PBX
@@ -683,6 +742,14 @@ echo -e "  Start:         ${YELLOW}sudo systemctl start opdesk${NC}"
 echo -e "  Stop:          ${YELLOW}sudo systemctl stop opdesk${NC}"
 echo -e "  Restart:       ${YELLOW}sudo systemctl restart opdesk${NC}"
 echo -e "  Logs:          ${YELLOW}sudo journalctl -u opdesk -f${NC}"
+echo ""
+echo -e "${BLUE}ADMIN CREDENTIALS:${NC}"
+echo -e "  Username:      admin"
+if [ "$IS_UPDATE" != "true" ] && [ -n "$ADMIN_INIT_PASSWORD_HASH" ]; then
+    echo -e "  Password:      (as entered during installation)"
+else
+    echo -e "  Password:      (unchanged)"
+fi
 echo ""
 echo -e "${BLUE}COMMANDS:${NC}"
 echo -e "  Run App:       ${YELLOW}./start.sh${NC}"
