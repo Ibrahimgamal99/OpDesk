@@ -385,17 +385,17 @@ elif [ -d /usr/share/issabel ]; then
         echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
         if command_exists mysql; then
             if [ -n "$_root_pass" ] && mysql -u root -p"$_root_pass" -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                mysql -u root -p"$_root_pass" -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
+                mysql -u root -p"$_root_pass" -e "GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             elif sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                sudo mysql -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
+                sudo mysql -e "GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                mysql -u root -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
+                mysql -u root -e "GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             else
                 echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
-                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;\"${NC}"
+                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;\"${NC}"
             fi
         else
             echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
@@ -439,14 +439,14 @@ elif [ -f /etc/freepbx.conf ]; then
         echo -e "${YELLOW}Creating database user '$DB_USER'...${NC}"
         if command_exists mysql; then
             if sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                sudo mysql -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
+                sudo mysql -e "GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             elif mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>/dev/null; then
-                mysql -u root -e "GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
+                mysql -u root -e "GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" 2>/dev/null
                 echo -e "${GREEN}Successfully created database user '$DB_USER'${NC}"
             else
                 echo -e "${YELLOW}Could not create database user automatically. You may need to create it manually.${NC}"
-                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT SELECT ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;\"${NC}"
+                echo -e "${YELLOW}Run: mysql -u root -p -e \"CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS'; GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO '$DB_USER'@'localhost'; GRANT SELECT ON asteriskcdrdb.* TO '$DB_USER'@'localhost'; GRANT ALL PRIVILEGES ON OpDesk.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;\"${NC}"
             fi
         else
             echo -e "${YELLOW}MySQL client not found. Please install mysql-client and create user manually.${NC}"
@@ -600,26 +600,46 @@ _listening_pid() {
     echo "$pid"
 }
 
-# Move Apache's listener from one port to another (Debian + CentOS/RHEL)
 _move_apache_port() {
     local from="$1" to="$2" changed=0
+
+    # --- Debian/Ubuntu (apache2) ---
     if [ -f /etc/apache2/ports.conf ]; then
         sudo sed -i "s/\bListen $from\b/Listen $to/g" /etc/apache2/ports.conf && changed=1
-        sudo find /etc/apache2/sites-enabled -type f \
-            -exec sudo sed -i "s/<VirtualHost \*:$from>/<VirtualHost *:$to>/g" {} \; 2>/dev/null || true
-        sudo systemctl restart apache2 2>/dev/null || true
+        sudo find /etc/apache2/sites-enabled -type f -exec sudo sed -i \
+            -e "s/<VirtualHost \*:$from>/<VirtualHost *:$to>/g" \
+            -e "s/<VirtualHost _default_:$from>/<VirtualHost _default_:$to>/g" \
+            {} \; 2>/dev/null || true
+        if [ "$changed" -eq 1 ]; then
+            sudo systemctl restart apache2 2>/dev/null || true
+        fi
     fi
+
+    # --- CentOS/RHEL (httpd) — FreePBX & Issabel ---
     if [ -f /etc/httpd/conf/httpd.conf ]; then
-        sudo sed -i "s/^Listen $from\b/Listen $to/" /etc/httpd/conf/httpd.conf && changed=1
+        sudo sed -i "s/\bListen $from\b/Listen $to/g" /etc/httpd/conf/httpd.conf && changed=1
     fi
+
+    # conf.d drop-ins (ssl.conf, freepbx.conf, issabel.conf, etc.)
     for f in /etc/httpd/conf.d/*.conf; do
         [ -f "$f" ] || continue
-        if grep -qE "^Listen $from\b|<VirtualHost [^>]*:$from>" "$f" 2>/dev/null; then
+        if grep -qE "\bListen $from\b|<VirtualHost [^>]*:$from>" "$f" 2>/dev/null; then
             sudo sed -i \
-                "s/^Listen $from\b/Listen $to/;s/<VirtualHost \*:$from>/<VirtualHost *:$to>/g" \
+                -e "s/\bListen $from\b/Listen $to/g" \
+                -e "s/<VirtualHost \*:$from>/<VirtualHost *:$to>/g" \
+                -e "s/<VirtualHost _default_:$from>/<VirtualHost _default_:$to>/g" \
                 "$f" && changed=1
         fi
     done
+
+    # SELinux: allow Apache to bind the new port (CentOS/RHEL only)
+    if [ "$changed" -eq 1 ] && command_exists semanage; then
+        if ! semanage port -l | grep -q "http_port_t.*\b${to}\b" 2>/dev/null; then
+            sudo semanage port -a -t http_port_t -p tcp "$to" 2>/dev/null || \
+            sudo semanage port -m -t http_port_t -p tcp "$to" 2>/dev/null || true
+        fi
+    fi
+
     if [ "$changed" -eq 1 ] && systemctl is-active httpd &>/dev/null; then
         sudo systemctl restart httpd 2>/dev/null || true
     fi
@@ -657,7 +677,8 @@ _resolve_port_conflict() {
     echo -e "${YELLOW}How would you like to resolve this?${NC}"
     echo -e "  ${GREEN}1)${NC} Change Nginx to listen on a different port"
     echo -e "  ${GREEN}2)${NC} Move '$proc' away from port $port (to $pbx_fallback)"
-    echo -ne "Enter choice [1/2]: "
+    echo -e "  ${GREEN}3)${NC} Do it manually (cancel install)"
+    echo -ne "Enter choice [1/2/3]: "
     local choice
     read -r choice
     case "$choice" in
@@ -680,6 +701,10 @@ _resolve_port_conflict() {
                 echo -e "${RED}'$proc' is not Apache/httpd — cannot auto-move. Falling back to option 1.${NC}"
                 choice=1
             fi
+            ;;
+        3)
+            echo -e "${YELLOW}Please resolve the port $port conflict manually and re-run the installer.${NC}"
+            exit 1
             ;;
     esac
     if [ "$choice" = "1" ]; then
