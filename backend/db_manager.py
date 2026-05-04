@@ -1085,7 +1085,7 @@ def update_user(user_id: int | None = None, name: str = None, extension: str = N
             if user_id is not None:
                 where_clauses.append("id = %s")
                 params.append(user_id)
-            if extension is not None:
+            elif extension is not None:
                 where_clauses.append("extension = %s")
                 params.append((str(extension).strip() or None))
             if where_clauses:

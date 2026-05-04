@@ -356,7 +356,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: form.name || null,
-            extension: form.extension || null,
+            extension: form.extension,
             role: form.role,
             monitor_modes: form.role === 'agent' ? [] : form.role === 'admin' ? ['listen', 'whisper', 'barge'] : form.monitor_modes,
             password: form.password || undefined,
