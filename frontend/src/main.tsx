@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { Login } from './components/Login'
@@ -16,6 +16,12 @@ function Root() {
   const onLogout = useCallback(() => {
     removeToken()
     setTokenState(null)
+  }, [])
+
+  useEffect(() => {
+    const handler = () => setTokenState(null);
+    window.addEventListener('opdesk:unauthorized', handler);
+    return () => window.removeEventListener('opdesk:unauthorized', handler);
   }, [])
 
   if (!token) {

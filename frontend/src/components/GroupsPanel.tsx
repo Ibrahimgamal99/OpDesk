@@ -5,7 +5,7 @@ import {
   Phone, List, ChevronDown, Group,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { getAuthHeaders, getUser } from '../auth';
+import { fetchWithAuth, getUser } from '../auth';
 
 export interface OpDeskGroup {
   id: number;
@@ -258,10 +258,10 @@ export function GroupsPanel(props: GroupsPanelProps) {
     setMessage(null);
     try {
       const [groupsRes, agentsRes, queuesRes, usersRes] = await Promise.all([
-        fetch('/api/settings/groups', { headers: getAuthHeaders() }),
-        fetch('/api/settings/agents', { headers: getAuthHeaders() }),
-        fetch('/api/settings/queues', { headers: getAuthHeaders() }),
-        fetch('/api/settings/users', { headers: getAuthHeaders() }),
+        fetchWithAuth('/api/settings/groups'),
+        fetchWithAuth('/api/settings/agents'),
+        fetchWithAuth('/api/settings/queues'),
+        fetchWithAuth('/api/settings/users'),
       ]);
       if (groupsRes.ok) {
         const d = await groupsRes.json();
@@ -326,9 +326,9 @@ export function GroupsPanel(props: GroupsPanelProps) {
     }
     try {
       if (editingGroup) {
-        const res = await fetch(`/api/settings/groups/${editingGroup.id}`, {
+        const res = await fetchWithAuth(`/api/settings/groups/${editingGroup.id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: form.name,
             agent_extensions: form.agent_extensions,
@@ -342,9 +342,9 @@ export function GroupsPanel(props: GroupsPanelProps) {
         }
         setMessage({ type: 'success', text: t('groups.groupUpdated') });
       } else {
-        const res = await fetch('/api/settings/groups', {
+        const res = await fetchWithAuth('/api/settings/groups', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: form.name.trim(),
             agent_extensions: form.agent_extensions,
@@ -370,9 +370,8 @@ export function GroupsPanel(props: GroupsPanelProps) {
     if (!window.confirm(t('groups.deleteConfirm', { name: g.name }))) return;
     setMessage(null);
     try {
-      const res = await fetch(`/api/settings/groups/${g.id}`, {
+      const res = await fetchWithAuth(`/api/settings/groups/${g.id}`, {
         method: 'DELETE',
-        headers: getAuthHeaders(),
       });
       if (!res.ok) {
         const err = await res.json();

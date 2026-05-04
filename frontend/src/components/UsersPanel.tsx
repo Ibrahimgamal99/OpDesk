@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
-import { getAuthHeaders, getUser } from '../auth';
+import { fetchWithAuth, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
 
 export interface OpDeskUser {
@@ -274,9 +274,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     setMessage(null);
     try {
       const [usersRes, groupsRes, agentsRes] = await Promise.all([
-        fetch('/api/settings/users', { headers: getAuthHeaders() }),
-        fetch('/api/settings/groups', { headers: getAuthHeaders() }),
-        fetch('/api/settings/agents', { headers: getAuthHeaders() }),
+        fetchWithAuth('/api/settings/users'),
+        fetchWithAuth('/api/settings/groups'),
+        fetchWithAuth('/api/settings/agents'),
       ]);
       if (usersRes.ok) {
         const d = await usersRes.json();
@@ -351,9 +351,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     }
     try {
       if (editingUser) {
-        const res = await fetch(`/api/settings/users/${editingUser.id}`, {
+        const res = await fetchWithAuth(`/api/settings/users/${editingUser.id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: form.name || null,
             extension: form.extension || null,
@@ -369,9 +369,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         }
         setMessage({ type: 'success', text: t('users.userUpdated') });
       } else {
-        const res = await fetch('/api/settings/users', {
+        const res = await fetchWithAuth('/api/settings/users', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             username: form.username.trim(),
             password: form.password,
@@ -404,9 +404,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     if (!window.confirm(t('users.deleteConfirm', { username: user.username }))) return;
     setMessage(null);
     try {
-      const res = await fetch(`/api/settings/users/${user.id}`, {
+      const res = await fetchWithAuth(`/api/settings/users/${user.id}`, {
         method: 'DELETE',
-        headers: getAuthHeaders(),
       });
       if (!res.ok) {
         const err = await res.json();

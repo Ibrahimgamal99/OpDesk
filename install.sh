@@ -590,21 +590,112 @@ NGINX_SERVER_NAME="_"
 NGINX_SSL_CERT="$HTTPS_CERT"
 NGINX_SSL_KEY="$HTTPS_KEY"
 
-# Check for port 443 conflict — only processes LISTENING on 443 matter (not outbound connections)
-PORT443_PID=$(ss -tlnp 'sport = :443' 2>/dev/null | awk 'NR>1{print $NF}' | grep -oP 'pid=\K[0-9]+' | head -1 \
-             || lsof -iTCP:443 -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
-PORT443_PROC=""
-if [ -n "$PORT443_PID" ]; then
-    PORT443_PROC=$(ps -p "$PORT443_PID" -o comm= 2>/dev/null || true)
-fi
-if [ -n "$PORT443_PROC" ] && [ "$PORT443_PROC" != "nginx" ]; then
-    echo -e "${RED}WARNING: Port 443 is already in use by '$PORT443_PROC' (PID $PORT443_PID).${NC}"
-    echo -e "${YELLOW}FreePBX and Issabel run Apache on port 443 by default.${NC}"
-    echo -e "${YELLOW}Move Apache to a different port (e.g. 4443) before continuing:${NC}"
-    echo -e "  sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf"
-    echo -e "  sudo systemctl restart httpd"
-    echo -e "${YELLOW}Then re-run install.sh. Nginx setup skipped for now.${NC}"
-fi
+# Return the PID of the process LISTENING on a port (empty if none / nginx)
+_listening_pid() {
+    local port="$1"
+    local pid
+    pid=$(ss -tlnp "sport = :$port" 2>/dev/null | awk 'NR>1{print $NF}' \
+          | grep -oP 'pid=\K[0-9]+' | head -1)
+    [ -z "$pid" ] && pid=$(lsof -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1)
+    echo "$pid"
+}
+
+# Move Apache's listener from one port to another (Debian + CentOS/RHEL)
+_move_apache_port() {
+    local from="$1" to="$2" changed=0
+    if [ -f /etc/apache2/ports.conf ]; then
+        sudo sed -i "s/\bListen $from\b/Listen $to/g" /etc/apache2/ports.conf && changed=1
+        sudo find /etc/apache2/sites-enabled -type f \
+            -exec sudo sed -i "s/<VirtualHost \*:$from>/<VirtualHost *:$to>/g" {} \; 2>/dev/null || true
+        sudo systemctl restart apache2 2>/dev/null || true
+    fi
+    if [ -f /etc/httpd/conf/httpd.conf ]; then
+        sudo sed -i "s/^Listen $from\b/Listen $to/" /etc/httpd/conf/httpd.conf && changed=1
+    fi
+    for f in /etc/httpd/conf.d/*.conf; do
+        [ -f "$f" ] || continue
+        if grep -qE "^Listen $from\b|<VirtualHost [^>]*:$from>" "$f" 2>/dev/null; then
+            sudo sed -i \
+                "s/^Listen $from\b/Listen $to/;s/<VirtualHost \*:$from>/<VirtualHost *:$to>/g" \
+                "$f" && changed=1
+        fi
+    done
+    if [ "$changed" -eq 1 ] && systemctl is-active httpd &>/dev/null; then
+        sudo systemctl restart httpd 2>/dev/null || true
+    fi
+}
+
+# Read a valid port number from stdin
+_read_port() {
+    local prompt="$1" default="$2" val
+    while true; do
+        read -rp "$prompt" val
+        val="${val:-$default}"
+        if [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 1 ] && [ "$val" -le 65535 ]; then
+            echo "$val"; return
+        fi
+        echo -e "${RED}  Invalid port. Enter a number between 1 and 65535.${NC}" >&2
+    done
+}
+
+# Resolve a port conflict interactively.
+# Sets NGINX_HTTPS_PORT or NGINX_HTTP_PORT as a side-effect via caller's variable.
+# Usage: _resolve_port_conflict <port> <varname> <pbx_fallback_port>
+#   port            — the contested port (443 or 80)
+#   varname         — shell variable to update with the chosen Nginx port
+#   pbx_fallback    — port Apache/httpd will be moved to if user picks option 2
+_resolve_port_conflict() {
+    local port="$1" varname="$2" pbx_fallback="$3"
+    local pid proc
+    pid=$(_listening_pid "$port")
+    [ -z "$pid" ] && return          # port is free
+    proc=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+    [ -z "$proc" ] && return         # process gone
+    [ "$proc" = "nginx" ] && return  # already ours
+
+    echo -e "${RED}Port $port is in use by '$proc' (PID $pid).${NC}"
+    echo -e "${YELLOW}How would you like to resolve this?${NC}"
+    echo -e "  ${GREEN}1)${NC} Change Nginx to listen on a different port"
+    echo -e "  ${GREEN}2)${NC} Move '$proc' away from port $port (to $pbx_fallback)"
+    echo -ne "Enter choice [1/2]: "
+    local choice
+    read -r choice
+    case "$choice" in
+        2)
+            if [[ "$proc" =~ ^(apache2|httpd)$ ]]; then
+                echo -e "${YELLOW}Moving $proc from port $port to $pbx_fallback...${NC}"
+                _move_apache_port "$port" "$pbx_fallback"
+                sleep 2
+                local new_pid new_proc
+                new_pid=$(_listening_pid "$port")
+                new_proc=""
+                [ -n "$new_pid" ] && new_proc=$(ps -p "$new_pid" -o comm= 2>/dev/null || true)
+                if [ -z "$new_proc" ] || [ "$new_proc" = "nginx" ]; then
+                    echo -e "${GREEN}Done — $proc is now on $pbx_fallback. Nginx will use port $port.${NC}"
+                else
+                    echo -e "${RED}Could not free port $port. Falling back to option 1.${NC}"
+                    choice=1
+                fi
+            else
+                echo -e "${RED}'$proc' is not Apache/httpd — cannot auto-move. Falling back to option 1.${NC}"
+                choice=1
+            fi
+            ;;
+    esac
+    if [ "$choice" = "1" ]; then
+        local new_port
+        new_port=$(_read_port "  Enter new port for Nginx (currently $port): " "$port")
+        printf -v "$varname" '%s' "$new_port"
+        echo -e "${GREEN}Nginx will use port $new_port instead of $port.${NC}"
+    fi
+}
+
+# Ports Nginx will listen on — may be changed interactively below
+NGINX_HTTPS_PORT=443
+NGINX_HTTP_PORT=80
+
+_resolve_port_conflict 443 NGINX_HTTPS_PORT 4443
+_resolve_port_conflict 80  NGINX_HTTP_PORT  8080
 
 # Install Nginx if not present
 if ! command_exists nginx; then
@@ -659,8 +750,8 @@ map \$http_upgrade \$connection_upgrade {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen $NGINX_HTTPS_PORT ssl http2;
+    listen [::]:$NGINX_HTTPS_PORT ssl http2;
     server_name $NGINX_SERVER_NAME;
 
     ssl_certificate     $NGINX_SSL_CERT;
@@ -705,8 +796,8 @@ server {
 }
 
 server {
-    listen 80;
-    listen [::]:80;
+    listen $NGINX_HTTP_PORT;
+    listen [::]:$NGINX_HTTP_PORT;
     server_name $NGINX_SERVER_NAME;
     return 301 https://\$host\$request_uri;
 }

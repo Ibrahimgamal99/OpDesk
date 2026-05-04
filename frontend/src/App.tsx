@@ -4,7 +4,7 @@ import { setLanguage } from './i18n';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWebPhone } from './hooks/useWebPhone';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
-import { getToken, setUser, getUser } from './auth';
+import { getToken, setUser, getUser, fetchWithAuth } from './auth';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
@@ -41,7 +41,6 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { getAuthHeaders } from './auth';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 
 type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'phone' | 'analytics';
@@ -114,7 +113,7 @@ function App({ onLogout }: AppProps) {
   }, [onLogout]);
 
   const fetchNewNotifCount = useCallback(() => {
-    fetch('/api/call-notifications?status=new&limit=100', { headers: getAuthHeaders() })
+    fetchWithAuth('/api/call-notifications?status=new&limit=100')
       .then((r) => r.ok ? r.json() : { notifications: [] })
       .then((data) => setNewNotifCount((data.notifications || []).length))
       .catch(() => setNewNotifCount(0));
@@ -150,7 +149,7 @@ function App({ onLogout }: AppProps) {
   useEffect(() => {
     if (!token) return;
     const ac = new AbortController();
-    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` }, signal: ac.signal })
+    fetchWithAuth('/api/auth/me', { signal: ac.signal })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => { if (data) setUser(data); })
       .catch(() => {});
@@ -160,7 +159,7 @@ function App({ onLogout }: AppProps) {
   // Load WebRTC extension list for Extensions tab (who can toggle and current state)
   useEffect(() => {
     if (activeTab !== 'extensions') return;
-    fetch('/api/settings/extensions/webrtc', { headers: getAuthHeaders() })
+    fetchWithAuth('/api/settings/extensions/webrtc')
       .then((r) => r.ok ? r.json() : { extensions: [] })
       .then((data) => setWebrtcExtensions(data.extensions || []))
       .catch(() => setWebrtcExtensions([]));
@@ -170,7 +169,7 @@ function App({ onLogout }: AppProps) {
 
   useEffect(() => {
     if (!notifDropdownOpen) return;
-    fetch('/api/call-notifications?status=new&limit=20', { headers: getAuthHeaders() })
+    fetchWithAuth('/api/call-notifications?status=new&limit=20')
       .then((r) => r.ok ? r.json() : { notifications: [] })
       .then((data) => setNotifList(data.notifications || []))
       .catch(() => setNotifList([]));
@@ -190,9 +189,9 @@ function App({ onLogout }: AppProps) {
   const updateNotifStatus = useCallback(async (id: number, status: 'read' | 'archived') => {
     setNotifUpdatingId(id);
     try {
-      const res = await fetch(`/api/call-notifications/${id}`, {
+      const res = await fetchWithAuth(`/api/call-notifications/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status_flag: status }),
       });
       if (!res.ok) return;
@@ -577,13 +576,13 @@ function App({ onLogout }: AppProps) {
               webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
               allowedWebrtcExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
               onWebrtcToggle={async (ext, enabled) => {
-                const res = await fetch(`/api/settings/extensions/${ext}/webrtc`, {
+                const res = await fetchWithAuth(`/api/settings/extensions/${ext}/webrtc`, {
                   method: 'PUT',
-                  headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                  headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ enabled }),
                 });
                 if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-                const list = await fetch('/api/settings/extensions/webrtc', { headers: getAuthHeaders() });
+                const list = await fetchWithAuth('/api/settings/extensions/webrtc');
                 const data = await list.json();
                 setWebrtcExtensions(data.extensions || []);
               }}
