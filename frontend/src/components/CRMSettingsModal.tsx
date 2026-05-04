@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
-import { getAuthHeaders } from '../auth';
+import { fetchWithAuth } from '../auth';
 import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
 
 export type SettingsTab = 'integrations' | 'qos' | 'analytics';
@@ -63,7 +63,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     setLoading(true);
     setMessage(null);
     try {
-      const response = await fetch('/api/crm/config', { headers: getAuthHeaders() });
+      const response = await fetchWithAuth('/api/crm/config');
       if (response.ok) {
         const data = await response.json();
         setConfig(data);
@@ -89,9 +89,9 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     setSaving(true);
     setMessage(null);
     try {
-      const response = await fetch('/api/crm/config', {
+      const response = await fetchWithAuth('/api/crm/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       });
       if (response.ok) {
@@ -122,7 +122,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     setQosLoading(true);
     setQosMessage(null);
     try {
-      const response = await fetch('/api/qos/enable', { method: 'POST', headers: getAuthHeaders() });
+      const response = await fetchWithAuth('/api/qos/enable', { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
         setQosMessage({ type: 'success', text: data.message || t('settings.qos.enable') });
@@ -142,7 +142,7 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     setQosLoading(true);
     setQosMessage(null);
     try {
-      const response = await fetch('/api/qos/disable', { method: 'POST', headers: getAuthHeaders() });
+      const response = await fetchWithAuth('/api/qos/disable', { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
         setQosMessage({ type: 'success', text: data.message || t('settings.qos.disable') });

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { DependencyList } from 'react';
-import { getAuthHeaders } from '../auth';
+import { fetchWithAuth } from '../auth';
 
 // ---------------------------------------------------------------------------
 // Shared date range types + helpers (used by Analytics AND Call History)
@@ -72,7 +72,7 @@ export function buildDateParams(from: string, to: string): URLSearchParams {
 }
 
 export async function analyticsGet<T>(url: string): Promise<T> {
-  const r = await fetch(url, { headers: getAuthHeaders() });
+  const r = await fetchWithAuth(url);
   if (!r.ok) throw new Error(`Request failed: ${r.status}`);
   return r.json();
 }

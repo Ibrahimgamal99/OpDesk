@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { WebPhone, type WebPhoneStatus, type WebPhoneCallbacks, type IncomingCallInfo } from '../lib/webPhone';
-import { getAuthHeaders } from '../auth';
+import { fetchWithAuth } from '../auth';
 
 export interface WebRtcConfig {
   server: string;
@@ -34,7 +34,7 @@ export function useWebPhone() {
     setConfigLoading(true);
     setConfigError(null);
     try {
-      const res = await fetch('/api/webrtc/config', { headers: getAuthHeaders() });
+      const res = await fetchWithAuth('/api/webrtc/config');
       if (!res.ok) throw new Error('Failed to load WebRTC config');
       const data = await res.json();
       setConfig({

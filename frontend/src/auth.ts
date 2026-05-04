@@ -86,3 +86,19 @@ export function getAuthHeaders(): Record<string, string> {
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
+
+/** Dispatch this event to trigger a global logout (e.g. on 401). */
+export function dispatchUnauthorized(): void {
+  removeToken();
+  window.dispatchEvent(new CustomEvent('opdesk:unauthorized'));
+}
+
+/** Drop-in replacement for fetch that auto-logs out on 401. */
+export async function fetchWithAuth(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = { ...getAuthHeaders(), ...(init?.headers as Record<string, string> | undefined) };
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401) {
+    dispatchUnauthorized();
+  }
+  return res;
+}

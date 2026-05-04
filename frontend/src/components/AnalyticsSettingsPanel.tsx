@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Save, CheckCircle2, Loader2 } from 'lucide-react';
-import { getAuthHeaders } from '../auth';
+import { fetchWithAuth } from '../auth';
 import type { AnalyticsSettings } from '../types';
 
 const inputStyle: React.CSSProperties = {
@@ -83,7 +83,7 @@ export function AnalyticsSettingsPanel() {
 
   useEffect(() => {
     setLoading(true);
-    fetch('/api/analytics/settings', { headers: getAuthHeaders() })
+    fetchWithAuth('/api/analytics/settings')
       .then(async r => {
         if (r.ok) {
           const d = await r.json();
@@ -99,9 +99,9 @@ export function AnalyticsSettingsPanel() {
     setSaved(false);
     setError(null);
     try {
-      const resp = await fetch('/api/analytics/settings', {
+      const resp = await fetchWithAuth('/api/analytics/settings', {
         method: 'POST',
-        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sla_default_secs: settings.sla_default_secs,
           fcr_window_days: settings.fcr_window_days,
