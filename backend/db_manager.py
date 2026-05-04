@@ -719,7 +719,6 @@ def init_settings_table():
     # Check if OpDesk database exists
     if check_database_exists('OpDesk'):
         log.info("✅ OpDesk database already exists")
-        # Verify table exists, create if missing
         try:
             config = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk'))
             conn = mysql.connector.connect(**config)
@@ -736,6 +735,20 @@ def init_settings_table():
                 """)
                 conn.commit()
                 log.info("✅ OpDesk_settings table created")
+
+            admin_hash_path = os.path.join(os.path.dirname(__file__), '.admin_init_hash')
+            if os.path.exists(admin_hash_path):
+                with open(admin_hash_path, 'r') as f:
+                    pw_hash = f.read().strip()
+                if pw_hash:
+                    cursor.execute(
+                        "UPDATE users SET password_hash = %s WHERE username = 'admin'",
+                        (pw_hash,),
+                    )
+                    conn.commit()
+                    os.remove(admin_hash_path)
+                    log.info("✅ Admin password applied from installer")
+
             cursor.close()
             conn.close()
         except Error as e:
@@ -754,7 +767,6 @@ def init_settings_table():
     
     # Execute schema.sql to create database and tables
     if execute_sql_file(schema_path):
-        # After creating database, connect to it and create table
         try:
             config = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk'))
             conn = mysql.connector.connect(**config)
@@ -766,7 +778,20 @@ def init_settings_table():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
-            conn.commit()
+
+            admin_hash_path = os.path.join(os.path.dirname(__file__), '.admin_init_hash')
+            if os.path.exists(admin_hash_path):
+                with open(admin_hash_path, 'r') as f:
+                    pw_hash = f.read().strip()
+                if pw_hash:
+                    cursor.execute(
+                        "UPDATE users SET password_hash = %s WHERE username = 'admin'",
+                        (pw_hash,),
+                    )
+                    conn.commit()
+                    os.remove(admin_hash_path)
+                    log.info("✅ Admin password applied from installer")
+
             cursor.close()
             conn.close()
             log.info("✅ OpDesk database and tables created successfully from schema.sql")

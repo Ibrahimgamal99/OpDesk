@@ -875,22 +875,7 @@ print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())
             if [ -z "$ADMIN_INIT_PASSWORD_HASH" ]; then
                 echo -e "${YELLOW}  Warning: Could not generate password hash (bcrypt missing?). Default password will be used.${NC}"
             else
-                python3 -c "
-import sys, re
-# Match any bcrypt hash pattern (\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}) in the admin INSERT line
-with open(sys.argv[1]) as f:
-    content = f.read()
-new_content = re.sub(
-    r\"(INSERT\s+IGNORE\s+INTO\s+users\s+\(username,\s*password_hash,\s*name,\s*role\)\s+VALUES\s*\(\s*'admin'\s*,\s*')\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}('\s*,\s*'Admin'\s*,\s*'admin'\s*\))\",
-    r'\1' + sys.argv[2] + r'\2',
-    content
-)
-if new_content == content:
-    # Fallback: replace any bcrypt hash in the file
-    new_content = re.sub(r'\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}', sys.argv[2], content)
-with open(sys.argv[1], 'w') as f:
-    f.write(new_content)
-" "$PROJECT_ROOT/backend/schema.sql" "$ADMIN_INIT_PASSWORD_HASH" 2>/dev/null || true
+                echo "$ADMIN_INIT_PASSWORD_HASH" > "$PROJECT_ROOT/backend/.admin_init_hash"
                 echo -e "${GREEN}  Admin password configured successfully.${NC}"
             fi
         fi
