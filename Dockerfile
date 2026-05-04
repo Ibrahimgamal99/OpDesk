@@ -38,11 +38,11 @@ COPY --from=frontend_builder /opt/opdesk/frontend/dist /opt/opdesk/frontend/dist
 COPY start.sh /opt/opdesk/start.sh
 RUN chmod +x /opt/opdesk/start.sh
 
-EXPOSE 8443
+EXPOSE 8765
 
-# No /api/health in repo, so check "/"
+# Uvicorn runs plain HTTP on 8765; Nginx on the host terminates TLS on 443.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -kfsS https://localhost:8443/ >/dev/null || exit 1
+  CMD curl -fsS http://localhost:8765/ >/dev/null || exit 1
 
 # Run the server exactly as the repo does
 WORKDIR /opt/opdesk/backend

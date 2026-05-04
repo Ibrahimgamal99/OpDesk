@@ -608,7 +608,7 @@ async def lifespan(app: FastAPI):
         'CRM_ENDPOINT_PATH': '/api/calls',
         'CRM_TIMEOUT': '30',
         'CRM_VERIFY_SSL': 'true',
-        'WEBRTC_PBX_SERVER': f'wss://{local_ip}:8089/ws',
+        'WEBRTC_PBX_SERVER': f'wss://{local_ip}/sip-ws',
     }
     
     for key, default_value in default_settings.items():
@@ -885,12 +885,21 @@ async def auth_me(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/webrtc/config")
-async def webrtc_config(current_user: dict = Depends(get_current_user)):
+async def webrtc_config(request: Request, current_user: dict = Depends(get_current_user)):
     """
     Return WebRTC softphone config for the current user: PBX WebSocket server URL (from settings),
     user extension and extension_secret (from DB). Used by the React softphone to register with SIP.js.
     """
-    server = (get_setting("WEBRTC_PBX_SERVER", os.getenv("WEBRTC_PBX_SERVER", "")) or "").strip()
+    stored = (get_setting("WEBRTC_PBX_SERVER", os.getenv("WEBRTC_PBX_SERVER", "")) or "").strip()
+    # When the stored value is empty or still the legacy direct-Asterisk default (port 8089),
+    # compute the URL from the request host so it works on any hostname without reconfiguration.
+    import re
+    if not stored or re.match(r'^wss?://[^:/]+:8089/ws$', stored):
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+        host = host.split(",")[0].strip()
+        server = f"wss://{host}/sip-ws" if host else stored
+    else:
+        server = stored
     creds = get_user_webrtc_credentials(current_user["id"])
     if not creds:
         return {"server": server, "extension": None, "extension_secret": None}
@@ -2444,7 +2453,7 @@ if __name__ == "__main__":
         log.info("Starting OpDesk over HTTPS on port %s (cert=%s)", port, ssl_cert)
         uvicorn.run(
             "server:app",
-            host="0.0.0.0",
+            host=os.getenv("OPDESK_BIND_HOST", "0.0.0.0"),
             port=port,
             ssl_certfile=ssl_cert,
             ssl_keyfile=ssl_key,
@@ -2456,7 +2465,7 @@ if __name__ == "__main__":
         log.info("Starting OpDesk over HTTP on port %s (set HTTPS_CERT and HTTPS_KEY for HTTPS)", port)
         uvicorn.run(
             "server:app",
-            host="0.0.0.0",
+            host=os.getenv("OPDESK_BIND_HOST", "0.0.0.0"),
             port=port,
             reload=True,
             log_level="info",

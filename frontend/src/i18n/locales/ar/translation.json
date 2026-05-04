@@ -437,9 +437,9 @@
     },
     "webrtcSettings": {
       "title": "WebRTC / WebSocket للمقسم",
-      "description": "عنوان WebSocket لخادم المقسم الخاص بك لـ WebRTC. استخدم الشكل wss://server:port/ws أو ws://server:port/ws.",
+      "description": "عنوان WebSocket لـ SIP للهاتف الناعم. عند استخدام Nginx (الافتراضي)، يُعيَّن تلقائياً إلى wss://your-host/sip-ws ولا يحتاج إلى تغيير.",
       "websocketUrl": "عنوان WebSocket",
-      "placeholder": "wss://server:port/ws",
+      "placeholder": "wss://your-host/sip-ws",
       "save": "حفظ إعدادات WebRTC",
       "saving": "جارٍ الحفظ...",
       "loading": "جارٍ تحميل إعدادات WebRTC...",

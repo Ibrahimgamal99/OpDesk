@@ -2,14 +2,14 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   X, Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff, Settings,
-  ChevronDown, ChevronRight, Plug, Server, BarChart3, KeyRound,
+  ChevronDown, ChevronRight, Plug, BarChart3, KeyRound,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
 import { getAuthHeaders } from '../auth';
 import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
 
-export type SettingsTab = 'integrations' | 'qos' | 'webrtc' | 'analytics';
+export type SettingsTab = 'integrations' | 'qos' | 'analytics';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -51,11 +51,6 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [qosLoading, setQosLoading] = useState(false);
   const [qosMessage, setQosMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [webrtcPbxServer, setWebrtcPbxServer] = useState('');
-  const [webrtcLoading, setWebrtcLoading] = useState(false);
-  const [webrtcSaving, setWebrtcSaving] = useState(false);
-  const [webrtcMessage, setWebrtcMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
   useEffect(() => {
     if (isOpen) {
       setActiveTab('integrations');
@@ -63,52 +58,6 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
       loadConfig();
     }
   }, [isOpen]);
-
-  useEffect(() => {
-    if (isOpen && activeTab === 'webrtc') {
-      loadWebrtcSettings();
-    }
-  }, [isOpen, activeTab]);
-
-  const loadWebrtcSettings = async () => {
-    setWebrtcLoading(true);
-    setWebrtcMessage(null);
-    try {
-      const response = await fetch('/api/settings', { headers: getAuthHeaders() });
-      if (response.ok) {
-        const data = await response.json();
-        setWebrtcPbxServer(data.settings?.WEBRTC_PBX_SERVER ?? '');
-      }
-    } catch (error) {
-      console.error('Failed to load WebRTC settings:', error);
-      setWebrtcMessage({ type: 'error', text: t('settings.webrtcSettings.loadError') });
-    } finally {
-      setWebrtcLoading(false);
-    }
-  };
-
-  const saveWebrtcSettings = async () => {
-    setWebrtcSaving(true);
-    setWebrtcMessage(null);
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ WEBRTC_PBX_SERVER: webrtcPbxServer.trim() }),
-      });
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setWebrtcMessage({ type: 'success', text: t('settings.webrtcSettings.savedSuccess') });
-      } else {
-        setWebrtcMessage({ type: 'error', text: data.detail || t('settings.webrtcSettings.saveError') });
-      }
-    } catch (error) {
-      console.error('Failed to save WebRTC settings:', error);
-      setWebrtcMessage({ type: 'error', text: t('settings.webrtcSettings.saveError') });
-    } finally {
-      setWebrtcSaving(false);
-    }
-  };
 
   const loadConfig = async () => {
     setLoading(true);
@@ -251,14 +200,6 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
           </button>
           <button
             type="button"
-            className={`settings-tab ${activeTab === 'webrtc' ? 'active' : ''}`}
-            onClick={() => setActiveTab('webrtc')}
-          >
-            <Server size={16} />
-            {t('settings.webrtc')}
-          </button>
-          <button
-            type="button"
             className={`settings-tab ${activeTab === 'analytics' ? 'active' : ''}`}
             onClick={() => setActiveTab('analytics')}
           >
@@ -266,70 +207,6 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
             {t('analytics.settings.title')}
           </button>
         </div>
-
-        {activeTab === 'webrtc' && (
-          <div className="settings-body">
-            {webrtcLoading ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48 }}>
-                <Loader2 size={28} className="spinner" />
-                <p style={{ marginTop: 16, color: 'var(--text-secondary)', fontSize: 14 }}>{t('settings.webrtcSettings.loading')}</p>
-              </div>
-            ) : (
-              <div className="settings-section">
-                <div className="settings-section-header">
-                  <div className="settings-section-icon">
-                    <Server size={20} />
-                  </div>
-                  <div>
-                    <div className="settings-section-title">{t('settings.webrtcSettings.title')}</div>
-                    <div className="settings-section-desc">{t('settings.webrtcSettings.description')}</div>
-                  </div>
-                </div>
-                {webrtcPbxServer.trim().startsWith('wss://') && (() => {
-                  const s = webrtcPbxServer.trim().replace(/^wss:\/\//, '').split('/')[0];
-                  const httpsUrl = s ? `https://${s}` : '';
-                  return httpsUrl ? (
-                    <p className="settings-hint" style={{ marginBottom: 12, fontSize: 13, color: 'var(--text-secondary)' }}>
-                      Using self-signed cert? In <strong>Firefox</strong>, open{' '}
-                      <a href={httpsUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>
-                        {httpsUrl}
-                      </a>{' '}
-                      in a new tab and accept the certificate, then try the softphone again.
-                    </p>
-                  ) : null;
-                })()}
-                <div className="form-group">
-                  <label className="form-label">{t('settings.webrtcSettings.websocketUrl')}</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder={t('settings.webrtcSettings.placeholder')}
-                    value={webrtcPbxServer}
-                    onChange={(e) => setWebrtcPbxServer(e.target.value)}
-                  />
-                </div>
-                {webrtcMessage && (
-                  <div className={`settings-alert ${webrtcMessage.type === 'success' ? 'success' : 'error'}`}>
-                    {webrtcMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                    <span>{webrtcMessage.text}</span>
-                  </div>
-                )}
-                <div className="settings-actions-row">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={saveWebrtcSettings}
-                    disabled={webrtcSaving}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                  >
-                    {webrtcSaving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
-                    {webrtcSaving ? t('settings.webrtcSettings.saving') : t('settings.webrtcSettings.save')}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
 
         {activeTab === 'qos' && (
           <div className="settings-body">
