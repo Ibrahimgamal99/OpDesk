@@ -78,24 +78,29 @@ The script clones to `/opt/OpDesk`, installs dependencies, detects Issabel/FreeP
 
 OpDesk is then accessible at **`https://<server-ip>`** (LAN) or **`https://<your-domain>`** (public).
 
-> ⚠️ **FreePBX / Issabel use port 443 by default.**
-> Both run Apache on port 443 for their admin web UI. If you install OpDesk on the same machine, you must move Apache to a different port **before** running `install.sh`, otherwise Nginx will fail to start.
+> ⚠️ **FreePBX / Issabel use ports 80 and 443 by default.**
+> Both run Apache on ports 80 and 443 for their admin web UI. If you install OpDesk on the same machine, you must move Apache to different ports **before** running `install.sh`, otherwise Nginx will fail to start.
 >
-> **FreePBX** — change the HTTPS port in `/etc/httpd/conf.d/ssl.conf` (or `/etc/apache2/sites-enabled/default-ssl.conf` on Debian-based):
+> **FreePBX** — change the HTTP and HTTPS ports:
 > ```bash
-> # Change: Listen 443 https  →  Listen 4443 https
-> # Change: <VirtualHost _default_:443>  →  <VirtualHost _default_:4443>
+> # HTTP: change port 80 → 8080
+> sudo sed -i 's/\bListen 80\b/Listen 8080/' /etc/httpd/conf/httpd.conf
+> sudo sed -i 's/:80>/:8080>/g' /etc/httpd/conf.d/*.conf
+>
+> # HTTPS: change port 443 → 4443
 > sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf
 > sudo systemctl restart httpd
 > ```
 >
-> **Issabel** — same Apache config, typically `/etc/httpd/conf.d/ssl.conf`:
+> **Issabel** — same Apache config:
 > ```bash
+> sudo sed -i 's/\bListen 80\b/Listen 8080/' /etc/httpd/conf/httpd.conf
+> sudo sed -i 's/:80>/:8080>/g' /etc/httpd/conf.d/*.conf
 > sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf
 > sudo systemctl restart httpd
 > ```
 >
-> After this the FreePBX/Issabel admin panel is at `https://<ip>:4443` and port 443 is free for Nginx + OpDesk.
+> After this the FreePBX/Issabel admin panel is at `https://<ip>:4443` and ports 80 and 443 are free for Nginx + OpDesk.
 
 **Default login after install:** Username **admin**, password as shown by the installer (e.g. `OpDesk@2026`). Change the password after your first login.
 
@@ -257,16 +262,14 @@ The service runs as the user who executed the installer, restarts automatically 
 ```
                         ┌──────────────────────────────────────────┐
          443/tcp        │   Nginx (TLS terminate)                  │
-  Browser ────────────► │  /        → 127.0.0.1:8765 uvicorn      │
-  (HTTPS/WSS)           │  /ws      → 127.0.0.1:8765 uvicorn      │
-                        │  /sip-ws  → 127.0.0.1:8088 Asterisk WS  │
+  Browser ────────────► │  /        → 127.0.0.1:8765 uvicorn       │
+        (HTTPS/WSS)     │  /ws      → 127.0.0.1:8765 uvicorn       │
+                        │  /sip-ws  → 127.0.0.1:8088 Asterisk WS   │
                         └──────────┬───────────────────────────────┘
-  ⚠ FreePBX/Issabel Apache also uses 443 by default — move it to
-    another port (e.g. 4443) before install (see Installation notes)
                                    │ plain HTTP (loopback)
-                    ┌──────────────▼───────────────┐     ┌─────────────────┐
+                    ┌──────────────▼───────────────┐      ┌─────────────────┐
                     │  FastAPI Server (uvicorn)     │◄───►│  Asterisk AMI   │
-                    │  127.0.0.1:8765               │     │  localhost:5038  │
+                    │  127.0.0.1:8765               │     │  localhost:5038 │
                     └──────────────┬────────────────┘     └─────────────────┘
                                    │ SQL (read/write)
                                    ▼
