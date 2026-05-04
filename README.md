@@ -99,9 +99,6 @@ OpDesk is then accessible at **`https://<server-ip>`** (LAN) or **`https://<your
 > sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf
 > sudo systemctl restart httpd
 > ```
->
-> After this the FreePBX/Issabel admin panel is at `https://<ip>:4443` and ports 80 and 443 are free for Nginx + OpDesk.
-
 **Default login after install:** Username **admin**, password as shown by the installer (e.g. `OpDesk@2026`). Change the password after your first login.
 
 ---
