@@ -577,6 +577,151 @@ else
     fi
 fi
 
+# --- Step 8b: Nginx + TLS orchestration ---
+echo -e "\n${YELLOW}Step 8b: Configuring Nginx reverse proxy...${NC}"
+
+# Read OPDESK_DOMAIN from env or existing .env so subsequent runs remember it
+if [ -z "$OPDESK_DOMAIN" ] && [ -f "$PROJECT_ROOT/backend/.env" ]; then
+    OPDESK_DOMAIN=$(grep -E '^OPDESK_DOMAIN=' "$PROJECT_ROOT/backend/.env" 2>/dev/null \
+                    | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
+fi
+
+NGINX_SERVER_NAME="_"
+NGINX_SSL_CERT="$HTTPS_CERT"
+NGINX_SSL_KEY="$HTTPS_KEY"
+
+# Check for port 443 conflict — only processes LISTENING on 443 matter (not outbound connections)
+PORT443_PID=$(ss -tlnp 'sport = :443' 2>/dev/null | awk 'NR>1{print $NF}' | grep -oP 'pid=\K[0-9]+' | head -1 \
+             || lsof -iTCP:443 -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
+PORT443_PROC=""
+if [ -n "$PORT443_PID" ]; then
+    PORT443_PROC=$(ps -p "$PORT443_PID" -o comm= 2>/dev/null || true)
+fi
+if [ -n "$PORT443_PROC" ] && [ "$PORT443_PROC" != "nginx" ]; then
+    echo -e "${RED}WARNING: Port 443 is already in use by '$PORT443_PROC' (PID $PORT443_PID).${NC}"
+    echo -e "${YELLOW}FreePBX and Issabel run Apache on port 443 by default.${NC}"
+    echo -e "${YELLOW}Move Apache to a different port (e.g. 4443) before continuing:${NC}"
+    echo -e "  sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf"
+    echo -e "  sudo systemctl restart httpd"
+    echo -e "${YELLOW}Then re-run install.sh. Nginx setup skipped for now.${NC}"
+fi
+
+# Install Nginx if not present
+if ! command_exists nginx; then
+    echo -e "${YELLOW}Installing Nginx...${NC}"
+    if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
+        sudo apt-get update -qq && sudo apt-get install -y nginx
+    elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
+        sudo dnf install -y nginx || sudo yum install -y nginx
+    fi
+fi
+sudo systemctl enable nginx 2>/dev/null || true
+
+# Public-domain mode: obtain or reuse Let's Encrypt cert
+if [ -n "$OPDESK_DOMAIN" ]; then
+    NGINX_SERVER_NAME="$OPDESK_DOMAIN"
+    LE_CERT="/etc/letsencrypt/live/$OPDESK_DOMAIN/fullchain.pem"
+    LE_KEY="/etc/letsencrypt/live/$OPDESK_DOMAIN/privkey.pem"
+    if [ ! -f "$LE_CERT" ]; then
+        echo -e "${YELLOW}Obtaining Let's Encrypt certificate for $OPDESK_DOMAIN...${NC}"
+        if ! command_exists certbot; then
+            if [ "$OS" == "debian" ] || [ "$OS" == "ubuntu" ]; then
+                sudo apt-get install -y certbot python3-certbot-nginx
+            elif [[ "$OS" =~ (centos|rhel|rocky|fedora) ]]; then
+                sudo dnf install -y certbot python3-certbot-nginx \
+                || sudo yum install -y certbot python3-certbot-nginx || true
+            fi
+        fi
+        LE_EMAIL="${OPDESK_LE_EMAIL:-admin@$OPDESK_DOMAIN}"
+        sudo certbot certonly --nginx \
+            -d "$OPDESK_DOMAIN" \
+            --non-interactive --agree-tos -m "$LE_EMAIL" || true
+    fi
+    if [ -f "$LE_CERT" ]; then
+        NGINX_SSL_CERT="$LE_CERT"
+        NGINX_SSL_KEY="$LE_KEY"
+        echo -e "${GREEN}Using Let's Encrypt certificate for $OPDESK_DOMAIN${NC}"
+    else
+        echo -e "${YELLOW}Could not obtain Let's Encrypt cert; falling back to self-signed${NC}"
+    fi
+fi
+
+# Write Nginx vhost config — stored in project folder, symlinked into Nginx
+mkdir -p "$PROJECT_ROOT/nginx"
+sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+tee "$PROJECT_ROOT/nginx/opdesk.conf" > /dev/null <<NGINXEOF
+upstream opdesk_app  { server 127.0.0.1:8765; keepalive 32; }
+upstream asterisk_ws { server 127.0.0.1:8088; keepalive 16; }
+
+map \$http_upgrade \$connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $NGINX_SERVER_NAME;
+
+    ssl_certificate     $NGINX_SSL_CERT;
+    ssl_certificate_key $NGINX_SSL_KEY;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    location = /ws {
+        proxy_pass         http://opdesk_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        \$connection_upgrade;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Host  \$host;
+        proxy_read_timeout 3600s;
+    }
+
+    location = /sip-ws {
+        proxy_pass         http://asterisk_ws/ws;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        \$connection_upgrade;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 3600s;
+    }
+
+    location / {
+        proxy_pass         http://opdesk_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Host  \$host;
+        client_max_body_size 25m;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $NGINX_SERVER_NAME;
+    return 301 https://\$host\$request_uri;
+}
+NGINXEOF
+
+sudo ln -sf "$PROJECT_ROOT/nginx/opdesk.conf" /etc/nginx/sites-available/opdesk
+sudo ln -sf /etc/nginx/sites-available/opdesk /etc/nginx/sites-enabled/opdesk
+sudo rm -f /etc/nginx/sites-enabled/default
+if sudo nginx -t 2>/dev/null; then
+    sudo systemctl reload nginx 2>/dev/null || sudo systemctl start nginx 2>/dev/null || true
+    echo -e "${GREEN}Nginx configured and running (config: $PROJECT_ROOT/nginx/opdesk.conf)${NC}"
+else
+    echo -e "${RED}Nginx config test failed — check $PROJECT_ROOT/nginx/opdesk.conf${NC}"
+fi
+
 # --- Admin Password Setup (fresh install only) ---
 ADMIN_INIT_PASSWORD_HASH=""
 if [ "$IS_UPDATE" != "true" ]; then
@@ -636,6 +781,34 @@ with open(sys.argv[1], 'w') as f:
     fi
 fi
 
+LOCAL_IP_ADDR=$(hostname -I | awk '{print $1}')
+if [ -n "$OPDESK_DOMAIN" ]; then
+    CORS_ORIGINS="https://$OPDESK_DOMAIN,https://$LOCAL_IP_ADDR"
+else
+    CORS_ORIGINS="https://$LOCAL_IP_ADDR"
+fi
+
+# Always re-read AMI_SECRET from manager_custom.conf (authoritative source)
+if [ -f /etc/asterisk/manager_custom.conf ] && grep -q "\[OpDesk\]" /etc/asterisk/manager_custom.conf; then
+    _ami=$(sed -n '/^\[OpDesk\][[:space:]]*$/,/^\[/p' /etc/asterisk/manager_custom.conf \
+          | grep -E '^[[:space:]]*secret[[:space:]]*=' | head -1 \
+          | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+    [ -n "$_ami" ] && AMI_SECRET="$_ami"
+fi
+# Fallback: preserve from existing .env
+if [ -z "$AMI_SECRET" ] && [ -f "$PROJECT_ROOT/backend/.env" ]; then
+    _ami=$(grep -E '^AMI_SECRET=' "$PROJECT_ROOT/backend/.env" | cut -d= -f2-)
+    [ -n "$_ami" ] && AMI_SECRET="$_ami"
+fi
+
+# Preserve JWT_SECRET across updates — only generate on fresh install
+if [ -f "$PROJECT_ROOT/backend/.env" ]; then
+    _jwt=$(grep -E '^JWT_SECRET=' "$PROJECT_ROOT/backend/.env" | cut -d= -f2-)
+else
+    _jwt=""
+fi
+JWT_SECRET="${_jwt:-$(openssl rand -hex 32)}"
+
 cat > .env <<EOF
 OS=$OS
 PBX=$PBX
@@ -651,11 +824,12 @@ AMI_PORT=$AMI_PORT
 AMI_USERNAME=$AMI_USER
 AMI_SECRET=$AMI_SECRET
 DB_OpDesk=OpDesk
-JWT_SECRET=$(openssl rand -hex 32)
-HTTPS_CERT=$HTTPS_CERT
-HTTPS_KEY=$HTTPS_KEY
-OPDESK_HTTPS_PORT=$OPDESK_HTTPS_PORT
-CORS_ALLOWED_ORIGINS=https://$(hostname -I | awk '{print $1}'):${OPDESK_HTTPS_PORT:-8443}
+JWT_SECRET=$JWT_SECRET
+HTTPS_CERT=
+HTTPS_KEY=
+OPDESK_BIND_HOST=127.0.0.1
+OPDESK_DOMAIN=$OPDESK_DOMAIN
+CORS_ALLOWED_ORIGINS=$CORS_ORIGINS
 EOF
 cd "$PROJECT_ROOT/frontend" && npm install || true
 

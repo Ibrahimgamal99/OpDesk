@@ -46,37 +46,89 @@ Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled
 ## Prerequisites
 
 - Issabel or FreePBX with Asterisk and **AMI** enabled
-- **WSS (WebSocket Secure)** enabled on FreePBX/Issabel for the WebRTC softphone
+- Asterisk plain WebSocket (port 8088) enabled — the installer checks for this automatically
 - MySQL/MariaDB (for FreePBX extension list)
 - `sudo` and `curl` (for the installer)
 
-The installer can install Python 3.11+, Node.js 24 (via nvm), git, lsof, and curl if missing.
+The installer can install Python 3.11+, Node.js 24 (via nvm), git, lsof, curl, and Nginx if missing.
 
 ---
 
-## Installation
+## Installation (Option A — Native)
 
-**One-liner:**
+**One-liner (LAN / self-signed cert):**
 
 ```bash
-curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh && chmod +x install.sh && ./install.sh
+curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh && chmod +x install.sh && sudo ./install.sh
+```
+
+**Public internet (Let's Encrypt — DNS must already point to this server):**
+
+```bash
+sudo OPDESK_DOMAIN=opdesk.example.com OPDESK_LE_EMAIL=admin@example.com ./install.sh
 ```
 
 **From repo:**
 
 ```bash
-chmod +x install.sh && ./install.sh
+chmod +x install.sh && sudo ./install.sh
 ```
 
-The script clones to `/opt/OpDesk`, installs dependencies, detects Issabel/FreePBX, configures DB and AMI user `OpDesk`, creates `backend/.env`, and prints a summary.
+The script clones to `/opt/OpDesk`, installs dependencies, detects Issabel/FreePBX, configures DB and AMI user `OpDesk`, installs and configures **Nginx** as a TLS-terminating reverse proxy on port **443**, obtains a **Let's Encrypt** certificate when `OPDESK_DOMAIN` is set (falls back to self-signed otherwise), and creates `backend/.env`.
+
+OpDesk is then accessible at **`https://<server-ip>`** (LAN) or **`https://<your-domain>`** (public).
+
+> ⚠️ **FreePBX / Issabel use port 443 by default.**
+> Both run Apache on port 443 for their admin web UI. If you install OpDesk on the same machine, you must move Apache to a different port **before** running `install.sh`, otherwise Nginx will fail to start.
+>
+> **FreePBX** — change the HTTPS port in `/etc/httpd/conf.d/ssl.conf` (or `/etc/apache2/sites-enabled/default-ssl.conf` on Debian-based):
+> ```bash
+> # Change: Listen 443 https  →  Listen 4443 https
+> # Change: <VirtualHost _default_:443>  →  <VirtualHost _default_:4443>
+> sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf
+> sudo systemctl restart httpd
+> ```
+>
+> **Issabel** — same Apache config, typically `/etc/httpd/conf.d/ssl.conf`:
+> ```bash
+> sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf
+> sudo systemctl restart httpd
+> ```
+>
+> After this the FreePBX/Issabel admin panel is at `https://<ip>:4443` and port 443 is free for Nginx + OpDesk.
 
 **Default login after install:** Username **admin**, password as shown by the installer (e.g. `OpDesk@2026`). Change the password after your first login.
 
 ---
 
-## 🐳 Docker Installation (Recommended)
+## Two deployment options
 
-For the most reliable and consistent deployment, especially on systems like Sangoma 7 / CentOS 7, it is highly recommended to use the official Docker container. This method avoids host system dependency issues.
+### Option A — Native install (`install.sh`)
+Nginx runs on the host as a TLS-terminating reverse proxy on port **443**. Uvicorn and Asterisk bind to loopback only. Supports Let's Encrypt for public domains.
+
+```
+Browser → Nginx :443 → uvicorn 127.0.0.1:8765
+                      → Asterisk WS 127.0.0.1:8088 (at /sip-ws)
+```
+
+### Option B — Docker (`docker compose`)
+The container runs with `network_mode: host`. Uvicorn runs plain HTTP on `127.0.0.1:8765` inside the container. Nginx on the host terminates TLS on port **443** and proxies to it — same result as the native install.
+
+```
+Browser → Nginx :443 (host) → uvicorn 127.0.0.1:8765 (container, plain HTTP)
+                             → Asterisk WS 127.0.0.1:8088 (at /sip-ws)
+```
+
+| | Native | Docker |
+|---|---|---|
+| **Port** | 443 (Nginx) | 443 (Nginx on host → container :8765) |
+| **SIP WebSocket** | `wss://<host>/sip-ws` via Nginx | `wss://<host>/sip-ws` via Nginx |
+| **TLS cert** | Auto (self-signed or Let's Encrypt) | Auto (self-signed or Let's Encrypt) |
+| **Apache port conflict** | Must move Apache off 443 first | Must move Apache off 443 first |
+
+---
+
+## 🐳 Docker Installation (Option B)
 
 ### Prerequisites
 
@@ -122,7 +174,7 @@ For the most reliable and consistent deployment, especially on systems like Sang
 
 5.  **Access OpDesk**
 
-    Open your web browser and navigate to `https://<your-server-ip>:8443`.
+    Open your web browser and navigate to `https://<your-server-ip>` (port 443 via Nginx).
 
 ### Dockerfile overview
 
@@ -134,7 +186,7 @@ The `Dockerfile` uses a **two-stage build** to keep the final image lean:
 | `runtime` | `python:3.11-slim` | Copies the built frontend assets and the FastAPI backend, installs Python dependencies, and starts `server.py`. |
 
 Key details:
-- **Port**: `8443` is exposed (HTTPS). Override via `OPDESK_HTTPS_PORT` in `backend/.env`.
+- **Port**: `8765` (plain HTTP on loopback) — Nginx on the host terminates TLS and serves on port **443**. `HTTPS_CERT` and `HTTPS_KEY` are cleared by `docker-compose.yml` so uvicorn runs without TLS.
 - **Health check**: `curl -kfsS https://localhost:8443/` every 30 s (3 retries, 10 s timeout, 10 s start period).
 - **Entry point**: `python server.py` from `/opt/opdesk/backend/`.
 - **SSL cert**: mount your cert files into the container (see step 3 above); a self-signed cert works for testing.
@@ -144,9 +196,9 @@ To build the image manually (without Compose):
 ```bash
 docker build -t opdesk:latest .
 docker run -d \
+  --network host \
   --env-file .env \
   -v "$(pwd)/cert:/opt/opdesk/cert:ro" \
-  -p 8443:8443 \
   opdesk:latest
 ```
 
@@ -160,8 +212,8 @@ docker run -d \
 ./start.sh
 ```
 
-- Serves API + frontend at **https://&lt;server-ip&gt;:8443** (HTTPS). Change the port via **OPDESK_HTTPS_PORT** in `backend/.env`.
-- Dev mode with hot reload: `./start.sh -d`.
+- Serves API + frontend at **https://&lt;server-ip&gt;** via Nginx on port **443**.
+- Dev mode with hot reload (no Nginx, direct uvicorn): `./start.sh -d`.
 
 ### systemd service (installed automatically)
 
@@ -179,7 +231,9 @@ The installer creates and enables `/etc/systemd/system/opdesk.service` so OpDesk
 
 The service runs as the user who executed the installer, restarts automatically on failure (10 s delay), and forwards all output to the system journal (`journalctl`).
 
-> **Update flow**: when you re-run `install.sh` on an existing installation the script pulls the latest code and restarts the service automatically.
+> **Update flow**: when you re-run `install.sh` on an existing installation the script pulls the latest code, regenerates the Nginx config (preserving LAN/public mode), and restarts the service automatically.
+>
+> **Switch to public domain**: `sudo OPDESK_DOMAIN=opdesk.example.com bash install.sh` — certbot obtains the cert and Nginx is reconfigured in one step.
 
 ---
 
@@ -188,7 +242,7 @@ The service runs as the user who executed the installer, restarts automatically 
 | Topic | Summary |
 |-------|--------|
 | **Auth** | Username or extension + password; JWT. Admin sees all; Supervisor sees only assigned extensions/queues. |
-| **Softphone** | Enable **WSS** in FreePBX/Issabel. Requires HTTPS. `WEBRTC_PBX_SERVER` is set automatically (e.g. `wss://<server-ip>:8089/ws`); adjust in Settings if needed. |
+| **Softphone** | Requires HTTPS (granted automatically by the Nginx setup). `WEBRTC_PBX_SERVER` is computed dynamically from the request host — no manual configuration needed. SIP WebSocket is proxied at `wss://<host>/sip-ws` → Asterisk plain WS on `127.0.0.1:8088`. |
 | **Call Journey** | In Call Log: open the journey button (route icon) on a row to see the event timeline (queue, ring, answer, transfer, etc.). |
 | **Call notifications** | Stored in `call_notifications`; MySQL event cleans read notifications after 7 days. |
 | **CRM** | Settings → CRM Settings; configure URL and auth (API Key, Basic, Bearer, OAuth2). |
@@ -201,14 +255,21 @@ The service runs as the user who executed the installer, restarts automatically 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  React Frontend │◄───►│  FastAPI Server  │◄───►│  Asterisk AMI   │
-│  (WebSocket)    │     │  (WebSocket)     │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                                ▲
-                                │ SQL (read/write)
-                                │
-                                ▼
+                        ┌──────────────────────────────────────────┐
+         443/tcp        │   Nginx (TLS terminate)                  │
+  Browser ────────────► │  /        → 127.0.0.1:8765 uvicorn      │
+  (HTTPS/WSS)           │  /ws      → 127.0.0.1:8765 uvicorn      │
+                        │  /sip-ws  → 127.0.0.1:8088 Asterisk WS  │
+                        └──────────┬───────────────────────────────┘
+  ⚠ FreePBX/Issabel Apache also uses 443 by default — move it to
+    another port (e.g. 4443) before install (see Installation notes)
+                                   │ plain HTTP (loopback)
+                    ┌──────────────▼───────────────┐     ┌─────────────────┐
+                    │  FastAPI Server (uvicorn)     │◄───►│  Asterisk AMI   │
+                    │  127.0.0.1:8765               │     │  localhost:5038  │
+                    └──────────────┬────────────────┘     └─────────────────┘
+                                   │ SQL (read/write)
+                                   ▼
                         ┌────────────────────────┐
                         │   MySQL / MariaDB DB   │
                         └────────────────────────┘
@@ -244,9 +305,14 @@ The service runs as the user who executed the installer, restarts automatically 
     - CRM configuration and audit fields.
     - **Analytics aggregation** tables (`analytics_hourly`, `analytics_daily`, `analytics_agent_daily`) refreshed every 15 minutes by a background asyncio task; SLA and FCR settings in `analytics_sla_settings` and `analytics_fcr_settings`.
 
+- **Nginx (reverse proxy)**:
+  - Terminates TLS on port **443** — the browser always sees HTTPS/WSS, which is required for microphone access (`getUserMedia`).
+  - Proxies `/ws` to the FastAPI backend for real-time events and `/sip-ws` to Asterisk's plain WebSocket (`127.0.0.1:8088`) for SIP signaling.
+  - Self-signed cert for LAN use; **Let's Encrypt** obtained automatically when `OPDESK_DOMAIN` is set in the installer.
+
 - **Asterisk / PBX integration**:
   - Uses **AMI** for signaling, monitoring, and call control (originate, spy/whisper/barge, transfers).
-  - Uses **WSS** (`wss://<server-ip>:8089/ws`) for WebRTC media when the built‑in softphone is enabled.
+  - Uses plain WebSocket on `127.0.0.1:8088` for SIP-over-WebSocket; Nginx adds TLS at `/sip-ws` so the browser connects over WSS.
   - OpDesk does **not** replace the PBX dialplan; it observes and controls calls through AMI while FreePBX/Issabel continues to own dialplan logic.
 
 ## 📊 Analytics

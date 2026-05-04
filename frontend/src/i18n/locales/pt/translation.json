@@ -437,9 +437,9 @@
     },
     "webrtcSettings": {
       "title": "WebRTC / WebSocket do PBX",
-      "description": "URL WebSocket do seu servidor PBX para WebRTC. Use o formato wss://server:port/ws ou ws://server:port/ws.",
+      "description": "URL WebSocket SIP para o softphone. Com Nginx (padrão), é definida automaticamente como wss://your-host/sip-ws e não precisa ser alterada.",
       "websocketUrl": "URL do WebSocket",
-      "placeholder": "wss://server:port/ws",
+      "placeholder": "wss://your-host/sip-ws",
       "save": "Salvar configurações do WebRTC",
       "saving": "Salvando...",
       "loading": "Carregando configurações do WebRTC...",

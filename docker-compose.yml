@@ -14,10 +14,12 @@ services:
     # The app binds directly to the host's port 8443; the 'ports' directive is
     # not used in host mode but is kept as a comment for documentation.
     network_mode: host
-    # ports:
-    #   - "8443:8443"   # not needed with network_mode: host
+    # Uvicorn runs plain HTTP on 127.0.0.1:8765; Nginx on the host owns port 443.
+    environment:
+      - HTTPS_CERT=
+      - HTTPS_KEY=
+      - OPDESK_BIND_HOST=127.0.0.1
     env_file:
       - .env
     volumes:
-      # Persist TLS certificates on the host
       - ./cert:/opt/opdesk/cert:rw
