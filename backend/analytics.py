@@ -37,6 +37,13 @@ except ImportError:
     mysql = None
     Error = Exception
 
+try:
+    from db_manager import prune_stale_device_tokens as _prune_stale_tokens
+except ImportError:  # pragma: no cover
+    _prune_stale_tokens = None
+
+_last_prune_day: Optional[date_type] = None
+
 # ---------------------------------------------------------------------------
 # DB helpers (mirror db_manager.get_db_config pattern)
 # ---------------------------------------------------------------------------
@@ -1305,6 +1312,13 @@ async def start_aggregation_loop():
             )
 
             log.debug(f"analytics: aggregation cycle complete ({now.strftime('%H:%M')})")
+
+            # Daily housekeeping: prune device tokens not refreshed in 90+ days.
+            global _last_prune_day
+            if _prune_stale_tokens and now.date() != _last_prune_day:
+                await asyncio.to_thread(_prune_stale_tokens)
+                _last_prune_day = now.date()
+
         except Exception as e:
             log.warning(f"analytics: aggregation loop error: {e}")
 

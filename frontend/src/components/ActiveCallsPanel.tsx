@@ -115,31 +115,31 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
       exit={{ opacity: 0, y: 10 }}
       transition={{ duration: 0.2 }}
     >
-      <td>
+      <td data-label={t('activeCalls.table.extension')}>
         <span className="call-ext">{call.extension}</span>
       </td>
-      <td>
+      <td data-label={t('activeCalls.table.state')}>
         <span className={`call-state ${stateClass}`}>
           {call.state}
         </span>
       </td>
-      <td>
+      <td data-label={t('activeCalls.table.talkingTo')}>
         <span className="call-talking-to">
           {call.talking_to || '—'}
         </span>
       </td>
-      <td>
+      <td data-label={t('activeCalls.table.duration')}>
         <span className="call-duration">
           {call.duration || '—'}
         </span>
       </td>
-      <td>
+      <td data-label={t('activeCalls.table.talkTime')}>
         <span className="call-duration">
           {call.talk_time || '—'}
         </span>
       </td>
       {getUser()?.role !== 'agent' && (
-        <td>
+        <td data-label="">
           <div className="call-actions" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {getAllowedMonitorModes().includes('listen') && (

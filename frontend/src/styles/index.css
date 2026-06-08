@@ -588,13 +588,22 @@ body::before {
   color: var(--text-muted);
 }
 .header-bell-dropdown-count {
-  margin-left: auto;
   font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
   border-radius: 10px;
   background: var(--status-ringing, #eab308);
   color: #000;
+}
+.header-bell-mark-all-btn {
+  margin-left: auto;
+  font-size: 11px !important;
+  padding: 3px 8px !important;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.header-bell-mark-all-btn:hover {
+  opacity: 1;
 }
 .header-bell-dropdown-empty {
   display: flex;
@@ -1949,8 +1958,9 @@ select.an-filter-select option:checked {
 /* Notifications - Modern toast design */
 .notifications {
   position: fixed;
-  bottom: 32px;
-  right: 32px;
+  bottom: calc(20px + 58px + 12px + env(safe-area-inset-bottom, 0px));
+  right: clamp(16px, 4vw, 28px);
+  top: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2035,18 +2045,33 @@ select.an-filter-select option:checked {
   }
   
   .header {
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px 16px;
+    /* Stay a single compact 56px row on mobile so the fixed drawer/backdrop
+       offsets line up; the sidebar moves into an off-canvas drawer. */
+    gap: 8px;
+    padding: 0 12px;
   }
-  
+
+  .header-brand .header-subtitle {
+    display: none;
+  }
+
+  .header-title {
+    font-size: 15px;
+  }
+
   .header-status {
-    flex-direction: column;
-    width: 100%;
-    gap: 10px;
-    padding: 12px;
+    gap: 6px;
   }
-  
+
+  /* Condense status controls to icons; hide the logout text label. */
+  .header-status .header-monitor-mode .header-monitor-label {
+    display: none;
+  }
+
+  .header-btn-label {
+    display: none;
+  }
+
   .header-status .stats-bar {
     width: 100%;
     gap: 8px;
@@ -2116,9 +2141,10 @@ select.an-filter-select option:checked {
   }
   
   .notifications {
-    bottom: 12px;
+    bottom: calc(20px + 58px + 12px + env(safe-area-inset-bottom, 0px));
     right: 12px;
     left: 12px;
+    top: auto;
   }
   
   .notification {
@@ -3032,6 +3058,7 @@ select.an-filter-select option:checked {
   overflow: hidden;
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-lg);
+  flex-shrink: 0;
 }
 
 /* Header */
@@ -4639,7 +4666,7 @@ select.an-filter-select option:checked {
 /* Responsive breakpoints */
 @media (max-width: 480px) {
   .softphone-wrap {
-    padding: 0 12px max(12px, env(safe-area-inset-bottom));
+    padding: 0 12px max(12px, env(safe-area-inset-bottom, 0px));
   }
 
   .softphone-panel {
@@ -4840,6 +4867,403 @@ select.an-filter-select option:checked {
   .softphone-btn-hangup:active,
   .softphone-incall-btn:active:not(:disabled) {
     transform: none;
+  }
+}
+
+/* ===========================================================================
+   Mobile nav drawer + hamburger
+   =========================================================================== */
+.header-hamburger {
+  display: none;                 /* desktop: hidden, shown ≤768px */
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.header-hamburger:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-backdrop {
+  display: none;                 /* only rendered/used ≤768px */
+}
+
+/* ===========================================================================
+   Floating softphone — FAB + popover (3CX-style), callable from anywhere
+   =========================================================================== */
+.softphone-fab {
+  position: fixed;
+  inset-block-end: calc(20px + env(safe-area-inset-bottom, 0px));
+  inset-inline-end: clamp(16px, 4vw, 28px);
+  z-index: 1150;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.softphone-fab:hover {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: var(--shadow-xl), var(--shadow-glow);
+}
+
+.softphone-fab:active {
+  transform: scale(0.96);
+}
+
+.softphone-fab:focus-visible {
+  outline: 2px solid var(--accent-primary-hover);
+  outline-offset: 3px;
+}
+
+/* Registration state dot */
+.softphone-fab-dot {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-primary);
+  background: var(--text-muted);
+}
+
+.softphone-fab--registered .softphone-fab-dot { background: var(--accent-success); }
+.softphone-fab--offline    .softphone-fab-dot { background: var(--text-muted); }
+
+/* Active call: steady accent */
+.softphone-fab--in-call {
+  background: linear-gradient(135deg, var(--accent-success), var(--accent-teal));
+}
+
+/* Incoming call: red pulse + badge */
+.softphone-fab--ringing {
+  background: linear-gradient(135deg, var(--accent-danger), #ff7b72);
+  animation: softphone-fab-pulse 1.4s ease-in-out infinite;
+}
+
+.softphone-fab-badge {
+  position: absolute;
+  inset-block-start: -2px;
+  inset-inline-end: -2px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent-danger);
+  border: 2px solid var(--bg-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+@keyframes softphone-fab-pulse {
+  0%   { box-shadow: var(--shadow-lg), 0 0 0 0 var(--status-ringing-glow); }
+  70%  { box-shadow: var(--shadow-lg), 0 0 0 16px rgba(248, 81, 73, 0); }
+  100% { box-shadow: var(--shadow-lg), 0 0 0 0 rgba(248, 81, 73, 0); }
+}
+
+/* Popover that holds the existing <Softphone /> */
+.softphone-popover {
+  position: fixed;
+  inset-block-end: calc(20px + 58px + 12px + env(safe-area-inset-bottom, 0px));
+  inset-inline-end: clamp(16px, 4vw, 28px);
+  z-index: 1160;
+  width: min(360px, calc(100vw - 32px));
+  /* Do NOT use filter: drop-shadow() here. In Firefox, any CSS filter on a
+     positioned ancestor creates a new compositing stacking context that breaks
+     backdrop-filter on children — the panel renders blank. Use box-shadow on
+     the panel itself instead; box-shadow never creates a stacking context. */
+}
+
+.softphone-popover .softphone-panel {
+  max-width: none;
+  min-width: 0;
+  width: 100%;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+/* In the popover there is no definite height context, so flex: 1 on
+   .softphone-dial-area would collapse to 0 in Firefox. Switch it to
+   content-sized so the panel height follows its content naturally. */
+.softphone-popover .softphone-dial-area {
+  flex: 0 0 auto;
+}
+
+/* Backdrop: only used as a tap-to-close layer on mobile bottom-sheet */
+.softphone-popover-backdrop {
+  display: none;
+}
+
+/* ===========================================================================
+   Language menu (migrated from inline styles in App.tsx)
+   =========================================================================== */
+.lang-menu {
+  position: relative;
+}
+
+.lang-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  inset-inline-end: 0;
+  min-width: 120px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  overflow: hidden;
+  padding: 4px;
+  animation: an-dropdown-in 0.13s ease;
+}
+
+.lang-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: start;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background var(--transition-fast);
+}
+
+.lang-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.lang-menu-item.active {
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+/* ===========================================================================
+   Softphone transfer box (migrated from inline styles in Softphone.tsx)
+   =========================================================================== */
+.softphone-transfer {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.softphone-transfer-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  width: 100%;
+}
+
+.softphone-transfer-input {
+  flex: 1;
+  min-width: 90px;
+}
+
+/* ===========================================================================
+   Consistent focus-visible rings (a11y / keyboard nav)
+   =========================================================================== */
+.sidebar-item:focus-visible,
+.header-hamburger:focus-visible,
+.lang-menu-item:focus-visible,
+.softphone-dialpad-key:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* ===========================================================================
+   Mobile: sidebar becomes an off-canvas drawer (≤768px)
+   =========================================================================== */
+@media (max-width: 768px) {
+  .header-hamburger {
+    display: inline-flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset-block: 56px 0;
+    inset-inline-start: 0;
+    width: 270px;
+    z-index: 110;
+    transform: translateX(-100%);
+    transition: transform var(--transition-normal);
+    box-shadow: var(--shadow-xl);
+  }
+
+  [dir="rtl"] .sidebar {
+    transform: translateX(100%);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* In the drawer always show full-width labels, never the 52px collapsed rail */
+  .sidebar.collapsed {
+    width: 270px;
+  }
+  .sidebar.collapsed .sidebar-item,
+  .sidebar.collapsed .sidebar-stat-item,
+  .sidebar.collapsed .sidebar-connection {
+    justify-content: flex-start;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 56px 0 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    animation: an-dropdown-in 0.15s ease;
+  }
+}
+
+/* ===========================================================================
+   Mobile: softphone popover becomes a bottom-sheet (≤600px)
+   =========================================================================== */
+@media (max-width: 600px) {
+  .softphone-popover {
+    inset-block-end: 0;
+    inset-inline: 0;
+    top: auto;
+    width: 100%;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    overflow: hidden;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--bg-card);
+  }
+
+  .softphone-popover .softphone-panel {
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  }
+
+  .softphone-popover-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1155;
+    background: rgba(0, 0, 0, 0.45);
+    animation: an-dropdown-in 0.15s ease;
+  }
+
+  /* Larger thumb-friendly dialpad keys on phones */
+  .softphone-popover .softphone-dialpad-key {
+    min-height: 54px;
+  }
+
+  /* Keep the FAB clear of the open sheet */
+  .softphone-fab.is-open {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+/* ===========================================================================
+   Mobile: operational tables reflow into stacked label/value cards (≤600px)
+   =========================================================================== */
+@media (max-width: 600px) {
+  .calls-table thead,
+  .cl-table thead {
+    display: none;
+  }
+
+  .calls-table,
+  .calls-table tbody,
+  .cl-table,
+  .cl-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .calls-table tr,
+  .cl-table tr {
+    display: block;
+    margin-bottom: 10px;
+    padding: 4px 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+
+  .calls-table td,
+  .cl-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 14px !important;
+    border: none;
+    text-align: end;
+  }
+
+  .calls-table td::before,
+  .cl-table td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: start;
+    flex-shrink: 0;
+  }
+
+  /* Cells with no label (action buttons) span full width */
+  .calls-table td[data-label='']::before,
+  .cl-table td[data-label='']::before {
+    content: none;
+  }
+  .calls-table td[data-label=''],
+  .cl-table td[data-label=''] {
+    justify-content: flex-end;
+  }
+
+  /* Single-column extension grid sooner so cards aren't cramped */
+  .extensions-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .softphone-fab,
+  .softphone-fab--ringing {
+    animation: none;
+    transition: none;
+  }
+  .softphone-fab:hover {
+    transform: none;
+  }
+  .sidebar {
+    transition: none;
   }
 }
 

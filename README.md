@@ -27,6 +27,7 @@ Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled
 - **CRM**: Push call data to external CRMs (API Key, Basic Auth, Bearer, OAuth2).
 - **Analytics**: Full KPI analytics suite — **12-card overview** (SLA, FCR, Abandonment, Short Abandon, Avg Wait, AHT, Inbound Answer Rate, Total Calls, Outbound Volume, Outbound Answer Rate, Outbound AHT) with delta vs. prior period, volume trend chart, per-queue and per-agent breakdowns, 7×24 heatmap, and paginated call drilldown with CSV / XLSX export.
 - **Multi-language UI**: Built-in i18n with support for English, Arabic (RTL), Spanish, and Portuguese — switchable from the UI without any restart.
+- **Mobile push notifications**: Wake a Flutter/native iOS/Android softphone for incoming calls via APNs VoIP (PushKit + CallKit) and high-priority FCM — no background socket required.
 
 ---
 ## Screenshots
@@ -244,7 +245,7 @@ The service runs as the user who executed the installer, restarts automatically 
 | Topic | Summary |
 |-------|--------|
 | **Auth** | Username or extension + password; JWT. Admin sees all; Supervisor sees only assigned extensions/queues. |
-| **Softphone** | Requires HTTPS (granted automatically by the Nginx setup). `WEBRTC_PBX_SERVER` is computed dynamically from the request host — no manual configuration needed. SIP WebSocket is proxied at `wss://<host>/sip-ws` → Asterisk plain WS on `127.0.0.1:8088`. |
+| **Softphone** | Requires HTTPS (granted automatically by the Nginx setup). `WEBRTC_PBX_SERVER` is computed dynamically from the request host — no manual configuration needed. SIP WebSocket is proxied at `wss://<host>/sip-ws` → Asterisk plain WS on `127.0.0.1:8088`. SIP clients that include `Sec-WebSocket-Protocol: sip` when connecting to the root path (`wss://<host>/`) are automatically detected and routed to Asterisk — no explicit `/sip-ws` path required. |
 | **Call Journey** | In Call Log: open the journey button (route icon) on a row to see the event timeline (queue, ring, answer, transfer, etc.). |
 | **Call notifications** | Stored in `call_notifications`; MySQL event cleans read notifications after 7 days. |
 | **CRM** | Settings → CRM Settings; configure URL and auth (API Key, Basic, Bearer, OAuth2). |
@@ -257,12 +258,13 @@ The service runs as the user who executed the installer, restarts automatically 
 ## Architecture
 
 ```
-                        ┌──────────────────────────────────────────┐
-         443/tcp        │   Nginx (TLS terminate)                  │
-  Browser ────────────► │  /        → 127.0.0.1:8765 uvicorn       │
-        (HTTPS/WSS)     │  /ws      → 127.0.0.1:8765 uvicorn       │
-                        │  /sip-ws  → 127.0.0.1:8088 Asterisk WS   │
-                        └──────────┬───────────────────────────────┘
+                        ┌──────────────────────────────────────────────────────────┐
+         443/tcp        │   Nginx (TLS terminate)                                  │
+  Browser ────────────► │  /        → 127.0.0.1:8765 uvicorn                       │
+        (HTTPS/WSS)     │  /        (Sec-WebSocket-Protocol: sip) → 127.0.0.1:8088 │
+                        │  /ws      → 127.0.0.1:8765 uvicorn                       │
+                        │  /sip-ws  → 127.0.0.1:8088 Asterisk WS                  │
+                        └──────────┬───────────────────────────────────────────────┘
                                    │ plain HTTP (loopback)
                     ┌──────────────▼───────────────┐      ┌─────────────────┐
                     │  FastAPI Server (uvicorn)     │◄───►│  Asterisk AMI   │
@@ -308,6 +310,7 @@ The service runs as the user who executed the installer, restarts automatically 
 - **Nginx (reverse proxy)**:
   - Terminates TLS on port **443** — the browser always sees HTTPS/WSS, which is required for microphone access (`getUserMedia`).
   - Proxies `/ws` to the FastAPI backend for real-time events and `/sip-ws` to Asterisk's plain WebSocket (`127.0.0.1:8088`) for SIP signaling.
+  - **SIP auto-detection**: inspects the `Sec-WebSocket-Protocol` header on every connection at `/`. If the header value is `sip`, Nginx routes the connection directly to Asterisk (`127.0.0.1:8088`) without requiring the client to target `/sip-ws` explicitly. This allows standard SIP stacks (JsSIP, SIP.js, etc.) that advertise the `sip` sub-protocol to connect to the root WebSocket endpoint and still reach Asterisk automatically.
   - Self-signed cert for LAN use; **Let's Encrypt** obtained automatically when `OPDESK_DOMAIN` is set in the installer.
 
 - **Asterisk / PBX integration**:
@@ -373,6 +376,53 @@ analytics.py  (single source of truth — all KPI math lives here)
 The analytics engine reads directly from the Asterisk **CDR table** using a two-leg join (`first_leg` = queue entry, `last_leg` = answered/agent leg) to accurately compute wait time, talk time, and agent attribution. All formula logic is in `analytics.py`; `server.py` only calls the public functions and the frontend never duplicates calculations.
 
 ---
+
+## Mobile push notifications (softphone integration)
+
+OpDesk can wake a mobile softphone (Flutter / native iOS / Android) for incoming calls without
+keeping a background socket alive. Two push paths cover both app states:
+
+- **App killed** — a dialplan hook fires *before* SIP contact resolution, CURLs
+  `/api/internal/mobile-wake/<ext>` to send the wake push, waits for the app to re-register,
+  then hands the call back to FreePBX normally.
+- **App backgrounded** — Asterisk emits `DialBegin` as usual; the AMI handler calls
+  `push_service.send_call_wake()` which sends a high-priority FCM data message (Android /
+  `flutter_callkit_incoming`) or an APNs VoIP push via PushKit (iOS / CallKit). On missed call,
+  `send_alert()` delivers a standard notification banner on both platforms.
+
+The mobile client registers tokens with `POST /api/device-tokens` after login (iOS posts twice:
+an `alert` token and a `voip` PushKit token) and removes them with `DELETE /api/device-tokens`
+on logout. Payload on wake: `{ type, extension, caller, call_id, display_name }`.
+
+### Firebase setup (Android + iOS alert push)
+
+1. Create a project at [console.firebase.google.com](https://console.firebase.google.com), add Android and iOS apps.
+2. Download `google-services.json` → `android/app/` and `GoogleService-Info.plist` → `ios/Runner/`.
+3. Project Settings → **Service accounts** → **Generate new private key** → save to `/opt/OpDesk/secrets/fcm-service-account.json`. Note your **Project ID**.
+
+### APNs setup (iOS VoIP + CallKit)
+
+1. [developer.apple.com → Certificates, IDs & Profiles → Keys](https://developer.apple.com/account/resources/authkeys/list) → **+** → check **Apple Push Notifications service** → Download.
+2. File is named `AuthKey_XXXXXXXXXX.p8` — the 10-char suffix is your **Key ID**. **Team ID** is top-right on the portal.
+3. Place the file at `/opt/OpDesk/secrets/AuthKey_XXXXXXXXXX.p8`.
+
+> APNs is called directly from the server — the iOS app never touches the key. The VoIP topic is `<APNS_BUNDLE_ID>.voip` automatically.
+
+### Fill in `.env`
+
+The installer already writes all push variables into `backend/.env` (empty). Just fill in the values:
+
+| Variable | What to put |
+|----------|-------------|
+| `FCM_PROJECT_ID` | Firebase Project ID (Project Settings page) |
+| `FCM_SERVICE_ACCOUNT_FILE` | `/opt/OpDesk/secrets/fcm-service-account.json` (already set) |
+| `APNS_AUTH_KEY_FILE` | `/opt/OpDesk/secrets/AuthKey_XXXXXXXXXX.p8` (rename to match) |
+| `APNS_KEY_ID` | 10-char suffix from the `.p8` filename |
+| `APNS_TEAM_ID` | Apple Developer Team ID (top-right on the portal) |
+| `APNS_BUNDLE_ID` | Your app's bundle ID |
+| `APNS_USE_SANDBOX` | `true` for dev/TestFlight, `false` for App Store |
+
+Then restart: `systemctl restart opdesk`.
 
 ## Tech stack
 
