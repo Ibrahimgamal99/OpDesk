@@ -192,6 +192,7 @@ class AMIExtensionsMonitor:
         self.linkedid2channels: Dict[str, Set[str]] = {}  # linkedid -> set of active channels (to detect final hangup)
         self.linkedid_crm_sent: Set[str] = set()  # "linkedid:uniqueid" -> track which channel instances have already sent CRM data (prevent duplicates)
         self._call_notification_callback: Optional[Callable[[str], None]] = None  # optional: (extension) -> None, called when a call_notification row is inserted
+        self._incoming_call_callback: Optional[Callable[[str, str, str, str], None]] = None  # optional: (extension, caller, call_id, display_name) -> None, called when a monitored extension starts ringing
 
     # ------------------------------------------------------------------
     # Connection
@@ -712,6 +713,11 @@ class AMIExtensionsMonitor:
     def set_call_notification_callback(self, callback: Optional[Callable[[str], None]]):
         """Set callback invoked when a call_notification is inserted (extension str). Used by server to push WebSocket event."""
         self._call_notification_callback = callback
+
+    def set_incoming_call_callback(self, callback: Optional[Callable[[str, str, str, str], None]]):
+        """Set callback invoked when a monitored extension starts ringing (extension, caller, call_id, display_name).
+        Used by server to send a VoIP/high-priority wake push so a backgrounded mobile app can take the call."""
+        self._incoming_call_callback = callback
 
     # ------------------------------------------------------------------
     # Individual event handlers  (prefix: _ev_)
@@ -1361,7 +1367,14 @@ class AMIExtensionsMonitor:
                             log.warning(f"CRM connector not available - skipping CRM send for extension {ext}")
                         # Call notification only for missed/busy/no-answer (not normal completed)
                         if insert_call_notification and ext and self._should_notify_missed_or_busy(cause, ext_info):
-                            caller_val = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '') or ''
+                            # Use 'caller' (set when ext is the callee) or the dialed destination
+                            # (set when ext is the outgoing caller). Never fall back to 'callerid'
+                            # which is the extension's own number and would show "From: self".
+                            caller_val = (ext_info.get('caller') or
+                                          ext_info.get('original_destination') or
+                                          ext_info.get('exten') or '')
+                            if caller_val == ext:
+                                caller_val = ''
                             queue_for_notif = queue or ext_info.get('queue')
                             insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
                             if self._call_notification_callback:
@@ -1373,7 +1386,11 @@ class AMIExtensionsMonitor:
                     log.info(f"⏸️ Skipping CRM send for extension {ext} - other channels still active (transfer in progress)")
                     # Still create notification for the agent who missed/was busy (e.g. queue ring timeout)
                     if insert_call_notification and ext and self._should_notify_missed_or_busy(cause, ext_info):
-                        caller_val = ext_info.get('caller') or ext_info.get('callerid') or self.ch_callerid.get(ch, '') or ''
+                        caller_val = (ext_info.get('caller') or
+                                      ext_info.get('original_destination') or
+                                      ext_info.get('exten') or '')
+                        if caller_val == ext:
+                            caller_val = ''
                         queue_for_notif = queue or ext_info.get('queue')
                         insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
                         if self._call_notification_callback:
@@ -1438,7 +1455,11 @@ class AMIExtensionsMonitor:
                             log.warning(f"CRM connector not available - skipping CRM send for extension {ext}")
                         # Call notification only for missed/busy/no-answer
                         if insert_call_notification and ext and self._should_notify_missed_or_busy(cause, ext_info):
-                            caller_val = ext_info.get('caller') or ext_info.get('callerid') or ''
+                            caller_val = (ext_info.get('caller') or
+                                          ext_info.get('original_destination') or
+                                          ext_info.get('exten') or '')
+                            if caller_val == ext:
+                                caller_val = ''
                             queue_for_notif = queue or ext_info.get('queue')
                             insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
                             if self._call_notification_callback:
@@ -1565,6 +1586,20 @@ class AMIExtensionsMonitor:
                 dest_info['state'] = 'Ringing'
             dest_info['caller'] = ext
             self.ch2ext[destch] = dest_ext
+
+            # Wake any mobile softphone registered to this extension (VoIP/high-priority push) so it
+            # can present CallKit/ConnectionService and register SIP to answer. Dedupe per dial leg
+            # (DialBegin can repeat) and only for monitored extensions.
+            if (self._incoming_call_callback and dest_ext in self.monitored
+                    and not dest_info.get('_wake_pushed')):
+                dest_info['_wake_pushed'] = True
+                caller = p.get('CallerIDNum') or ext or ''
+                display = p.get('CallerIDName') or caller
+                call_id = p.get('DestUniqueid') or p.get('Uniqueid') or p.get('Linkedid') or ''
+                try:
+                    self._incoming_call_callback(dest_ext, caller, call_id, display)
+                except Exception as e:
+                    log.debug("incoming_call_callback error: %s", e)
         
         # Track dest channel -> caller ext for ringing detection
         if destch:

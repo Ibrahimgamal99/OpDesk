@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus, Phone,
+  X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus, Phone, Eye, EyeOff,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
@@ -242,6 +242,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [editingUser, setEditingUser] = useState<OpDeskUser | null>(null);
   const [usersSubTab, setUsersSubTab] = useState<'create' | 'list'>('create');
   const [expandedAccessUserId, setExpandedAccessUserId] = useState<number | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
   const [newGroupNameForCreate, setNewGroupNameForCreate] = useState('');
   const [form, setForm] = useState({
     username: '',
@@ -252,6 +253,22 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     monitor_modes: ['listen'] as string[],
     group_ids: [] as string[],
   });
+
+  const handleExtensionSelect = useCallback(async (ext: string) => {
+    setForm(f => ({ ...f, extension: ext }));
+    if (!ext) return;
+    try {
+      const res = await fetchWithAuth(`/api/settings/extensions/${ext}/credentials`);
+      if (res.ok) {
+        const data = await res.json();
+        setForm(f => ({
+          ...f,
+          ...(editingUser ? {} : { username: data.username || ext, password: data.password || '' }),
+          name: data.name || f.name,
+        }));
+      }
+    } catch { /* ignore */ }
+  }, [editingUser]);
 
   // Restore user form when returning from Groups tab (create new group flow)
   useEffect(() => {
@@ -513,18 +530,28 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   value={form.username}
                   onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
                   placeholder={t('users.username')}
-                  disabled={!!editingUser}
                 />
               </div>
               <div className="up-form-group">
                 <label>{editingUser ? t('users.newPassword') : t('users.password')}</label>
-                <input
-                  type="password"
-                  className="form-input"
-                  value={form.password}
-                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  placeholder={editingUser ? t('users.keepBlank') : t('users.password')}
-                />
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className="form-input"
+                    style={{ paddingRight: 36 }}
+                    value={form.password}
+                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                    placeholder={editingUser ? t('users.keepBlank') : t('users.password')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    style={{ position: 'absolute', right: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -548,7 +575,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 <FilterSelect
                   size="md"
                   value={form.extension ?? ''}
-                  onChange={v => setForm(f => ({ ...f, extension: v }))}
+                  onChange={handleExtensionSelect}
                   icon={Phone}
                   options={[
                     { value: '', label: t('users.none', 'None') },

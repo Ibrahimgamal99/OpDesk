@@ -18,7 +18,9 @@
     "softphone": "الهاتف",
     "groups": "المجموعات",
     "users": "المستخدمون",
-    "analytics": "التحليلات"
+    "analytics": "التحليلات",
+    "openMenu": "فتح القائمة",
+    "closeMenu": "إغلاق القائمة"
   },
   "header": {
     "softphoneRegistered": "الهاتف (مسجّل)",
@@ -39,6 +41,7 @@
     "queue": "قائمة الانتظار",
     "read": "مقروء",
     "markRead": "وضع علامة مقروء",
+    "markAllRead": "تعليم الكل كمقروء",
     "archive": "أرشفة",
     "lastUpdate": "آخر تحديث",
     "monitor": "مراقبة"
@@ -247,6 +250,8 @@
   },
   "softphone": {
     "title": "الهاتف",
+    "openDialer": "فتح لوحة الاتصال",
+    "closeDialer": "إغلاق لوحة الاتصال",
     "enterNumber": "أدخل الرقم",
     "browser": "المتصفح",
     "incomingCall": "مكالمة واردة",
@@ -446,6 +451,20 @@
       "savedSuccess": "تم حفظ إعدادات WebRTC بنجاح",
       "loadError": "فشل تحميل إعدادات WebRTC",
       "saveError": "فشل حفظ إعدادات WebRTC"
+    },
+    "sipTls": {
+      "tab": "SIP TLS",
+      "title": "SIP TLS (المنفذ 5061)",
+      "description": "تفعيل اتصال SIP المشفر للهواتف الناعمة التقليدية باستخدام شهادة Let's Encrypt الخاصة بك.",
+      "enable": "تفعيل SIP TLS",
+      "disable": "تعطيل SIP TLS",
+      "enableError": "فشل تفعيل SIP TLS",
+      "disableError": "فشل تعطيل SIP TLS",
+      "domain": "النطاق",
+      "port": "المنفذ",
+      "status": "الحالة",
+      "statusEnabled": "مفعّل",
+      "statusDisabled": "معطّل"
     }
   },
   "time": {

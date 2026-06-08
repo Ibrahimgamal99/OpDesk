@@ -38,6 +38,7 @@ export function Softphone() {
     activeCallRemoteName,
     dialNumber,
     setDialNumber,
+    lastDialedNumber,
     isConnected,
     hasActiveCall,
     isCallAnswered,
@@ -56,6 +57,7 @@ export function Softphone() {
     isOnHold,
     toggleHold,
     transfer,
+    unlockRemoteAudio,
   } = useWebPhoneContext();
 
   const [showLog, setShowLog] = useState(false);
@@ -127,7 +129,12 @@ export function Softphone() {
             <button
               type="button"
               className="softphone-btn-answer"
-              onClick={() => incomingCall.accept()}
+              onClick={() => {
+                // Unlock the remote audio element synchronously before any async
+                // SIP/WebRTC operations break the user-gesture chain on iOS Safari.
+                unlockRemoteAudio();
+                incomingCall.accept();
+              }}
               title={t('softphone.answer')}
             >
               <Phone size={24} />
@@ -214,19 +221,8 @@ export function Softphone() {
             </button>
           </div>
           {showTransfer && (
-            <div
-              style={{
-                marginTop: 16,
-                padding: 12,
-                borderRadius: 'var(--radius-md)',
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            <div className="softphone-transfer">
+              <span className="softphone-transfer-label">
                 {t('softphone.transferToExtension')}
               </span>
               <input
@@ -234,8 +230,7 @@ export function Softphone() {
                 value={transferDest}
                 onChange={(e) => setTransferDest(e.target.value)}
                 placeholder={t('softphone.transferPlaceholder')}
-                className="form-input"
-                style={{ maxWidth: 100 }}
+                className="form-input softphone-transfer-input"
               />
               <button
                 type="button"
@@ -306,7 +301,7 @@ export function Softphone() {
           <input
             type="text"
             className="softphone-search-input"
-            placeholder={t('softphone.enterNumber')}
+            placeholder={lastDialedNumber ? lastDialedNumber : t('softphone.enterNumber')}
             value={dialNumber}
             onChange={(e) => setDialNumber(e.target.value.replace(/[^0-9*#+\-\s()]/g, ''))}
             onKeyDown={handleKeyDown}
@@ -339,7 +334,7 @@ export function Softphone() {
             type="button"
             className="softphone-bottom-btn softphone-call-btn"
             onClick={hasActiveCall ? hangup : makeCall}
-            disabled={!isConnected || (!hasActiveCall && !dialNumber.trim())}
+            disabled={!isConnected || (!hasActiveCall && !dialNumber.trim() && !lastDialedNumber)}
             title={hasActiveCall ? t('softphone.endCall') : t('softphone.answer')}
           >
             <Phone size={26} />

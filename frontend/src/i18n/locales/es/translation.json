@@ -18,7 +18,9 @@
     "softphone": "Softphone",
     "groups": "Grupos",
     "users": "Usuarios",
-    "analytics": "Analíticas"
+    "analytics": "Analíticas",
+    "openMenu": "Abrir menú",
+    "closeMenu": "Cerrar menú"
   },
   "header": {
     "softphoneRegistered": "Softphone (registrado)",
@@ -39,6 +41,7 @@
     "queue": "Cola",
     "read": "Leer",
     "markRead": "Marcar como leído",
+    "markAllRead": "Marcar todo como leído",
     "archive": "Archivar",
     "lastUpdate": "Última actualización",
     "monitor": "Monitor"
@@ -247,6 +250,8 @@
   },
   "softphone": {
     "title": "Softphone",
+    "openDialer": "Abrir teclado",
+    "closeDialer": "Cerrar teclado",
     "enterNumber": "Ingrese el número",
     "browser": "Navegador",
     "incomingCall": "Llamada entrante",
@@ -446,6 +451,20 @@
       "savedSuccess": "La configuración de WebRTC se guardó correctamente",
       "loadError": "Error al cargar la configuración de WebRTC",
       "saveError": "Error al guardar la configuración de WebRTC"
+    },
+    "sipTls": {
+      "tab": "SIP TLS",
+      "title": "SIP TLS (Puerto 5061)",
+      "description": "Habilitar señalización SIP cifrada para softphones tradicionales usando su certificado Let's Encrypt.",
+      "enable": "Habilitar SIP TLS",
+      "disable": "Deshabilitar SIP TLS",
+      "enableError": "Error al habilitar SIP TLS",
+      "disableError": "Error al deshabilitar SIP TLS",
+      "domain": "Dominio",
+      "port": "Puerto",
+      "status": "Estado",
+      "statusEnabled": "Habilitado",
+      "statusDisabled": "Deshabilitado"
     }
   },
   "time": {

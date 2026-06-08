@@ -2,14 +2,14 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   X, Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff, Settings,
-  ChevronDown, ChevronRight, Plug, BarChart3, KeyRound,
+  ChevronDown, ChevronRight, Plug, BarChart3, KeyRound, ShieldCheck, Smartphone,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../auth';
 import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
 
-export type SettingsTab = 'integrations' | 'qos' | 'analytics';
+export type SettingsTab = 'integrations' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -51,11 +51,22 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [qosLoading, setQosLoading] = useState(false);
   const [qosMessage, setQosMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [sipTlsEnabled, setSipTlsEnabled] = useState(false);
+  const [sipTlsDomain, setSipTlsDomain] = useState('');
+  const [sipTlsLoading, setSipTlsLoading] = useState(false);
+  const [sipTlsMessage, setSipTlsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [mobileWakeEnabled, setMobileWakeEnabled] = useState(false);
+  const [mobileWakeWait, setMobileWakeWait] = useState(3);
+  const [mobileWakeLoading, setMobileWakeLoading] = useState(false);
+  const [mobileWakeMessage, setMobileWakeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
     if (isOpen) {
       setActiveTab('integrations');
       setAdvancedOpen(false);
       loadConfig();
+      loadSipTlsStatus();
+      loadMobileWakeStatus();
     }
   }, [isOpen]);
 
@@ -158,6 +169,112 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
     }
   };
 
+  const loadSipTlsStatus = async () => {
+    try {
+      const res = await fetchWithAuth('/api/sip-tls/status');
+      if (res.ok) {
+        const data = await res.json();
+        setSipTlsEnabled(data.enabled);
+        setSipTlsDomain(data.domain || '');
+      }
+    } catch {}
+  };
+
+  const handleSipTlsEnable = async () => {
+    setSipTlsLoading(true);
+    setSipTlsMessage(null);
+    try {
+      const res = await fetchWithAuth('/api/sip-tls/enable', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setSipTlsEnabled(true);
+        setSipTlsMessage({ type: 'success', text: data.message });
+      } else {
+        const err = await res.json();
+        setSipTlsMessage({ type: 'error', text: err.detail || t('settings.sipTls.enableError') });
+      }
+    } catch {
+      setSipTlsMessage({ type: 'error', text: t('settings.sipTls.enableError') });
+    } finally {
+      setSipTlsLoading(false);
+    }
+  };
+
+  const handleSipTlsDisable = async () => {
+    setSipTlsLoading(true);
+    setSipTlsMessage(null);
+    try {
+      const res = await fetchWithAuth('/api/sip-tls/disable', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setSipTlsEnabled(false);
+        setSipTlsMessage({ type: 'success', text: data.message });
+      } else {
+        const err = await res.json();
+        setSipTlsMessage({ type: 'error', text: err.detail || t('settings.sipTls.disableError') });
+      }
+    } catch {
+      setSipTlsMessage({ type: 'error', text: t('settings.sipTls.disableError') });
+    } finally {
+      setSipTlsLoading(false);
+    }
+  };
+
+  const loadMobileWakeStatus = async () => {
+    try {
+      const res = await fetchWithAuth('/api/mobile-wake/status');
+      if (res.ok) {
+        const data = await res.json();
+        setMobileWakeEnabled(data.enabled);
+        setMobileWakeWait(data.wait_seconds ?? 4);
+      }
+    } catch {}
+  };
+
+  const handleMobileWakeEnable = async () => {
+    setMobileWakeLoading(true);
+    setMobileWakeMessage(null);
+    try {
+      const res = await fetchWithAuth('/api/mobile-wake/enable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wait_seconds: mobileWakeWait }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMobileWakeEnabled(true);
+        setMobileWakeMessage({ type: 'success', text: data.message });
+      } else {
+        const err = await res.json();
+        setMobileWakeMessage({ type: 'error', text: err.detail || 'Failed to enable mobile wake' });
+      }
+    } catch {
+      setMobileWakeMessage({ type: 'error', text: 'Failed to enable mobile wake' });
+    } finally {
+      setMobileWakeLoading(false);
+    }
+  };
+
+  const handleMobileWakeDisable = async () => {
+    setMobileWakeLoading(true);
+    setMobileWakeMessage(null);
+    try {
+      const res = await fetchWithAuth('/api/mobile-wake/disable', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setMobileWakeEnabled(false);
+        setMobileWakeMessage({ type: 'success', text: data.message });
+      } else {
+        const err = await res.json();
+        setMobileWakeMessage({ type: 'error', text: err.detail || 'Failed to disable mobile wake' });
+      }
+    } catch {
+      setMobileWakeMessage({ type: 'error', text: 'Failed to disable mobile wake' });
+    } finally {
+      setMobileWakeLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -205,6 +322,22 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
           >
             <BarChart3 size={16} />
             {t('analytics.settings.title')}
+          </button>
+          <button
+            type="button"
+            className={`settings-tab ${activeTab === 'sip-tls' ? 'active' : ''}`}
+            onClick={() => setActiveTab('sip-tls')}
+          >
+            <ShieldCheck size={16} />
+            {t('settings.sipTls.tab')}
+          </button>
+          <button
+            type="button"
+            className={`settings-tab ${activeTab === 'mobile-wake' ? 'active' : ''}`}
+            onClick={() => setActiveTab('mobile-wake')}
+          >
+            <Smartphone size={16} />
+            Mobile Wake
           </button>
         </div>
 
@@ -505,6 +638,126 @@ export function CRMSettingsModal({ isOpen, onClose }: CRMSettingsModalProps) {
               </div>
             </form>
           )
+        )}
+        {activeTab === 'sip-tls' && (
+          <div className="settings-body">
+            <div className="settings-section">
+              <div className="settings-section-header">
+                <div className="settings-section-icon">
+                  <ShieldCheck size={20} />
+                </div>
+                <div>
+                  <div className="settings-section-title">{t('settings.sipTls.title')}</div>
+                  <div className="settings-section-desc">{t('settings.sipTls.description')}</div>
+                </div>
+              </div>
+              {sipTlsDomain && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  {t('settings.sipTls.domain')}: <strong style={{ color: 'var(--text-primary)' }}>{sipTlsDomain}</strong>
+                  {' · '}{t('settings.sipTls.port')}: <strong style={{ color: 'var(--text-primary)' }}>5061</strong>
+                  {' · '}{t('settings.sipTls.status')}: <strong style={{ color: sipTlsEnabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                    {sipTlsEnabled ? t('settings.sipTls.statusEnabled') : t('settings.sipTls.statusDisabled')}
+                  </strong>
+                </div>
+              )}
+              <div className="settings-actions-row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSipTlsEnable}
+                  disabled={sipTlsLoading || sipTlsEnabled}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (sipTlsLoading || sipTlsEnabled) ? 0.6 : 1 }}
+                >
+                  {sipTlsLoading ? <Loader2 size={14} className="spinner" /> : <Power size={14} />}
+                  {sipTlsLoading ? t('settings.qos.processing') : t('settings.sipTls.enable')}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleSipTlsDisable}
+                  disabled={sipTlsLoading || !sipTlsEnabled}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (sipTlsLoading || !sipTlsEnabled) ? 0.6 : 1 }}
+                >
+                  {sipTlsLoading ? <Loader2 size={14} className="spinner" /> : <PowerOff size={14} />}
+                  {sipTlsLoading ? t('settings.qos.processing') : t('settings.sipTls.disable')}
+                </button>
+              </div>
+              {sipTlsMessage && (
+                <div className={`settings-alert ${sipTlsMessage.type === 'success' ? 'success' : 'error'}`}>
+                  {sipTlsMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                  <span>{sipTlsMessage.text}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {activeTab === 'mobile-wake' && (
+          <div className="settings-body">
+            <div className="settings-section">
+              <div className="settings-section-header">
+                <div className="settings-section-icon">
+                  <Smartphone size={20} />
+                </div>
+                <div>
+                  <div className="settings-section-title">Mobile Wake</div>
+                  <div className="settings-section-desc">
+                    Send a push notification before dialing so a killed app can re-register with Asterisk before the call rings.
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Status:</span>
+                  <strong style={{ fontSize: 13, color: mobileWakeEnabled ? 'var(--success)' : 'var(--text-secondary)' }}>
+                    {mobileWakeEnabled ? 'Enabled' : 'Disabled'}
+                  </strong>
+                </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: 16 }}>
+                <label className="form-label">Wake wait time (seconds)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={mobileWakeWait}
+                  onChange={e => setMobileWakeWait(Math.max(1, Math.min(30, parseInt(e.target.value) || 4)))}
+                  min={1}
+                  max={30}
+                  style={{ width: 100 }}
+                />
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  How long Asterisk waits after sending the push before dialing. Recommended: 3–5s.
+                </p>
+              </div>
+              <div className="settings-actions-row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleMobileWakeEnable}
+                  disabled={mobileWakeLoading}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: mobileWakeLoading ? 0.6 : 1 }}
+                >
+                  {mobileWakeLoading ? <Loader2 size={14} className="spinner" /> : <Power size={14} />}
+                  {mobileWakeLoading ? 'Processing...' : mobileWakeEnabled ? 'Update wait time' : 'Enable'}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleMobileWakeDisable}
+                  disabled={mobileWakeLoading || !mobileWakeEnabled}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (mobileWakeLoading || !mobileWakeEnabled) ? 0.6 : 1 }}
+                >
+                  {mobileWakeLoading ? <Loader2 size={14} className="spinner" /> : <PowerOff size={14} />}
+                  {mobileWakeLoading ? 'Processing...' : 'Disable'}
+                </button>
+              </div>
+              {mobileWakeMessage && (
+                <div className={`settings-alert ${mobileWakeMessage.type === 'success' ? 'success' : 'error'}`}>
+                  {mobileWakeMessage.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                  <span>{mobileWakeMessage.text}</span>
+                </div>
+              )}
+            </div>
+          </div>
         )}
         {activeTab === 'analytics' && (
           <div className="settings-body">

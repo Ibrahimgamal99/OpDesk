@@ -43,10 +43,24 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
 if [[ "$MODE" == "production" ]]; then
-  echo -e "${GREEN}[OpDesk]${NC} Production mode: building frontend first..."
-  cd "$PROJECT_ROOT/frontend" || { echo -e "${RED}Error: Frontend directory not found${NC}"; exit 1; }
-  npm run build || { echo -e "${RED}Error: Frontend build failed${NC}"; exit 1; }
-  echo -e "${GREEN}[OpDesk]${NC} Frontend built (frontend/dist). Starting backend..."
+  DIST_INDEX="$PROJECT_ROOT/frontend/dist/index.html"
+  NEEDS_BUILD=true
+  if [ -f "$DIST_INDEX" ]; then
+    CHANGED=$(find "$PROJECT_ROOT/frontend/src" "$PROJECT_ROOT/frontend/index.html" \
+      "$PROJECT_ROOT/frontend/package.json" "$PROJECT_ROOT/frontend/vite.config"* \
+      "$PROJECT_ROOT/frontend/tsconfig"* \
+      -newer "$DIST_INDEX" 2>/dev/null | head -1)
+    [ -z "$CHANGED" ] && NEEDS_BUILD=false
+  fi
+
+  if [[ "$NEEDS_BUILD" == "true" ]]; then
+    echo -e "${GREEN}[OpDesk]${NC} Production mode: building frontend..."
+    cd "$PROJECT_ROOT/frontend" || { echo -e "${RED}Error: Frontend directory not found${NC}"; exit 1; }
+    npm run build || { echo -e "${RED}Error: Frontend build failed${NC}"; exit 1; }
+    echo -e "${GREEN}[OpDesk]${NC} Frontend built (frontend/dist). Starting backend..."
+  else
+    echo -e "${GREEN}[OpDesk]${NC} Production mode: frontend up-to-date, skipping build."
+  fi
 fi
 
 echo -e "${BLUE}[OpDesk]${NC} Starting Backend..."

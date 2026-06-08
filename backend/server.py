@@ -25,7 +25,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depe
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 import uvicorn
 
 from ami import AMIExtensionsMonitor, _format_duration, DIALPLAN_CTX, normalize_interface
@@ -37,11 +37,13 @@ from db_manager import (
     delete_user as db_delete_user, get_user_agents_and_queues,get_user_group_ids, set_user_groups,get_groups_list, get_group, 
     create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
     get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
-    set_extension_webrtc, get_extensions_with_webrtc_from_users,get_extension_secret_from_db
+    set_extension_webrtc, get_extensions_with_webrtc_from_users,get_extension_secret_from_db, set_extension_secret_in_pbx, set_extension_username_in_pbx, set_extension_name_in_pbx,
+    register_device_token, delete_device_token, get_device_tokens_for_extension
 )
-from dialplan import enable_qos, disable_qos
+from dialplan import enable_qos, disable_qos, enable_sip_tls, disable_sip_tls, enable_mobile_wake, disable_mobile_wake, reload_asterisk_sip
 from call_log import call_log as get_call_log, build_call_journey_from_cdr
 import analytics as analytics_module
+import push_service
 
 # Load environment variables
 load_dotenv()
@@ -581,6 +583,13 @@ monitor: Optional[AMIExtensionsMonitor] = None
 bridge: Optional[AMIEventBridge] = None
 crm_connector: Optional[CRMConnector] = None
 
+# Extensions that received a predial VoIP wake push, keyed by extension → loop.time().
+# _on_incoming_call suppresses the second VoIP push while this entry is fresh so the
+# mobile app only ever gets one VoIP push (and therefore one CallKit/ConnectionService
+# call UUID) per incoming call.
+_pre_woken: Dict[str, float] = {}
+_PRE_WAKE_TTL = 12  # seconds — covers Wait(3) + dial setup + clock slop
+
 
 # ---------------------------------------------------------------------------
 # FastAPI App
@@ -597,18 +606,20 @@ async def lifespan(app: FastAPI):
     init_settings_table()
 
 
-    # Detect local IP for WebRTC default (can be overridden via settings/UI)
-    local_ip = detect_local_ip()
+    # WebRTC default host: prefer the configured public domain (its TLS cert matches); otherwise
+    # fall back to the detected local IP. Can be overridden via settings/UI.
+    webrtc_host = os.getenv("OPDESK_DOMAIN", "").strip() or detect_local_ip()
 
     # Initialize default settings if they don't exist
     default_settings = {
+        'SIP_TLS_ENABLED': 'false',
         'QOS_ENABLED': 'false',
         'CRM_ENABLED': 'false',
         'CRM_AUTH_TYPE': 'api_key',
         'CRM_ENDPOINT_PATH': '/api/calls',
         'CRM_TIMEOUT': '30',
         'CRM_VERIFY_SSL': 'true',
-        'WEBRTC_PBX_SERVER': f'wss://{local_ip}/sip-ws',
+        'WEBRTC_PBX_SERVER': f'wss://{webrtc_host}/sip-ws',
     }
     
     for key, default_value in default_settings.items():
@@ -634,11 +645,32 @@ async def lifespan(app: FastAPI):
             log.error(f"Error enabling QoS on startup: {e}")
     else:
         log.info("QOS_ENABLED is not set or disabled. QoS will not be configured automatically.")
-    
+
+    # Check and apply mobile wake configuration from database (fallback to env)
+    mobile_wake_enabled_str = get_setting('MOBILE_WAKE_ENABLED', os.getenv('MOBILE_WAKE_ENABLED', ''))
+    if mobile_wake_enabled_str.lower() in ('true', '1', 'yes'):
+        wait_seconds_str = get_setting('MOBILE_WAKE_WAIT', os.getenv('MOBILE_WAKE_WAIT', '3'))
+        try:
+            if enable_mobile_wake(wait_seconds=int(wait_seconds_str)):
+                log.info("✅ Mobile wake dialplan enabled on startup (wait=%ss)", wait_seconds_str)
+            else:
+                log.warning("⚠️ Failed to enable mobile wake dialplan on startup")
+        except Exception as e:
+            log.error(f"Error enabling mobile wake on startup: {e}")
+
     # Create AMI monitor with CRM connector
     monitor = AMIExtensionsMonitor(crm_connector=crm_connector)
-    
-    if await monitor.connect():
+
+    # Retry loop — needed when SIP TLS startup restarts Asterisk right before we connect
+    _ami_connected = False
+    for _attempt in range(1, 11):
+        if await monitor.connect():
+            _ami_connected = True
+            break
+        log.warning("AMI connect attempt %d/10 failed — retrying in 3s", _attempt)
+        await asyncio.sleep(3)
+
+    if _ami_connected:
         log.info("Connected to AMI")
         
         # Load extensions
@@ -665,9 +697,24 @@ async def lifespan(app: FastAPI):
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(manager.broadcast({"type": "call_notification_new", "extension": ext}))
+                loop.create_task(_dispatch_missed_call_push(ext))
             except RuntimeError:
                 pass
         monitor.set_call_notification_callback(_on_call_notification_new)
+
+        def _on_incoming_call(ext: str, caller: str, call_id: str, display_name: str):
+            try:
+                loop = asyncio.get_running_loop()
+                # If a predial VoIP push was already sent for this extension, skip the
+                # second push.  Two VoIP pushes → two CallKit UUIDs → end-call event
+                # lands on the wrong UUID → no SIP BYE → caller stuck.
+                wake_time = _pre_woken.pop(ext, 0.0)
+                if loop.time() - wake_time < _PRE_WAKE_TTL:
+                    return
+                loop.create_task(push_service.send_call_wake(ext, caller, call_id, display_name))
+            except RuntimeError:
+                pass
+        monitor.set_incoming_call_callback(_on_incoming_call)
 
         # Start event bridge
         bridge = AMIEventBridge(manager, monitor)
@@ -691,6 +738,33 @@ async def lifespan(app: FastAPI):
     if crm_connector:
         await crm_connector.close()
         log.info("CRM connector closed")
+    await push_service.close()
+
+
+async def _dispatch_missed_call_push(ext: str):
+    """Build a missed-call banner from the latest notification row and send it as an alert push."""
+    try:
+        rows = await asyncio.to_thread(get_call_notifications_from_db, ext, None, 1)
+        row = rows[0] if rows else {}
+        caller = row.get("caller_from") or "Unknown"
+        body = f"Missed call from {caller}"
+        if row.get("queue"):
+            body += f" (queue {row['queue']})"
+        await push_service.send_alert(
+            ext,
+            title="Missed call",
+            body=body,
+            data={
+                "type": "call_notification_new",
+                "extension": ext,
+                "caller_from": row.get("caller_from") or "",
+                "queue": row.get("queue") or "",
+                "reason": row.get("reason") or "",
+                "call_id": row.get("call_id") or "",
+            },
+        )
+    except Exception as e:
+        log.debug("missed-call push dispatch error: %s", e)
 
 
 app = FastAPI(
@@ -900,12 +974,93 @@ async def webrtc_config(request: Request, current_user: dict = Depends(get_curre
         server = f"wss://{host}/sip-ws" if host else stored
     else:
         server = stored
+
+    # If the resulting URL points at a raw IP but a domain is configured, rewrite the host to
+    # the domain. The Let's Encrypt cert is issued for the domain only, so a wss:// connection to
+    # the bare IP fails the TLS handshake (browser reports WebSocket close code 1015). Applying this
+    # to the final URL fixes both auto-detected hosts and stale IP-based values saved in settings.
+    domain = os.getenv("OPDESK_DOMAIN", "").strip()
+    if domain and server:
+        m = re.match(r'^(wss?://)\d{1,3}(?:\.\d{1,3}){3}(:\d+)?(/.*)?$', server)
+        if m:
+            scheme, port, path = m.group(1), m.group(2) or "", m.group(3) or "/sip-ws"
+            server = f"{scheme}{domain}{port}{path}"
     creds = get_user_webrtc_credentials(current_user["id"])
     if not creds:
         return {"server": server, "extension": None, "extension_secret": None}
     ext = creds.get("extension")
-    secret = creds.get("extension_secret")
+    secret = get_extension_secret_from_db(ext) if ext else None
     return {"server": server, "extension": ext, "extension_secret": secret}
+
+
+class DeviceTokenBody(BaseModel):
+    token: str
+    platform: str            # "ios" | "android"
+    token_type: str = "alert"  # "voip" (iOS PushKit) | "alert" (regular APNs/FCM)
+    app_version: Optional[str] = None
+
+
+class DeleteDeviceTokenBody(BaseModel):
+    token: str
+
+
+@app.post("/api/device-tokens")
+async def register_device_token_endpoint(body: DeviceTokenBody, current_user: dict = Depends(get_current_user)):
+    """
+    Register (or refresh) a mobile push token for the current user so the backend can wake the device
+    for incoming calls and send missed-call alerts. iOS registers twice: its APNs alert token
+    (token_type=alert) and its PushKit VoIP token (token_type=voip).
+    Body: { token, platform: "ios"|"android", token_type: "voip"|"alert", app_version? }
+    """
+    token = (body.token or "").strip()
+    platform = (body.platform or "").strip().lower()
+    token_type = (body.token_type or "alert").strip().lower()
+    if not token or platform not in ("ios", "android") or token_type not in ("voip", "alert"):
+        raise HTTPException(status_code=400, detail="Invalid token, platform, or token_type")
+    ok = register_device_token(
+        current_user["id"], current_user.get("extension"), platform, token_type, token, body.app_version
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to register device token")
+    return {"status": "ok"}
+
+
+@app.delete("/api/device-tokens")
+async def delete_device_token_endpoint(body: DeleteDeviceTokenBody, current_user: dict = Depends(get_current_user)):
+    """Unregister a mobile push token (call on logout). Body: { token }"""
+    token = (body.token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token required")
+    delete_device_token(token)
+    return {"status": "ok"}
+
+
+@app.api_route("/api/internal/mobile-wake/{extension}", methods=["GET", "POST"])
+async def internal_mobile_wake(extension: str, request: Request, caller: str = ""):
+    """Called by the dialplan (CURL) BEFORE the extension is dialed, so the wake push is
+    sent while the dialplan Wait() gives a killed/backgrounded app time to re-register
+    with Asterisk and become dialable.
+
+    Asterisk's CURL() dialplan function issues a GET, so this must accept GET (a POST-only
+    route would fall through to the SPA catch-all and return index.html instead of "1").
+
+    Restricted to loopback — no JWT required. Returns the plain body "1" when the
+    extension has at least one registered mobile token (so the dialplan should Wait for
+    it) or an empty body otherwise — letting non-mobile extensions ring with no added
+    latency."""
+    client_host = getattr(request.client, "host", "")
+    if client_host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail="Loopback only")
+    tokens = await asyncio.to_thread(get_device_tokens_for_extension, extension)
+    if not tokens:
+        # No mobile device for this extension — tell the dialplan not to wait.
+        return PlainTextResponse("")
+    try:
+        _pre_woken[extension] = asyncio.get_event_loop().time()
+    except RuntimeError:
+        pass
+    asyncio.create_task(push_service.send_call_wake(extension, caller.strip(), f"predial-{extension}"))
+    return PlainTextResponse("1")
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -930,6 +1085,7 @@ class CreateUserBody(BaseModel):
 
 
 class UpdateUserBody(BaseModel):
+    username: Optional[str] = None
     name: Optional[str] = None
     extension: Optional[str] = None
     role: Optional[str] = None
@@ -1002,6 +1158,16 @@ async def api_create_user(
     if not user_id:
         raise HTTPException(status_code=400, detail="Username or extension already in use")
     set_user_groups(user_id, group_ids=body.group_ids or [])
+    if body.extension:
+        pbx_changed = False
+        if body.password:
+            set_extension_secret_in_pbx(body.extension, body.password)
+            pbx_changed = True
+        if body.name:
+            set_extension_name_in_pbx(body.extension, body.name)
+            pbx_changed = True
+        if pbx_changed:
+            reload_asterisk_sip()
     user = get_user_by_id(user_id)
     agents, queues = get_user_agents_and_queues(user_id)
     group_ids = get_user_group_ids(user_id)
@@ -1024,6 +1190,7 @@ async def api_update_user(
         monitor_modes = ["listen", "whisper", "barge"]  # Admin: auto-fill full modes in DB
     db_update_user(
         user_id,
+        username=body.username,
         name=body.name,
         extension=body.extension,
         role=body.role,
@@ -1034,6 +1201,17 @@ async def api_update_user(
     )
     if body.group_ids is not None:
         set_user_groups(user_id, body.group_ids)
+    ext = body.extension or user.get("extension")
+    pbx_changed = False
+    if ext:
+        if body.password:
+            set_extension_secret_in_pbx(ext, body.password)
+            pbx_changed = True
+        if body.name:
+            set_extension_name_in_pbx(ext, body.name)
+            pbx_changed = True
+    if pbx_changed:
+        reload_asterisk_sip()
     user = get_user_by_id(user_id)
     agents, queues = get_user_agents_and_queues(user_id)
     group_ids = get_user_group_ids(user_id)
@@ -1094,6 +1272,17 @@ async def api_list_extensions_webrtc(
     return {"extensions": [e for e in all_exts if e.get("extension") in allow_set]}
 
 
+@app.get("/api/settings/extensions/{extension}/credentials")
+async def api_get_extension_credentials(
+    extension: str,
+    current_user: dict = Depends(require_admin),
+):
+    """Return PBX SIP username, secret, and display name for an extension (admin only)."""
+    secret = get_extension_secret_from_db(extension)
+    names = get_extension_names_from_db()
+    return {"username": extension, "password": secret or "", "name": names.get(extension, "")}
+
+
 @app.put("/api/settings/extensions/{extension}/webrtc")
 async def api_set_extension_webrtc(
     extension: str,
@@ -1126,9 +1315,7 @@ async def api_set_extension_webrtc(
     if not set_extension_webrtc(extension=ext, enabled=enabled,PBX=os.getenv('PBX')):
         raise HTTPException(status_code=404, detail="Extension not found in users")
 
-    extension_secret = get_extension_secret_from_db(ext)
-    db_update_user(extension=ext, extension_secret=extension_secret)
-    log.info(f"WebRTC enabled/disabled for extension: {ext} - {enabled} and secrets set")
+    log.info(f"WebRTC enabled/disabled for extension: {ext} - {enabled}")
     return {"ok": True, "extension": ext}
 
 
@@ -1806,6 +1993,96 @@ async def disable_qos_endpoint(current_user: dict = Depends(require_admin)):
     except Exception as e:
         log.error(f"Failed to disable QoS: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to disable QoS configuration: {str(e)}")
+
+
+@app.get("/api/mobile-wake/status")
+async def get_mobile_wake_status(current_user: dict = Depends(get_current_user)):
+    """Get current mobile wake configuration."""
+    enabled_str = get_setting('MOBILE_WAKE_ENABLED', os.getenv('MOBILE_WAKE_ENABLED', ''))
+    wait_str = get_setting('MOBILE_WAKE_WAIT', os.getenv('MOBILE_WAKE_WAIT', '3'))
+    return {
+        "enabled": enabled_str.lower() in ('true', '1', 'yes'),
+        "wait_seconds": int(wait_str) if wait_str.isdigit() else 4,
+    }
+
+
+class MobileWakeConfigBody(BaseModel):
+    wait_seconds: int = 4
+
+
+@app.post("/api/mobile-wake/enable")
+async def enable_mobile_wake_endpoint(body: MobileWakeConfigBody = MobileWakeConfigBody(), current_user: dict = Depends(require_admin)):
+    """Enable the mobile pre-dial wake dialplan. Optionally set wait_seconds."""
+    try:
+        wait = max(1, min(body.wait_seconds, 30))
+        if enable_mobile_wake(wait_seconds=wait):
+            set_setting('MOBILE_WAKE_ENABLED', 'true')
+            set_setting('MOBILE_WAKE_WAIT', str(wait))
+            return {"success": True, "message": f"Mobile wake enabled (wait={wait}s). Asterisk dialplan reloaded."}
+        raise HTTPException(status_code=500, detail="Failed to enable mobile wake. Check server logs.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to enable mobile wake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mobile-wake/disable")
+async def disable_mobile_wake_endpoint(current_user: dict = Depends(require_admin)):
+    """Disable the mobile pre-dial wake dialplan."""
+    try:
+        if disable_mobile_wake():
+            set_setting('MOBILE_WAKE_ENABLED', 'false')
+            return {"success": True, "message": "Mobile wake disabled. Asterisk dialplan reloaded."}
+        raise HTTPException(status_code=500, detail="Failed to disable mobile wake. Check server logs.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to disable mobile wake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sip-tls/status")
+async def get_sip_tls_status(current_user: dict = Depends(get_current_user)):
+    """Get current SIP TLS configuration status."""
+    enabled = get_setting('SIP_TLS_ENABLED', 'false').lower() in ('true', '1', 'yes')
+    domain = get_setting('OPDESK_DOMAIN', os.getenv('OPDESK_DOMAIN', ''))
+    return {"enabled": enabled, "domain": domain, "port": 5061}
+
+
+@app.post("/api/sip-tls/enable")
+async def enable_sip_tls_endpoint(current_user: dict = Depends(require_admin)):
+    """Enable SIP TLS on port 5061 using the Let's Encrypt cert."""
+    domain = get_setting('OPDESK_DOMAIN', os.getenv('OPDESK_DOMAIN', ''))
+    if not domain:
+        raise HTTPException(status_code=400, detail="OPDESK_DOMAIN is not configured. Set it in your .env file.")
+    try:
+        success = enable_sip_tls(domain)
+        if success:
+            set_setting('SIP_TLS_ENABLED', 'true')
+            return {"success": True, "message": f"SIP TLS enabled on port 5061 for {domain}"}
+        raise HTTPException(status_code=500, detail="Failed to enable SIP TLS. Check server logs.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to enable SIP TLS: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sip-tls/disable")
+async def disable_sip_tls_endpoint(current_user: dict = Depends(require_admin)):
+    """Disable SIP TLS on port 5061."""
+    try:
+        success = disable_sip_tls()
+        if success:
+            set_setting('SIP_TLS_ENABLED', 'false')
+            return {"success": True, "message": "SIP TLS disabled. Port 5061 closed."}
+        raise HTTPException(status_code=500, detail="Failed to disable SIP TLS. Check server logs.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to disable SIP TLS: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/crm/config")

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2 } from 'lucide-react';
+import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2, Wifi, WifiOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Extension, ExtensionStatus } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
@@ -133,9 +133,9 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
             {webrtcSaving ? (
               <Loader2 size={18} className="spinner" />
             ) : webrtcEnabled ? (
-              <Phone size={18} style={{ color: 'var(--status-idle)' }} />
+              <Wifi size={18} style={{ color: 'var(--status-idle)' }} />
             ) : (
-              <PhoneOff size={18} style={{ color: 'var(--text-muted)' }} />
+              <WifiOff size={18} style={{ color: 'var(--text-muted)' }} />
             )}
           </button>
         )}

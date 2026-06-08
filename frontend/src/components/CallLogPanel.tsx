@@ -780,16 +780,16 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
 
                 return (
                   <tr key={`${call.calldate}-${idx}`} className={idx % 2 === 0 ? 'cl-row-even' : 'cl-row-odd'}>
-                    <td>
+                    <td data-label={t('callLog.table.src')}>
                       <span className="cl-phone">{call.src || '—'}</span>
                     </td>
-                    <td>
+                    <td data-label={t('callLog.table.dest')}>
                       <span className="cl-phone">
                         {call.dst || '—'}
                       </span>
                     </td>
-                    <td>{call.app || '—'}</td>
-                    <td>
+                    <td data-label={t('callLog.table.app')}>{call.app || '—'}</td>
+                    <td data-label={t('callLog.table.direction')}>
                       <span className={`cl-direction cl-direction-${call.call_type?.toLowerCase()}`}>
                         {call.call_type === 'IN' ? '📥 IN' :
                          call.call_type === 'OUT' ? '📤 OUT' :
@@ -797,7 +797,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                          call.call_type || '—'}
                       </span>
                     </td>
-                    <td>
+                    <td data-label={t('callLog.table.status')}>
                       <span
                         className="cl-status-badge"
                         style={{ color: st.color, background: st.bg, borderColor: st.color }}
@@ -807,23 +807,23 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                         {stLabel}
                       </span>
                     </td>
-                    <td>{call.extension || '—'}</td>
-                    <td>
+                    <td data-label={t('callLog.table.agent')}>{call.extension || '—'}</td>
+                    <td data-label={t('callLog.table.duration')}>
                       <span className="cl-duration">{formatDuration(call.duration)}</span>
                     </td>
-                    <td>
+                    <td data-label={t('callLog.table.talk')}>
                       <span className="cl-duration">{formatDuration(call.talk)}</span>
                     </td>
-                    <td>
+                    <td data-label={t('callLog.table.recording')}>
                       <AudioPlayer recordingPath={call.recording_path} recordingFile={call.recording_file} />
                     </td>
-                    <td>
+                    <td data-label={t('callLog.table.dateTime')}>
                       <div className="cl-datetime">
                         <span className="cl-date">{dt.date}</span>
                         <span className="cl-time">{dt.time}</span>
                       </div>
                     </td>
-                    <td>
+                    <td data-label={t('callLog.table.callJourney')}>
                       {(call.call_journey_count != null && call.call_journey_count > 1) ? (
                         <button
                           className="cl-qos-btn cl-journey-btn"
@@ -838,7 +838,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                         <span className="cl-no-qos">—</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label={t('callLog.table.qos')}>
                       {hasQos ? (
                         <button
                           className="cl-qos-btn"
