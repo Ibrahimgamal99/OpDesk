@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS users (
     id INT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(100) UNIQUE NOT NULL,
     extension VARCHAR(20) UNIQUE NULL,
-    extension_secret VARCHAR(255),
     password_hash VARCHAR(255),
     name VARCHAR(255),
     webrtc ENUM('yes', 'no') DEFAULT 'no',
@@ -65,6 +64,30 @@ CREATE TABLE IF NOT EXISTS call_notifications (
     INDEX idx_status (status_flag),
     INDEX idx_event_time (event_time),
     INDEX idx_caller_from (caller_from)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Device push tokens: one row per (device, token_type). A mobile softphone registers its
+-- FCM/APNs token here so the backend can wake it for incoming calls (VoIP push) and send
+-- missed-call alerts when the app is backgrounded and the SIP-over-WSS registration is gone.
+-- FIX: token stored in TEXT (FCM tokens exceed 191 chars) and keyed on a SHA-256 hash, because
+--      a VARCHAR(255) UNIQUE under utf8mb4 = 1020 bytes > 767-byte InnoDB key limit (MariaDB 5.5).
+--      token_type distinguishes the iOS PushKit/VoIP token from the regular APNs/FCM alert token
+--      (an iOS device registers both).
+CREATE TABLE IF NOT EXISTS device_tokens (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    extension VARCHAR(20) NULL,
+    platform ENUM('ios', 'android') NOT NULL,
+    token_type ENUM('voip', 'alert') NOT NULL DEFAULT 'alert',
+    token TEXT NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    app_version VARCHAR(40) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_token_hash (token_hash),
+    INDEX idx_user (user_id),
+    INDEX idx_extension (extension),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Delete read call_notifications older than 7 days (runs daily via MySQL event scheduler).

@@ -586,6 +586,57 @@ if [ -z "$OPDESK_DOMAIN" ] && [ -f "$PROJECT_ROOT/backend/.env" ]; then
                     | cut -d= -f2- | sed "s/^['\"]*//;s/['\"]*$//")
 fi
 
+# --- Domain / certificate interactive prompt ---
+if [ "$IS_UPDATE" == "true" ]; then
+    if [ -n "$OPDESK_DOMAIN" ]; then
+        echo -e "${BLUE}Current domain: $OPDESK_DOMAIN${NC}"
+        echo -e "  ${GREEN}1)${NC} Keep current domain ($OPDESK_DOMAIN)"
+        echo -e "  ${GREEN}2)${NC} Change domain"
+        echo -e "  ${GREEN}3)${NC} Force-renew certificate for $OPDESK_DOMAIN"
+        echo -ne "Choose [1/2/3] (default: 1): "
+        read -r _domain_choice
+        case "${_domain_choice:-1}" in
+            2)
+                echo -ne "  Enter new domain (e.g. op-desk.com): "
+                read -r _new_domain
+                [ -n "$_new_domain" ] && OPDESK_DOMAIN="$_new_domain"
+                ;;
+            3)
+                echo -e "${YELLOW}Force-renewing certificate for $OPDESK_DOMAIN...${NC}"
+                if ! command_exists certbot; then
+                    echo -e "${RED}certbot not found — cannot renew.${NC}"
+                else
+                    # Use standalone so certbot is not blocked by the current nginx config
+                    _nginx_was_active=false
+                    systemctl is-active --quiet nginx 2>/dev/null && _nginx_was_active=true
+                    sudo systemctl stop nginx 2>/dev/null || true
+                    sudo certbot certonly --standalone -d "$OPDESK_DOMAIN" \
+                        --non-interactive --agree-tos \
+                        -m "${OPDESK_LE_EMAIL:-admin@$OPDESK_DOMAIN}" \
+                        --force-renewal 2>/dev/null \
+                        && echo -e "${GREEN}Certificate renewed successfully.${NC}" \
+                        || echo -e "${RED}Renewal failed. Run: sudo certbot renew${NC}"
+                    "$_nginx_was_active" && sudo systemctl start nginx 2>/dev/null || true
+                fi
+                ;;
+        esac
+    else
+        echo -e "${YELLOW}No domain configured for this installation.${NC}"
+        echo -e "  ${BLUE}Enter a domain to enable trusted HTTPS, or press Enter to keep self-signed.${NC}"
+        echo -ne "  Domain (e.g. op-desk.com) or Enter to skip: "
+        read -r _new_domain
+        [ -n "$_new_domain" ] && OPDESK_DOMAIN="$_new_domain"
+    fi
+else
+    # Fresh install
+    echo -e "${YELLOW}Do you have a public domain name for this server?${NC}"
+    echo -e "  ${BLUE}A domain enables HTTPS with a trusted Let's Encrypt certificate.${NC}"
+    echo -e "  ${BLUE}Leave blank to use a self-signed certificate (IP-only access).${NC}"
+    echo -ne "  Domain (e.g. op-desk.com) or press Enter to skip: "
+    read -r _new_domain
+    [ -n "$_new_domain" ] && OPDESK_DOMAIN="$_new_domain"
+fi
+
 NGINX_SERVER_NAME="_"
 NGINX_SSL_CERT="$HTTPS_CERT"
 NGINX_SSL_KEY="$HTTPS_KEY"
@@ -749,9 +800,14 @@ if [ -n "$OPDESK_DOMAIN" ]; then
             fi
         fi
         LE_EMAIL="${OPDESK_LE_EMAIL:-admin@$OPDESK_DOMAIN}"
-        sudo certbot certonly --nginx \
+        # Use standalone so certbot is not blocked by an invalid/stale nginx config
+        _nginx_was_active=false
+        systemctl is-active --quiet nginx 2>/dev/null && _nginx_was_active=true
+        sudo systemctl stop nginx 2>/dev/null || true
+        sudo certbot certonly --standalone \
             -d "$OPDESK_DOMAIN" \
             --non-interactive --agree-tos -m "$LE_EMAIL" || true
+        "$_nginx_was_active" && sudo systemctl start nginx 2>/dev/null || true
     fi
     if [ -f "$LE_CERT" ]; then
         NGINX_SSL_CERT="$LE_CERT"
@@ -762,16 +818,29 @@ if [ -n "$OPDESK_DOMAIN" ]; then
     fi
 fi
 
+# Resolve backend HTTP port early — needed for the Nginx upstream and written to .env later
+_port_val=""
+[ -f "$PROJECT_ROOT/backend/.env" ] && \
+    _port_val=$(grep -E '^PORT=' "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2-)
+PORT="${_port_val:-8765}"
+
 # Write Nginx vhost config — stored in project folder, symlinked into Nginx
 mkdir -p "$PROJECT_ROOT/nginx"
 sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
 tee "$PROJECT_ROOT/nginx/opdesk.conf" > /dev/null <<NGINXEOF
-upstream opdesk_app  { server 127.0.0.1:8765; keepalive 32; }
+upstream opdesk_app  { server 127.0.0.1:$PORT; keepalive 32; }
 upstream asterisk_ws { server 127.0.0.1:8088; keepalive 16; }
 
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
     ''      close;
+}
+
+# Route SIP WebSocket (Sec-WebSocket-Protocol: sip) to Asterisk; everything else to the app.
+# Using a variable avoids the "if in location" anti-pattern which can silently mis-route.
+map \$http_sec_websocket_protocol \$root_proxy {
+    "sip"   "http://127.0.0.1:8088/ws";
+    default "http://127.0.0.1:8765";
 }
 
 server {
@@ -787,7 +856,7 @@ server {
     ssl_session_timeout 10m;
 
     location = /ws {
-        proxy_pass         http://opdesk_app;
+        proxy_pass         \$root_proxy;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade           \$http_upgrade;
         proxy_set_header   Connection        \$connection_upgrade;
@@ -806,16 +875,20 @@ server {
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Host  \$host;
         proxy_read_timeout 3600s;
     }
 
     location / {
-        proxy_pass         http://opdesk_app;
+        proxy_pass         \$root_proxy;
         proxy_http_version 1.1;
+        proxy_set_header   Upgrade           \$http_upgrade;
+        proxy_set_header   Connection        \$connection_upgrade;
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_set_header   X-Forwarded-Host  \$host;
+        proxy_read_timeout 3600s;
         client_max_body_size 25m;
     }
 }
@@ -910,6 +983,36 @@ else
 fi
 JWT_SECRET="${_jwt:-$(openssl rand -hex 32)}"
 
+# Helper: read a var from existing .env; fall back to supplied default
+_env_preserve() {
+    local varname="$1" default="$2" val=""
+    [ -f "$PROJECT_ROOT/backend/.env" ] && \
+        val=$(grep -E "^${varname}=" "$PROJECT_ROOT/backend/.env" 2>/dev/null | cut -d= -f2-)
+    echo "${val:-$default}"
+}
+
+# Preserve HTTPS_CERT / HTTPS_KEY — keep whatever was set; default to empty (Nginx handles TLS)
+HTTPS_CERT=$(_env_preserve HTTPS_CERT "")
+HTTPS_KEY=$(_env_preserve HTTPS_KEY "")
+
+# Preserve OPDESK_HTTPS_PORT (direct TLS mode); PORT was already resolved before Nginx config
+OPDESK_HTTPS_PORT=$(_env_preserve OPDESK_HTTPS_PORT "8443")
+# PORT already set above — re-read only if somehow unset
+PORT="${PORT:-$(_env_preserve PORT "8765")}"
+
+# Preserve AMI_CONTEXT — dialplan context for transfers (FreePBX/Issabel default: ext-local)
+AMI_CONTEXT=$(_env_preserve AMI_CONTEXT "ext-local")
+
+# Preserve push-notification vars (optional — absent vars simply disable push)
+FCM_PROJECT_ID=$(_env_preserve FCM_PROJECT_ID "")
+FCM_SERVICE_ACCOUNT_FILE=$(_env_preserve FCM_SERVICE_ACCOUNT_FILE "/opt/OpDesk/secrets/fcm-service-account.json")
+APNS_AUTH_KEY_FILE=$(_env_preserve APNS_AUTH_KEY_FILE "/opt/OpDesk/secrets/AuthKey_XXXX.p8")
+APNS_KEY_ID=$(_env_preserve APNS_KEY_ID "")
+APNS_TEAM_ID=$(_env_preserve APNS_TEAM_ID "")
+APNS_BUNDLE_ID=$(_env_preserve APNS_BUNDLE_ID "")
+APNS_USE_SANDBOX=$(_env_preserve APNS_USE_SANDBOX "false")
+MOBILE_WAKE_WAIT=$(_env_preserve MOBILE_WAKE_WAIT "3")
+
 cat > .env <<EOF
 OS=$OS
 PBX=$PBX
@@ -919,18 +1022,42 @@ DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASS
 DB_NAME=$DB_NAME
 DB_CDR=asteriskcdrdb
+DB_OpDesk=OpDesk
+
 ASTERISK_RECORDING_ROOT_DIR=/var/spool/asterisk/monitor/
 AMI_HOST=$AMI_HOST
 AMI_PORT=$AMI_PORT
 AMI_USERNAME=$AMI_USER
 AMI_SECRET=$AMI_SECRET
-DB_OpDesk=OpDesk
+AMI_CONTEXT=$AMI_CONTEXT
+
+PORT=$PORT
+OPDESK_HTTPS_PORT=$OPDESK_HTTPS_PORT
 JWT_SECRET=$JWT_SECRET
-HTTPS_CERT=
-HTTPS_KEY=
+
 OPDESK_BIND_HOST=127.0.0.1
 OPDESK_DOMAIN=$OPDESK_DOMAIN
 CORS_ALLOWED_ORIGINS=$CORS_ORIGINS
+
+# IMPORTANT: these are the names server.py reads.
+# Leave empty when Nginx handles TLS termination (default); set paths to run backend with TLS directly.
+HTTPS_CERT=$HTTPS_CERT
+HTTPS_KEY=$HTTPS_KEY
+
+# --- Mobile push notifications (optional) ---
+# Leave these unset to disable push (web client is unaffected). A provider is skipped
+# unless all of its vars are present. Mount the key files as secrets; never commit them.
+# Android — Firebase Cloud Messaging (HTTP v1):
+FCM_PROJECT_ID=$FCM_PROJECT_ID
+FCM_SERVICE_ACCOUNT_FILE=$FCM_SERVICE_ACCOUNT_FILE
+# iOS — direct APNs (HTTP/2, token-based auth). VoIP topic is <APNS_BUNDLE_ID>.voip:
+APNS_AUTH_KEY_FILE=$APNS_AUTH_KEY_FILE
+APNS_KEY_ID=$APNS_KEY_ID
+APNS_TEAM_ID=$APNS_TEAM_ID
+APNS_BUNDLE_ID=$APNS_BUNDLE_ID
+APNS_USE_SANDBOX=$APNS_USE_SANDBOX
+# Seconds the dialplan waits after sending the wake push (gives the app time to re-register):
+MOBILE_WAKE_WAIT=$MOBILE_WAKE_WAIT
 EOF
 cd "$PROJECT_ROOT/frontend" && npm install || true
 

@@ -17,6 +17,7 @@ import type { UserAgentOptions } from 'sip.js';
 import type { InviterOptions } from 'sip.js';
 import type { InvitationAcceptOptions } from 'sip.js';
 
+
 export type WebPhoneStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type CallStatus = '' | 'dialing' | 'ringing' | 'in_call' | 'incoming' | 'error';
 
@@ -76,6 +77,8 @@ export class WebPhone {
   private domain: string = '';
   /** Local hold state (SIP re-INVITE sendonly). */
   private holdState: boolean = false;
+  private stopping: boolean = false;
+  private onVisibilityChange: (() => void) | null = null;
 
   constructor(callbacks: WebPhoneCallbacks = {}) {
     this.callbacks = callbacks;
@@ -155,6 +158,53 @@ export class WebPhone {
     }
     this.callStartTime = null;
     this.setCallDuration('');
+  }
+
+  /**
+   * Wire up early media from a 183 Session Progress response so the real SIP trunk
+   * ringback tone plays instead of the local dialing.wav fallback.
+   * Attaches a `track` listener to the peer connection; cleans itself up on Established/Terminated.
+   */
+  private listenForEarlyMedia(session: Session, onStream: (stream: MediaStream) => void): void {
+    const sdh = session.sessionDescriptionHandler as { peerConnection?: RTCPeerConnection } | undefined;
+    const pc = sdh?.peerConnection;
+    if (!pc) return;
+
+    let fired = false;
+    const tracked = new Set<MediaStreamTrack>();
+
+    // Only surface the remote stream once real RTP is actually flowing. A receiver
+    // track exists immediately after the local offer but stays `muted` until the
+    // carrier's early-media answer (183 w/ SDP) is applied and packets arrive.
+    // Firing on the still-muted track would stop the local dialing tone and play
+    // silence — so we wait for the track's `unmute` event before switching over.
+    const fire = (track: MediaStreamTrack) => {
+      if (fired) return;
+      fired = true;
+      onStream(new MediaStream([track]));
+    };
+
+    const watch = (track: MediaStreamTrack | null) => {
+      if (!track || tracked.has(track)) return;
+      tracked.add(track);
+      if (!track.muted) {
+        fire(track);
+        return;
+      }
+      track.addEventListener('unmute', () => fire(track), { once: true });
+    };
+
+    pc.getReceivers().forEach((r) => watch(r.track));
+    const onTrack = (event: RTCTrackEvent) => watch(event.track);
+    pc.addEventListener('track', onTrack);
+
+    // Remove listener once the call transitions out of the early-media phase.
+    const cleanup = (state: SessionState) => {
+      if (state === SessionState.Established || state === SessionState.Terminated) {
+        pc.removeEventListener('track', onTrack);
+      }
+    };
+    session.stateChange.addListener(cleanup);
   }
 
   private setupRemoteMedia(session: Session, onRemoteStream: (stream: MediaStream) => void) {
@@ -275,6 +325,7 @@ export class WebPhone {
       this.updateStatus('error');
       return;
     }
+    this.stopping = false;
     this.serverUrl = server.trim();
     this.domain = parseDomain(this.serverUrl);
     this.updateStatus('connecting');
@@ -286,9 +337,17 @@ export class WebPhone {
 
       const configuration: UserAgentOptions = {
         uri,
-        transportOptions: { server: this.serverUrl },
+        transportOptions: {
+          server: this.serverUrl,
+          // Ping every 25 s to keep the WebSocket alive on mobile — without this,
+          // iOS/Android kill idle connections within ~30 s when the tab is backgrounded.
+          keepAliveInterval: 25,
+          connectionTimeout: 10,
+        },
         authorizationUsername: username,
         authorizationPassword: password,
+        // reconnectionAttempts defaults to 0 (we handle reconnect ourselves below
+        // to avoid conflicting with the hook-level reconnect triggered by status changes).
         logLevel: 'error',
         sessionDescriptionHandlerFactoryOptions: {
           peerConnectionConfiguration: PEER_CONNECTION_CONFIG,
@@ -297,11 +356,44 @@ export class WebPhone {
 
       this.userAgent = new UserAgent(configuration);
       this.userAgent.delegate = {
+        onConnect: () => {
+          // Transport (re)connected — re-register so the PBX can reach this extension.
+          this.log('Transport connected, re-registering...', 'info');
+          this.registerer?.register().catch((err) => {
+            this.log(`Re-registration failed: ${err}`, 'error');
+          });
+        },
+        onDisconnect: (error?: Error) => {
+          if (this.stopping) return;
+          if (error) {
+            // Unexpected drop (e.g. mobile OS killed the WebSocket).
+            // Set status to 'connecting' so the hook-level reconnect guard (statusRef)
+            // prevents App.tsx from creating a new WebPhone while we try a fast transport
+            // reconnect here. If that fails we fall back to 'disconnected' so App.tsx
+            // takes over and creates a fresh connection.
+            this.updateStatus('connecting');
+            this.log(`Transport disconnected: ${error.message}. Reconnecting...`, 'warn');
+            this.userAgent?.reconnect().catch(() => {
+              if (!this.stopping) {
+                this.log('Reconnect failed — resetting connection', 'warn');
+                this.updateStatus('disconnected');
+              }
+            });
+          } else {
+            // Clean close from the server — not retrying.
+            this.updateStatus('disconnected');
+          }
+        },
         onInvite: (invitation: Invitation) => {
+          // Reject if already in a call (busy).
+          if (this.session) {
+            this.log('Incoming call rejected — already in a call', 'warn');
+            invitation.reject({ statusCode: 486 }).catch(() => {});
+            return;
+          }
           this.log('Incoming call...', 'info');
           this.session = invitation;
           this.setCallStatus('Incoming call...');
-          // When caller hangs up or cancels before we answer, clear incoming UI and stop ringtone
           invitation.stateChange.addListener((state) => {
             if (state === SessionState.Terminated) {
               this.resetCallState();
@@ -330,17 +422,35 @@ export class WebPhone {
         },
       };
 
-      this.registerer = new Registerer(this.userAgent, { expires: 600 });
+      this.registerer = new Registerer(this.userAgent, { expires: 300 });
       this.registerer.stateChange.addListener((state) => {
         if (state === RegistererState.Registered) {
           this.updateStatus('connected');
           this.log('Registered successfully', 'success');
           this.callbacks.onRegistered?.();
         } else if (state === RegistererState.Unregistered) {
-          this.updateStatus('disconnected');
+          if (!this.stopping) this.updateStatus('disconnected');
           this.callbacks.onUnregistered?.();
         }
       });
+
+      // When the tab comes back to the foreground: if the 25-s keepalive kept the
+      // transport alive, just refresh the registration. If the transport died while
+      // backgrounded, reconnect immediately (before App.tsx's 3-s WS reconnect fires).
+      this.onVisibilityChange = () => {
+        if (document.visibilityState !== 'visible' || this.stopping) return;
+        const ua = this.userAgent;
+        if (!ua) return;
+        if (ua.transport.isConnected()) {
+          this.registerer?.register().catch(() => {});
+        } else {
+          this.updateStatus('connecting');
+          ua.reconnect().catch(() => {
+            if (!this.stopping) this.updateStatus('disconnected');
+          });
+        }
+      };
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
 
       await this.userAgent.start();
       await this.registerer.register();
@@ -352,6 +462,11 @@ export class WebPhone {
   }
 
   disconnect(): void {
+    this.stopping = true;
+    if (this.onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
+      this.onVisibilityChange = null;
+    }
     if (this.session) this.hangup();
     if (this.registerer) {
       this.registerer.unregister().catch(() => {});
@@ -418,6 +533,12 @@ export class WebPhone {
       if (!targetUri) throw new Error('Failed to create target URI');
 
       const inviterOptions: InviterOptions = {
+        // Apply the SDP answer from a provisional response (183 Session Progress)
+        // so carrier-provided ringback (early media) plays. Without this, SIP.js
+        // ignores the early SDP for an INVITE-with-offer and no early-media RTP
+        // ever flows. Assumes the INVITE does not fork (single PBX/trunk), which
+        // holds for this softphone's setup.
+        earlyMedia: true,
         sessionDescriptionHandlerOptions: {
           constraints: { audio: true, video: false },
           mediaStream: this.localStream,
@@ -440,6 +561,10 @@ export class WebPhone {
         switch (state) {
           case SessionState.Establishing:
             this.setCallStatus('Ringing...');
+            // Attempt to grab early media (183 Session Progress with SDP).
+            // If the SIP trunk streams real ringback audio, this fires onRemoteStream
+            // so the local dialing.wav fallback stops and the real tone plays.
+            this.listenForEarlyMedia(inviter, onRemoteStream);
             break;
           case SessionState.Established:
             this.log('Call connected', 'success');

@@ -15,6 +15,7 @@ export interface WebPhoneContextValue {
   activeCallRemoteName: string;
   dialNumber: string;
   setDialNumber: React.Dispatch<React.SetStateAction<string>>;
+  lastDialedNumber: string;
   canConnect: boolean;
   isConnected: boolean;
   hasActiveCall: boolean;
@@ -37,6 +38,7 @@ export interface WebPhoneContextValue {
   isOnHold: boolean;
   toggleHold: () => void;
   transfer: (destination: string) => Promise<void> | void;
+  unlockRemoteAudio: () => void;
 }
 
 const WebPhoneContext = createContext<WebPhoneContextValue | null>(null);

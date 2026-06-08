@@ -14,7 +14,7 @@ import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
 import { CRMSettingsModal } from './components/CRMSettingsModal';
-import { Softphone } from './components/Softphone';
+import { FloatingSoftphone } from './components/FloatingSoftphone';
 import {
   Phone,
   PhoneCall,
@@ -30,20 +30,22 @@ import {
   UserCog,
   Monitor,
   Group,
-  Headphones,
   Bell,
   PhoneMissed,
   Clock,
   Check,
+  CheckCheck,
   Archive,
   Globe,
   BarChart3,
   ChevronLeft,
   ChevronRight,
+  Menu,
+  X,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 
-type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'phone' | 'analytics';
+type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
 
 function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unknown>) => string): string {
@@ -96,6 +98,12 @@ function App({ onLogout }: AppProps) {
       const ctx = new Ctx();
       audioContextRef.current = ctx;
       if (ctx.state === 'suspended') ctx.resume();
+      // Request notification permission here too: browsers only allow it from a
+      // user-generated event handler, so requesting it later (e.g. on an incoming
+      // call) is rejected. This unlock runs on the first click/keydown.
+      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
       document.removeEventListener('click', unlock);
       document.removeEventListener('keydown', unlock);
     };
@@ -126,6 +134,8 @@ function App({ onLogout }: AppProps) {
   const [activeTab, setActiveTab] = useState<TabType>('extensions');
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['30d']);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
   /** User form preserved when switching to Groups to create a new group (no API call). */
   const [pendingUserForm, setPendingUserForm] = useState<PendingUserFormSnapshot | null>(null);
   /** When set, Groups tab opens create form with this name pre-filled; consumed after applied. */
@@ -202,6 +212,20 @@ function App({ onLogout }: AppProps) {
     }
   }, [fetchNewNotifCount]);
 
+  const markAllRead = useCallback(async () => {
+    const ids = notifList.map((n) => n.id);
+    if (ids.length === 0) return;
+    await Promise.all(ids.map((id) =>
+      fetchWithAuth(`/api/call-notifications/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status_flag: 'read' }),
+      })
+    ));
+    setNotifList([]);
+    fetchNewNotifCount();
+  }, [notifList, fetchNewNotifCount]);
+
   // Auto-connect softphone when logged in and config is ready
   useEffect(() => {
     if (!canConnect || isConnected || configLoading) return;
@@ -219,10 +243,9 @@ function App({ onLogout }: AppProps) {
     };
   }, []);
 
-  // Redirect to softphone and show browser notification when incoming call
+  // Show browser notification when incoming call (the floating dialer auto-opens itself).
   useEffect(() => {
     if (!incomingCall) return;
-    setActiveTab('phone');
     let notification: Notification | null = null;
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       const title = t('common.incomingCall');
@@ -240,9 +263,9 @@ function App({ onLogout }: AppProps) {
         notification?.close();
       };
     }
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
+    // Note: we do NOT request permission here — browsers reject requestPermission()
+    // outside a user gesture. Permission is requested in the AudioContext-unlock
+    // handler (first click/keydown) instead.
     return () => {
       notification?.close();
     };
@@ -259,22 +282,23 @@ function App({ onLogout }: AppProps) {
       if (ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
-      const playTone = (freq: number, start: number, duration: number) => {
+      const now = ctx.currentTime;
+      const playTone = (freq: number, offset: number, duration: number) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.frequency.value = freq;
         osc.type = 'sine';
-        gain.gain.setValueAtTime(0.15, start);
-        gain.gain.exponentialRampToValueAtTime(0.01, start + duration);
-        osc.start(start);
-        osc.stop(start + duration);
+        gain.gain.setValueAtTime(0.4, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + offset + duration);
+        osc.start(now + offset);
+        osc.stop(now + offset + duration);
       };
       playTone(440, 0, 0.2);
-      playTone(440, 0.2, 0.2);
-      playTone(480, 0.5, 0.2);
-      playTone(480, 0.7, 0.2);
+      playTone(440, 0.25, 0.2);
+      playTone(480, 0.55, 0.2);
+      playTone(480, 0.8, 0.2);
     };
     const interval = setInterval(playRing, 2000);
     playRing();
@@ -284,13 +308,19 @@ function App({ onLogout }: AppProps) {
     };
   }, [incomingCall]);
 
-  // Agent only has Extensions, Active Calls, Call History, Softphone; switch away from other tabs
+  // Agent only has Extensions, Active Calls, Call History; switch away from other tabs
   const userRole = getUser()?.role;
   useEffect(() => {
-    if (userRole === 'agent' && !['extensions', 'calls', 'call-log', 'phone'].includes(activeTab)) {
+    if (userRole === 'agent' && !['extensions', 'calls', 'call-log'].includes(activeTab)) {
       setActiveTab('extensions');
     }
   }, [userRole, activeTab]);
+
+  // Select a tab and close the mobile drawer (no-op on desktop where it's never open)
+  const selectTab = useCallback((tab: TabType) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
+  }, []);
 
   const handleSupervisorAction = useCallback((
     mode: 'listen' | 'whisper' | 'barge',
@@ -315,12 +345,6 @@ function App({ onLogout }: AppProps) {
     total_waiting: 0,
   };
 
-  const openSoftphone = useCallback(() => {
-    setActiveTab('phone');
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, []);
 
   const handleLangSwitch = (lang: string) => {
     setLanguage(lang);
@@ -334,6 +358,15 @@ function App({ onLogout }: AppProps) {
       {/* ── Header: 56px compact bar ── */}
       <header className="header">
         <div className="header-brand">
+          <button
+            type="button"
+            className="header-hamburger"
+            onClick={() => setMobileNavOpen((o) => !o)}
+            aria-label={mobileNavOpen ? t('nav.closeMenu') : t('nav.openMenu')}
+            aria-expanded={mobileNavOpen}
+          >
+            {mobileNavOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
           <div className="header-logo"><Radio size={20} /></div>
           <div>
             <h1 className="header-title">{t('app.title')}</h1>
@@ -360,6 +393,11 @@ function App({ onLogout }: AppProps) {
                   <PhoneMissed size={16} />
                   <span>{t('header.missedBusyCalls')}</span>
                   {newNotifCount > 0 && <span className="header-bell-dropdown-count">{newNotifCount}</span>}
+                  {notifList.length > 0 && (
+                    <button type="button" className="btn btn-sm header-bell-action-btn header-bell-mark-all-btn" onClick={markAllRead} title={t('header.markAllRead')}>
+                      <CheckCheck size={14} /><span>{t('header.markAllRead')}</span>
+                    </button>
+                  )}
                 </div>
                 {notifList.length === 0 ? (
                   <div className="header-bell-dropdown-empty">
@@ -430,15 +468,19 @@ function App({ onLogout }: AppProps) {
           })()}
 
           {/* Language switcher */}
-          <div ref={langMenuRef} style={{ position: 'relative' }}>
+          <div ref={langMenuRef} className="lang-menu">
             <button className="btn" onClick={() => setLangMenuOpen(o => !o)} title={t('language.select')} aria-label={t('language.select')}>
               <Globe size={14} />
             </button>
             {langMenuOpen && (
-              <div style={{ position: 'absolute', top: '100%', insetInlineEnd: 0, marginTop: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 1000, minWidth: 110, overflow: 'hidden' }}>
+              <div className="lang-menu-dropdown">
                 {LANGUAGE_OPTIONS.map(lang => (
-                  <button key={lang} type="button" onClick={() => handleLangSwitch(lang)}
-                    style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'start', background: i18n.language === lang ? 'var(--bg-hover)' : 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: i18n.language === lang ? 600 : 400 }}>
+                  <button
+                    key={lang}
+                    type="button"
+                    onClick={() => handleLangSwitch(lang)}
+                    className={`lang-menu-item${i18n.language === lang ? ' active' : ''}`}
+                  >
                     {t(`language.${lang}`)}
                   </button>
                 ))}
@@ -456,7 +498,7 @@ function App({ onLogout }: AppProps) {
           {/* Logout */}
           <button className="btn" onClick={handleLogout} title={t('header.signOut')}>
             <LogOut size={14} />
-            {t('header.logout')}
+            <span className="header-btn-label">{t('header.logout')}</span>
           </button>
         </div>
       </header>
@@ -464,28 +506,20 @@ function App({ onLogout }: AppProps) {
       {/* ── Body: sidebar + content ── */}
       <div className="body-layout">
 
+        {/* Mobile drawer backdrop */}
+        {mobileNavOpen && (
+          <div className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} aria-hidden />
+        )}
+
         {/* ── Sidebar ── */}
-        <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
+        <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileNavOpen ? ' open' : ''}`}>
           <nav className="sidebar-nav">
 
-            {/* Softphone */}
-            <button
-              type="button"
-              className={`sidebar-item ${activeTab === 'phone' ? 'active' : ''} ${isConnected ? 'registered' : 'not-registered'}`}
-              onClick={openSoftphone}
-              title={isConnected ? t('header.softphoneRegistered') : t('header.softphoneNotRegistered')}
-            >
-              <Headphones size={16} />
-              {!sidebarCollapsed && t('nav.softphone')}
-            </button>
-
-            <div className="sidebar-divider" />
-
-            <button className={`sidebar-item${activeTab === 'extensions' ? ' active' : ''}`} onClick={() => setActiveTab('extensions')} title={sidebarCollapsed ? t('nav.extensions') : undefined}>
+            <button className={`sidebar-item${activeTab === 'extensions' ? ' active' : ''}`} onClick={() => selectTab('extensions')} title={sidebarCollapsed ? t('nav.extensions') : undefined}>
               <Phone size={16} />{!sidebarCollapsed && t('nav.extensions')}
             </button>
 
-            <button className={`sidebar-item${activeTab === 'calls' ? ' active' : ''}`} onClick={() => setActiveTab('calls')} title={sidebarCollapsed ? t('nav.activeCalls') : undefined}>
+            <button className={`sidebar-item${activeTab === 'calls' ? ' active' : ''}`} onClick={() => selectTab('calls')} title={sidebarCollapsed ? t('nav.activeCalls') : undefined}>
               <PhoneCall size={16} />{!sidebarCollapsed && t('nav.activeCalls')}
               {stats.active_calls_count > 0 && (
                 <span className="sidebar-badge" style={{ background: 'var(--status-call)', color: '#fff' }}>{stats.active_calls_count}</span>
@@ -493,7 +527,7 @@ function App({ onLogout }: AppProps) {
             </button>
 
             {getUser()?.role !== 'agent' && (
-              <button className={`sidebar-item${activeTab === 'queues' ? ' active' : ''}`} onClick={() => setActiveTab('queues')} title={sidebarCollapsed ? t('nav.queues') : undefined}>
+              <button className={`sidebar-item${activeTab === 'queues' ? ' active' : ''}`} onClick={() => selectTab('queues')} title={sidebarCollapsed ? t('nav.queues') : undefined}>
                 <Users size={16} />{!sidebarCollapsed && t('nav.queues')}
                 {stats.total_waiting > 0 && (
                   <span className="sidebar-badge" style={{ background: 'var(--status-ringing)', color: '#fff' }}>{stats.total_waiting}</span>
@@ -501,12 +535,12 @@ function App({ onLogout }: AppProps) {
               </button>
             )}
 
-            <button className={`sidebar-item${activeTab === 'call-log' ? ' active' : ''}`} onClick={() => setActiveTab('call-log')} title={sidebarCollapsed ? t('nav.callHistory') : undefined}>
+            <button className={`sidebar-item${activeTab === 'call-log' ? ' active' : ''}`} onClick={() => selectTab('call-log')} title={sidebarCollapsed ? t('nav.callHistory') : undefined}>
               <History size={16} />{!sidebarCollapsed && t('nav.callHistory')}
             </button>
 
             {getUser()?.role !== 'agent' && (
-              <button className={`sidebar-item${activeTab === 'analytics' ? ' active' : ''}`} onClick={() => setActiveTab('analytics')} title={sidebarCollapsed ? t('nav.analytics') : undefined}>
+              <button className={`sidebar-item${activeTab === 'analytics' ? ' active' : ''}`} onClick={() => selectTab('analytics')} title={sidebarCollapsed ? t('nav.analytics') : undefined}>
                 <BarChart3 size={16} />{!sidebarCollapsed && t('nav.analytics')}
               </button>
             )}
@@ -515,10 +549,10 @@ function App({ onLogout }: AppProps) {
               <>
                 <div className="sidebar-divider" />
                 {!sidebarCollapsed && <span className="sidebar-section-label">{t('nav.admin', 'Admin')}</span>}
-                <button className={`sidebar-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => setActiveTab('groups')} title={sidebarCollapsed ? t('nav.groups') : undefined}>
+                <button className={`sidebar-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')} title={sidebarCollapsed ? t('nav.groups') : undefined}>
                   <Group size={16} />{!sidebarCollapsed && t('nav.groups')}
                 </button>
-                <button className={`sidebar-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => setActiveTab('users')} title={sidebarCollapsed ? t('nav.users') : undefined}>
+                <button className={`sidebar-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')} title={sidebarCollapsed ? t('nav.users') : undefined}>
                   <UserCog size={16} />{!sidebarCollapsed && t('nav.users')}
                 </button>
               </>
@@ -609,7 +643,6 @@ function App({ onLogout }: AppProps) {
           )}
           {activeTab === 'call-log' && <CallLogPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
           {activeTab === 'analytics' && <AnalyticsPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
-          {activeTab === 'phone' && <div className="softphone-wrap"><Softphone /></div>}
           {activeTab === 'groups' && (
             <GroupsPanel
               initialGroupName={groupsTabIntent?.prefillGroupName ?? undefined}
@@ -639,6 +672,7 @@ function App({ onLogout }: AppProps) {
         />
       )}
       <CRMSettingsModal isOpen={crmSettingsOpen} onClose={() => setCrmSettingsOpen(false)} />
+      <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} />
       <div className="notifications">
         {notifications.map((notification, index) => (
           <div key={index} className="notification">{notification}</div>

@@ -7,3 +7,6 @@ httpx>=0.25.0
 PyJWT>=2.8.0
 bcrypt>=4.1.0
 openpyxl>=3.1.0
+google-auth>=2.0.0
+h2>=4.0.0
+cryptography>=42.0.0

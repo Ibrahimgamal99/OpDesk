@@ -6,6 +6,7 @@ Configuration (via .env):
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 """
 
+import hashlib
 import logging
 import os
 from typing import Any, Optional, List
@@ -173,6 +174,60 @@ def get_extension_secret_from_db(extension):
         log.warning(f"⚠️  Database error getting extension secret: {e}")
 
     return secret
+
+
+def _upsert_sip_keyword(extension: str, keyword: str, value: str) -> bool:
+    """Insert or update a keyword row in the Asterisk sip table for an extension."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_NAME', 'asterisk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE sip SET data = %s WHERE id = %s AND keyword = %s",
+            (value, extension, keyword),
+        )
+        if cursor.rowcount == 0:
+            cursor.execute(
+                "INSERT INTO sip (id, keyword, data) VALUES (%s, %s, %s)",
+                (extension, keyword, value),
+            )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error _upsert_sip_keyword ({keyword}): {e}")
+        return False
+
+
+def set_extension_secret_in_pbx(extension: str, secret: str) -> bool:
+    """Update the SIP secret for an extension in the Asterisk DB."""
+    return _upsert_sip_keyword(extension, 'secret', secret)
+
+
+def set_extension_username_in_pbx(extension: str, username: str) -> bool:
+    """Update the SIP username for an extension in the Asterisk DB."""
+    return _upsert_sip_keyword(extension, 'username', username)
+
+
+def set_extension_name_in_pbx(extension: str, name: str) -> bool:
+    """Update the display name for an extension in the Asterisk users table."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_NAME', 'asterisk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET name = %s WHERE extension = %s",
+            (name, extension),
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error set_extension_name_in_pbx: {e}")
+        return False
+
 
 def get_extensions_with_webrtc_from_users() -> list:
     """Only source for listing extensions in WebRTC tab. OpDesk users with an extension; unique by extension. Returns [{ extension, name, webrtc }, ...]."""
@@ -644,6 +699,126 @@ def update_call_notification_status(notification_id: int, status_flag: str) -> b
         return False
 
 
+# =============================================================================
+# Device push tokens (FCM / APNs) — used to wake mobile softphones for calls.
+# =============================================================================
+
+def _token_hash(token: str) -> str:
+    """SHA-256 of a push token, used as the unique key (token itself is too long for an index)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def register_device_token(
+    user_id: int,
+    extension: Optional[str],
+    platform: str,
+    token_type: str,
+    token: str,
+    app_version: Optional[str] = None,
+) -> bool:
+    """
+    Register (upsert) a device push token in the OpDesk DB. Idempotent: re-registering the same
+    token updates its owner/extension and last_seen_at instead of creating a duplicate.
+    platform: 'ios' | 'android'. token_type: 'voip' (iOS PushKit) | 'alert' (regular APNs/FCM).
+    """
+    if platform not in ("ios", "android") or token_type not in ("voip", "alert") or not token:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO device_tokens
+                   (user_id, extension, platform, token_type, token, token_hash, app_version)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON DUPLICATE KEY UPDATE
+                   user_id = VALUES(user_id),
+                   extension = VALUES(extension),
+                   platform = VALUES(platform),
+                   token_type = VALUES(token_type),
+                   app_version = VALUES(app_version),
+                   last_seen_at = CURRENT_TIMESTAMP""",
+            (user_id, extension or None, platform, token_type, token, _token_hash(token), app_version or None),
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error registering device token: {e}")
+        return False
+
+
+def delete_device_token(token: str) -> bool:
+    """Delete a device token (on logout, or when a push provider reports it as stale/unregistered)."""
+    if not token:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM device_tokens WHERE token_hash = %s", (_token_hash(token),))
+        conn.commit()
+        ok = cursor.rowcount > 0
+        cursor.close()
+        conn.close()
+        return ok
+    except Error as e:
+        log.warning(f"⚠️  Database error deleting device token: {e}")
+        return False
+
+
+def get_device_tokens_for_extension(
+    extension: str,
+    token_type: Optional[str] = None,
+) -> List[dict]:
+    """
+    Get registered device tokens for an extension. Optionally filter by token_type
+    ('voip' for incoming-call wake, 'alert' for missed-call banners).
+    Returns rows of {token, platform, token_type}.
+    """
+    if not extension:
+        return []
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    data: List[dict] = []
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        query = "SELECT token, platform, token_type FROM device_tokens WHERE extension = %s"
+        params: List[Any] = [extension]
+        if token_type is not None:
+            query += " AND token_type = %s"
+            params.append(token_type)
+        cursor.execute(query, tuple(params))
+        data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    except Error as e:
+        log.warning(f"⚠️  Database error getting device tokens: {e}")
+    return data
+
+
+def prune_stale_device_tokens(days: int = 90) -> int:
+    """Delete device tokens not refreshed in `days` days. Returns the number of rows deleted."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM device_tokens WHERE last_seen_at < NOW() - INTERVAL %s DAY", (days,)
+        )
+        conn.commit()
+        count = cursor.rowcount
+        cursor.close()
+        conn.close()
+        if count:
+            log.info(f"Pruned {count} stale device token(s) (not seen in {days}+ days)")
+        return count
+    except Error as e:
+        log.warning(f"⚠️  Database error pruning stale device tokens: {e}")
+        return 0
+
+
 def check_database_exists(db_name: str) -> bool:
     """Check if a database exists."""
     config_no_db = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk')).copy()
@@ -1029,7 +1204,7 @@ def get_all_users() -> list:
 
 def create_user(username: str, password: str, name: str = None, extension: str = None,
                 role: str = 'supervisor', monitor_mode: str = 'listen',
-                monitor_modes: list = None, extension_secret: str = None) -> Optional[int]:
+                monitor_modes: list = None) -> Optional[int]:
     """Create user. Returns new user id or None on error/duplicate. monitor_modes: optional list ['listen','whisper','barge']."""
     if not username or not username.strip():
         return None
@@ -1071,10 +1246,10 @@ def create_user(username: str, password: str, name: str = None, extension: str =
         return None
 
 
-def update_user(user_id: int | None = None, name: str = None, extension: str = None, role: str = None,
+def update_user(user_id: int | None = None, username: str = None, name: str = None, extension: str = None, role: str = None,
                 is_active: bool = None, monitor_mode: str = None, monitor_modes: list = None,
-                password: str = None, extension_secret: str = None) -> bool:
-    """Update user. password optional (new hash). extension_se  cret: optional (for WebRTC). monitor_modes: optional list to set multiple modes. Returns True on success."""
+                password: str = None) -> bool:
+    """Update user. password optional (new hash). monitor_modes: optional list to set multiple modes. Returns True on success."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
@@ -1082,6 +1257,9 @@ def update_user(user_id: int | None = None, name: str = None, extension: str = N
 
         updates = []
         params = []
+        if username is not None:
+            updates.append("username = %s")
+            params.append(username.strip())
         if name is not None:
             updates.append("name = %s")
             params.append((name or '').strip() or None)
@@ -1094,9 +1272,6 @@ def update_user(user_id: int | None = None, name: str = None, extension: str = N
         if is_active is not None:
             updates.append("is_active = %s")
             params.append(1 if is_active else 0)
-        if extension_secret is not None:
-            updates.append("extension_secret = %s")
-            params.append((extension_secret or '').strip() or None)
         if password is not None and password:
             try:
                 import bcrypt
@@ -1203,13 +1378,13 @@ def set_user_monitor_modes(user_id: int, modes: list) -> bool:
 
 
 def get_user_webrtc_credentials(user_id: int) -> Optional[dict]:
-    """Get extension and extension_secret for the given user (for WebRTC softphone). Returns None if user not found."""
+    """Get extension for the given user (for WebRTC softphone). Returns None if user not found."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
-            "SELECT extension, extension_secret FROM users WHERE id = %s",
+            "SELECT extension FROM users WHERE id = %s",
             (user_id,)
         )
         row = cursor.fetchone()
@@ -1217,7 +1392,7 @@ def get_user_webrtc_credentials(user_id: int) -> Optional[dict]:
         conn.close()
         if not row:
             return None
-        return {"extension": row.get("extension"), "extension_secret": row.get("extension_secret")}
+        return {"extension": row.get("extension")}
     except Error as e:
         log.warning(f"⚠️  Database error get_user_webrtc_credentials: {e}")
         return None

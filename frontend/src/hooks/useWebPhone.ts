@@ -2,6 +2,13 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { WebPhone, type WebPhoneStatus, type WebPhoneCallbacks, type IncomingCallInfo } from '../lib/webPhone';
 import { fetchWithAuth } from '../auth';
 
+// Minimal valid silent WAV (8-bit mono 8 kHz, ~100 samples) — used to unlock audio
+// elements on mobile before any async operations break the user-gesture chain
+// (iOS Safari autoplay policy). Must contain actual samples: a 0-sample data chunk
+// decodes on Chrome/Safari but Firefox rejects it (NS_ERROR_DOM_MEDIA_METADATA_ERR),
+// which left the audio element un-primed and the dialing/ringback tone silent.
+const SILENT_WAV = 'data:audio/wav;base64,UklGRogAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YWQAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+
 export interface WebRtcConfig {
   server: string;
   extension: string | null;
@@ -24,11 +31,17 @@ export function useWebPhone() {
   const [isMuted, setIsMuted] = useState(false);
   const [isOnHold, setIsOnHold] = useState(false);
   const [dialNumber, setDialNumber] = useState('');
+  const [lastDialedNumber, setLastDialedNumber] = useState<string>(
+    () => localStorage.getItem('softphone_last_number') ?? ''
+  );
   const phoneRef = useRef<WebPhone | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
-  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
   const dialingRef = useRef<HTMLAudioElement | null>(null);
   const hasActiveCallRef = useRef(false);
+  const audioUnlockedRef = useRef(false);
+  // Tracks the current status synchronously so connect() can guard against
+  // interrupting a SIP.js transport reconnect that's already in progress.
+  const statusRef = useRef<WebPhoneStatus>('disconnected');
 
   const fetchConfig = useCallback(async () => {
     setConfigLoading(true);
@@ -53,6 +66,33 @@ export function useWebPhone() {
   useEffect(() => {
     fetchConfig();
   }, [fetchConfig]);
+
+  // Unlock audio on first user gesture so ringtone/dialing sounds work on mobile.
+  // Mobile browsers block programmatic audio until the page has had a user-activated
+  // audio play (iOS Safari autoplay policy).
+  useEffect(() => {
+    const unlock = () => {
+      if (audioUnlockedRef.current) return;
+      audioUnlockedRef.current = true;
+      const a = new Audio(SILENT_WAV);
+      a.play().catch(() => {});
+      // Pre-load sound files so they're ready when needed
+      const preRingtone = new Audio('/sounds/ringtone.wav');
+      preRingtone.load();
+      const preDialing = new Audio('/sounds/dialing.wav');
+      preDialing.load();
+    };
+    document.addEventListener('click', unlock, { once: true });
+    document.addEventListener('touchstart', unlock, { once: true });
+    return () => {
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('touchstart', unlock);
+    };
+  }, []);
+
+  // Keep statusRef in sync so connect() can read the current status synchronously
+  // without stale-closure issues (statusRef is updated before App.tsx effects run).
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const addLog = useCallback((message: string, type: 'info' | 'success' | 'warn' | 'error') => {
     setLogs((prev) => [...prev.slice(-99), { message, type, time: new Date().toLocaleTimeString() }]);
@@ -93,6 +133,10 @@ export function useWebPhone() {
       addLog('Set PBX server (admin), extension and extension secret first', 'error');
       return;
     }
+    // Guard: if the existing WebPhone is already mid-reconnect (status = 'connecting'),
+    // don't interrupt it. onDisconnect sets 'connecting' so this hook's callers
+    // (App.tsx's auto-reconnect effect) don't race with SIP.js's transport reconnect.
+    if (statusRef.current === 'connecting' && phoneRef.current) return;
     if (phoneRef.current) {
       phoneRef.current.disconnect();
       phoneRef.current = null;
@@ -136,8 +180,14 @@ export function useWebPhone() {
   const makeCall = useCallback(() => {
     const phone = phoneRef.current;
     if (!phone) return;
-    phone.makeCall(dialNumber.trim(), (stream) => setRemoteStream(stream));
-  }, [dialNumber]);
+    const target = dialNumber.trim() || lastDialedNumber;
+    if (!target) return;
+    if (target !== lastDialedNumber) {
+      setLastDialedNumber(target);
+      localStorage.setItem('softphone_last_number', target);
+    }
+    phone.makeCall(target, (stream) => setRemoteStream(stream));
+  }, [dialNumber, lastDialedNumber]);
 
   const hangup = useCallback(() => {
     phoneRef.current?.hangup();
@@ -199,6 +249,24 @@ export function useWebPhone() {
     }
   }, [addLog]);
 
+  // Called synchronously in the Answer button click handler (before any awaits) to
+  // unlock the remote audio element under iOS Safari's autoplay/user-gesture policy.
+  // Without this, play() called later (after SIP/WebRTC negotiation awaits) is blocked.
+  const unlockRemoteAudio = useCallback(() => {
+    const audio = remoteAudioRef.current;
+    if (!audio) return;
+    audio.src = SILENT_WAV;
+    audio.play()
+      .then(() => {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      })
+      .catch(() => {
+        audio.removeAttribute('src');
+      });
+  }, []);
+
   useEffect(() => {
     if (remoteStream && remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = remoteStream;
@@ -206,28 +274,16 @@ export function useWebPhone() {
     }
   }, [remoteStream]);
 
-  // Incoming call: play ringtone until answer/reject
-  useEffect(() => {
-    if (incomingCall) {
-      const audio = new Audio('/sounds/ringtone.wav');
-      audio.loop = true;
-      ringtoneRef.current = audio;
-      audio.play().catch(() => {});
-      return () => {
-        audio.pause();
-        audio.currentTime = 0;
-        ringtoneRef.current = null;
-      };
-    }
-    ringtoneRef.current = null;
-  }, [incomingCall]);
+  // Incoming-call ringtone is handled by the AudioContext oscillator in App.tsx.
 
   const isOutgoingRinging =
     callStatus.startsWith('Calling ') || callStatus === 'Ringing...';
 
-  // Outgoing call: play dialing (ringback) while "Calling..." or "Ringing..."
+  // Outgoing call: play ringtone.wav as local ringback until the carrier sends
+  // early media (183 with SDP). When remoteStream is set, the cleanup here stops
+  // the local audio and the carrier ringback plays through remoteAudioRef.
   useEffect(() => {
-    if (isOutgoingRinging) {
+    if (isOutgoingRinging && !remoteStream) {
       const audio = new Audio('/sounds/dialing.wav');
       audio.loop = true;
       dialingRef.current = audio;
@@ -238,14 +294,18 @@ export function useWebPhone() {
         dialingRef.current = null;
       };
     }
-    dialingRef.current = null;
-  }, [isOutgoingRinging]);
+    // Early media arrived — stop local dialing tone so carrier ringback is heard.
+    if (dialingRef.current) {
+      dialingRef.current.pause();
+      dialingRef.current.currentTime = 0;
+      dialingRef.current = null;
+    }
+  }, [isOutgoingRinging, remoteStream]);
 
   useEffect(() => {
     return () => {
       phoneRef.current?.disconnect();
       phoneRef.current = null;
-      ringtoneRef.current?.pause();
       dialingRef.current?.pause();
     };
   }, []);
@@ -272,6 +332,7 @@ export function useWebPhone() {
       setActiveCallRemoteNumber('');
       setActiveCallRemoteName('');
       setDialNumber('');
+      setRemoteStream(null);
       setLocalStream(null);
       setIsMuted(false);
       setIsOnHold(false);
@@ -302,6 +363,7 @@ export function useWebPhone() {
     activeCallRemoteName,
     dialNumber,
     setDialNumber,
+    lastDialedNumber,
     canConnect,
     isConnected,
     hasActiveCall,
@@ -324,5 +386,6 @@ export function useWebPhone() {
     toggleMute,
     isOnHold,
     toggleHold,
+    unlockRemoteAudio,
   };
 }
