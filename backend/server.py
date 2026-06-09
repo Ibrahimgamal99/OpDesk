@@ -1035,6 +1035,36 @@ async def delete_device_token_endpoint(body: DeleteDeviceTokenBody, current_user
     return {"status": "ok"}
 
 
+client_log = logging.getLogger("opdesk.client")
+
+
+@app.post("/api/client-log")
+async def client_log_endpoint(request: Request):
+    """
+    Diagnostic sink for browser-side logs (esp. mobile, where devtools are not reachable).
+    Intentionally UNAUTHENTICATED: the frontend ships logs via navigator.sendBeacon(), which
+    cannot set an Authorization header and must work during pagehide/freeze — exactly the
+    moment we need to capture. Entries are size-capped and only logged, never persisted to DB.
+    Body: { session: str, entries: [{ t: <ms>, tag: str, msg: str, data?: any }, ...] }
+    """
+    try:
+        raw = await request.body()
+        if len(raw) > 64 * 1024:  # cap payload; drop anything abusive
+            raw = raw[: 64 * 1024]
+        payload = json.loads(raw or b"{}")
+    except Exception:
+        return PlainTextResponse("", status_code=204)
+    session = str(payload.get("session", "?"))[:64]
+    entries = payload.get("entries") or []
+    for e in entries[:200]:
+        tag = str(e.get("tag", ""))[:40]
+        msg = str(e.get("msg", ""))[:1000]
+        data = e.get("data")
+        suffix = f" | {json.dumps(data)[:1000]}" if data not in (None, "", {}) else ""
+        client_log.info(f"CLIENT[{session}] {tag}: {msg}{suffix}")
+    return PlainTextResponse("", status_code=204)
+
+
 @app.api_route("/api/internal/mobile-wake/{extension}", methods=["GET", "POST"])
 async def internal_mobile_wake(extension: str, request: Request, caller: str = ""):
     """Called by the dialplan (CURL) BEFORE the extension is dialed, so the wake push is

@@ -5,6 +5,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useWebPhone } from './hooks/useWebPhone';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
 import { getToken, setUser, getUser, fetchWithAuth } from './auth';
+import { rlog } from './lib/remoteLog';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
@@ -84,9 +85,15 @@ function App({ onLogout }: AppProps) {
   const { t, i18n } = useTranslation();
   const token = getToken();
   const webPhone = useWebPhone();
-  const { connect, disconnect, canConnect, isConnected, configLoading, incomingCall } = webPhone;
+  const { connect, disconnect, canConnect, isConnected, configLoading, incomingCall, hasActiveCall } = webPhone;
   const disconnectRef = useRef(disconnect);
   disconnectRef.current = disconnect;
+  // Tracks whether a call is ringing/active so the page-lifecycle teardown below
+  // never unregisters SIP mid-call. On mobile, pagehide/freeze can fire while the
+  // tab still looks foregrounded (notification overlay, screen-state change, memory
+  // pressure); without this guard that kills a ringing incoming call.
+  const hasCallRef = useRef(false);
+  hasCallRef.current = !!incomingCall || hasActiveCall;
 
   // AudioContext must be created/resumed after a user gesture (Chrome autoplay policy).
   // Unlock on first user interaction so ringtone can play when an incoming call arrives.
@@ -116,7 +123,7 @@ function App({ onLogout }: AppProps) {
   }, []);
 
   const handleLogout = useCallback(() => {
-    disconnectRef.current();
+    disconnectRef.current('logout');
     onLogout();
   }, [onLogout]);
 
@@ -234,7 +241,13 @@ function App({ onLogout }: AppProps) {
 
   // Disconnect SIP on tab close
   useEffect(() => {
-    const onUnload = () => { disconnectRef.current(); };
+    const onUnload = () => {
+      // Don't tear down (and unregister) while a call is ringing/active — on mobile
+      // pagehide fires spuriously and would drop the call. A real tab close lets the
+      // WS die and the registration lapse on its own.
+      if (hasCallRef.current) return;
+      disconnectRef.current('pagehide/beforeunload');
+    };
     window.addEventListener('beforeunload', onUnload);
     window.addEventListener('pagehide', onUnload);
     return () => {
@@ -246,28 +259,66 @@ function App({ onLogout }: AppProps) {
   // Show browser notification when incoming call (the floating dialer auto-opens itself).
   useEffect(() => {
     if (!incomingCall) return;
+    const perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+    rlog('notify', `incoming call, Notification.permission=${perm}`);
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+    const title = t('common.incomingCall');
+    const body = incomingCall.callerName
+      ? `${incomingCall.callerName} (${incomingCall.callerNumber})`
+      : incomingCall.callerNumber;
+    // `vibrate` is valid for service-worker notifications but missing from the DOM
+    // typings — vibration is our stand-in for a ringtone when the tab is backgrounded
+    // (browsers won't autoplay looping audio in the background).
+    const options: NotificationOptions & { vibrate?: number[] } = {
+      body,
+      icon: '/favicon.svg',
+      tag: 'opdesk-incoming-call',
+      requireInteraction: true,
+      vibrate: [300, 150, 300, 150, 300],
+    };
+
     let notification: Notification | null = null;
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      const title = t('common.incomingCall');
-      const body = incomingCall.callerName
-        ? `${incomingCall.callerName} (${incomingCall.callerNumber})`
-        : incomingCall.callerNumber;
-      notification = new Notification(title, {
-        body,
-        icon: '/favicon.ico',
-        tag: 'opdesk-incoming-call',
-        requireInteraction: true,
-      });
-      notification.onclick = () => {
-        window.focus();
-        notification?.close();
-      };
-    }
+    let cancelled = false;
+
+    // Mobile Chrome/Android FORBIDS `new Notification()` — it throws
+    // "Illegal constructor. Use ServiceWorkerRegistration.showNotification() instead".
+    // That throw was previously uncaught, crashing the React tree → App unmounted →
+    // the SIP stack was torn down mid-ring (the call would never connect). Prefer the
+    // service-worker API, fall back to the constructor, and never let either throw.
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker?.getRegistration?.();
+        rlog('notify', `serviceWorker reg=${reg ? 'yes' : 'no'}, showNotification=${reg?.showNotification ? 'yes' : 'no'}`);
+        if (cancelled) return;
+        if (reg?.showNotification) {
+          await reg.showNotification(title, options);
+          rlog('notify', 'showNotification (service worker) succeeded');
+          return;
+        }
+        notification = new Notification(title, options);
+        rlog('notify', 'new Notification() succeeded');
+        notification.onclick = () => {
+          window.focus();
+          notification?.close();
+        };
+      } catch (err) {
+        // Notifications are best-effort; a failure here must never affect the call.
+        rlog('notify', `notification FAILED: ${String(err)}`);
+        console.warn('Incoming-call notification failed:', err);
+      }
+    })();
+
     // Note: we do NOT request permission here — browsers reject requestPermission()
     // outside a user gesture. Permission is requested in the AudioContext-unlock
     // handler (first click/keydown) instead.
     return () => {
+      cancelled = true;
       notification?.close();
+      navigator.serviceWorker?.getRegistration?.()
+        .then((reg) => reg?.getNotifications?.({ tag: 'opdesk-incoming-call' }))
+        .then((ns) => ns?.forEach((n) => n.close()))
+        .catch(() => {});
     };
   }, [incomingCall, t]);
 

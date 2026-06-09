@@ -138,7 +138,7 @@ export function useWebPhone() {
     // (App.tsx's auto-reconnect effect) don't race with SIP.js's transport reconnect.
     if (statusRef.current === 'connecting' && phoneRef.current) return;
     if (phoneRef.current) {
-      phoneRef.current.disconnect();
+      phoneRef.current.disconnect('connect-replace');
       phoneRef.current = null;
     }
     const phone = new WebPhone(callbacks);
@@ -165,9 +165,9 @@ export function useWebPhone() {
     }
   }, [configLoading, configError, config, status, connect]);
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback((reason: string = 'manual') => {
     if (phoneRef.current) {
-      phoneRef.current.disconnect();
+      phoneRef.current.disconnect(reason);
       phoneRef.current = null;
     }
     setStatus('disconnected');
@@ -304,7 +304,7 @@ export function useWebPhone() {
 
   useEffect(() => {
     return () => {
-      phoneRef.current?.disconnect();
+      phoneRef.current?.disconnect('hook-unmount');
       phoneRef.current = null;
       dialingRef.current?.pause();
     };
