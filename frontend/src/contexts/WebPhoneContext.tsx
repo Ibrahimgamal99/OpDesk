@@ -22,7 +22,7 @@ export interface WebPhoneContextValue {
   isCallAnswered: boolean;
   isOutgoingRinging: boolean;
   connect: () => Promise<void>;
-  disconnect: () => void;
+  disconnect: (reason?: string) => void;
   makeCall: () => void;
   hangup: () => void;
   addDigit: (digit: string) => void;

@@ -16,6 +16,7 @@ import {
 import type { UserAgentOptions } from 'sip.js';
 import type { InviterOptions } from 'sip.js';
 import type { InvitationAcceptOptions } from 'sip.js';
+import { rlog, remoteLogEnabled } from './remoteLog';
 
 
 export type WebPhoneStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -126,6 +127,7 @@ export class WebPhone {
 
   private log(message: string, type: 'info' | 'success' | 'warn' | 'error' = 'info') {
     this.callbacks.onLog?.(message, type);
+    rlog('webphone', message, type === 'info' ? undefined : { type });
   }
 
   private updateStatus(status: WebPhoneStatus) {
@@ -348,7 +350,25 @@ export class WebPhone {
         authorizationPassword: password,
         // reconnectionAttempts defaults to 0 (we handle reconnect ourselves below
         // to avoid conflicting with the hook-level reconnect triggered by status changes).
-        logLevel: 'error',
+        // With debug logging on, capture SIP.js's full output (incl. the sent/received
+        // SIP wire messages — so a REGISTER with Expires:0 is visible) and route it to the
+        // remote logger; otherwise stay quiet at 'error'.
+        logLevel: remoteLogEnabled ? 'debug' : 'error',
+        logBuiltinEnabled: !remoteLogEnabled,
+        logConnector: remoteLogEnabled
+          ? (level: string, category: string, _label: string | undefined, content: string) => {
+              // Keep the wire-message traffic (transport) and registration, drop the rest
+              // to avoid drowning the signal.
+              const c = String(content);
+              if (
+                category.includes('Transport') ||
+                category.includes('Registerer') ||
+                /REGISTER|Expires|BYE|CANCEL|INVITE/.test(c)
+              ) {
+                rlog('sip', `[${level}] ${category}`, c.slice(0, 900));
+              }
+            }
+          : undefined,
         sessionDescriptionHandlerFactoryOptions: {
           peerConnectionConfiguration: PEER_CONNECTION_CONFIG,
         },
@@ -385,6 +405,9 @@ export class WebPhone {
           }
         },
         onInvite: (invitation: Invitation) => {
+          rlog('sip', 'onInvite (incoming call received)', {
+            visibility: document.visibilityState,
+          });
           // Reject if already in a call (busy).
           if (this.session) {
             this.log('Incoming call rejected — already in a call', 'warn');
@@ -424,6 +447,7 @@ export class WebPhone {
 
       this.registerer = new Registerer(this.userAgent, { expires: 300 });
       this.registerer.stateChange.addListener((state) => {
+        rlog('registerer', `state=${state}`);
         if (state === RegistererState.Registered) {
           this.updateStatus('connected');
           this.log('Registered successfully', 'success');
@@ -461,7 +485,10 @@ export class WebPhone {
     }
   }
 
-  disconnect(): void {
+  disconnect(reason: string = 'manual'): void {
+    // Log the trigger so an unexpected teardown (e.g. a mobile page-lifecycle event
+    // firing mid-ring) is visible in the softphone log panel instead of silent.
+    this.log(`Disconnecting (${reason})`, 'warn');
     this.stopping = true;
     if (this.onVisibilityChange) {
       document.removeEventListener('visibilitychange', this.onVisibilityChange);
