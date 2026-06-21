@@ -1199,6 +1199,7 @@ body::before {
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-lg);
   transition: all var(--transition-normal);
+  flex-shrink: 0;
 }
 
 .panel:hover {
