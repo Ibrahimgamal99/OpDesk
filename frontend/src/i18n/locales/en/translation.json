@@ -134,7 +134,8 @@
     "unpause": "Unpause",
     "removeStatic": "Cannot remove: Member is statically configured in queues.conf. Edit config and reload Asterisk to remove.",
     "removeDynamic": "Remove from Queue (Dynamic member)",
-    "removeCheck": "Remove from Queue (Will check if removable)"
+    "removeCheck": "Remove from Queue (Will check if removable)",
+    "removeConfirm": "Remove {{member}} from queue {{queue}}?"
   },
   "callLog": {
     "title": "Call History",
@@ -585,6 +586,7 @@
       "exportCsv": "Export CSV",
       "exportXlsx": "Export XLSX",
       "exporting": "Exporting...",
+      "exportFailed": "Export failed. Please try again.",
       "clearFilters": "Clear"
     },
     "settings": {

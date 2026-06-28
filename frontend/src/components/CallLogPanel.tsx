@@ -5,10 +5,11 @@ import {
   ArrowUpDown, Search, Phone, X, Download, Play, Pause,
   ChevronLeft, ChevronRight, Loader2, BarChart3, Route,
   PhoneIncoming, PhoneOutgoing, ListOrdered, PhoneCall, Share2, PhoneOff, PhoneMissed,
+  Activity,
 } from 'lucide-react';
 import { FilterSelect, type SelectOption } from './FilterSelect';
 import type { CallLogRecord, QoSData, CallJourneyEvent } from '../types';
-import { getAuthHeaders } from '../auth';
+import { getAuthHeaders, fetchWithAuth } from '../auth';
 import { PeriodPicker } from './AnalyticsPanel';
 import type { DateRange } from './analyticsUtils';
 
@@ -167,9 +168,10 @@ const ITEMS_PER_PAGE = 25;
 interface AudioPlayerProps {
   recordingPath: string | null;
   recordingFile: string | null;
+  onVadClick?: () => void;
 }
 
-function AudioPlayer({ recordingPath, recordingFile }: AudioPlayerProps) {
+function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerProps) {
   const { t } = useTranslation();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -259,9 +261,20 @@ function AudioPlayer({ recordingPath, recordingFile }: AudioPlayerProps) {
         {formatAudioTime(currentTime)} / {loaded ? formatAudioTime(duration) : '--:--'}
       </span>
       {recordingFile && (
-        <span className="cl-audio-filename" title={recordingFile}>
-          {recordingFile.length > 20 ? recordingFile.slice(0, 17) + '...' : recordingFile}
-        </span>
+        onVadClick ? (
+          <button
+            className="cl-audio-filename cl-audio-filename-btn"
+            title={`${recordingFile} — click to view voice activity`}
+            onClick={e => { e.stopPropagation(); onVadClick(); }}
+          >
+            <Activity size={10} />
+            {recordingFile.length > 20 ? recordingFile.slice(0, 17) + '...' : recordingFile}
+          </button>
+        ) : (
+          <span className="cl-audio-filename" title={recordingFile}>
+            {recordingFile.length > 20 ? recordingFile.slice(0, 17) + '...' : recordingFile}
+          </span>
+        )
       )}
     </div>
   );
@@ -526,6 +539,144 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
 }
 
 // ---------------------------------------------------------------------------
+// VAD Modal — voice activity timeline
+// ---------------------------------------------------------------------------
+interface VadSegment { start: number; end: number; }
+interface VadData {
+  uniqueid: string;
+  base: string | null;
+  duration: number | null;
+  sp1_talk_seconds: number | null;
+  sp2_talk_seconds: number | null;
+  overlap_seconds: number | null;
+  sp1_segments: number | null;
+  sp2_segments: number | null;
+  segments: { sp1?: VadSegment[]; sp2?: VadSegment[] } | null;
+}
+
+interface VadModalProps {
+  vad: VadData;
+  recordingFile: string | null;
+  onClose: () => void;
+}
+
+function VadModal({ vad, recordingFile, onClose }: VadModalProps) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', handler);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [onClose]);
+
+  const duration = vad.duration ?? 0;
+  const sp1 = vad.segments?.sp1 ?? [];
+  const sp2 = vad.segments?.sp2 ?? [];
+
+  const sp1Talk = vad.sp1_talk_seconds ?? 0;
+  const sp2Talk = vad.sp2_talk_seconds ?? 0;
+  const overlap = vad.overlap_seconds ?? 0;
+  const silence = Math.max(0, duration - sp1Talk - sp2Talk + overlap);
+
+  const pct = (v: number) => duration > 0 ? `${((v / duration) * 100).toFixed(1)}%` : '0%';
+  const fmt = (s: number) => `${s.toFixed(1)}s`;
+
+  return createPortal(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="cl-qos-modal cl-vad-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3 className="modal-title">
+            <Activity size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
+            Voice Activity
+          </h3>
+          <button className="modal-close" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="modal-body" style={{ padding: '20px 24px', overflowY: 'auto', maxHeight: '60vh' }}>
+          {recordingFile && (
+            <p className="cl-vad-filename">{recordingFile}</p>
+          )}
+
+          {/* Summary stats */}
+          <div className="cl-vad-stats">
+            <div className="cl-vad-stat">
+              <span className="cl-vad-stat-label">Duration</span>
+              <span className="cl-vad-stat-value">{fmt(duration)}</span>
+            </div>
+            <div className="cl-vad-stat cl-vad-stat-sp1">
+              <span className="cl-vad-stat-label">Speaker 1 ({vad.sp1_segments ?? 0} segments)</span>
+              <span className="cl-vad-stat-value">{fmt(sp1Talk)} <small>({pct(sp1Talk)})</small></span>
+            </div>
+            <div className="cl-vad-stat cl-vad-stat-sp2">
+              <span className="cl-vad-stat-label">Speaker 2 ({vad.sp2_segments ?? 0} segments)</span>
+              <span className="cl-vad-stat-value">{fmt(sp2Talk)} <small>({pct(sp2Talk)})</small></span>
+            </div>
+            {overlap > 0 && (
+              <div className="cl-vad-stat cl-vad-stat-overlap">
+                <span className="cl-vad-stat-label">Overlap</span>
+                <span className="cl-vad-stat-value">{fmt(overlap)} <small>({pct(overlap)})</small></span>
+              </div>
+            )}
+            <div className="cl-vad-stat cl-vad-stat-silence">
+              <span className="cl-vad-stat-label">Silence</span>
+              <span className="cl-vad-stat-value">{fmt(silence)} <small>({pct(silence)})</small></span>
+            </div>
+          </div>
+
+          {/* Timeline */}
+          {duration > 0 && (
+            <div className="cl-vad-timeline-wrap">
+              <div className="cl-vad-timeline-label">Speaker 1</div>
+              <div className="cl-vad-timeline-track">
+                {sp1.map((seg, i) => (
+                  <div
+                    key={i}
+                    className="cl-vad-segment cl-vad-segment-sp1"
+                    style={{
+                      left: `${(seg.start / duration) * 100}%`,
+                      width: `${Math.max(0.3, ((seg.end - seg.start) / duration) * 100)}%`,
+                    }}
+                    title={`${seg.start.toFixed(2)}s – ${seg.end.toFixed(2)}s`}
+                  />
+                ))}
+              </div>
+              <div className="cl-vad-timeline-label">Speaker 2</div>
+              <div className="cl-vad-timeline-track">
+                {sp2.map((seg, i) => (
+                  <div
+                    key={i}
+                    className="cl-vad-segment cl-vad-segment-sp2"
+                    style={{
+                      left: `${(seg.start / duration) * 100}%`,
+                      width: `${Math.max(0.3, ((seg.end - seg.start) / duration) * 100)}%`,
+                    }}
+                    title={`${seg.start.toFixed(2)}s – ${seg.end.toFixed(2)}s`}
+                  />
+                ))}
+              </div>
+              {/* Time axis */}
+              <div className="cl-vad-time-axis">
+                <span>0s</span>
+                <span>{fmt(duration / 2)}</span>
+                <span>{fmt(duration)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main CallLogPanel Component
 // ---------------------------------------------------------------------------
 interface CallLogPanelProps {
@@ -557,6 +708,9 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   // Call Journey modal
   const [journeyModal, setJourneyModal] = useState<{ call: CallLogRecord; journey: CallJourneyEvent[] } | null>(null);
   const [journeyLoadingLinkedid, setJourneyLoadingLinkedid] = useState<string | null>(null);
+  // VAD modal
+  const [vadModal, setVadModal] = useState<{ vad: VadData; recordingFile: string | null } | null>(null);
+  const [vadLoadingUniqueid, setVadLoadingUniqueid] = useState<string | null>(null);
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -647,6 +801,26 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       setJourneyModal({ call, journey: [] });
     } finally {
       setJourneyLoadingLinkedid(null);
+    }
+  };
+
+  const handleOpenVad = async (call: CallLogRecord) => {
+    const uniqueid = call.uniqueid;
+    if (!uniqueid || vadLoadingUniqueid) return;
+    setVadLoadingUniqueid(uniqueid);
+    try {
+      const res = await fetchWithAuth(`/api/call-log/vad/${encodeURIComponent(uniqueid)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const vad = await res.json() as VadData;
+      setVadModal({ vad, recordingFile: call.recording_file });
+    } catch {
+      // no VAD data — show empty modal
+      setVadModal({
+        vad: { uniqueid: uniqueid, base: null, duration: null, sp1_talk_seconds: null, sp2_talk_seconds: null, overlap_seconds: null, sp1_segments: null, sp2_segments: null, segments: null },
+        recordingFile: call.recording_file,
+      });
+    } finally {
+      setVadLoadingUniqueid(null);
     }
   };
 
@@ -815,7 +989,11 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                       <span className="cl-duration">{formatDuration(call.talk)}</span>
                     </td>
                     <td data-label={t('callLog.table.recording')}>
-                      <AudioPlayer recordingPath={call.recording_path} recordingFile={call.recording_file} />
+                      <AudioPlayer
+                        recordingPath={call.recording_path}
+                        recordingFile={call.recording_file}
+                        onVadClick={call.uniqueid ? () => handleOpenVad(call) : undefined}
+                      />
                     </td>
                     <td data-label={t('callLog.table.dateTime')}>
                       <div className="cl-datetime">
@@ -904,6 +1082,14 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
           onClose={() => setJourneyModal(null)}
         />,
         document.body
+      )}
+
+      {vadModal && (
+        <VadModal
+          vad={vadModal.vad}
+          recordingFile={vadModal.recordingFile}
+          onClose={() => setVadModal(null)}
+        />
       )}
     </div>
   );

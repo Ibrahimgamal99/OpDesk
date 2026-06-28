@@ -38,9 +38,10 @@ from db_manager import (
     create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
     get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
     set_extension_webrtc, get_extensions_with_webrtc_from_users,get_extension_secret_from_db, set_extension_secret_in_pbx, set_extension_username_in_pbx, set_extension_name_in_pbx,
-    register_device_token, delete_device_token, get_device_tokens_for_extension
+    register_device_token, delete_device_token, get_device_tokens_for_extension,
+    get_call_vad_from_db,
 )
-from dialplan import enable_qos, disable_qos, enable_sip_tls, disable_sip_tls, enable_mobile_wake, disable_mobile_wake, reload_asterisk_sip
+from dialplan import enable_qos, disable_qos, enable_sip_tls, disable_sip_tls, enable_mobile_wake, disable_mobile_wake, enable_recording, disable_recording, reload_asterisk_sip
 from call_log import call_log as get_call_log, build_call_journey_from_cdr
 import analytics as analytics_module
 import push_service
@@ -658,6 +659,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.error(f"Error enabling mobile wake on startup: {e}")
 
+    # Check and apply call recording configuration from database (fallback to env)
+    recording_enabled_str = get_setting('RECORDING_ENABLED', os.getenv('RECORDING_ENABLED', ''))
+    if recording_enabled_str.lower() in ('true', '1', 'yes'):
+        rec_format = get_setting('RECORDING_FORMAT', os.getenv('RECORDING_FORMAT', 'wav'))
+        try:
+            if enable_recording(mix_format=rec_format):
+                log.info("✅ Call recording dialplan enabled on startup (format=%s)", rec_format)
+            else:
+                log.warning("⚠️ Failed to enable call recording dialplan on startup")
+        except Exception as e:
+            log.error(f"Error enabling call recording on startup: {e}")
+
     # Create AMI monitor with CRM connector
     monitor = AMIExtensionsMonitor(crm_connector=crm_connector)
 
@@ -1055,7 +1068,9 @@ async def client_log_endpoint(request: Request):
     except Exception:
         return PlainTextResponse("", status_code=204)
     session = str(payload.get("session", "?"))[:64]
-    entries = payload.get("entries") or []
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        entries = []
     for e in entries[:200]:
         tag = str(e.get("tag", ""))[:40]
         msg = str(e.get("msg", ""))[:1000]
@@ -2054,7 +2069,7 @@ async def enable_mobile_wake_endpoint(body: MobileWakeConfigBody = MobileWakeCon
         raise
     except Exception as e:
         log.error(f"Failed to enable mobile wake: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/mobile-wake/disable")
@@ -2069,7 +2084,57 @@ async def disable_mobile_wake_endpoint(current_user: dict = Depends(require_admi
         raise
     except Exception as e:
         log.error(f"Failed to disable mobile wake: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/recording/status")
+async def get_recording_status(current_user: dict = Depends(get_current_user)):
+    """Get current full-call recording configuration."""
+    enabled_str = get_setting('RECORDING_ENABLED', os.getenv('RECORDING_ENABLED', ''))
+    return {
+        "enabled": enabled_str.lower() in ('true', '1', 'yes'),
+        "format": get_setting('RECORDING_FORMAT', os.getenv('RECORDING_FORMAT', 'wav')),
+        "mixed_dir": "/var/spool/asterisk/monitor",
+        "single_dir": "/var/spool/asterisk/single",
+    }
+
+
+class RecordingConfigBody(BaseModel):
+    format: str = "wav"
+
+
+@app.post("/api/recording/enable")
+async def enable_recording_endpoint(body: RecordingConfigBody = RecordingConfigBody(), current_user: dict = Depends(require_admin)):
+    """Enable full-call MixMonitor recording (mixed file + separate sp1/sp2 legs)."""
+    try:
+        fmt = (body.format or "wav").strip().lower()
+        if fmt not in ("wav", "wav49", "gsm", "g722", "ulaw", "alaw", "sln"):
+            raise HTTPException(status_code=400, detail=f"Unsupported recording format: {fmt}")
+        if enable_recording(mix_format=fmt):
+            set_setting('RECORDING_ENABLED', 'true')
+            set_setting('RECORDING_FORMAT', fmt)
+            return {"success": True, "message": f"Call recording enabled (format={fmt}). Asterisk dialplan reloaded."}
+        raise HTTPException(status_code=500, detail="Failed to enable call recording. Check server logs.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to enable call recording: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/recording/disable")
+async def disable_recording_endpoint(current_user: dict = Depends(require_admin)):
+    """Disable full-call recording (resets the predial hooks to no-ops)."""
+    try:
+        if disable_recording():
+            set_setting('RECORDING_ENABLED', 'false')
+            return {"success": True, "message": "Call recording disabled. Asterisk dialplan reloaded."}
+        raise HTTPException(status_code=500, detail="Failed to disable call recording. Check server logs.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to disable call recording: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/sip-tls/status")
@@ -2096,7 +2161,7 @@ async def enable_sip_tls_endpoint(current_user: dict = Depends(require_admin)):
         raise
     except Exception as e:
         log.error(f"Failed to enable SIP TLS: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/sip-tls/disable")
@@ -2112,7 +2177,7 @@ async def disable_sip_tls_endpoint(current_user: dict = Depends(require_admin)):
         raise
     except Exception as e:
         log.error(f"Failed to disable SIP TLS: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/crm/config")
@@ -2249,6 +2314,35 @@ async def get_call_journey_endpoint(
     except Exception as e:
         log.error(f"Error fetching call journey: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch call journey: {str(e)}")
+
+
+@app.get("/api/call-log/vad/{uniqueid}")
+async def get_call_vad_endpoint(
+    uniqueid: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get VAD (Voice Activity Detection) analysis for a call by uniqueid."""
+    if not uniqueid or uniqueid.strip() == "":
+        raise HTTPException(status_code=400, detail="uniqueid is required")
+    try:
+        data = get_call_vad_from_db(uniqueid.strip())
+        if data is None:
+            raise HTTPException(status_code=404, detail="No VAD data found for this call")
+        # segments is stored as JSON string — parse it
+        if isinstance(data.get("segments"), str):
+            import json as _json
+            try:
+                data["segments"] = _json.loads(data["segments"])
+            except Exception:
+                data["segments"] = None
+        # Remove non-serializable fields
+        data.pop("created_at", None)
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error fetching call VAD: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch VAD data: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -2464,7 +2558,7 @@ async def analytics_overview(
         raise
     except Exception as e:
         log.error(f"analytics overview error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/analytics/queue-performance")
@@ -2485,7 +2579,7 @@ async def analytics_queue_performance(
         raise
     except Exception as e:
         log.error(f"analytics queue performance error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/analytics/agent-performance")
@@ -2505,7 +2599,7 @@ async def analytics_agent_performance(
         raise
     except Exception as e:
         log.error(f"analytics agent performance error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/analytics/heatmap")
@@ -2522,7 +2616,7 @@ async def analytics_heatmap(
         raise
     except Exception as e:
         log.error(f"analytics heatmap error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/analytics/trend")
@@ -2539,7 +2633,7 @@ async def analytics_trend(
         raise
     except Exception as e:
         log.error(f"analytics trend error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/analytics/drilldown")
@@ -2574,7 +2668,7 @@ async def analytics_drilldown(
         raise
     except Exception as e:
         log.error(f"analytics drilldown error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/analytics/export")
@@ -2663,7 +2757,7 @@ async def analytics_export(
         raise
     except Exception as e:
         log.error(f"analytics export error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/analytics/settings")
@@ -2702,7 +2796,7 @@ async def save_analytics_settings(
         return {"ok": True}
     except Exception as e:
         log.error(f"analytics settings save error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/health")

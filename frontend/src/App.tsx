@@ -14,7 +14,7 @@ import { AnalyticsPanel } from './components/AnalyticsPanel';
 import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
-import { CRMSettingsModal } from './components/CRMSettingsModal';
+import { SettingsPanel } from './components/CRMSettingsModal';
 import { FloatingSoftphone } from './components/FloatingSoftphone';
 import {
   Phone,
@@ -41,12 +41,13 @@ import {
   BarChart3,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Menu,
   X,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 
-type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics';
+type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics' | 'settings';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
 
 function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unknown>) => string): string {
@@ -141,6 +142,7 @@ function App({ onLogout }: AppProps) {
   const [activeTab, setActiveTab] = useState<TabType>('extensions');
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['30d']);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [teamExpanded, setTeamExpanded] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
   /** User form preserved when switching to Groups to create a new group (no API call). */
@@ -152,7 +154,6 @@ function App({ onLogout }: AppProps) {
     mode: 'listen' | 'whisper' | 'barge';
     target: string;
   }>({ isOpen: false, mode: 'listen', target: '' });
-  const [crmSettingsOpen, setCrmSettingsOpen] = useState(false);
   const [webrtcExtensions, setWebrtcExtensions] = useState<{ extension: string; name?: string; webrtc?: string }[]>([]);
   const [newNotifCount, setNewNotifCount] = useState(0);
   const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
@@ -294,6 +295,12 @@ function App({ onLogout }: AppProps) {
         if (reg?.showNotification) {
           await reg.showNotification(title, options);
           rlog('notify', 'showNotification (service worker) succeeded');
+          // Check cancelled again: cleanup may have run while showNotification awaited.
+          if (cancelled) {
+            reg.getNotifications?.({ tag: 'opdesk-incoming-call' })
+              .then((ns) => ns?.forEach((n) => n.close()))
+              .catch(() => {});
+          }
           return;
         }
         notification = new Notification(title, options);
@@ -539,13 +546,6 @@ function App({ onLogout }: AppProps) {
             )}
           </div>
 
-          {/* Settings */}
-          {(getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && (
-            <button className="btn" onClick={() => setCrmSettingsOpen(true)} title={t('header.settings')}>
-              <Settings size={14} />
-            </button>
-          )}
-
           {/* Logout */}
           <button className="btn" onClick={handleLogout} title={t('header.signOut')}>
             <LogOut size={14} />
@@ -599,12 +599,45 @@ function App({ onLogout }: AppProps) {
             {getUser()?.role === 'admin' && (
               <>
                 <div className="sidebar-divider" />
-                {!sidebarCollapsed && <span className="sidebar-section-label">{t('nav.admin', 'Admin')}</span>}
-                <button className={`sidebar-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')} title={sidebarCollapsed ? t('nav.groups') : undefined}>
-                  <Group size={16} />{!sidebarCollapsed && t('nav.groups')}
-                </button>
-                <button className={`sidebar-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')} title={sidebarCollapsed ? t('nav.users') : undefined}>
-                  <UserCog size={16} />{!sidebarCollapsed && t('nav.users')}
+
+                {/* Team collapsible group — admin only */}
+                {!sidebarCollapsed ? (
+                  <>
+                    <button className="sidebar-group-header" onClick={() => setTeamExpanded(e => !e)}>
+                      <Users size={14} />
+                      <span>{t('nav.team', 'Team')}</span>
+                      <ChevronDown size={12} className={`sidebar-group-chevron${teamExpanded ? '' : ' collapsed'}`} />
+                    </button>
+                    {teamExpanded && (
+                      <div className="sidebar-group-items">
+                        <button className={`sidebar-item sidebar-sub-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')}>
+                          <Group size={16} />{t('nav.groups')}
+                        </button>
+                        <button className={`sidebar-item sidebar-sub-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')}>
+                          <UserCog size={16} />{t('nav.users')}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button className={`sidebar-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')} title={t('nav.groups')}>
+                      <Group size={16} />
+                    </button>
+                    <button className={`sidebar-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')} title={t('nav.users')}>
+                      <UserCog size={16} />
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+
+            {/* Settings — admin and supervisor */}
+            {(getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && (
+              <>
+                {getUser()?.role === 'supervisor' && <div className="sidebar-divider" />}
+                <button className={`sidebar-item${activeTab === 'settings' ? ' active' : ''}`} onClick={() => selectTab('settings')} title={sidebarCollapsed ? t('header.settings', 'Settings') : undefined}>
+                  <Settings size={16} />{!sidebarCollapsed && t('header.settings', 'Settings')}
                 </button>
               </>
             )}
@@ -711,6 +744,7 @@ function App({ onLogout }: AppProps) {
               }}
             />
           )}
+          {activeTab === 'settings' && (getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && <SettingsPanel />}
         </main>
       </div>
 
@@ -722,7 +756,6 @@ function App({ onLogout }: AppProps) {
           onSubmit={executeSupervisorAction}
         />
       )}
-      <CRMSettingsModal isOpen={crmSettingsOpen} onClose={() => setCrmSettingsOpen(false)} />
       <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} />
       <div className="notifications">
         {notifications.map((notification, index) => (

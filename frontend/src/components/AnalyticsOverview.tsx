@@ -32,6 +32,11 @@ function abandonColor(v: number | null): 'good' | 'warn' | 'bad' | '' {
   return 'bad';
 }
 
+function delta(a: number | null, b: number | null): number | null {
+  if (a === null || b === null) return null;
+  return parseFloat((a - b).toFixed(1));
+}
+
 function KpiCard({ label, value, desc, delta, deltaInvert = false, trend, colorClass = '' }: KpiCardProps) {
   const { t } = useTranslation();
   let deltaClass = 'neu';
@@ -114,11 +119,6 @@ export function AnalyticsOverview({ dateRange }: Props) {
 
   const cur = kpis.current;
   const prev = kpis.prev_period;
-
-  function delta(a: number | null, b: number | null): number | null {
-    if (a === null || b === null) return null;
-    return parseFloat((a - b).toFixed(1));
-  }
 
   const outKpis = cur.outbound;
   const prevOut = prev.outbound;

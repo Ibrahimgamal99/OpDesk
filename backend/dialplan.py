@@ -18,6 +18,15 @@ log = logging.getLogger(__name__)
 EXTENSIONS_CUSTOM_CONF = "/etc/asterisk/extensions_custom.conf"
 EXTENSIONS_OPDESK_CONF = "/etc/asterisk/extensions_opdesk.conf"
 EXTENSIONS_MOBILE_WAKE_CONF = "/etc/asterisk/extensions_mobile_wake.conf"
+EXTENSIONS_RECORD_CONF = "/etc/asterisk/extensions_opdesk_record.conf"
+
+# Where MixMonitor writes call recordings.
+#   - Mixed file goes to the FreePBX/Asterisk default monitor dir, so it lands in the
+#     same place the CDR(recordingfile) field points at (CMS / CDR reports find it).
+#   - The two single-leg files (caller=sp1, callee=sp2) go to a sibling folder.
+# Both are date-partitioned YYYY/MM/DD exactly like FreePBX's native recorder.
+RECORD_MIX_DIR = "/var/spool/asterisk/monitor"
+RECORD_SINGLE_DIR = "/var/spool/asterisk/single"
 # Included INSIDE pjsip.transports.conf BEFORE the auto-generated [0.0.0.0-tls] section.
 # PJSIP uses first-wins for duplicate section names, so this file's definition wins
 # over the auto-generated one.  pjsip.transports_custom_post.conf is included AFTER
@@ -434,6 +443,203 @@ def disable_qos():
     
     log.info("QoS configuration disabled successfully!")
     return True
+
+
+def write_recording_conf(mix_format: str = None, vad: bool = True) -> bool:
+    """
+    Install full-call recording via MixMonitor for every real call — internal
+    extension-to-extension, inbound from trunks, and outbound to trunks.
+
+    Why the predial hooks and NOT [from-internal-custom]:
+      [from-internal-custom] is only reachable through the `_.` catch-all, which is the
+      least-specific pattern in Asterisk. For any routed call (a real extension, an
+      outbound route) a more-specific pattern in ext-local / outrt-N wins, so the catch-all
+      never executes — recording placed there would capture nothing. FreePBX instead ships
+      two blank predial-hook stubs (extensions.conf, `s,1,return()`) specifically so
+      integrators can override them:
+        - macro-dialout-one-predial-hook   : fires before dialling an extension
+                                             (internal ext<->ext and inbound trunk -> ext)
+        - macro-dialout-trunk-predial-hook : fires before dialling out a trunk (outbound)
+      Together they fire exactly once per real call, on the originating channel, just
+      before the bridge — so a single MixMonitor follows the whole conversation. Defining
+      them from a file #include'd by extensions_custom.conf wins the duplicate-priority
+      race against the blank stubs (the custom include is parsed before them).
+
+    Outputs (one MixMonitor call, three files):
+      - mixed : RECORD_MIX_DIR/YYYY/MM/DD/<base>.<fmt>      (FreePBX/CDR default location;
+                CDR(recordingfile) is set so it shows in CDR reports / Call Recordings)
+      - sp1   : RECORD_SINGLE_DIR/YYYY/MM/DD/<base>-sp1.<fmt>  (caller leg  = r() receive)
+      - sp2   : RECORD_SINGLE_DIR/YYYY/MM/DD/<base>-sp2.<fmt>  (callee leg  = t() transmit)
+
+    <base> mirrors FreePBX's naming style: <timestamp>-<cidnum>-<dialed>-<uniqueid>.
+    A channel flag (__OPDESK_REC) guards against double-recording when a ring group /
+    queue runs the predial hook once per member on the same channel.
+    """
+    if mix_format is None:
+        mix_format = os.getenv("OPDESK_REC_FORMAT", "wav")
+
+    # VAD post-call analysis only makes sense on a PCM format the analyser can read.
+    if vad and mix_format not in ("wav", "sln"):
+        log.warning(f"VAD analysis needs 16-bit PCM (wav/sln); format={mix_format} -> disabling VAD")
+        vad = False
+
+    log.info(f"Writing call recording dialplan to {EXTENSIONS_RECORD_CONF} (vad={vad})")
+
+    # When VAD is on, [opdesk-record] records the single-leg base path and fires a
+    # UserEvent so the OpDesk AMI monitor can run the post-call analysis in-process.
+    # The monitor pairs this base with the channel's Hangup event (same Uniqueid) and,
+    # once the WAV legs are flushed, analyses them and stores the result in the OpDesk DB.
+    # No AGI / hangup handler / loopback endpoint involved.
+    vad_record_lines = (
+        " same => n,Set(OPDESK_SINGLE_BASE=__SINGLEDIR__/${OPDESK_DAY}/${OPDESK_BASE})\n"
+        " same => n,UserEvent(OpDeskRecording,Recbase: ${OPDESK_SINGLE_BASE})\n"
+    ) if vad else ""
+
+    vad_context = ""
+
+    template = """; OpDesk call recording dialplan — auto-generated. Do not edit manually.
+;
+; Records every real call (internal ext<->ext, inbound from trunks, outbound to trunks)
+; with a single MixMonitor started from FreePBX's predial hooks. [from-internal-custom]
+; is NOT used on purpose: its `_.` entry is a catch-all that loses to FreePBX's
+; per-extension / per-route patterns and never runs for routed calls.
+;
+;   mixed -> __MIXDIR__/YYYY/MM/DD/<base>.__FMT__        (CDR default location, CDR-linked)
+;   sp1   -> __SINGLEDIR__/YYYY/MM/DD/<base>-sp1.__FMT__ (caller leg, r() receive)
+;   sp2   -> __SINGLEDIR__/YYYY/MM/DD/<base>-sp2.__FMT__ (callee leg, t() transmit)
+;
+; The predial-hook stubs ship blank in extensions.conf to be overridden; defining them
+; here (included from extensions_custom.conf, parsed before the stubs) wins the
+; duplicate-priority race so this version runs instead of the no-op stub.
+
+[macro-dialout-one-predial-hook]
+exten => s,1,GosubIf($["${OPDESK_REC}"=""]?opdesk-record,s,1)
+ same => n,Return()
+
+[macro-dialout-trunk-predial-hook]
+exten => s,1,GosubIf($["${OPDESK_REC}"=""]?opdesk-record,s,1)
+ same => n,Return()
+
+[opdesk-record]
+exten => s,1,NoOp(OpDesk recording start on ${CHANNEL})
+ same => n,Set(__OPDESK_REC=1)
+ same => n,Set(OPDESK_TS=${STRFTIME(${EPOCH},,%Y%m%d-%H%M%S)})
+ same => n,Set(OPDESK_DAY=${STRFTIME(${EPOCH},,%Y/%m/%d)})
+ same => n,Set(OPDESK_DST=${IF($["${EXTTOCALL}"!=""]?${EXTTOCALL}:${CALLERID(dnid)})})
+ same => n,Set(OPDESK_BASE=${OPDESK_TS}-${CALLERID(num)}-${OPDESK_DST}-${UNIQUEID})
+ same => n,Set(OPDESK_MIX=__MIXDIR__/${OPDESK_DAY}/${OPDESK_BASE}.__FMT__)
+ same => n,Set(OPDESK_SP1=__SINGLEDIR__/${OPDESK_DAY}/${OPDESK_BASE}-sp1.__FMT__)
+ same => n,Set(OPDESK_SP2=__SINGLEDIR__/${OPDESK_DAY}/${OPDESK_BASE}-sp2.__FMT__)
+ same => n,MixMonitor(${OPDESK_MIX},r(${OPDESK_SP1})t(${OPDESK_SP2}))
+ same => n,Set(CDR(recordingfile)=${OPDESK_BASE}.__FMT__)
+ same => n,NoOp(OpDesk recording: mix=${OPDESK_MIX} sp1=${OPDESK_SP1} sp2=${OPDESK_SP2})
+__VAD_RECORD_LINES__ same => n,Return()
+__VAD_CONTEXT__"""
+
+    content = (
+        template
+        .replace("__VAD_RECORD_LINES__", vad_record_lines)
+        .replace("__VAD_CONTEXT__", vad_context)
+        .replace("__MIXDIR__", RECORD_MIX_DIR)
+        .replace("__SINGLEDIR__", RECORD_SINGLE_DIR)
+        .replace("__FMT__", mix_format)
+    )
+
+    try:
+        import tempfile
+
+        # MixMonitor auto-creates the dated YYYY/MM/DD subdirs, but the single base dir
+        # must exist and be writable by the asterisk user first.
+        subprocess.run(['sudo', 'mkdir', '-p', RECORD_SINGLE_DIR], capture_output=True)
+        subprocess.run(['sudo', 'chown', 'asterisk:asterisk', RECORD_SINGLE_DIR], capture_output=True)
+        subprocess.run(['sudo', 'chmod', '775', RECORD_SINGLE_DIR], capture_output=True)
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        result = subprocess.run(
+            ['sudo', 'cp', tmp_path, EXTENSIONS_RECORD_CONF],
+            capture_output=True, text=True,
+        )
+        subprocess.run(['sudo', 'chmod', '644', EXTENSIONS_RECORD_CONF], capture_output=True)
+        os.unlink(tmp_path)
+
+        if result.returncode != 0:
+            log.error(f"Failed to write {EXTENSIONS_RECORD_CONF}: {result.stderr}")
+            return False
+
+        # Ensure extensions_custom.conf includes the recording file.
+        include_line = f"#include {os.path.basename(EXTENSIONS_RECORD_CONF)}"
+        existing = ""
+        if os.path.exists(EXTENSIONS_CUSTOM_CONF):
+            with open(EXTENSIONS_CUSTOM_CONF, 'r') as f:
+                existing = f.read()
+
+        if include_line not in existing:
+            if existing and not existing.endswith('\n'):
+                existing += '\n'
+            existing += include_line + '\n'
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
+                tmp.write(existing)
+                tmp_path = tmp.name
+            subprocess.run(['sudo', 'cp', tmp_path, EXTENSIONS_CUSTOM_CONF], capture_output=True)
+            subprocess.run(['sudo', 'chmod', '644', EXTENSIONS_CUSTOM_CONF], capture_output=True)
+            os.unlink(tmp_path)
+
+        log.info(f"Call recording dialplan written to {EXTENSIONS_RECORD_CONF}")
+        return True
+
+    except Exception as e:
+        log.error(f"Error writing recording conf: {e}")
+        return False
+
+
+def remove_recording_conf() -> bool:
+    """Reset the recording predial hooks to no-ops (disables recording)."""
+    log.info(f"Clearing call recording dialplan from {EXTENSIONS_RECORD_CONF}")
+    try:
+        import tempfile
+        if not os.path.exists(EXTENSIONS_RECORD_CONF):
+            return True
+        # Keep the hook contexts but make them no-ops, so they still win the
+        # duplicate-priority race against the blank stubs without starting MixMonitor.
+        minimal = (
+            "; OpDesk call recording disabled\n"
+            "[macro-dialout-one-predial-hook]\n"
+            "exten => s,1,Return()\n\n"
+            "[macro-dialout-trunk-predial-hook]\n"
+            "exten => s,1,Return()\n"
+        )
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
+            tmp.write(minimal)
+            tmp_path = tmp.name
+        result = subprocess.run(['sudo', 'cp', tmp_path, EXTENSIONS_RECORD_CONF], capture_output=True, text=True)
+        subprocess.run(['sudo', 'chmod', '644', EXTENSIONS_RECORD_CONF], capture_output=True)
+        os.unlink(tmp_path)
+        if result.returncode != 0:
+            log.error(f"Failed to clear {EXTENSIONS_RECORD_CONF}: {result.stderr}")
+            return False
+        log.info("Call recording dialplan cleared")
+        return True
+    except Exception as e:
+        log.error(f"Error clearing recording conf: {e}")
+        return False
+
+
+def enable_recording(mix_format: str = None, vad: bool = True) -> bool:
+    """Enable full-call MixMonitor recording (+ optional post-call VAD analysis) and
+    reload the Asterisk dialplan."""
+    if not write_recording_conf(mix_format=mix_format, vad=vad):
+        return False
+    return reload_asterisk_dialplan()
+
+
+def disable_recording() -> bool:
+    """Disable full-call recording and reload the Asterisk dialplan."""
+    if not remove_recording_conf():
+        return False
+    return reload_asterisk_dialplan()
 
 
 # Markers written around OpDesk's TLS block so we can find and remove it cleanly
