@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -nE \"^#{1,3} \" backend/../README.md | head -50)",
+      "Read(//opt/OpDesk/**)",
+      "Bash(pkill -f \"python server.py\")",
+      "Bash(python server.py)",
+      "Bash(echo \"PID: $!\")",
+      "Read(//tmp/**)",
+      "Bash(pkill -f \"uvicorn|server.py\")",
+      "Bash(tee /tmp/opdesk2.log)",
+      "Bash(pkill -f \"server.py\")",
+      "Bash(pkill -f \"uvicorn\")",
+      "Bash(ls -lt /proc/68526/fd 2>/dev/null | head -5; cat /proc/68526/cmdline 2>/dev/null | tr '\\\\0' ' ')",
+      "Read(//proc/68526/**)",
+      "Bash(sed -n '13,22p' ar/translation.json)",
+      "Bash(sed -n '/\"softphone\": {/,+3p' ar/translation.json)",
+      "WebSearch"
+    ]
+  }
+}

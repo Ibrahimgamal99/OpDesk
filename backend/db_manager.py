@@ -439,6 +439,7 @@ def get_call_log_from_db(limit: int = None, date: str = None,
                 first_leg.channel,
                 first_leg.recordingfile,
                 first_leg.cnam,
+                first_leg.uniqueid,
                 first_leg.linkedid,
                 last_leg.userfield,
                 leg_count.total_legs AS call_journey_count,
@@ -617,6 +618,82 @@ def insert_call_notification(
     except Error as e:
         log.warning(f"⚠️  Database error inserting call notification: {e}")
         return None
+
+
+def upsert_call_vad(
+    uniqueid: str,
+    base: str = None,
+    duration: float = None,
+    sp1_talk_seconds: float = None,
+    sp2_talk_seconds: float = None,
+    overlap_seconds: float = None,
+    sp1_segments: int = None,
+    sp2_segments: int = None,
+    segments_json: str = None,
+) -> bool:
+    """
+    Store (or replace) the VAD analysis for one call in the OpDesk DB, keyed by uniqueid.
+    Called from vad_runner after the recording legs are analysed. Idempotent on uniqueid.
+    """
+    if not uniqueid:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO call_vad
+                   (uniqueid, base, duration, sp1_talk_seconds, sp2_talk_seconds,
+                    overlap_seconds, sp1_segments, sp2_segments, segments)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON DUPLICATE KEY UPDATE
+                   base=VALUES(base), duration=VALUES(duration),
+                   sp1_talk_seconds=VALUES(sp1_talk_seconds),
+                   sp2_talk_seconds=VALUES(sp2_talk_seconds),
+                   overlap_seconds=VALUES(overlap_seconds),
+                   sp1_segments=VALUES(sp1_segments), sp2_segments=VALUES(sp2_segments),
+                   segments=VALUES(segments)""",
+            (uniqueid, base, duration, sp1_talk_seconds, sp2_talk_seconds,
+             overlap_seconds, sp1_segments, sp2_segments, segments_json),
+        )
+        conn.commit()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error upserting call_vad ({uniqueid}): {e}")
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def get_call_vad_from_db(uniqueid: str) -> Optional[dict]:
+    """Fetch VAD analysis for a single call by uniqueid. Returns None if not found."""
+    if not uniqueid:
+        return None
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT * FROM call_vad WHERE uniqueid = %s LIMIT 1",
+            (uniqueid,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Error as e:
+        log.warning(f"DB error fetching call_vad ({uniqueid}): {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def get_call_notifications_from_db(

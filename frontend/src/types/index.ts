@@ -102,6 +102,7 @@ export interface CallLogRecord {
   app: string;
   call_journey_count?: number | null;
   linkedid?: string | null;
+  uniqueid?: string | null;
 }
 
 // Call journey event (from API)

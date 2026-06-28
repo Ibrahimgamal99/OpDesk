@@ -134,7 +134,8 @@
     "unpause": "Retomar",
     "removeStatic": "Não é possível remover: o membro está configurado estaticamente em queues.conf. Edite a configuração e recarregue o Asterisk para removê-lo.",
     "removeDynamic": "Remover da fila (membro dinâmico)",
-    "removeCheck": "Remover da fila (será verificado se pode ser removido)"
+    "removeCheck": "Remover da fila (será verificado se pode ser removido)",
+    "removeConfirm": "Remover {{member}} da fila {{queue}}?"
   },
   "callLog": {
     "title": "Histórico de chamadas",
@@ -583,6 +584,7 @@
       "exportCsv": "Exportar CSV",
       "exportXlsx": "Exportar XLSX",
       "exporting": "Exportando...",
+      "exportFailed": "Falha na exportação. Tente novamente.",
       "clearFilters": "Limpar"
     },
     "settings": {
