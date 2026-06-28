@@ -51,11 +51,21 @@ load_dotenv()
 
 # Import CRM connector
 try:
-    from crm import CRMConnector, create_crm_connector, AuthType
+    from crm import (
+        CRMConnector, create_crm_connector, AuthType,
+        CRM_SYNC_FIELD_CATALOG, DEFAULT_CRM_SYNC_FIELDS, CRMSyncConfig,
+        parse_sync_fields, validate_crm_url, redact_url,
+    )
 except ImportError:
     CRMConnector = None
     create_crm_connector = None
     AuthType = None
+    CRM_SYNC_FIELD_CATALOG = []
+    DEFAULT_CRM_SYNC_FIELDS = []
+    CRMSyncConfig = None
+    parse_sync_fields = None
+    validate_crm_url = None
+    redact_url = None
 
 # Filter to suppress "change detected" messages
 class SuppressChangeDetectedFilter(logging.Filter):
@@ -576,6 +586,47 @@ def init_crm_connector() -> Optional[CRMConnector]:
         return None
 
 
+def load_crm_sync_config() -> Optional["CRMSyncConfig"]:
+    """
+    Build the call-data sync configuration from settings.
+
+    This is read at startup AND rebuilt whenever the config is saved, so changes
+    take effect without a server restart. Defaults preserve the original
+    behaviour: sync enabled, all directions on, and the legacy 8-field payload.
+    """
+    if CRMSyncConfig is None:
+        return None
+
+    def _flag(key: str, default: str = 'true') -> bool:
+        return (get_setting(key, os.getenv(key, default)) or default).lower() in ('true', '1', 'yes')
+
+    # The push endpoint falls back to the connection endpoint_path when unset, so
+    # an upgraded install keeps POSTing to the same path it always did.
+    sync_endpoint = (get_setting('CRM_SYNC_ENDPOINT', os.getenv('CRM_SYNC_ENDPOINT', '')) or '').strip()
+    if not sync_endpoint:
+        sync_endpoint = get_setting('CRM_ENDPOINT_PATH', os.getenv('CRM_ENDPOINT_PATH', '/api/calls'))
+
+    method = (get_setting('CRM_SYNC_METHOD', os.getenv('CRM_SYNC_METHOD', 'POST')) or 'POST').upper()
+    if method not in ('POST', 'PUT'):
+        method = 'POST'
+
+    raw_fields = get_setting('CRM_SYNC_FIELDS', os.getenv('CRM_SYNC_FIELDS', ''))
+    fields = parse_sync_fields(raw_fields) if raw_fields else list(DEFAULT_CRM_SYNC_FIELDS)
+    if not fields:
+        fields = list(DEFAULT_CRM_SYNC_FIELDS)
+
+    return CRMSyncConfig(
+        enabled=_flag('CRM_SYNC_ENABLED'),
+        endpoint=sync_endpoint,
+        method=method,
+        fields=fields,
+        dir_inbound=_flag('CRM_SYNC_DIR_INBOUND'),
+        dir_outbound=_flag('CRM_SYNC_DIR_OUTBOUND'),
+        dir_internal=_flag('CRM_SYNC_DIR_INTERNAL'),
+        block_private=_flag('CRM_BLOCK_PRIVATE', 'false'),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Global instances
 # ---------------------------------------------------------------------------
@@ -620,6 +671,15 @@ async def lifespan(app: FastAPI):
         'CRM_ENDPOINT_PATH': '/api/calls',
         'CRM_TIMEOUT': '30',
         'CRM_VERIFY_SSL': 'true',
+        # Call-data sync (push) — defaults reproduce the original fixed payload so
+        # enabling CRM on an upgraded install keeps the exact same behaviour.
+        'CRM_SYNC_ENABLED': 'true',
+        'CRM_SYNC_METHOD': 'POST',
+        'CRM_SYNC_FIELDS': ','.join(DEFAULT_CRM_SYNC_FIELDS),
+        'CRM_SYNC_DIR_INBOUND': 'true',
+        'CRM_SYNC_DIR_OUTBOUND': 'true',
+        'CRM_SYNC_DIR_INTERNAL': 'true',
+        'CRM_BLOCK_PRIVATE': 'false',  # allow on-prem/LAN CRM by default
         'WEBRTC_PBX_SERVER': f'wss://{webrtc_host}/sip-ws',
     }
     
@@ -671,8 +731,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.error(f"Error enabling call recording on startup: {e}")
 
-    # Create AMI monitor with CRM connector
-    monitor = AMIExtensionsMonitor(crm_connector=crm_connector)
+    # Create AMI monitor with CRM connector + call-data sync config
+    monitor = AMIExtensionsMonitor(crm_connector=crm_connector, crm_sync_config=load_crm_sync_config())
 
     # Retry loop — needed when SIP TLS startup restarts Asterisk right before we connect
     _ami_connected = False
@@ -1972,7 +2032,22 @@ async def get_crm_config(current_user: dict = Depends(require_admin)):
         config["oauth2_client_secret"] = "***" if oauth2_secret else ""
         config["oauth2_token_url"] = get_setting('CRM_OAUTH2_TOKEN_URL', os.getenv('CRM_OAUTH2_TOKEN_URL', ''))
         config["oauth2_scope"] = get_setting('CRM_OAUTH2_SCOPE', os.getenv('CRM_OAUTH2_SCOPE', ''))
-    
+
+    # Call-data sync (push) configuration + the field catalog the UI renders as
+    # checkboxes. Selecting which fields to push, per-direction filtering and the
+    # POST/PUT method all live here.
+    sync = load_crm_sync_config()
+    if sync is not None:
+        config["sync_enabled"] = sync.enabled
+        config["sync_endpoint"] = get_setting('CRM_SYNC_ENDPOINT', '') or ''
+        config["sync_method"] = sync.method
+        config["sync_fields"] = sync.fields
+        config["sync_dir_inbound"] = sync.dir_inbound
+        config["sync_dir_outbound"] = sync.dir_outbound
+        config["sync_dir_internal"] = sync.dir_internal
+        config["block_private"] = sync.block_private
+    config["field_catalog"] = list(CRM_SYNC_FIELD_CATALOG)
+
     return config
 
 
@@ -2183,9 +2258,20 @@ async def disable_sip_tls_endpoint(current_user: dict = Depends(require_admin)):
 @app.post("/api/crm/config")
 async def save_crm_config(config_data: dict, current_user: dict = Depends(require_admin)):
     """
-    Save CRM configuration to database.
-    Note: This requires server restart to take effect.
+    Save CRM configuration to database and apply it live (no restart required).
     """
+    # Reject an SSRF-unsafe server URL before persisting anything. Raised here
+    # (outside the try) so it surfaces as a real 400, not a generic 500.
+    server_url_in = (config_data.get('server_url') or '').strip()
+    if config_data.get('enabled') and server_url_in and validate_crm_url is not None:
+        bp = config_data.get('block_private')
+        if bp is None:
+            bp = (get_setting('CRM_BLOCK_PRIVATE', 'false') or 'false').lower() in ('true', '1', 'yes')
+        try:
+            validate_crm_url(server_url_in, block_private=bool(bp))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid CRM server URL: {e}")
+
     try:
         # Get existing settings to preserve masked values
         existing_settings = get_all_settings()
@@ -2240,17 +2326,139 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
                 set_setting('CRM_OAUTH2_TOKEN_URL', config_data.get('oauth2_token_url', ''))
             if config_data.get('oauth2_scope'):
                 set_setting('CRM_OAUTH2_SCOPE', config_data.get('oauth2_scope', ''))
-        
+
+        # ── Call-data sync (push) settings ──
+        # Older clients may POST without these keys; default to "on / all" so the
+        # legacy behaviour is preserved and nothing is silently disabled.
+        set_setting('CRM_SYNC_ENABLED', 'true' if config_data.get('sync_enabled', True) else 'false')
+        sync_method = str(config_data.get('sync_method', 'POST')).upper()
+        set_setting('CRM_SYNC_METHOD', 'PUT' if sync_method == 'PUT' else 'POST')
+        if 'sync_endpoint' in config_data:
+            set_setting('CRM_SYNC_ENDPOINT', (config_data.get('sync_endpoint') or '').strip())
+        if 'sync_fields' in config_data:
+            cleaned = parse_sync_fields(config_data.get('sync_fields')) if parse_sync_fields else []
+            # Never persist an empty selection — fall back to the compatible default.
+            set_setting('CRM_SYNC_FIELDS', ','.join(cleaned) if cleaned else ','.join(DEFAULT_CRM_SYNC_FIELDS))
+        set_setting('CRM_SYNC_DIR_INBOUND', 'true' if config_data.get('sync_dir_inbound', True) else 'false')
+        set_setting('CRM_SYNC_DIR_OUTBOUND', 'true' if config_data.get('sync_dir_outbound', True) else 'false')
+        set_setting('CRM_SYNC_DIR_INTERNAL', 'true' if config_data.get('sync_dir_internal', True) else 'false')
+        set_setting('CRM_BLOCK_PRIVATE', 'true' if config_data.get('block_private', False) else 'false')
+
         log.info("CRM configuration saved to database")
-        
+
+        # Apply immediately — rebuild the connector + sync config and hand them to
+        # the live AMI monitor so changes take effect without a restart.
+        global crm_connector, monitor
+        try:
+            crm_connector = init_crm_connector()
+            new_sync = load_crm_sync_config()
+            if monitor is not None and hasattr(monitor, 'set_crm'):
+                monitor.set_crm(crm_connector, new_sync)
+            log.info("✅ CRM configuration reloaded live (no restart needed)")
+        except Exception as e:
+            log.error(f"CRM config saved but live reload failed (restart to apply): {e}")
+
         return {
             "success": True,
-            "message": "CRM configuration saved. Server restart required to apply changes."
+            "message": "CRM configuration saved and applied."
         }
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         log.error(f"Failed to save CRM config: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save CRM configuration: {str(e)}")
+
+
+@app.post("/api/crm/test")
+async def test_crm_connection(config_data: dict = None, current_user: dict = Depends(require_admin)):
+    """
+    Test connectivity to the CRM using the values in the request body, falling
+    back to saved secrets when a field is masked ("***") or blank. Persists
+    nothing, so the operator can verify credentials before saving.
+    """
+    if CRMConnector is None or create_crm_connector is None:
+        raise HTTPException(status_code=503, detail="CRM connector module not available")
+    config_data = config_data or {}
+
+    def _val(posted_key, setting_key, default=''):
+        v = config_data.get(posted_key)
+        if v is None or v == '':
+            return get_setting(setting_key, os.getenv(setting_key, default))
+        return v
+
+    def _secret(posted_key, setting_key):
+        v = config_data.get(posted_key)
+        if v and v != '***':
+            return v
+        return get_setting(setting_key, os.getenv(setting_key, ''))
+
+    server_url = (_val('server_url', 'CRM_SERVER_URL') or '').strip()
+    if not server_url:
+        raise HTTPException(status_code=400, detail="CRM server URL is required")
+    auth_type = (_val('auth_type', 'CRM_AUTH_TYPE', 'api_key') or 'api_key').lower()
+
+    # SSRF guard — same rules as save.
+    bp = config_data.get('block_private')
+    if bp is None:
+        bp = (get_setting('CRM_BLOCK_PRIVATE', 'false') or 'false').lower() in ('true', '1', 'yes')
+    if validate_crm_url is not None:
+        try:
+            validate_crm_url(server_url, block_private=bool(bp))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid CRM server URL: {e}")
+
+    cfg = {"server_url": server_url, "auth_type": auth_type,
+           "endpoint_path": _val('endpoint_path', 'CRM_ENDPOINT_PATH', '/api/calls')}
+    if isinstance(config_data.get('verify_ssl'), bool):
+        cfg['verify_ssl'] = config_data['verify_ssl']
+    else:
+        cfg['verify_ssl'] = (get_setting('CRM_VERIFY_SSL', 'true') or 'true').lower() in ('true', '1', 'yes')
+    try:
+        cfg['timeout'] = int(config_data.get('timeout') or get_setting('CRM_TIMEOUT', '30') or 30)
+    except (TypeError, ValueError):
+        cfg['timeout'] = 30
+
+    if auth_type == 'api_key':
+        cfg['api_key'] = _secret('api_key', 'CRM_API_KEY')
+        hdr = _val('api_key_header', 'CRM_API_KEY_HEADER', 'X-API-Key')
+        if hdr:
+            cfg['api_key_header'] = hdr
+    elif auth_type == 'basic_auth':
+        cfg['username'] = _val('username', 'CRM_USERNAME')
+        cfg['password'] = _secret('password', 'CRM_PASSWORD')
+    elif auth_type == 'bearer_token':
+        cfg['bearer_token'] = _secret('bearer_token', 'CRM_BEARER_TOKEN')
+    elif auth_type == 'oauth2':
+        cfg['oauth2_client_id'] = _val('oauth2_client_id', 'CRM_OAUTH2_CLIENT_ID')
+        cfg['oauth2_client_secret'] = _secret('oauth2_client_secret', 'CRM_OAUTH2_CLIENT_SECRET')
+        cfg['oauth2_token_url'] = _val('oauth2_token_url', 'CRM_OAUTH2_TOKEN_URL')
+        scope = _val('oauth2_scope', 'CRM_OAUTH2_SCOPE')
+        if scope:
+            cfg['oauth2_scope'] = scope
+
+    try:
+        connector = create_crm_connector(cfg)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Prefer testing the actual push endpoint when one is configured.
+    sync_endpoint = (config_data.get('sync_endpoint') or get_setting('CRM_SYNC_ENDPOINT', '') or '').strip() or None
+    try:
+        result = await connector.test_connection(endpoint_path=sync_endpoint)
+        return {
+            "success": bool(result.get('success')),
+            "status_code": result.get('status_code'),
+            "message": result.get('message', ''),
+            "method": result.get('method'),
+        }
+    except Exception as e:
+        return {"success": False, "status_code": None, "message": f"Connection test failed: {e}"}
+    finally:
+        try:
+            await connector.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff,
   ChevronDown, ChevronRight, Plug, BarChart3, KeyRound, ShieldCheck, Smartphone, Disc,
+  Link2, Send, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Check, Lock,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
@@ -26,7 +27,57 @@ export interface CRMConfig {
   endpoint_path?: string;
   timeout?: number;
   verify_ssl?: boolean;
+  // Call-data sync (push) — which fields/directions get pushed after each call
+  sync_enabled?: boolean;
+  sync_endpoint?: string;
+  sync_method?: 'POST' | 'PUT';
+  sync_fields?: string[];
+  sync_dir_inbound?: boolean;
+  sync_dir_outbound?: boolean;
+  sync_dir_internal?: boolean;
+  block_private?: boolean;
+  field_catalog?: string[];
 }
+
+// Reusable toggle switch matching the app's dark theme.
+function CrmToggle({ checked, onChange, label, desc }: {
+  checked: boolean; onChange: (v: boolean) => void; label: React.ReactNode; desc?: string;
+}) {
+  return (
+    <label className="crm-switch">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span className="crm-track"><span className="crm-thumb" /></span>
+      {(label || desc) && (
+        <span className="crm-switch-text">
+          {label && <span className="crm-switch-label">{label}</span>}
+          {desc && <span className="crm-switch-desc">{desc}</span>}
+        </span>
+      )}
+    </label>
+  );
+}
+
+// Identity fields always included in the push (cannot be de-selected).
+const CRM_ALWAYS_FIELDS = ['caller', 'destination'];
+
+// Icons + labels for the direction segmented control.
+const CRM_DIRECTIONS = [
+  { key: 'sync_dir_inbound' as const, label: 'Inbound', Icon: PhoneIncoming },
+  { key: 'sync_dir_outbound' as const, label: 'Outbound', Icon: PhoneOutgoing },
+  { key: 'sync_dir_internal' as const, label: 'Internal', Icon: ArrowLeftRight },
+];
+
+const CRM_AUTH_LABELS: Record<string, string> = {
+  api_key: 'API Key', basic_auth: 'Basic Auth', bearer_token: 'Bearer Token', oauth2: 'OAuth2',
+};
+
+// Friendly labels for the field-picker chips; unknown keys fall back to the raw name.
+const CRM_FIELD_LABELS: Record<string, string> = {
+  caller: 'Caller', destination: 'Destination', duration: 'Duration', talk_time: 'Talk time',
+  datetime: 'Date / time', call_status: 'Call status', call_type: 'Direction', queue: 'Queue',
+  caller_name: 'Caller name', uniqueid: 'Unique ID', linkedid: 'Linked ID', disposition: 'Disposition',
+  hangup_cause: 'Hangup cause', agent: 'Agent', answered_extension: 'Answered ext', queue_wait_time: 'Queue wait (s)',
+};
 
 export function SettingsPanel() {
   const { t } = useTranslation();
@@ -39,9 +90,19 @@ export function SettingsPanel() {
     endpoint_path: '/api/calls',
     timeout: 30,
     verify_ssl: true,
+    sync_enabled: true,
+    sync_method: 'POST',
+    sync_fields: [],
+    sync_dir_inbound: true,
+    sync_dir_outbound: true,
+    sync_dir_internal: true,
+    block_private: false,
+    field_catalog: [],
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [qosLoading, setQosLoading] = useState(false);
   const [qosMessage, setQosMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -123,6 +184,41 @@ export function SettingsPanel() {
   const updateConfig = (updates: Partial<CRMConfig>) => {
     setConfig(prev => ({ ...prev, ...updates }));
   };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetchWithAuth('/api/crm/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        const code = data.status_code ? ` (HTTP ${data.status_code})` : '';
+        setTestResult({ type: 'success', text: (data.message || 'Connection successful') + code });
+      } else {
+        setTestResult({ type: 'error', text: data.detail || data.message || 'Connection test failed' });
+      }
+    } catch {
+      setTestResult({ type: 'error', text: 'Connection test failed' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  // ── Field-picker helpers ──
+  const isFieldOn = (f: string) =>
+    CRM_ALWAYS_FIELDS.includes(f) || (config.sync_fields || []).includes(f);
+  const toggleField = (f: string) => {
+    if (CRM_ALWAYS_FIELDS.includes(f)) return; // identity fields are always sent
+    const cur = config.sync_fields || [];
+    updateConfig({ sync_fields: cur.includes(f) ? cur.filter(x => x !== f) : [...cur, f] });
+  };
+  const selectAllFields = () =>
+    updateConfig({ sync_fields: (config.field_catalog || []).filter(f => !CRM_ALWAYS_FIELDS.includes(f)) });
+  const clearFields = () => updateConfig({ sync_fields: [] });
 
   const handleQosEnable = async () => {
     setQosLoading(true);
@@ -326,7 +422,7 @@ export function SettingsPanel() {
   };
 
   return (
-    <div className="panel">
+    <div className="panel settings-panel-full">
       <div className="panel-content up-root">
 
         <div className="up-tabs">
@@ -379,50 +475,68 @@ export function SettingsPanel() {
                     <span>{message.text}</span>
                   </div>
                 )}
-                <div className="up-form-group">
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={config.enabled}
-                      onChange={(e) => updateConfig({ enabled: e.target.checked })}
-                      style={{ width: 18, height: 18 }}
-                    />
-                    {t('settings.crm.enable')}
-                  </label>
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, marginInlineStart: 28 }}>
-                    {t('settings.crm.enableDesc')}
-                  </p>
+                <div className={`crm-master ${config.enabled ? 'on' : ''}`}>
+                  <CrmToggle
+                    checked={config.enabled}
+                    onChange={(v) => updateConfig({ enabled: v })}
+                    label={t('settings.crm.enable')}
+                    desc={t('settings.crm.enableDesc')}
+                  />
+                  <span className={`crm-badge ${config.enabled ? 'on' : 'off'}`}>
+                    {config.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
                 </div>
 
                 {config.enabled && (
                   <>
-                    <div className="up-form-group">
-                      <label>{t('settings.crm.serverUrl')}</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="https://crm.example.com or http://192.168.1.100:8080"
-                        value={config.server_url}
-                        onChange={(e) => updateConfig({ server_url: e.target.value })}
-                        required
-                      />
+                    <div className="crm-summary">
+                      <span className={`crm-badge ${config.sync_enabled !== false ? 'on' : 'off'}`}>
+                        {config.sync_enabled !== false ? 'Sync on' : 'Sync off'}
+                      </span>
+                      <span>Push target&nbsp;
+                        <code>{(config.server_url || 'https://…') + (config.sync_endpoint || config.endpoint_path || '/api/calls')}</code>
+                      </span>
+                      <span>· Auth&nbsp;<code>{CRM_AUTH_LABELS[config.auth_type] || config.auth_type}</code></span>
                     </div>
 
-                    <div className="up-form-group">
-                      <label>{t('settings.crm.authType')}</label>
-                      <FilterSelect
-                        size="md"
-                        value={config.auth_type}
-                        onChange={v => updateConfig({ auth_type: v as CRMConfig['auth_type'] })}
-                        icon={KeyRound}
-                        options={[
-                          { value: 'api_key',       label: 'API Key',       dot: 'blue'    },
-                          { value: 'basic_auth',    label: 'Basic Auth',    dot: 'neutral' },
-                          { value: 'bearer_token',  label: 'Bearer Token',  dot: 'green'   },
-                          { value: 'oauth2',        label: 'OAuth2',        dot: 'orange'  },
-                        ]}
-                      />
-                    </div>
+                    {/* ── Connection ── */}
+                    <div className="crm-section">
+                      <div className="crm-section-head">
+                        <div className="crm-section-ico"><Link2 size={18} /></div>
+                        <div>
+                          <div className="crm-section-title">Connection</div>
+                          <div className="crm-section-sub">Where OpDesk reaches your CRM and how it authenticates.</div>
+                        </div>
+                      </div>
+                      <div className="crm-section-body">
+
+                      <div className="up-form-group" style={{ marginBottom: 16 }}>
+                        <label>{t('settings.crm.serverUrl')}</label>
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="https://crm.example.com or http://192.168.1.100:8080"
+                          value={config.server_url}
+                          onChange={(e) => updateConfig({ server_url: e.target.value })}
+                          required
+                        />
+                      </div>
+
+                      <div className="up-form-group" style={{ marginBottom: 16 }}>
+                        <label>{t('settings.crm.authType')}</label>
+                        <FilterSelect
+                          size="md"
+                          value={config.auth_type}
+                          onChange={v => updateConfig({ auth_type: v as CRMConfig['auth_type'] })}
+                          icon={KeyRound}
+                          options={[
+                            { value: 'api_key',       label: 'API Key',       dot: 'blue'    },
+                            { value: 'basic_auth',    label: 'Basic Auth',    dot: 'neutral' },
+                            { value: 'bearer_token',  label: 'Bearer Token',  dot: 'green'   },
+                            { value: 'oauth2',        label: 'OAuth2',        dot: 'orange'  },
+                          ]}
+                        />
+                      </div>
 
                     {config.auth_type === 'api_key' && (
                       <>
@@ -479,32 +593,168 @@ export function SettingsPanel() {
                       </>
                     )}
 
-                    <button type="button" className="settings-advanced-toggle" onClick={() => setAdvancedOpen((o) => !o)}>
-                      {advancedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      {t('settings.crm.advancedOptions')}
-                    </button>
-                    {advancedOpen && (
-                      <div className="settings-advanced-body">
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.endpointPath')}</label>
-                          <input type="text" className="form-input" placeholder="/api/calls" value={config.endpoint_path || ''} onChange={(e) => updateConfig({ endpoint_path: e.target.value })} />
+                      <button type="button" className="settings-advanced-toggle" onClick={() => setAdvancedOpen((o) => !o)}>
+                        {advancedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        {t('settings.crm.advancedOptions')}
+                      </button>
+                      {advancedOpen && (
+                        <div className="settings-advanced-body">
+                          <div className="up-form-row">
+                            <div className="up-form-group">
+                              <label>{t('settings.crm.endpointPath')}</label>
+                              <input type="text" className="form-input" placeholder="/api/calls" value={config.endpoint_path || ''} onChange={(e) => updateConfig({ endpoint_path: e.target.value })} />
+                            </div>
+                            <div className="up-form-group">
+                              <label>{t('settings.crm.timeout')}</label>
+                              <input type="number" className="form-input" placeholder="30" value={config.timeout || 30} onChange={(e) => updateConfig({ timeout: parseInt(e.target.value) || 30 })} min={1} max={300} />
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
+                            <CrmToggle
+                              checked={config.verify_ssl !== false}
+                              onChange={(v) => updateConfig({ verify_ssl: v })}
+                              label={t('settings.crm.verifySSL')}
+                            />
+                            <CrmToggle
+                              checked={config.block_private === true}
+                              onChange={(v) => updateConfig({ block_private: v })}
+                              label="Block private / LAN addresses (strict SSRF)"
+                              desc="Loopback and cloud-metadata are always blocked. Enable only if your CRM is public — it rejects on-prem/LAN URLs."
+                            />
+                          </div>
                         </div>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.timeout')}</label>
-                          <input type="number" className="form-input" placeholder="30" value={config.timeout || 30} onChange={(e) => updateConfig({ timeout: parseInt(e.target.value) || 30 })} min={1} max={300} />
+                      )}
+                      </div>{/* /crm-section-body */}
+                    </div>{/* /crm-section Connection */}
+
+                    {/* ── Call-Data Sync (push after each call) ── */}
+                    <div className="crm-section">
+                      <div className="crm-section-head">
+                        <div className="crm-section-ico"><Send size={18} /></div>
+                        <div>
+                          <div className="crm-section-title">Call-Data Sync</div>
+                          <div className="crm-section-sub">Push call records to the CRM when each call ends.</div>
                         </div>
-                        <div className="up-form-group">
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                            <input type="checkbox" checked={config.verify_ssl !== false} onChange={(e) => updateConfig({ verify_ssl: e.target.checked })} style={{ width: 18, height: 18 }} />
-                            {t('settings.crm.verifySSL')}
-                          </label>
-                        </div>
+                        <CrmToggle
+                          checked={config.sync_enabled !== false}
+                          onChange={(v) => updateConfig({ sync_enabled: v })}
+                          label=""
+                        />
+                      </div>
+                      <div className="crm-section-body">
+                      {config.sync_enabled !== false && (
+                        <>
+                          <div className="up-form-row">
+                            <div className="up-form-group">
+                              <label>Sync endpoint path</label>
+                              <input
+                                type="text"
+                                className="form-input"
+                                placeholder={config.endpoint_path || '/api/calls'}
+                                value={config.sync_endpoint || ''}
+                                onChange={(e) => updateConfig({ sync_endpoint: e.target.value })}
+                              />
+                            </div>
+                            <div className="up-form-group">
+                              <label>HTTP method</label>
+                              <FilterSelect
+                                size="md"
+                                value={config.sync_method || 'POST'}
+                                onChange={(v) => updateConfig({ sync_method: v as 'POST' | 'PUT' })}
+                                icon={Send}
+                                options={[
+                                  { value: 'POST', label: 'POST', dot: 'green' },
+                                  { value: 'PUT', label: 'PUT', dot: 'blue' },
+                                ]}
+                              />
+                            </div>
+                          </div>
+                          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: -8, marginBottom: 18 }}>
+                            Endpoint is appended to the server URL. Leave blank to use the connection endpoint path.
+                          </p>
+
+                          <div className="up-form-group">
+                            <label>Push these call directions</label>
+                            <div className="crm-seg">
+                              {CRM_DIRECTIONS.map(({ key, label, Icon }) => {
+                                const on = (config as any)[key] !== false;
+                                return (
+                                  <button
+                                    type="button"
+                                    key={key}
+                                    className={`crm-seg-btn ${on ? 'on' : ''}`}
+                                    onClick={() => updateConfig({ [key]: !on } as Partial<CRMConfig>)}
+                                  >
+                                    <Icon size={15} />{label}{on && <Check size={14} />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="up-form-group">
+                            <div className="crm-field-head">
+                              <div className="crm-field-head-left">
+                                <label style={{ margin: 0 }}>Fields to send</label>
+                                <span className="crm-count">{(config.field_catalog || []).filter(isFieldOn).length} selected</span>
+                              </div>
+                              <div className="crm-field-actions">
+                                <button type="button" className="crm-link-btn" onClick={selectAllFields}>Select all</button>
+                                <button type="button" className="crm-link-btn" onClick={clearFields}>Clear</button>
+                              </div>
+                            </div>
+                            <div className="crm-chips">
+                              {(config.field_catalog || []).map((f) => {
+                                const on = isFieldOn(f);
+                                const locked = CRM_ALWAYS_FIELDS.includes(f);
+                                return (
+                                  <button
+                                    type="button"
+                                    key={f}
+                                    onClick={() => toggleField(f)}
+                                    disabled={locked}
+                                    className={`crm-chip ${on ? 'on' : ''} ${locked ? 'locked' : ''}`}
+                                    title={locked ? 'Always sent (call identity)' : ''}
+                                  >
+                                    <span className="crm-chip-ico">
+                                      {locked ? <Lock size={12} /> : on ? <Check size={13} /> : null}
+                                    </span>
+                                    {CRM_FIELD_LABELS[f] || f}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {(config.field_catalog || []).length === 0 && (
+                              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                                Save once to load the list of available fields.
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      )}
+                      </div>{/* /crm-section-body */}
+                    </div>{/* /crm-section Sync */}
+
+                    {testResult && (
+                      <div className={`up-alert ${testResult.type === 'success' ? 'success' : 'error'}`} style={{ marginTop: 12 }}>
+                        {testResult.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+                        <span>{testResult.text}</span>
                       </div>
                     )}
                   </>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
+                <div className="crm-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={testConnection}
+                    disabled={testing || !config.enabled || !config.server_url}
+                    style={{ opacity: (testing || !config.enabled || !config.server_url) ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 8 }}
+                  >
+                    {testing ? <Loader2 size={14} className="spinner" /> : <Plug size={14} />}
+                    {testing ? 'Testing…' : 'Test connection'}
+                  </button>
                   <button
                     type="submit"
                     className="btn btn-primary"

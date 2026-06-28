@@ -10,10 +10,13 @@ This connector sends call data to CRM systems in a standardized format.
 
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
+import socket
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, timedelta
 import httpx
 
@@ -283,7 +286,8 @@ class CRMConnector:
         self,
         call_data: Dict[str, Any],
         endpoint_path: Optional[str] = None,
-        method: str = "POST"
+        method: str = "POST",
+        require_fields: bool = True
     ) -> Dict[str, Union[bool, int, str, Dict[str, Any], None]]:
         """
         Send call data to CRM system.
@@ -322,12 +326,14 @@ class CRMConnector:
             }
             result = await crm.send_call_data(call_data)
         """
-        # Validate required fields
-        required_fields = ["caller", "destination"]
-        missing = [f for f in required_fields if f not in call_data or not call_data[f]]
-        if missing:
-            raise ValueError(f"Missing required fields: {missing}")
-        
+        # Validate required fields. The call-data sync path lets operators choose
+        # exactly which fields to push (require_fields=False), so the check is opt-out.
+        if require_fields:
+            required_fields = ["caller", "destination"]
+            missing = [f for f in required_fields if f not in call_data or not call_data[f]]
+            if missing:
+                raise ValueError(f"Missing required fields: {missing}")
+
         client = await self._get_client()
         url = f"{self.server_url}{endpoint_path or self.endpoint_path}"
         
@@ -663,4 +669,210 @@ def create_crm_connector(config: Dict[str, Any]) -> CRMConnector:
         kwargs["oauth2_token"] = config.get("oauth2_token")  # Pre-obtained token
     
     return CRMConnector(**kwargs)
+
+
+# ===========================================================================
+# Call-Data Sync engine
+# ---------------------------------------------------------------------------
+# The "sync" layer is the operator-facing push: after every completed call the
+# AMI monitor assembles the full set of available call values and this module
+# decides *what* actually gets sent — which fields the operator selected, which
+# call directions are enabled — and applies SSRF hardening before the request
+# leaves the box. It mirrors VOPX's crmsync.go design, adapted to OpDesk's
+# Asterisk/AMI field names and kept backward-compatible with the original fixed
+# payload (the default field selection reproduces the legacy 8-field body).
+# ===========================================================================
+
+# Canonical set of call fields that can be selected for the CRM push ("all
+# possible pass values"). The Settings API serves this to the UI (one checkbox
+# per entry), validates saved selections against it, and the AMI monitor builds
+# its payload from the same keys. Every entry is a value that is available by the
+# time a call hangs up. `caller`/`destination` are the call's identity and are
+# always sent (see build_crm_payload); the rest are opt-in.
+CRM_SYNC_FIELD_CATALOG: List[str] = [
+    "caller",             # caller number/extension (always sent)
+    "destination",        # destination number/extension (always sent)
+    "duration",           # total call time, HH:MM:SS
+    "talk_time",          # answer→hangup time, HH:MM:SS
+    "datetime",           # call start, ISO 8601
+    "call_status",        # completed | busy | noanswer | failed | ...
+    "call_type",          # inbound | outbound | internal
+    "queue",              # queue name (queue calls only)
+    "caller_name",        # CallerID name, when Asterisk provides it
+    "uniqueid",           # Asterisk channel Uniqueid
+    "linkedid",           # Asterisk Linkedid (groups the call legs)
+    "disposition",        # ANSWERED | NO ANSWER | BUSY | FAILED (CDR-style)
+    "hangup_cause",       # raw Asterisk hangup cause code
+    "agent",              # agent/extension that answered (queue calls)
+    "answered_extension", # extension that answered the call
+    "queue_wait_time",    # seconds spent waiting in queue before answer
+]
+
+_CRM_SYNC_FIELD_SET = set(CRM_SYNC_FIELD_CATALOG)
+
+# Default selection when nothing has been configured yet. This is exactly the
+# field set the connector sent before the sync layer existed, so enabling CRM on
+# an upgraded install keeps producing the identical payload.
+DEFAULT_CRM_SYNC_FIELDS: List[str] = [
+    "caller", "destination", "duration", "talk_time",
+    "datetime", "call_status", "call_type", "queue",
+]
+
+# Fields that are always included in the payload regardless of selection — they
+# are the call's identity and keep the body meaningful for any receiver.
+CRM_SYNC_ALWAYS_FIELDS = ("caller", "destination")
+
+
+def is_crm_sync_field(name: str) -> bool:
+    """Report whether `name` is a recognised sync field (used to drop unknown keys)."""
+    return name in _CRM_SYNC_FIELD_SET
+
+
+# ---------------------------------------------------------------------------
+# SSRF hardening
+# ---------------------------------------------------------------------------
+# A CRM URL is operator-configured, so the main threat is a misconfiguration or
+# a malicious admin steering the push at internal infrastructure (the box's own
+# AMI/DB on loopback, or the cloud metadata service at 169.254.169.254). We
+# always block loopback, link-local (incl. metadata), multicast and the
+# unspecified address. RFC-1918 private ranges are ALLOWED by default because
+# on-prem CRM on the LAN is a first-class OpDesk deployment (the settings UI
+# itself suggests e.g. http://192.168.1.100:8080); operators who want a stricter
+# posture can opt in via block_private.
+
+def _is_blocked_ip(ip: ipaddress._BaseAddress, *, block_private: bool, block_loopback: bool) -> bool:
+    """Return True if `ip` must never be the target of an outbound CRM request."""
+    if ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        return True
+    # link-local covers IPv4 169.254/16 (incl. the 169.254.169.254 metadata
+    # service) and IPv6 fe80::/10 — always blocked.
+    if ip.is_link_local:
+        return True
+    if block_loopback and ip.is_loopback:
+        return True
+    if block_private and ip.is_private:
+        return True
+    return False
+
+
+def validate_crm_url(raw: str, *, block_private: bool = False, block_loopback: bool = True) -> None:
+    """
+    Vet a CRM base/target URL for the call-data push (SSRF protection).
+
+    Rejects anything that is not an absolute http(s) URL and blocks requests to
+    loopback, link-local (incl. cloud metadata), multicast, reserved and the
+    unspecified address. An empty URL is allowed (sync simply does nothing). A
+    hostname that does not currently resolve is allowed (it may resolve later);
+    any address it *does* resolve to is checked.
+
+    Raises:
+        ValueError: if the URL is malformed or resolves to a blocked address.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return
+
+    parsed = httpx.URL(raw)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("CRM URL scheme must be http or https")
+    host = parsed.host
+    if not host:
+        raise ValueError("CRM URL has no host")
+
+    # Collect the candidate IPs: a literal host is checked directly, otherwise we
+    # resolve it. Resolution failure is tolerated (host may come up later).
+    ips: List[ipaddress._BaseAddress] = []
+    try:
+        ips.append(ipaddress.ip_address(host))
+    except ValueError:
+        try:
+            for info in socket.getaddrinfo(host, parsed.port or None, proto=socket.IPPROTO_TCP):
+                try:
+                    ips.append(ipaddress.ip_address(info[4][0]))
+                except ValueError:
+                    continue
+        except (socket.gaierror, OSError):
+            ips = []  # unresolvable now — allow
+
+    for ip in ips:
+        if _is_blocked_ip(ip, block_private=block_private, block_loopback=block_loopback):
+            raise ValueError(f"CRM URL host resolves to a blocked address ({ip})")
+
+
+def redact_url(raw: str) -> str:
+    """Strip the query string and any embedded credentials from a URL for logging."""
+    try:
+        u = httpx.URL(raw)
+        return str(u.copy_with(query=None, userinfo=b""))
+    except Exception:
+        return "(crm endpoint)"
+
+
+# ---------------------------------------------------------------------------
+# Sync configuration + payload assembly
+# ---------------------------------------------------------------------------
+@dataclass
+class CRMSyncConfig:
+    """Resolved call-data sync configuration (read from settings)."""
+    enabled: bool = False
+    endpoint: str = ""          # path appended to the connection server_url
+    method: str = "POST"        # POST or PUT
+    fields: List[str] = field(default_factory=lambda: list(DEFAULT_CRM_SYNC_FIELDS))
+    dir_inbound: bool = True
+    dir_outbound: bool = True
+    dir_internal: bool = True
+    block_private: bool = False
+
+    def direction_allowed(self, call_type: Optional[str]) -> bool:
+        """Whether a call of this direction should be pushed."""
+        if call_type == "inbound":
+            return self.dir_inbound
+        if call_type == "outbound":
+            return self.dir_outbound
+        if call_type == "internal":
+            return self.dir_internal
+        # Unknown/blank direction: push it rather than silently dropping the call.
+        return True
+
+
+def parse_sync_fields(raw: Union[str, List[str], None]) -> List[str]:
+    """
+    Normalise a stored field selection (CSV string or list) into a clean, ordered
+    list limited to known catalog fields. Unknown/blank entries are dropped.
+    """
+    if raw is None:
+        items: List[str] = []
+    elif isinstance(raw, str):
+        items = raw.split(",")
+    else:
+        items = list(raw)
+    out: List[str] = []
+    seen = set()
+    for f in items:
+        f = (f or "").strip()
+        if f and f in _CRM_SYNC_FIELD_SET and f not in seen:
+            seen.add(f)
+            out.append(f)
+    return out
+
+
+def build_crm_payload(all_fields: Dict[str, Any], selected: List[str]) -> Dict[str, Any]:
+    """
+    Build the CRM push body from the full set of available call values, keeping
+    only the operator-selected fields that are actually present. `caller` and
+    `destination` (the call identity) are always included when available. A value
+    is "present" unless it is None or an empty string — numeric 0 is kept.
+    """
+    def present(v: Any) -> bool:
+        return v is not None and v != ""
+
+    keys: List[str] = []
+    for f in CRM_SYNC_ALWAYS_FIELDS:
+        if f not in keys:
+            keys.append(f)
+    for f in selected:
+        if f in _CRM_SYNC_FIELD_SET and f not in keys:
+            keys.append(f)
+
+    return {f: all_fields[f] for f in keys if f in all_fields and present(all_fields[f])}
 
