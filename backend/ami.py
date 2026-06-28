@@ -15,15 +15,17 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from enum import IntEnum
 
-# Import CRM connector
+# Import CRM connector + call-data sync helpers
 try:
-    from .crm import CRMConnector
+    from .crm import CRMConnector, CRMSyncConfig, build_crm_payload
 except ImportError:
     # Fallback for direct execution
     try:
-        from crm import CRMConnector
+        from crm import CRMConnector, CRMSyncConfig, build_crm_payload
     except ImportError:
         CRMConnector = None
+        CRMSyncConfig = None
+        build_crm_payload = None
 
 try:
     from db_manager import insert_call_notification
@@ -153,15 +155,17 @@ class AMIExtensionsMonitor:
     Real-time Asterisk extension monitor with ChanSpy supervisor features.
     """
 
-    def __init__(self, host=None, port=None, username=None, secret=None, context=None, crm_connector=None):
+    def __init__(self, host=None, port=None, username=None, secret=None, context=None, crm_connector=None, crm_sync_config=None):
         self.host     = host     or os.getenv('AMI_HOST','127.0.0.1')
         self.port     = port     or int(os.getenv('AMI_PORT','5038'))
         self.username = username or os.getenv('AMI_USERNAME','')
         self.secret   = secret   or os.getenv('AMI_SECRET','')
         self.context  = context  or os.getenv('AMI_CONTEXT','ext-local')
-        
+
         # Optional CRM connector - server will handle CRM configuration
         self.crm_connector = crm_connector
+        # Call-data sync (push) config — which fields/directions actually get pushed.
+        self.crm_sync_config = crm_sync_config or (CRMSyncConfig() if CRMSyncConfig else None)
 
         # Async socket streams
         self.reader: Optional[asyncio.StreamReader] = None
@@ -788,10 +792,59 @@ class AMIExtensionsMonitor:
         status = self.map_cause_to_status(cause, None)
         return status in ('busy', 'noanswer', 'switched_off', 'failed', 'invalid_number')
 
+    def set_crm(self, crm_connector, crm_sync_config=None):
+        """
+        Hot-swap the CRM connector + sync config so Settings changes take effect
+        live, without a server restart.
+        """
+        self.crm_connector = crm_connector
+        if crm_sync_config is not None:
+            self.crm_sync_config = crm_sync_config
+        elif self.crm_sync_config is None and CRMSyncConfig is not None:
+            self.crm_sync_config = CRMSyncConfig()
+        enabled = bool(self.crm_sync_config and getattr(self.crm_sync_config, 'enabled', False))
+        log.info("🔄 CRM runtime updated (connector=%s, sync=%s)",
+                 "set" if crm_connector else "none",
+                 "enabled" if enabled else "disabled")
+
+    def _crm_queue_wait_seconds(self, call_info: Dict, queue: Optional[str], queue_caller: Optional[str]):
+        """
+        Best-effort seconds a queue caller waited before an agent answered. Returns
+        '' when the timestamps aren't available (the field is then simply omitted).
+        """
+        try:
+            ans = call_info.get('answer_time')
+            entry = call_info.get('entry_time')
+            if (not entry) and queue_caller:
+                ci = self.active_calls.get(queue_caller)
+                if ci:
+                    entry = ci.get('entry_time')
+                    ans = ans or ci.get('answer_time')
+            if not entry or not ans:
+                return ''
+
+            def _parse(v):
+                if isinstance(v, datetime):
+                    return v
+                if isinstance(v, str):
+                    try:
+                        return datetime.fromisoformat(v.replace('Z', '+00:00'))
+                    except ValueError:
+                        return None
+                return None
+
+            e, a = _parse(entry), _parse(ans)
+            if not e or not a:
+                return ''
+            secs = int((a - e).total_seconds())
+            return secs if secs >= 0 else ''
+        except Exception:
+            return ''
+
     async def _send_crm_data(self, ext: str, call_info: Dict, hangup_event: Dict, queue: Optional[str] = None):
         """
         Send call data to CRM after call ends.
-        
+
         Args:
             ext: Extension number
             call_info: Call information dictionary from active_calls
@@ -995,47 +1048,107 @@ class AMIExtensionsMonitor:
                 else:
                     call_type = 'outbound'
             
-            # Format call data for CRM
+            # ── Build the full set of available call fields (catalog superset) ──
+            # crm.build_crm_payload() then keeps only the operator-selected fields.
             if CRMConnector is None:
                 log.warning("CRMConnector not available - cannot format call data")
                 return
-            
-            call_data = CRMConnector.format_call_data_for_crm(
-                caller=caller,
-                destination=destination,
-                duration=duration_seconds,
-                datetime_str=datetime_str,
-                call_status=call_status,
-                queue=queue,  # Optional queue parameter
-                call_type=call_type,
-                talk_time=talk_seconds  # Talk time (time from answer to hangup)
-            )
-            
-            log.info(f"📤 Preparing to send CRM data: {caller} -> {destination} (status: {call_status}, type: {call_type}, duration: {duration_seconds}s, talk: {talk_seconds}s, queue: {queue or 'N/A'})")
-            
-            # Send to CRM (fire and forget - don't block hangup processing)
-            # Create async task to send CRM data (called from async dispatch context)
+
+            cause_raw = str(cause or '')
+            disposition_map = {
+                'completed': 'ANSWERED', 'busy': 'BUSY', 'noanswer': 'NO ANSWER',
+                'switched_off': 'NO ANSWER', 'invalid_number': 'FAILED', 'failed': 'FAILED',
+            }
+            answered = bool(call_info.get('answer_time')) or bool(queue_answered)
+            disposition = 'ANSWERED' if answered else disposition_map.get(call_status, 'FAILED')
+
+            # Agent / answered extension (queue + direct answered calls)
+            agent = str(answered_agent or '') or str(call_info.get('membername') or '')
+            answered_extension = ''
+            dest_s = str(destination or '')
+            if answered and dest_s.isdigit() and 3 <= len(dest_s) <= 5:
+                answered_extension = dest_s
+            if not agent and answered_extension and queue:
+                agent = answered_extension
+
+            # Caller name (best-effort; populated by NewCallerid on the caller's leg)
+            caller_name = str(call_info.get('callerid_name') or '')
+            if not caller_name and queue_caller:
+                _ci = self.active_calls.get(queue_caller)
+                if _ci:
+                    caller_name = str(_ci.get('callerid_name') or '')
+
+            queue_wait_time = self._crm_queue_wait_seconds(call_info, queue, queue_caller) if queue else ''
+
+            full_fields = {
+                "caller": str(caller or ''),
+                "destination": dest_s,
+                "duration": CRMConnector.normalize_duration(duration_seconds),
+                "talk_time": CRMConnector.normalize_duration(talk_seconds),
+                "datetime": datetime_str,
+                "call_status": call_status,
+                "call_type": call_type,
+                "queue": str(queue or ''),
+                "caller_name": caller_name,
+                "uniqueid": str(hangup_event.get('Uniqueid') or ''),
+                "linkedid": str(hangup_event.get('Linkedid') or ''),
+                "disposition": disposition,
+                "hangup_cause": cause_raw,
+                "agent": agent,
+                "answered_extension": answered_extension,
+                "queue_wait_time": queue_wait_time,
+            }
+
+            # ── Apply the operator's sync config: enabled? direction allowed? ──
+            sync_cfg = self.crm_sync_config
+            if sync_cfg is not None and not sync_cfg.enabled:
+                log.info(f"⏸️ CRM call-data sync disabled - skipping push for {caller} -> {destination}")
+                return
+            if sync_cfg is not None and not sync_cfg.direction_allowed(call_type):
+                log.info(f"⏸️ CRM sync skipped: direction '{call_type}' disabled ({caller} -> {destination})")
+                return
+
+            selected = list(sync_cfg.fields) if (sync_cfg and sync_cfg.fields) else None
+            if build_crm_payload is not None and selected is not None:
+                call_data = build_crm_payload(full_fields, selected)
+            else:
+                # Fallback (sync helpers unavailable): the legacy fixed 8-field body.
+                _legacy = ('caller', 'destination', 'duration', 'talk_time',
+                           'datetime', 'call_status', 'call_type', 'queue')
+                call_data = {k: v for k, v in full_fields.items() if k in _legacy and v not in (None, '')}
+
+            method = (sync_cfg.method if sync_cfg else 'POST') or 'POST'
+            endpoint = (sync_cfg.endpoint if sync_cfg else None) or None
+
+            log.info(f"📤 Preparing CRM push: {caller} -> {destination} "
+                     f"(status: {call_status}, type: {call_type}, fields: {len(call_data)}, "
+                     f"method: {method}, queue: {queue or 'N/A'})")
+
+            # Fire-and-forget — never block hangup processing.
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._send_crm_data_async(call_data))
+                loop.create_task(self._send_crm_data_async(call_data, method=method, endpoint_path=endpoint))
             except RuntimeError:
                 # No running event loop, try to get/create one
                 try:
-                    asyncio.ensure_future(self._send_crm_data_async(call_data))
+                    asyncio.ensure_future(self._send_crm_data_async(call_data, method=method, endpoint_path=endpoint))
                 except Exception as e:
                     log.error(f"Could not schedule CRM send task: {e}")
-            
+
         except Exception as e:
             log.error(f"Error preparing CRM data for call: {e}")
     
-    async def _send_crm_data_async(self, call_data: Dict):
+    async def _send_crm_data_async(self, call_data: Dict, method: str = "POST", endpoint_path: Optional[str] = None):
         """Async helper to send CRM data without blocking."""
         try:
             if self.crm_connector:
                 caller = call_data.get('caller', 'unknown')
                 destination = call_data.get('destination', 'unknown')
                 log.info(f"📤 Sending call data to CRM: {caller} -> {destination}")
-                result = await self.crm_connector.send_call_data(call_data)
+                # require_fields=False: the operator chose the field set; the push
+                # must not raise if caller/destination were de-selected.
+                result = await self.crm_connector.send_call_data(
+                    call_data, endpoint_path=endpoint_path, method=method, require_fields=False)
                 if result.get('success'):
                     log.info(f"✅ Successfully sent call data to CRM: {caller} -> {destination}")
                 else:
@@ -1559,6 +1672,11 @@ class AMIExtensionsMonitor:
             info = self._call_info(ext)
             if _meaningful(callerid):
                 info['callerid'] = callerid
+            # Capture the CallerID *name* for the CRM push (best-effort; Asterisk
+            # often sends "<unknown>" which we ignore).
+            cid_name = (p.get('CallerIDName', '') or '').strip()
+            if cid_name and cid_name not in ('<unknown>', 'unknown'):
+                info['callerid_name'] = cid_name
             if _meaningful(exten):
                 info['exten'] = exten
                 if 'original_destination' not in info:
