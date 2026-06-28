@@ -21,16 +21,44 @@ interface QueuesPanelProps {
   onSync?: () => void;
 }
 
+/** Map a queue member's status/paused state to a CSS modifier class.
+ *  Asterisk reports status either as a name ("In Use") or a numeric device-state code. */
+function memberStatusClass(member: QueueMember): string {
+  if (member.paused) return 'paused';
+  const s = member.status?.toLowerCase();
+  if (s === 'unavailable' || s === 'invalid' || member.status === '4' || member.status === '5') {
+    return 'unavailable';
+  }
+  if (s === 'in use' || s === 'busy' || s === 'ring+in use' || member.status === '2' || member.status === '3') {
+    return 'busy';
+  }
+  return '';
+}
+
 export function QueuesPanel({ queues, members, entries, sendAction, onSync }: QueuesPanelProps) {
   const { t } = useTranslation();
   const [showAddMember, setShowAddMember] = useState<string | null>(null);
   const [newMemberInterface, setNewMemberInterface] = useState('');
   const [newMemberName, setNewMemberName] = useState('');
-  const [processingPause, setProcessingPause] = useState<Set<string>>(new Set());
+  // Map of memberKey -> target paused state of the in-flight pause/unpause action.
+  const [processingPause, setProcessingPause] = useState<Map<string, boolean>>(new Map());
 
-  // Clear processing state when members update (state came from server)
+  // When members update from the server, clear processing state only for members
+  // that have reached their target paused state — leaves other in-flight actions intact.
   useEffect(() => {
-    setProcessingPause(new Set());
+    setProcessingPause(prev => {
+      if (prev.size === 0) return prev;
+      const next = new Map(prev);
+      let changed = false;
+      Object.values(members).forEach(m => {
+        const key = `${m.queue}:${m.interface}`;
+        if (next.has(key) && m.paused === next.get(key)) {
+          next.delete(key);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
   }, [members]);
 
   const queueList = Object.values(queues).sort((a, b) => a.name.localeCompare(b.name));
@@ -49,7 +77,10 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
     }
   };
 
-  const handleRemoveMember = (queueName: string, interfaceName: string) => {
+  const handleRemoveMember = (queueName: string, interfaceName: string, memberLabel: string) => {
+    if (!window.confirm(t('queues.removeConfirm', { member: memberLabel, queue: queueName }))) {
+      return;
+    }
     sendAction({
       action: 'queue_remove',
       queue: queueName,
@@ -63,7 +94,8 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
       return; // Already processing
     }
 
-    setProcessingPause(prev => new Set(prev).add(memberKey));
+    const target = !member.paused;
+    setProcessingPause(prev => new Map(prev).set(memberKey, target));
 
     sendAction({
       action: member.paused ? 'queue_unpause' : 'queue_pause',
@@ -71,14 +103,15 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
       interface: member.interface,
     });
 
-    // Clear processing state after a delay (state update will come from WebSocket)
+    // Fallback: clear processing state if no WebSocket update arrives.
     setTimeout(() => {
       setProcessingPause(prev => {
-        const next = new Set(prev);
+        if (!prev.has(memberKey)) return prev;
+        const next = new Map(prev);
         next.delete(memberKey);
         return next;
       });
-    }, 1000);
+    }, 5000);
   };
 
   // Group entries by queue
@@ -167,8 +200,8 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                       </div>
                       {entriesByQueue[queueExt]
                         .sort((a, b) => a.position - b.position)
-                        .map((entry, idx) => (
-                          <div key={idx} style={{
+                        .map((entry) => (
+                          <div key={`${entry.callerid}-${entry.position}`} style={{
                             display: 'flex',
                             justifyContent: 'space-between',
                             alignItems: 'center',
@@ -280,18 +313,7 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                     {membersByQueue[queueExt]?.map((member) => (
                       <div key={member.interface} className="queue-member">
                         <div className="queue-member-info">
-                          <div className={`queue-member-status ${
-                            member.paused ? 'paused' :
-                            (member.status?.toLowerCase() === 'unavailable' ||
-                             member.status?.toLowerCase() === 'invalid' ||
-                             member.status === '4' ||
-                             member.status === '5') ? 'unavailable' :
-                            (member.status?.toLowerCase() === 'in use' ||
-                             member.status?.toLowerCase() === 'busy' ||
-                             member.status?.toLowerCase() === 'ring+in use' ||
-                             member.status === '2' ||
-                             member.status === '3') ? 'busy' : ''
-                          }`} />
+                          <div className={`queue-member-status ${memberStatusClass(member)}`} />
                           <div>
                             <div className="queue-member-name">
                               {member.membername || member.interface}
@@ -313,7 +335,7 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                           </button>
                           <button
                             className="btn btn-icon btn-barge"
-                            onClick={() => handleRemoveMember(queueExt, member.interface)}
+                            onClick={() => handleRemoveMember(queueExt, member.interface, member.membername || member.interface)}
                             disabled={member.dynamic === false}
                             title={member.dynamic === false
                               ? t('queues.removeStatic')

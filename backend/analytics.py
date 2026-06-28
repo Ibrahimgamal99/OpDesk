@@ -313,8 +313,10 @@ def _run_queue_cdr(date_from: str, date_to: str, extra_sql: str = "", extra_para
             cursor.execute(_queue_cdr_sql(extra_sql), params)
             return cursor.fetchall()
     except Error as e:
-        log.warning(f"analytics: CDR query error: {e}")
-        return []
+        # Propagate so the API surfaces a 500 instead of returning empty data
+        # that the UI would render as "no data for this period".
+        log.error(f"analytics: CDR query error: {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -388,8 +390,8 @@ def _run_all_cdr(date_from: str, date_to: str, extra_sql: str = "", extra_params
             cursor.execute(_all_cdr_sql(extra_sql), params)
             return cursor.fetchall()
     except Error as e:
-        log.warning(f"analytics: all-CDR query error: {e}")
-        return []
+        log.error(f"analytics: all-CDR query error: {e}")
+        raise
 
 
 def _classify_row_direction(row: dict) -> str:
@@ -811,6 +813,7 @@ def compute_agent_performance(
     by_agent_billsec = defaultdict(int)     # total talk time
     by_agent_sla_met = defaultdict(int)     # SLA met (inbound queue only)
     by_agent_inbound = defaultdict(int)     # inbound calls
+    by_agent_inbound_answered = defaultdict(int)  # answered inbound queue calls (SLA denominator)
     by_agent_outbound = defaultdict(int)    # outbound calls
     daily_trend_data = defaultdict(lambda: defaultdict(int))  # agent -> date -> count
 
@@ -839,6 +842,7 @@ def compute_agent_performance(
             # SLA check (only for inbound queue calls)
             if call_type == 'IN' and dst and dst.isdigit():
                 q_ext = dst
+                by_agent_inbound_answered[ext] += 1
                 wait = max(0, duration - talk)
                 threshold = _sla_threshold_for(q_ext, thresholds, default_secs)
                 if wait <= threshold:
@@ -857,10 +861,11 @@ def compute_agent_performance(
     for a_ext in by_agent_total:
         answered = by_agent_answered[a_ext]
         total_billsec = by_agent_billsec[a_ext]
-        inbound = by_agent_inbound[a_ext]
+        inbound_answered = by_agent_inbound_answered[a_ext]
 
-        # SLA % only for inbound queue answered calls
-        sla_pct = round(by_agent_sla_met[a_ext] / inbound * 100, 1) if inbound else None
+        # SLA % = answered inbound queue calls within threshold / answered inbound queue calls
+        # (mirrors the queue-level definition: sla_met_calls / answered)
+        sla_pct = round(by_agent_sla_met[a_ext] / inbound_answered * 100, 1) if inbound_answered else None
 
         trend = [daily_trend_data[a_ext].get(d, 0) for d in trend_days]
 
@@ -934,8 +939,10 @@ def compute_hourly_heatmap(
             """, [date_from, date_to, date_from, date_to, date_from, date_to] + qparams)
             rows = cursor.fetchall()
     except Error as e:
-        log.warning(f"analytics: heatmap query error: {e}")
-        rows = []
+        # Propagate so the API surfaces a 500 instead of returning an all-zero
+        # matrix that the UI would render as a real (empty) heatmap.
+        log.error(f"analytics: heatmap query error: {e}")
+        raise
 
     # DAYOFWEEK: 1=Sun,2=Mon,...,7=Sat -- convert to 0=Mon..6=Sun
     matrix = [[0] * 24 for _ in range(7)]
@@ -1240,7 +1247,11 @@ def refresh_daily_bucket(
     day_str = day.strftime('%Y-%m-%d')
 
     # Re-use live compute for now (aggregation is idempotent via ON DUPLICATE KEY)
-    rows = _run_queue_cdr(day_str, day_str, "", [])
+    try:
+        rows = _run_queue_cdr(day_str, day_str, "", [])
+    except Error as e:
+        log.warning(f"analytics: skipping daily bucket for {day_str} due to CDR error: {e}")
+        return
     if not rows:
         return
 

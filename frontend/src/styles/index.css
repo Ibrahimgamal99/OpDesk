@@ -953,6 +953,50 @@ body::before {
   border-radius: 3px 0 0 3px;
 }
 
+/* Sidebar collapsible group */
+.sidebar-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  width: 100%;
+  text-align: start;
+  font-family: inherit;
+  border-radius: var(--radius-md);
+  transition: color var(--transition-fast);
+}
+
+.sidebar-group-header:hover {
+  color: var(--text-primary);
+}
+
+.sidebar-group-chevron {
+  margin-inline-start: auto;
+  transition: transform var(--transition-fast);
+}
+
+.sidebar-group-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.sidebar-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-sub-item {
+  padding-inline-start: 28px;
+}
+
 .sidebar-item.registered { color: var(--status-idle); }
 .sidebar-item.not-registered { color: var(--accent-danger); }
 .sidebar-item.registered:hover { color: var(--status-idle); background: var(--status-idle-bg); }
@@ -3667,6 +3711,124 @@ select.an-filter-select option:checked {
 .cl-qos-overall {
   font-size: 14px;
   color: var(--text-secondary);
+}
+
+/* ------- VAD Modal ------- */
+.cl-vad-modal {
+  max-width: 560px;
+}
+
+.cl-audio-filename-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cl-audio-filename-btn:hover {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+}
+
+.cl-vad-filename {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+  font-family: 'SF Mono', 'Monaco', monospace;
+}
+
+.cl-vad-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.cl-vad-stat {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-vad-stat-sp1 { border-left: 3px solid #58a6ff; }
+.cl-vad-stat-sp2 { border-left: 3px solid #3fb950; }
+.cl-vad-stat-overlap { border-left: 3px solid #f0883e; }
+.cl-vad-stat-silence { border-left: 3px solid var(--text-muted); }
+
+.cl-vad-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cl-vad-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Monaco', monospace;
+}
+
+.cl-vad-stat-value small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.cl-vad-timeline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cl-vad-timeline-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 8px;
+}
+
+.cl-vad-timeline-track {
+  position: relative;
+  height: 20px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.cl-vad-segment {
+  position: absolute;
+  top: 2px;
+  height: calc(100% - 4px);
+  border-radius: 3px;
+  min-width: 2px;
+}
+
+.cl-vad-segment-sp1 { background: #58a6ff; opacity: 0.85; }
+.cl-vad-segment-sp2 { background: #3fb950; opacity: 0.85; }
+
+.cl-vad-time-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Monaco', monospace;
+  margin-top: 2px;
 }
 
 /* ------- Call Journey Modal ------- */

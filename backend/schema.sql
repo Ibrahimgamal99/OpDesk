@@ -66,6 +66,26 @@ CREATE TABLE IF NOT EXISTS call_notifications (
     INDEX idx_caller_from (caller_from)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Per-call VAD (voice activity) analysis of the separate caller/callee recording legs.
+-- Written post-call by the opdesk_vad AGI worker (pushed as a hangup handler in the
+-- [opdesk-record] dialplan): it pairs <base>-sp1/<base>-sp2, runs WebRTC VAD per leg, and
+-- POSTs the result to /api/internal/call-vad. One row per call, keyed by uniqueid.
+CREATE TABLE IF NOT EXISTS call_vad (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    uniqueid VARCHAR(32) NOT NULL UNIQUE,
+    base VARCHAR(255) NULL,
+    duration FLOAT NULL,
+    sp1_talk_seconds FLOAT NULL,
+    sp2_talk_seconds FLOAT NULL,
+    overlap_seconds FLOAT NULL,
+    sp1_segments INT NULL,
+    sp2_segments INT NULL,
+    segments LONGTEXT NULL,           -- full JSON: {sp1:[{start,end}...], sp2:[...]}
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_uniqueid (uniqueid),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Device push tokens: one row per (device, token_type). A mobile softphone registers its
 -- FCM/APNs token here so the backend can wake it for incoming calls (VoIP push) and send
 -- missed-call alerts when the app is backgrounded and the SIP-over-WSS registration is gone.

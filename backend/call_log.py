@@ -164,6 +164,7 @@ def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extens
             'app': cdr.get('call_app'),  
             'call_journey_count':cdr.get('call_journey_count'),
             'linkedid':cdr.get('linkedid'),
+            'uniqueid':cdr.get('uniqueid'),
         }
         
         result.append(filtered_cdr)

@@ -26,8 +26,12 @@ Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled
 - **Notifications**: Missed/busy calls in a header bell; per-extension; mark read/archive; 7-day auto-cleanup of read items.
 - **CRM**: Push call data to external CRMs (API Key, Basic Auth, Bearer, OAuth2).
 - **Analytics**: Full KPI analytics suite — **12-card overview** (SLA, FCR, Abandonment, Short Abandon, Avg Wait, AHT, Inbound Answer Rate, Total Calls, Outbound Volume, Outbound Answer Rate, Outbound AHT) with delta vs. prior period, volume trend chart, per-queue and per-agent breakdowns, 7×24 heatmap, and paginated call drilldown with CSV / XLSX export.
+- **Call recording**: Full-call recording via MixMonitor — writes a mixed file (FreePBX CDR-compatible location) plus two separate single-leg WAVs (`-sp1` caller, `-sp2` callee) for every inbound, outbound, and internal call. Format and enable/disable are configurable from Settings.
+- **Voice Activity Detection (VAD)**: Automatic post-call analysis of the two recording legs. Primary engine: **Silero VAD** (ONNX runtime, neural, robust on telephony audio); fallback: **WebRTC VAD** with sliding-window smoothing. Stores per-leg talk time, simultaneous-speech overlap, and the full segment timeline in the DB. Results are visible in the Call Log — click the waveform icon on any recording to open the VAD timeline visualization showing caller vs. callee speech side-by-side.
 - **Multi-language UI**: Built-in i18n with support for English, Arabic (RTL), Spanish, and Portuguese — switchable from the UI without any restart.
 - **Mobile push notifications**: Wake a Flutter/native iOS/Android softphone for incoming calls via APNs VoIP (PushKit + CallKit) and high-priority FCM — no background socket required.
+- **Service worker**: Enables incoming-call notifications while the browser tab is backgrounded (tab alive, no Web Push/VAPID required). Notification tap focuses an existing app tab or opens one.
+- **Mobile diagnostic logging**: Optional remote log sink (`?debug=1` URL flag, persisted to localStorage). The frontend batches entries and ships them via `navigator.sendBeacon()` — survives `pagehide`/freeze so SIP teardown events at call drop are captured. Lands in the backend log under `CLIENT[session]`; never stored to DB.
 
 ---
 ## Screenshots
@@ -252,6 +256,9 @@ The service runs as the user who executed the installer, restarts automatically 
 | **Analytics** | Available to Admin and Supervisor roles. 12 overview KPI cards: SLA, FCR, Abandonment, Short Abandon, Avg Wait, AHT, Inbound Answer Rate, Total Calls, Outbound Volume, Outbound Answer Rate, Outbound AHT, Market Talk Time. All KPI math is in `backend/analytics.py`. Settings under Settings → Analytics. |
 | **Analytics export** | Drilldown tab → Export CSV / Export XLSX (requires `openpyxl`; falls back to CSV if not installed). |
 | **SLA per queue** | In the DB: `INSERT INTO analytics_sla_settings (queue_extension, threshold_secs) VALUES ('200', 30);` or via the Settings UI. |
+| **Call recording** | Enable under Settings → Recording. Format: `wav` (default) or `sln`. Mixed file lands in `/var/spool/asterisk/monitor/YYYY/MM/DD/`; single-leg files in `/var/spool/asterisk/single/YYYY/MM/DD/`. CDR `recordingfile` field is set so recordings appear in FreePBX CDR reports. |
+| **VAD analysis** | Runs automatically after each call when recording is enabled. Requires `onnxruntime` + `numpy` for Silero (recommended) or `webrtcvad` for the fallback. The Silero model is downloaded on first use to `~/.cache/opdesk/silero_vad.onnx`. Results stored in the `call_vad` DB table. View the timeline in Call Log → click the waveform icon on a row with a recording. |
+| **Mobile debug log** | Open the app with `?debug=1` once (or run `localStorage.opdesk_debug='1'` in devtools and reload). Logs page-lifecycle events, SIP events, and errors; ships them via `sendBeacon` to `/api/client-log`; visible in `journalctl -u opdesk` as `CLIENT[session]` lines. Disable with `?debug=0`. |
 
 ---
 

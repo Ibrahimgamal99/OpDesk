@@ -10,3 +10,5 @@ openpyxl>=3.1.0
 google-auth>=2.0.0
 h2>=4.0.0
 cryptography>=42.0.0
+webrtcvad
+onnxruntime

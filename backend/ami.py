@@ -193,6 +193,8 @@ class AMIExtensionsMonitor:
         self.linkedid_crm_sent: Set[str] = set()  # "linkedid:uniqueid" -> track which channel instances have already sent CRM data (prevent duplicates)
         self._call_notification_callback: Optional[Callable[[str], None]] = None  # optional: (extension) -> None, called when a call_notification row is inserted
         self._incoming_call_callback: Optional[Callable[[str, str, str, str], None]] = None  # optional: (extension, caller, call_id, display_name) -> None, called when a monitored extension starts ringing
+        self._vad_pending: Dict[str, str] = {}    # uniqueid -> recording base, set by OpDeskRecording UserEvent, consumed on Hangup
+        self._vad_pending_ch: Dict[str, str] = {}  # channel -> uniqueid, fallback when Hangup event lacks Uniqueid field
 
     # ------------------------------------------------------------------
     # Connection
@@ -663,7 +665,8 @@ class AMIExtensionsMonitor:
         'QueueEntry','QueueCallerJoin','QueueCallerLeave',
         'QueueMemberPause','QueueMemberPaused','QueueMemberUnpause',
         'QueueMemberRingInUse','QueueSummary',
-        'AgentCalled','AgentConnect','AgentComplete'
+        'AgentCalled','AgentConnect','AgentComplete',
+        'UserEvent'
     })
 
     async def _dispatch_async(self, raw: str):
@@ -1130,6 +1133,25 @@ class AMIExtensionsMonitor:
                 if _meaningful(conn):
                     info['original_destination'] = conn
 
+    def _ev_UserEvent(self, p, ts):
+        """Capture the OpDeskRecording UserEvent fired by [opdesk-record] at call start,
+        remembering the recording base by Uniqueid so the matching Hangup can trigger the
+        post-call VAD analysis. Other UserEvents are ignored."""
+        if p.get('UserEvent') != 'OpDeskRecording':
+            return
+        uniqueid = p.get('Uniqueid', '')
+        base = p.get('Recbase', '')
+        ch = p.get('Channel', '')
+        if not uniqueid or not base:
+            return
+        # Bound memory in case a hangup is ever missed.
+        if len(self._vad_pending) > 5000:
+            self._vad_pending.pop(next(iter(self._vad_pending)), None)
+        self._vad_pending[uniqueid] = base
+        # Secondary index so Hangup events that omit Uniqueid can still be matched by channel.
+        if ch:
+            self._vad_pending_ch[ch] = uniqueid
+
     def _ev_Hangup(self, p, ts):
         ch = p.get('Channel', '')
         uniqueid = p.get('Uniqueid', '')
@@ -1145,7 +1167,25 @@ class AMIExtensionsMonitor:
         # Get uniqueid from event or channel mapping
         if not uniqueid:
             uniqueid = self.ch2uniqueid.get(ch, '')
-        
+
+        # If this channel had OpDesk recording, kick off post-call VAD analysis (in-process,
+        # non-blocking). The runner waits for MixMonitor to finish flushing the WAV legs.
+        # Primary lookup by uniqueid; fall back to the channel name for bridged/Local/ legs
+        # where the Hangup event may carry a different Uniqueid than the UserEvent.
+        vad_uid = uniqueid if uniqueid in self._vad_pending else None
+        if not vad_uid:
+            fallback = self._vad_pending_ch.get(ch, '')
+            if fallback and fallback in self._vad_pending:
+                vad_uid = fallback
+        self._vad_pending_ch.pop(ch, None)
+        if vad_uid:
+            base = self._vad_pending.pop(vad_uid)
+            try:
+                import vad_runner
+                vad_runner.schedule(base, vad_uid)
+            except Exception as e:
+                log.warning("VAD schedule failed (%s): %s", vad_uid, e)
+
         # Get queue name before cleaning up queue entries
         queue = None
         if uniqueid and uniqueid in self.queue_entries:

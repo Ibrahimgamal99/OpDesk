@@ -1,16 +1,13 @@
 .git
 .github
 .vscode
-.claude
 
 frontend/node_modules
 frontend/dist
 
-
 backend/__pycache__
 backend/**/*.pyc
 
-secrets/
 cert/
 nginx/
 .env

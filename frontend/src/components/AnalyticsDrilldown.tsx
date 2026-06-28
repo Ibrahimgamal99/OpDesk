@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, FileSpreadsheet, Search, X, ArrowUpDown, Activity } from 'lucide-react';
-import { getAuthHeaders } from '../auth';
+import { fetchWithAuth } from '../auth';
 import type { DateRange } from './analyticsUtils';
 import type { AnalyticsDrilldownRecord } from '../types';
 import { fmtSecs, analyticsGet, useAnalyticsFetch } from './analyticsUtils';
@@ -21,7 +21,8 @@ interface Props { dateRange: DateRange }
 export function AnalyticsDrilldown({ dateRange }: Props) {
   const { t } = useTranslation();
   const [page, setPage] = useState(1);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<'csv' | 'xlsx' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Filters
   const [queue, setQueue] = useState('');
@@ -63,38 +64,14 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
   const calls = data?.calls ?? [];
   const total = data?.total ?? 0;
 
-  function exportCsv() {
-    if (!calls.length) return;
-    const headers = ['Date', 'Src', 'Queue', 'Agent', 'Duration(s)', 'Talk(s)', 'Wait(s)', 'Disposition', 'SLA Met'];
-    const rows = calls.map(r => [
-      r.calldate || '',
-      r.src,
-      r.queue_extension,
-      r.agent_extension,
-      r.duration,
-      r.talk,
-      r.wait_secs,
-      r.disposition,
-      r.sla_met ? 'Yes' : 'No',
-    ]);
-    const bom = '\uFEFF';
-    const csv = bom + [headers, ...rows].map(row =>
-      row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
-    ).join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `analytics_${dateRange.from}_${dateRange.to}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function exportXlsx() {
-    setExporting(true);
+  // Both CSV and XLSX go through the backend export endpoint so the export covers
+  // ALL filtered records \u2014 not just the current page that the table is showing.
+  async function downloadExport(format: 'csv' | 'xlsx') {
+    setExporting(format);
+    setExportError(null);
     try {
       const params = new URLSearchParams({
-        format: 'xlsx',
+        format,
         date_from: dateRange.from,
         date_to: dateRange.to,
       });
@@ -102,19 +79,21 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
       if (agent)       params.set('agent', agent);
       if (direction)   params.set('direction', direction);
       if (disposition) params.set('disposition', disposition);
-      const resp = await fetch(`/api/analytics/export?${params}`, { headers: getAuthHeaders() });
+      const resp = await fetchWithAuth(`/api/analytics/export?${params}`);
       if (!resp.ok) throw new Error('Export failed');
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `analytics_${dateRange.from}_${dateRange.to}.xlsx`;
+      a.download = `analytics_${dateRange.from}_${dateRange.to}.${format}`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch {
-      alert('Export failed. Try CSV instead.');
+      setExportError(t('analytics.drilldown.exportFailed', 'Export failed. Please try again.'));
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   }
 
@@ -288,13 +267,26 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
         </div>
 
         <div className="an-export-bar">
-          <button className="an-export-btn" onClick={exportCsv} disabled={calls.length === 0}>
+          {exportError && (
+            <span style={{ color: 'var(--accent-danger, #f85149)', fontSize: '0.78rem' }}>
+              {exportError}
+            </span>
+          )}
+          <button
+            className="an-export-btn"
+            onClick={() => downloadExport('csv')}
+            disabled={exporting !== null || total === 0}
+          >
             <Download size={13} />
-            {t('analytics.drilldown.exportCsv')}
+            {exporting === 'csv' ? t('analytics.drilldown.exporting') : t('analytics.drilldown.exportCsv')}
           </button>
-          <button className="an-export-btn" onClick={exportXlsx} disabled={exporting || calls.length === 0}>
+          <button
+            className="an-export-btn"
+            onClick={() => downloadExport('xlsx')}
+            disabled={exporting !== null || total === 0}
+          >
             <FileSpreadsheet size={13} />
-            {exporting ? t('analytics.drilldown.exporting') : t('analytics.drilldown.exportXlsx')}
+            {exporting === 'xlsx' ? t('analytics.drilldown.exporting') : t('analytics.drilldown.exportXlsx')}
           </button>
         </div>
       </div>
