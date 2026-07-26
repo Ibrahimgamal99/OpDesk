@@ -236,7 +236,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingGroup, setEditingGroup] = useState<OpDeskGroup | null>(null);
   const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null);
-  const [groupsSubTab, setGroupsSubTab] = useState<'create' | 'list'>('create');
+  const [groupsSubTab, setGroupsSubTab] = useState<'create' | 'list'>('list');
   const [form, setForm] = useState({
     name: '',
     agent_extensions: [] as string[],
@@ -421,32 +421,40 @@ export function GroupsPanel(props: GroupsPanelProps) {
 
   return (
     <div className="panel">
-      <div className="panel-content up-root">
+      <div className="panel-header">
+        <h2 className="panel-title">
+          <Group size={16} className="panel-title-icon" />
+          {t('groups.title')}
+        </h2>
+        <div className="panel-header-actions">
+          <div className="up-tabs up-tabs-inline">
+            <button
+              type="button"
+              className={`up-tab ${groupsSubTab === 'create' ? 'active' : ''}`}
+              onClick={() => setGroupsSubTab('create')}
+            >
+              <UserPlus size={14} />
+              {t('groups.createEdit')}
+            </button>
+            <button
+              type="button"
+              className={`up-tab ${groupsSubTab === 'list' ? 'active' : ''}`}
+              onClick={() => setGroupsSubTab('list')}
+            >
+              <Group size={14} />
+              {t('groups.title')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel-content">
         {message && (
           <div className={`up-alert ${message.type === 'success' ? 'success' : 'error'}`}>
             {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
             <span>{message.text}</span>
           </div>
         )}
-
-        <div className="up-tabs">
-          <button
-            type="button"
-            className={`up-tab ${groupsSubTab === 'create' ? 'active' : ''}`}
-            onClick={() => setGroupsSubTab('create')}
-          >
-            <UserPlus size={18} />
-            {t('groups.createEdit')}
-          </button>
-          <button
-            type="button"
-            className={`up-tab ${groupsSubTab === 'list' ? 'active' : ''}`}
-            onClick={() => setGroupsSubTab('list')}
-          >
-            <Group size={18} />
-            {t('groups.title')}
-          </button>
-        </div>
 
         {groupsSubTab === 'create' && (
           <div className="up-add-card">
@@ -541,16 +549,6 @@ export function GroupsPanel(props: GroupsPanelProps) {
 
         {groupsSubTab === 'list' && (
           <>
-            <div className="up-list-header">
-              <div className="up-list-icon">
-                <Group size={22} />
-              </div>
-              <div>
-                <h2 className="up-list-title">{t('groups.title')}</h2>
-                <p className="up-list-desc">{t('groups.description')}</p>
-              </div>
-            </div>
-
             {groups.length === 0 ? (
               <div className="up-empty">{t('groups.noGroups')}</div>
             ) : (

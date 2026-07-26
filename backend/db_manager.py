@@ -42,10 +42,18 @@ def get_db_config(password,database):
 
 
 
-def get_extensions_from_db() -> list:
-    """Get list of extension numbers from the database."""
+def get_extensions_from_db():
+    """Get list of extension numbers from the PBX database.
+
+    Returns a list on success (possibly empty when the PBX genuinely has no
+    extensions), or ``None`` when the DB could not be read at all. Callers use the
+    None-vs-[] distinction to avoid pruning local state on a transient read failure.
+    """
     config = get_db_config(os.getenv('DB_PASSWORD', ''),os.getenv('DB_NAME', 'asterisk'))
     extensions = []
+    read_ok = False
+    conn = None
+    cursor = None
 
     try:
         conn = mysql.connector.connect(**config)
@@ -56,6 +64,7 @@ def get_extensions_from_db() -> list:
             cursor.execute("SELECT extension FROM users ORDER BY extension")
             users = cursor.fetchall()
             extensions = [str(u['extension']) for u in users if u['extension']]
+            read_ok = True
         except Error:
             pass
 
@@ -65,15 +74,18 @@ def get_extensions_from_db() -> list:
                 cursor.execute("SELECT id FROM ps_endpoints WHERE id REGEXP '^[0-9]+$' ORDER BY CAST(id AS UNSIGNED)")
                 endpoints = cursor.fetchall()
                 extensions = [str(e['id']) for e in endpoints if e['id']]
+                read_ok = True
             except Error:
                 pass
 
-        cursor.close()
-        conn.close()
-
     except Error as e:
         log.warning(f"⚠️  Database error getting extensions: {e}")
+    finally:
+        _safe_close(cursor, conn)
 
+    # Neither source query succeeded → signal a read failure, not an empty PBX.
+    if not read_ok:
+        return None
     return extensions
 
 def get_extension_names_from_db() -> dict:
@@ -98,19 +110,20 @@ def get_extension_names_from_db() -> dict:
         except Error as e:
             log.debug(f"Could not get names from users table: {e}")
 
-        # If no names found, try PJSIP endpoints (description field)
-        if not extension_names:
-            try:
-                cursor.execute("SELECT id, description FROM ps_endpoints WHERE id REGEXP '^[0-9]+$' ORDER BY CAST(id AS UNSIGNED)")
-                endpoints = cursor.fetchall()
-                for e in endpoints:
-                    if e['id']:
-                        ext = str(e['id'])
-                        name = e.get('description', '') or ''
-                        if name:
-                            extension_names[ext] = name
-            except Error as e:
-                log.debug(f"Could not get names from ps_endpoints table: {e}")
+        # Fill in any extension still missing a name from PJSIP endpoints
+        # (per-extension fallback, not all-or-nothing — so a partial users.name
+        # table still gets topped up from ps_endpoints.description).
+        try:
+            cursor.execute("SELECT id, description FROM ps_endpoints WHERE id REGEXP '^[0-9]+$' ORDER BY CAST(id AS UNSIGNED)")
+            endpoints = cursor.fetchall()
+            for e in endpoints:
+                if e['id']:
+                    ext = str(e['id'])
+                    name = e.get('description', '') or ''
+                    if name and ext not in extension_names:
+                        extension_names[ext] = name
+        except Error as e:
+            log.debug(f"Could not get names from ps_endpoints table: {e}")
 
         cursor.close()
         conn.close()
@@ -400,7 +413,8 @@ def get_cdr_by_linkedid(linkedid):
 
 def get_call_log_from_db(limit: int = None, date: str = None,
                          date_from: str = None, date_to: str = None,
-                         allowed_extensions: Optional[List[str]] = None) -> list:
+                         allowed_extensions: Optional[List[str]] = None,
+                         search: str = None) -> list:
     """
     Get call log data from the database.
     
@@ -504,7 +518,18 @@ def get_call_log_from_db(limit: int = None, date: str = None,
                 )
                 params.extend(allowed_extensions)
                 params.extend(allowed_extensions)
-        
+
+        # Free-text search across caller/destination and call ids (whole-history search).
+        if search:
+            like = f"%{search.strip()}%"
+            conditions.append(
+                "("
+                "first_leg.src LIKE %s OR first_leg.dst LIKE %s OR last_leg.dst LIKE %s "
+                "OR first_leg.uniqueid LIKE %s OR first_leg.linkedid LIKE %s"
+                ")"
+            )
+            params.extend([like, like, like, like, like])
+
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         
@@ -534,7 +559,8 @@ def get_call_log_from_db(limit: int = None, date: str = None,
 
 def get_call_log_count_from_db(date: str = None,
                                 date_from: str = None, date_to: str = None,
-                                allowed_extensions: Optional[List[str]] = None) -> int:
+                                allowed_extensions: Optional[List[str]] = None,
+                                search: str = None) -> int:
     """
     Get total count of call log rows with the same filters as get_call_log_from_db
     (same JOIN/WHERE, no limit). Used so UI can show total calls beyond the fetch limit.
@@ -576,6 +602,11 @@ def get_call_log_count_from_db(date: str = None,
             )
             params.extend(allowed_extensions)
             params.extend(allowed_extensions)
+
+        if search:
+            like = f"%{search.strip()}%"
+            conditions.append("(src LIKE %s OR dst LIKE %s OR uniqueid LIKE %s OR linkedid LIKE %s)")
+            params.extend([like, like, like, like])
 
         where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         query = "SELECT COUNT(DISTINCT linkedid) AS cnt FROM cdr" + where_clause
@@ -796,9 +827,11 @@ def register_device_token(
     """
     Register (upsert) a device push token in the OpDesk DB. Idempotent: re-registering the same
     token updates its owner/extension and last_seen_at instead of creating a duplicate.
-    platform: 'ios' | 'android'. token_type: 'voip' (iOS PushKit) | 'alert' (regular APNs/FCM).
+    platform: 'ios' | 'android' | 'web'. token_type: 'voip' (iOS PushKit) | 'alert'
+    (regular APNs/FCM, and Web Push). For platform='web' the `token` column holds the
+    JSON-encoded Web Push subscription ({endpoint, keys:{p256dh, auth}}).
     """
-    if platform not in ("ios", "android") or token_type not in ("voip", "alert") or not token:
+    if platform not in ("ios", "android", "web") or token_type not in ("voip", "alert") or not token:
         return False
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
@@ -1552,6 +1585,41 @@ def get_user_agents_and_queues(user_id: int) -> tuple:
     return agents, queues
 
 
+def get_agent_login_queues(agent_ext: str) -> list:
+    """Queue extensions this agent may log in to / out of — the union of the queues
+    assigned to every group that contains this agent's *extension* (group_agents →
+    group_queues). Keys off the extension, not the user account's user_groups, so the
+    echo model holds: put a queue and an agent in the same group and that agent can
+    log in/out of it. Returns [] if the agent is in no group or none of their groups
+    have queues."""
+    ext = str(agent_ext or '').strip()
+    if not ext:
+        return []
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    queues = []
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT group_id FROM group_agents WHERE agent_ext = %s", (ext,))
+        group_ids = [r['group_id'] for r in cursor.fetchall()]
+        if not group_ids:
+            return []
+        placeholders = ",".join(["%s"] * len(group_ids))
+        cursor.execute(
+            "SELECT DISTINCT q.extension FROM group_queues gq JOIN queues q ON gq.queue_extension = q.extension "
+            "WHERE gq.group_id IN (" + placeholders + ")",
+            tuple(group_ids)
+        )
+        queues = [str(r['extension']) for r in cursor.fetchall() if r.get('extension')]
+    except Error as e:
+        log.warning(f"⚠️  Database error get_agent_login_queues: {e}")
+    finally:
+        _safe_close(cursor, conn)
+    return queues
+
+
 def set_user_agents_and_queues(user_id: int, agent_extensions: list, queue_names: list) -> bool:
     """
     Set which agents (extensions) and queues a user can access.
@@ -1604,10 +1672,27 @@ def set_user_agents_and_queues(user_id: int, agent_extensions: list, queue_names
         return False
 
 
+def _safe_close(cursor=None, conn=None) -> None:
+    """Best-effort close of a cursor + connection; never raises. Use in a finally block
+    so DB resources are released even when a query raised mid-function."""
+    if cursor is not None:
+        try:
+            cursor.close()
+        except Error:
+            pass
+    if conn is not None:
+        try:
+            conn.close()
+        except Error:
+            pass
+
+
 def get_groups_list() -> list:
     """Return all groups (excluding auto-created user_<id> ones) with agents, queues, and user ids."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     out = []
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -1631,24 +1716,24 @@ def get_groups_list() -> list:
                 "queues": queues,
                 "user_ids": user_ids,
             })
-        cursor.close()
-        conn.close()
     except Error as e:
         log.warning(f"⚠️  Database error get_groups_list: {e}")
+    finally:
+        _safe_close(cursor, conn)
     return out
 
 
 def get_group(group_id: int):
     """Return one group by id with agents, queues, and user ids, or None."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT id, name FROM groups WHERE id = %s", (group_id,))
         r = cursor.fetchone()
         if not r:
-            cursor.close()
-            conn.close()
             return None
         gid = r['id']
         cursor.execute("SELECT agent_ext FROM group_agents WHERE group_id = %s", (gid,))
@@ -1660,8 +1745,6 @@ def get_group(group_id: int):
         queues = [{"extension": x["extension"], "queue_name": x["queue_name"]} for x in cursor.fetchall()]
         cursor.execute("SELECT user_id FROM user_groups WHERE group_id = %s", (gid,))
         user_ids = [x['user_id'] for x in cursor.fetchall()]
-        cursor.close()
-        conn.close()
         return {
             "id": gid,
             "name": r["name"],
@@ -1672,6 +1755,8 @@ def get_group(group_id: int):
     except Error as e:
         log.warning(f"⚠️  Database error get_group: {e}")
         return None
+    finally:
+        _safe_close(cursor, conn)
 
 
 def create_group(name: str):
@@ -1680,18 +1765,20 @@ def create_group(name: str):
     if not name:
         return None
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO groups (name) VALUES (%s)", (name,))
         gid = cursor.lastrowid
         conn.commit()
-        cursor.close()
-        conn.close()
         return gid
     except Error as e:
         log.warning(f"⚠️  Database error create_group: {e}")
         return None
+    finally:
+        _safe_close(cursor, conn)
 
 
 def update_group(group_id: int, name: str) -> bool:
@@ -1700,25 +1787,30 @@ def update_group(group_id: int, name: str) -> bool:
     if not name or not group_id:
         return False
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         cursor.execute("UPDATE groups SET name = %s WHERE id = %s AND name NOT LIKE 'user\_%'", (name, group_id))
         ok = cursor.rowcount > 0
         conn.commit()
-        cursor.close()
-        conn.close()
         return ok
     except Error as e:
         log.warning(f"⚠️  Database error update_group: {e}")
         return False
+    finally:
+        _safe_close(cursor, conn)
 
 
 def set_group_agents(group_id: int, agent_extensions: list) -> bool:
-    """Set agents for a group. Ensures agents exist in agents table."""
+    """Replace a group's agents. Ensures agents exist. Transactional: any row error rolls
+    back the whole replacement, so a group is never left with a partial member set."""
     if not group_id:
         return False
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -1727,25 +1819,30 @@ def set_group_agents(group_id: int, agent_extensions: list) -> bool:
             ext = str(ext).strip()
             if not ext:
                 continue
-            try:
-                cursor.execute("INSERT IGNORE INTO agents (extension, name) VALUES (%s, %s)", (ext, ext))
-                cursor.execute("INSERT INTO group_agents (group_id, agent_ext) VALUES (%s, %s)", (group_id, ext))
-            except Error:
-                pass
+            cursor.execute("INSERT IGNORE INTO agents (extension, name) VALUES (%s, %s)", (ext, ext))
+            cursor.execute("INSERT INTO group_agents (group_id, agent_ext) VALUES (%s, %s)", (group_id, ext))
         conn.commit()
-        cursor.close()
-        conn.close()
         return True
     except Error as e:
         log.warning(f"⚠️  Database error set_group_agents: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Error:
+                pass
         return False
+    finally:
+        _safe_close(cursor, conn)
 
 
 def set_group_queues(group_id: int, queue_extensions: list) -> bool:
-    """Set queues for a group by queue extension. Ensures queues exist (by extension)."""
+    """Replace a group's queues by extension. Ensures queues exist. Transactional (see
+    set_group_agents)."""
     if not group_id:
         return False
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
@@ -1754,66 +1851,87 @@ def set_group_queues(group_id: int, queue_extensions: list) -> bool:
             qext = str(qext).strip()
             if not qext or qext.lower() == "default":
                 continue
-            try:
-                cursor.execute("INSERT INTO queues (extension, queue_name) VALUES (%s, %s) ON DUPLICATE KEY UPDATE queue_name = VALUES(queue_name)", (qext, qext))
-                cursor.execute("INSERT INTO group_queues (group_id, queue_extension) VALUES (%s, %s)", (group_id, qext))
-            except Error:
-                pass
+            cursor.execute("INSERT INTO queues (extension, queue_name) VALUES (%s, %s) ON DUPLICATE KEY UPDATE queue_name = VALUES(queue_name)", (qext, qext))
+            cursor.execute("INSERT INTO group_queues (group_id, queue_extension) VALUES (%s, %s)", (group_id, qext))
         conn.commit()
-        cursor.close()
-        conn.close()
         return True
     except Error as e:
         log.warning(f"⚠️  Database error set_group_queues: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Error:
+                pass
         return False
+    finally:
+        _safe_close(cursor, conn)
 
 
 def set_group_users(group_id: int, user_ids: list) -> bool:
-    """Set which users belong to this group (replaces existing)."""
+    """Replace which users belong to this group. Transactional (see set_group_agents).
+    Non-integer ids are skipped before the transaction runs, not swallowed mid-loop."""
     if not group_id:
         return False
+    clean_uids = []
+    for uid in (user_ids or []):
+        try:
+            clean_uids.append(int(uid))
+        except (ValueError, TypeError):
+            continue
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM user_groups WHERE group_id = %s", (group_id,))
-        for uid in (user_ids or []):
-            try:
-                uid = int(uid)
-                cursor.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (uid, group_id))
-            except (ValueError, Error):
-                pass
+        for uid in clean_uids:
+            cursor.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (uid, group_id))
         conn.commit()
-        cursor.close()
-        conn.close()
         return True
     except Error as e:
         log.warning(f"⚠️  Database error set_group_users: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Error:
+                pass
         return False
+    finally:
+        _safe_close(cursor, conn)
 
 
 def set_user_groups(user_id: int, group_ids: list) -> bool:
     """Set which groups a user belongs to (replaces existing). Removes user from any user_<id> auto-group."""
     if not user_id:
         return False
+    clean_gids = []
+    for gid in (group_ids or []):
+        try:
+            clean_gids.append(int(gid))
+        except (ValueError, TypeError):
+            continue
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM user_groups WHERE user_id = %s", (user_id,))
-        for gid in (group_ids or []):
-            try:
-                gid = int(gid)
-                cursor.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (user_id, gid))
-            except (ValueError, Error):
-                pass
+        for gid in clean_gids:
+            cursor.execute("INSERT INTO user_groups (user_id, group_id) VALUES (%s, %s)", (user_id, gid))
         conn.commit()
-        cursor.close()
-        conn.close()
         return True
     except Error as e:
         log.warning(f"⚠️  Database error set_user_groups: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Error:
+                pass
         return False
+    finally:
+        _safe_close(cursor, conn)
 
 
 def delete_group(group_id: int) -> bool:
@@ -1821,18 +1939,20 @@ def delete_group(group_id: int) -> bool:
     if not group_id:
         return False
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM groups WHERE id = %s AND name NOT LIKE 'user\_%'", (group_id,))
         ok = cursor.rowcount > 0
         conn.commit()
-        cursor.close()
-        conn.close()
         return ok
     except Error as e:
         log.warning(f"⚠️  Database error delete_group: {e}")
         return False
+    finally:
+        _safe_close(cursor, conn)
 
 
 def get_agents_list() -> list:
@@ -1871,43 +1991,514 @@ def get_queues_list() -> list:
         return []
 
 
-def sync_agents_from_extensions(extension_list: list, name_map: dict) -> None:
-    """Ensure OpDesk agents table has entries for given extensions (from Asterisk/FreePBX)."""
-    if not extension_list:
+def sync_agents_from_extensions(extension_list: list, name_map: dict,
+                                prune: bool = False, prune_all_when_empty: bool = False) -> None:
+    """Upsert OpDesk agents for the given extensions (from Asterisk/FreePBX).
+
+    When ``prune`` is set, agents NOT in ``extension_list`` are deleted so the table
+    stays authoritative (cascades to group_agents). As a safety guard, an empty list is
+    never pruned unless ``prune_all_when_empty`` is explicitly True — this prevents a
+    transient PBX-read failure from wiping every agent.
+    """
+    normalized = [str(e).strip() for e in (extension_list or []) if str(e).strip()]
+    if not normalized and not (prune and prune_all_when_empty):
         return
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
-        for ext in extension_list:
-            ext = str(ext).strip()
-            if not ext:
-                continue
+        for ext in normalized:
             name = (name_map or {}).get(ext) or ext
             cursor.execute("INSERT INTO agents (extension, name) VALUES (%s, %s) ON DUPLICATE KEY UPDATE name = VALUES(name)", (ext, name))
+        if prune:
+            if normalized:
+                placeholders = ",".join(["%s"] * len(normalized))
+                cursor.execute(f"DELETE FROM agents WHERE extension NOT IN ({placeholders})", tuple(normalized))
+            elif prune_all_when_empty:
+                cursor.execute("DELETE FROM agents")
         conn.commit()
-        cursor.close()
-        conn.close()
     except Error as e:
         log.warning(f"⚠️  Database error sync_agents_from_extensions: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Error:
+                pass
+    finally:
+        _safe_close(cursor, conn)
 
 
-def sync_queues_from_list(queue_extensions: list, name_map: dict = None) -> None:
-    """Ensure OpDesk queues table has entries for given queue extensions (extension as PK). Uses name_map for display names. Skips 'default' queue."""
-    if not queue_extensions:
+def sync_queues_from_list(queue_extensions: list, name_map: dict = None,
+                          prune: bool = False, prune_all_when_empty: bool = False) -> None:
+    """Upsert OpDesk queues for the given queue extensions (extension as PK). Uses
+    name_map for display names; skips the 'default' queue. When ``prune`` is set, queues
+    NOT in the list are deleted (cascades to group_queues), with the same empty-list
+    safety guard as sync_agents_from_extensions."""
+    normalized = [(q or '').strip() for q in (queue_extensions or [])]
+    normalized = [q for q in normalized if q and q.lower() != "default"]
+    if not normalized and not (prune and prune_all_when_empty):
         return
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor()
-        for qext in queue_extensions:
-            qext = (qext or '').strip()
-            if not qext or qext.lower() == "default":
-                continue
+        for qext in normalized:
             name = (name_map or {}).get(qext) or qext
             cursor.execute("INSERT INTO queues (extension, queue_name) VALUES (%s, %s) ON DUPLICATE KEY UPDATE queue_name = VALUES(queue_name)", (qext, name))
+        if prune:
+            if normalized:
+                placeholders = ",".join(["%s"] * len(normalized))
+                cursor.execute(
+                    f"DELETE FROM queues WHERE extension NOT IN ({placeholders}) AND LOWER(extension) <> 'default'",
+                    tuple(normalized),
+                )
+            elif prune_all_when_empty:
+                cursor.execute("DELETE FROM queues WHERE LOWER(extension) <> 'default'")
         conn.commit()
-        cursor.close()
-        conn.close()
     except Error as e:
         log.warning(f"⚠️  Database error sync_queues_from_list: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Error:
+                pass
+    finally:
+        _safe_close(cursor, conn)
+
+
+# ---------------------------------------------------------------------------
+# Not-Ready Codes (pause reasons) — a small admin-managed catalog used when an
+# agent goes Not-Ready (queue_pause with a reason_code).
+# ---------------------------------------------------------------------------
+
+_DEFAULT_PAUSE_REASONS = [
+    # (code, label, productive, color, sort_order, is_system)
+    ("break", "Break", 0, "#d29922", 10, 0),
+    ("lunch", "Lunch", 0, "#f85149", 20, 0),
+    ("meeting", "Meeting", 1, "#58a6ff", 30, 0),
+    ("training", "Training", 1, "#3fb950", 40, 0),
+]
+
+
+def init_call_supervision_table() -> None:
+    """Create the call_supervision table (if missing). One row per ChanSpy leg,
+    keyed by the spy channel's linkedid, so the call log can flag/hide supervision
+    (listen/whisper/barge) rows and attach them to the monitored call."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS call_supervision (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                spy_linkedid VARCHAR(64) NOT NULL UNIQUE,
+                spy_uniqueid VARCHAR(64) NULL,
+                target_linkedid VARCHAR(64) NULL,
+                target_extension VARCHAR(20) NULL,
+                supervisor_extension VARCHAR(20) NULL,
+                mode ENUM('listen','whisper','barge') NOT NULL DEFAULT 'listen',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_spy_linkedid (spy_linkedid),
+                INDEX idx_target_linkedid (target_linkedid),
+                INDEX idx_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Error as e:
+        log.warning(f"⚠️  Database error init_call_supervision_table: {e}")
+    finally:
+        _safe_close(cursor, conn)
+
+
+def record_supervision(
+    spy_linkedid: str,
+    target_linkedid: Optional[str] = None,
+    target_extension: Optional[str] = None,
+    supervisor_extension: Optional[str] = None,
+    mode: str = "listen",
+    spy_uniqueid: Optional[str] = None,
+) -> bool:
+    """Record one supervision event, keyed by the ChanSpy leg's linkedid.
+    mode is one of 'listen' | 'whisper' | 'barge'. Idempotent on spy_linkedid."""
+    if not spy_linkedid:
+        return False
+    if mode not in ("listen", "whisper", "barge"):
+        mode = "listen"
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO call_supervision
+                   (spy_linkedid, spy_uniqueid, target_linkedid, target_extension,
+                    supervisor_extension, mode)
+               VALUES (%s, %s, %s, %s, %s, %s)
+               ON DUPLICATE KEY UPDATE
+                   spy_uniqueid=VALUES(spy_uniqueid),
+                   target_linkedid=VALUES(target_linkedid),
+                   target_extension=VALUES(target_extension),
+                   supervisor_extension=VALUES(supervisor_extension),
+                   mode=VALUES(mode)""",
+            (str(spy_linkedid), spy_uniqueid, target_linkedid,
+             target_extension, supervisor_extension, mode),
+        )
+        conn.commit()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  DB error recording supervision ({spy_linkedid}): {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def get_supervision_by_spy_keys(keys: List[str]) -> dict:
+    """Fetch supervision rows whose spy_linkedid OR spy_uniqueid is in `keys`.
+    Returns a dict keyed by BOTH spy_linkedid and spy_uniqueid → row dict, so a
+    call-log row can be matched by either its linkedid or its uniqueid. Used to
+    flag the standalone ChanSpy row as supervision so the UI can hide it."""
+    ids = [str(x) for x in keys if x]
+    if not ids:
+        return {}
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    out: dict = {}
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        placeholders = ", ".join(["%s"] * len(ids))
+        cursor.execute(
+            f"""SELECT spy_linkedid, spy_uniqueid, target_linkedid, target_extension,
+                       supervisor_extension, mode
+                FROM call_supervision
+                WHERE spy_linkedid IN ({placeholders})
+                   OR spy_uniqueid IN ({placeholders})""",
+            tuple(ids) + tuple(ids),
+        )
+        for row in cursor.fetchall():
+            d = dict(row)
+            if d.get("spy_linkedid"):
+                out[str(d["spy_linkedid"])] = d
+            if d.get("spy_uniqueid"):
+                out[str(d["spy_uniqueid"])] = d
+    except Error as e:
+        log.warning(f"⚠️  DB error fetching call_supervision by spy keys: {e}")
+    finally:
+        _safe_close(cursor, conn)
+    return out
+
+
+def get_supervision_targets(target_linkedids: List[str]) -> dict:
+    """Bulk lookup of supervision rows grouped by the monitored call's linkedid.
+    Returns {target_linkedid: [supervision rows]} so the call log can flag which
+    monitored calls were supervised (to surface a marker) in one query."""
+    ids = [str(x) for x in target_linkedids if x]
+    if not ids:
+        return {}
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    out: dict = {}
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        placeholders = ", ".join(["%s"] * len(ids))
+        cursor.execute(
+            f"""SELECT spy_linkedid, target_linkedid, target_extension,
+                       supervisor_extension, mode, created_at
+                FROM call_supervision
+                WHERE target_linkedid IN ({placeholders})
+                ORDER BY created_at ASC""",
+            tuple(ids),
+        )
+        for row in cursor.fetchall():
+            out.setdefault(str(row["target_linkedid"]), []).append(dict(row))
+    except Error as e:
+        log.warning(f"⚠️  DB error fetching call_supervision targets: {e}")
+    finally:
+        _safe_close(cursor, conn)
+    return out
+
+
+def init_pause_reasons_table() -> None:
+    """Create the pause_reasons table (if missing) and seed default codes once."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pause_reasons (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                code VARCHAR(64) NOT NULL UNIQUE,
+                label VARCHAR(191) NOT NULL,
+                productive TINYINT(1) NOT NULL DEFAULT 0,
+                color VARCHAR(16) DEFAULT NULL,
+                sort_order INT NOT NULL DEFAULT 100,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                is_system TINYINT(1) NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cursor.execute("SELECT COUNT(*) FROM pause_reasons")
+        (count,) = cursor.fetchone()
+        if not count:
+            for code, label, productive, color, order, is_system in _DEFAULT_PAUSE_REASONS:
+                cursor.execute(
+                    "INSERT INTO pause_reasons (code, label, productive, color, sort_order, is_active, is_system) "
+                    "VALUES (%s, %s, %s, %s, %s, 1, %s)",
+                    (code, label, productive, color, order, is_system),
+                )
+        # Widen the device_tokens.platform enum to include 'web' for browser Web Push
+        # (idempotent — MODIFY is a no-op if it already includes 'web').
+        try:
+            cursor.execute(
+                "ALTER TABLE device_tokens MODIFY platform ENUM('ios','android','web') NOT NULL"
+            )
+        except Error:
+            pass  # table may not exist yet on a brand-new DB (schema.sql already has 'web')
+        conn.commit()
+    except Error as e:
+        log.warning(f"⚠️  Database error init_pause_reasons_table: {e}")
+    finally:
+        _safe_close(cursor, conn)
+
+
+def pause_reason_list(active_only: bool = False, include_system: bool = True) -> list:
+    """Return pause reasons ordered by sort_order. active_only hides inactive codes;
+    include_system=False hides system codes."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    out = []
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        conditions = []
+        if active_only:
+            conditions.append("is_active = 1")
+        if not include_system:
+            conditions.append("is_system = 0")
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        cursor.execute(f"SELECT id, code, label, productive, color, sort_order, is_active, is_system FROM pause_reasons{where} ORDER BY sort_order, label")
+        out = cursor.fetchall()
+    except Error as e:
+        log.warning(f"⚠️  Database error pause_reason_list: {e}")
+    finally:
+        _safe_close(cursor, conn)
+    return out
+
+
+def pause_reason_create(code: str, label: str, productive: bool = False,
+                        color: str = None, sort_order: int = 100, is_active: bool = True):
+    """Create a pause reason. Returns the new id or None."""
+    code = (code or '').strip()
+    label = (label or '').strip()
+    if not code or not label:
+        return None
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO pause_reasons (code, label, productive, color, sort_order, is_active, is_system) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 0)",
+            (code, label, 1 if productive else 0, color, int(sort_order or 100), 1 if is_active else 0),
+        )
+        gid = cursor.lastrowid
+        conn.commit()
+        return gid
+    except Error as e:
+        log.warning(f"⚠️  Database error pause_reason_create: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+def pause_reason_update(reason_id: int, fields: dict) -> bool:
+    """Update a pause reason's mutable fields (label, productive, color, sort_order,
+    is_active). The code and is_system flag are immutable."""
+    if not reason_id or not fields:
+        return False
+    allowed = {"label", "productive", "color", "sort_order", "is_active"}
+    sets = []
+    params = []
+    for key, val in fields.items():
+        if key not in allowed:
+            continue
+        if key in ("productive", "is_active"):
+            val = 1 if val else 0
+        elif key == "sort_order":
+            val = int(val or 100)
+        sets.append(f"{key} = %s")
+        params.append(val)
+    if not sets:
+        return False
+    params.append(reason_id)
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE pause_reasons SET {', '.join(sets)} WHERE id = %s", tuple(params))
+        conn.commit()
+        return cursor.rowcount >= 0
+    except Error as e:
+        log.warning(f"⚠️  Database error pause_reason_update: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def pause_reason_delete(reason_id: int) -> bool:
+    """Delete a non-system pause reason."""
+    if not reason_id:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM pause_reasons WHERE id = %s AND is_system = 0", (reason_id,))
+        ok = cursor.rowcount > 0
+        conn.commit()
+        return ok
+    except Error as e:
+        log.warning(f"⚠️  Database error pause_reason_delete: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def pause_reason_get(code: str) -> Optional[dict]:
+    """Return a single pause reason by code, or None."""
+    if not code:
+        return None
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT id, code, label, productive, color, sort_order, is_active, is_system "
+            "FROM pause_reasons WHERE code = %s",
+            (code,),
+        )
+        return cursor.fetchone()
+    except Error as e:
+        log.warning(f"⚠️  Database error pause_reason_get: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+# ── Agent presence segments (agent_activity) ─────────────────────────────────
+# Append-only presence log powering the Agent Adherence report. The presence
+# recorder (backend/agent_presence.py) is the only writer.
+def init_agent_activity_table() -> None:
+    """Create the agent_activity table (if missing). Idempotent; called at startup."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_activity (
+                id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+                agent_ext     VARCHAR(20) NOT NULL,
+                state         VARCHAR(20) NOT NULL,
+                reason_code   VARCHAR(64) NULL,
+                queue         VARCHAR(40) NULL,
+                linkedid      VARCHAR(64) NULL,
+                started_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ended_at      TIMESTAMP NULL DEFAULT NULL,
+                duration_secs INT NULL,
+                source        VARCHAR(20) NOT NULL DEFAULT 'ui',
+                INDEX idx_agent_started (agent_ext, started_at),
+                INDEX idx_started (started_at),
+                INDEX idx_open (agent_ext, ended_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Error as e:
+        log.warning(f"⚠️  Database error init_agent_activity_table: {e}")
+    finally:
+        _safe_close(cursor, conn)
+
+
+def agent_activity_transition(agent_ext: str, new_state: Optional[str], reason_code: Optional[str] = None,
+                              queue: Optional[str] = None, linkedid: Optional[str] = None,
+                              source: str = 'ui') -> Optional[int]:
+    """Atomically close the agent's open segment (set ended_at/duration_secs) and, when
+    new_state is not None, open a fresh one. new_state=None means logged out (close only).
+    Both statements share one connection/commit so a transition is never half-applied.
+    Returns the new open segment's id, or None on logout/error."""
+    ext = str(agent_ext or '').strip()
+    if not ext:
+        return None
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE agent_activity SET ended_at = NOW(), "
+            "duration_secs = TIMESTAMPDIFF(SECOND, started_at, NOW()) "
+            "WHERE agent_ext = %s AND ended_at IS NULL",
+            (ext,),
+        )
+        new_id = None
+        if new_state is not None:
+            cursor.execute(
+                "INSERT INTO agent_activity (agent_ext, state, reason_code, queue, linkedid, source) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (ext, new_state, reason_code, queue, linkedid, source),
+            )
+            new_id = cursor.lastrowid
+        conn.commit()
+        return new_id
+    except Error as e:
+        log.warning(f"⚠️  Database error agent_activity_transition({ext}, {new_state}): {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+def agent_activity_close_all_open(source: str = 'system') -> int:
+    """Close every open segment. Used at startup before re-hydrating from live queue
+    state, so a segment left open by a previous process is clamped to now rather than
+    counting time while the backend was down. Returns rows affected."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE agent_activity SET ended_at = NOW(), "
+            "duration_secs = TIMESTAMPDIFF(SECOND, started_at, NOW()) "
+            "WHERE ended_at IS NULL"
+        )
+        n = cursor.rowcount
+        conn.commit()
+        return n
+    except Error as e:
+        log.warning(f"⚠️  Database error agent_activity_close_all_open: {e}")
+        return 0
+    finally:
+        _safe_close(cursor, conn)

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, type ReactNode } from 'react';
 import type { WebRtcConfig } from '../hooks/useWebPhone';
 import type { WebPhoneStatus, IncomingCallInfo } from '../lib/webPhone';
+import type { CallStats } from '../lib/callStats';
 
 export interface WebPhoneContextValue {
   config: WebRtcConfig | null;
@@ -39,6 +40,8 @@ export interface WebPhoneContextValue {
   toggleHold: () => void;
   transfer: (destination: string) => Promise<void> | void;
   unlockRemoteAudio: () => void;
+  /** Live WebRTC media quality for the active call (null when no inbound audio yet). */
+  callStats: CallStats | null;
 }
 
 const WebPhoneContext = createContext<WebPhoneContextValue | null>(null);

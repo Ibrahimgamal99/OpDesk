@@ -5,7 +5,7 @@ import {
   ArrowUpDown, Search, Phone, X, Download, Play, Pause,
   ChevronLeft, ChevronRight, Loader2, BarChart3, Route,
   PhoneIncoming, PhoneOutgoing, ListOrdered, PhoneCall, Share2, PhoneOff, PhoneMissed,
-  Activity,
+  Activity, Ear, Mic, Users,
 } from 'lucide-react';
 import { FilterSelect, type SelectOption } from './FilterSelect';
 import type { CallLogRecord, QoSData, CallJourneyEvent } from '../types';
@@ -698,6 +698,9 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   const [statusFilter, setStatusFilter] = useState('');
   const [callTypeFilter, setCallTypeFilter] = useState('');
   const [appFilter, setAppFilter] = useState('');
+  // Supervision (listen/whisper/barge) rows are their own ChanSpy CDR calls. Hidden
+  // by default; a filter surfaces them on demand.
+  const [showSupervision, setShowSupervision] = useState(false);
 
   // Sort & pagination
   const [sortAsc, setSortAsc] = useState(false);
@@ -712,6 +715,14 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   const [vadModal, setVadModal] = useState<{ vad: VadData; recordingFile: string | null } | null>(null);
   const [vadLoadingUniqueid, setVadLoadingUniqueid] = useState<string | null>(null);
 
+  // Debounce the search box so it queries the server (whole-history search) rather
+  // than only filtering the already-loaded page.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
+    return () => window.clearTimeout(id);
+  }, [searchQuery]);
+
   // Fetch data
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -721,6 +732,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       params.set('limit', '500');
       params.set('date_from', dateRange.from);
       params.set('date_to', dateRange.to);
+      if (debouncedSearch) params.set('search', debouncedSearch);
       const res = await fetch(`/api/call-log?${params.toString()}`, { headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
@@ -731,7 +743,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
+  }, [dateRange, debouncedSearch]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -739,6 +751,9 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   const statusOptions = Array.from(new Set(calls.map(c => c.status))).filter(Boolean).sort();
   const callTypeOptions = Array.from(new Set(calls.map(c => c.call_type))).filter(Boolean).sort();
   const appOptions = Array.from(new Set(calls.map(c => c.app))).filter(Boolean).sort();
+  // Count of hidden supervision (listen/whisper/barge) rows in the loaded set, so the
+  // filter chip can advertise how many rows it is hiding.
+  const supervisionCount = calls.filter(c => c.is_supervision).length;
 
   function statusDot(s: string): SelectOption['dot'] {
     if (s === 'ANSWERED') return 'green';
@@ -753,14 +768,11 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
     return 'neutral';
   }
 
-  // Filtered + sorted
+  // Filtered + sorted. Search is applied server-side (whole history, incl. uniqueid/
+  // linkedid); status/type/app stay client-side over the fetched set.
   const filtered = calls.filter(c => {
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchSrc = c.src?.toLowerCase().includes(q);
-      const matchDst = c.dst?.toLowerCase().includes(q);
-      if (!matchSrc && !matchDst) return false;
-    }
+    // Supervision (listen/whisper/barge) rows are hidden unless explicitly shown.
+    if (!showSupervision && c.is_supervision) return false;
     if (statusFilter && c.status !== statusFilter) return false;
     if (callTypeFilter && c.call_type !== callTypeFilter) return false;
     if (appFilter && c.app !== appFilter) return false;
@@ -780,7 +792,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   const pageItems = sorted.slice(startIdx, startIdx + ITEMS_PER_PAGE);
 
   // Reset page on filter change
-  useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, callTypeFilter, appFilter, dateRange]);
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, callTypeFilter, appFilter, showSupervision, dateRange]);
 
   const handleOpenQos = (call: CallLogRecord) => {
     const qos = parseQoS(call.QoS);
@@ -869,6 +881,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
           <FilterSelect
             value={statusFilter}
             onChange={setStatusFilter}
+            size="md"
             style={{ width: '100%' }}
             options={[
               { value: '', label: t('callLog.allStatuses') },
@@ -885,6 +898,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
             value={callTypeFilter}
             onChange={setCallTypeFilter}
             icon={ArrowUpDown}
+            size="md"
             style={{ width: '100%' }}
             options={[
               { value: '', label: t('callLog.allDirections') },
@@ -900,6 +914,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
           <FilterSelect
             value={appFilter}
             onChange={setAppFilter}
+            size="md"
             style={{ width: '100%' }}
             options={[
               { value: '', label: t('callLog.allApps') },
@@ -907,6 +922,20 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
             ]}
           />
         </div>
+        {supervisionCount > 0 && (
+          <div className="cl-filter-item">
+            <FilterSelect
+              value={showSupervision ? 'show' : ''}
+              onChange={(v) => setShowSupervision(v === 'show')}
+              size="md"
+              style={{ width: '100%' }}
+              options={[
+                { value: '', label: t('callLog.supervisionHidden', { count: supervisionCount }) },
+                { value: 'show', label: t('callLog.supervisionShown') },
+              ]}
+            />
+          </div>
+        )}
         <PeriodPicker value={dateRange} onChange={onDateRangeChange} />
       </div>
 
@@ -964,12 +993,20 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                     </td>
                     <td data-label={t('callLog.table.app')}>{call.app || '—'}</td>
                     <td data-label={t('callLog.table.direction')}>
-                      <span className={`cl-direction cl-direction-${call.call_type?.toLowerCase()}`}>
-                        {call.call_type === 'IN' ? '📥 IN' :
-                         call.call_type === 'OUT' ? '📤 OUT' :
-                         call.call_type === 'INTERNAL' ? '🔄 INT' :
-                         call.call_type || '—'}
-                      </span>
+                      {call.is_supervision ? (
+                        <span className="cl-direction cl-direction-supervision">
+                          {call.supervision?.mode === 'whisper' ? <><Mic size={11} /> {t('callLog.supervision.WHISPER')}</> :
+                           call.supervision?.mode === 'barge' ? <><Users size={11} /> {t('callLog.supervision.BARGE')}</> :
+                           <><Ear size={11} /> {t('callLog.supervision.LISTEN')}</>}
+                        </span>
+                      ) : (
+                        <span className={`cl-direction cl-direction-${call.call_type?.toLowerCase()}`}>
+                          {call.call_type === 'IN' ? '📥 IN' :
+                           call.call_type === 'OUT' ? '📤 OUT' :
+                           call.call_type === 'INTERNAL' ? '🔄 INT' :
+                           call.call_type || '—'}
+                        </span>
+                      )}
                     </td>
                     <td data-label={t('callLog.table.status')}>
                       <span

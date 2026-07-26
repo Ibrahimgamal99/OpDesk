@@ -158,6 +158,13 @@
     "allStatuses": "Todos los estados",
     "allDirections": "Todas las direcciones",
     "allApps": "Todas las aplicaciones",
+    "supervisionHidden": "Supervisión oculta ({{count}})",
+    "supervisionShown": "Mostrando supervisión",
+    "supervision": {
+      "LISTEN": "ESCUCHA",
+      "WHISPER": "SUSURRO",
+      "BARGE": "IRRUPCIÓN"
+    },
     "totalCalls": "Total de llamadas",
     "showing": "Mostrando {{start}} a {{end}} de {{total}} llamadas",
     "previous": "Anterior",
@@ -276,7 +283,16 @@
       "registered": "Registrado",
       "error": "Error",
       "notRegistered": "No registrado"
-    }
+    },
+    "qos_na": "Señal: N/D",
+    "qos_excellent": "Señal: Excelente",
+    "qos_good": "Señal: Buena",
+    "qos_fair": "Señal: Regular",
+    "qos_poor": "Señal: Débil",
+    "quality_mos": "MOS",
+    "quality_jitter": "Jitter",
+    "quality_loss": "Pérdida",
+    "quality_rtt": "Latencia"
   },
   "users": {
     "title": "Todos los usuarios",
@@ -496,6 +512,7 @@
       "overview": "Resumen",
       "queues": "Rendimiento de colas",
       "agents": "Rendimiento de agentes",
+      "adherence": "Adherencia",
       "drilldown": "Explorador"
     },
     "period": {
@@ -597,6 +614,27 @@
       "shortAbandon": "Umbral de abandono corto",
       "save": "Guardar configuración de analíticas",
       "saved": "¡Guardado!"
+    }
+  },
+  "agent": {
+    "adherence": {
+      "title": "Adherencia del agente",
+      "subtitle": "Tiempo de conexión, disponible, en llamada y pausa por agente en el periodo seleccionado.",
+      "agent": "Agente",
+      "login": "Entrada",
+      "logout": "Salida",
+      "loggedIn": "Conectado",
+      "ready": "Disponible",
+      "onCall": "En llamada",
+      "wrapUp": "Post-llamada",
+      "notReady": "No disponible",
+      "occupancy": "Ocupación",
+      "stillIn": "Activo",
+      "empty": "Sin actividad de agentes en este periodo",
+      "exportCsv": "CSV",
+      "exportXlsx": "Excel",
+      "exporting": "Exportando…",
+      "exportFailed": "Error al exportar. Inténtalo de nuevo."
     }
   }
 }

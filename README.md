@@ -20,8 +20,12 @@ Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled
 
 - **Roles**: Admin (full access) and Supervisor (scoped to assigned extensions/queues).
 - **Real-time**: Extension status, active calls, queue state, and call notifications via WebSocket.
+- **Dashboard**: Live landing screen — active-call count, waiting/ringing/longest-wait, a workforce-availability bar (available/on-call/ringing/offline), today's KPIs, and a live queue board. Updates from the WebSocket state with no polling.
+- **Do Not Disturb**: Per-extension DND toggle on the Extensions grid. Sets the Asterisk DB `DND` flag (honoured by both FreePBX and Issabel); state reflects live to every client.
+- **Agent queue Login/Logout**: From the softphone, agents log into / out of their assigned queues (same `QueueAdd`/`QueueRemove` mechanism as the Queues panel) and set **Ready / Not-Ready** with a reason.
+- **Not-Ready Codes**: Admin-managed pause-reason catalog (Settings → Not-Ready Codes) — code, label, colour, productive flag; agents pick one when going Not-Ready.
 - **Supervision**: Listen, Whisper, Barge (per-user configurable).
-- **Call management**: CDR/call log, filtering, search, recording playback, QoS, **Call Journey** (timeline for multi-leg calls in the call log).
+- **Call management**: CDR/call log, filtering, whole-history **search** (caller/destination/uniqueid/linkedid), recording playback, QoS, **Call Journey** (timeline for multi-leg calls in the call log).
 - **Web softphone**: Make/receive calls in the browser (WebRTC); hold, mute, transfer.
 - **Notifications**: Missed/busy calls in a header bell; per-extension; mark read/archive; 7-day auto-cleanup of read items.
 - **CRM**: Push call data to external CRMs (API Key, Basic Auth, Bearer, OAuth2) — selectable fields, per-direction filtering, POST/PUT, test-connection, live reload, SSRF-guarded.
@@ -29,8 +33,9 @@ Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled
 - **Call recording**: Full-call recording via MixMonitor — writes a mixed file (FreePBX CDR-compatible location) plus two separate single-leg WAVs (`-sp1` caller, `-sp2` callee) for every inbound, outbound, and internal call. Format and enable/disable are configurable from Settings.
 - **Voice Activity Detection (VAD)**: Automatic post-call analysis of the two recording legs. Primary engine: **Silero VAD** (ONNX runtime, neural, robust on telephony audio); fallback: **WebRTC VAD** with sliding-window smoothing. Stores per-leg talk time, simultaneous-speech overlap, and the full segment timeline in the DB. Results are visible in the Call Log — click the waveform icon on any recording to open the VAD timeline visualization showing caller vs. callee speech side-by-side.
 - **Multi-language UI**: Built-in i18n with support for English, Arabic (RTL), Spanish, and Portuguese — switchable from the UI without any restart.
-- **Mobile push notifications**: Wake a Flutter/native iOS/Android softphone for incoming calls via APNs VoIP (PushKit + CallKit) and high-priority FCM — no background socket required.
-- **Service worker**: Enables incoming-call notifications while the browser tab is backgrounded (tab alive, no Web Push/VAPID required). Notification tap focuses an existing app tab or opens one.
+- **Mobile push notifications**: Wake a Flutter/native iOS/Android softphone for incoming calls via APNs VoIP (PushKit + CallKit) and high-priority FCM — no background socket required. The predial dialplan hook now **polls** `PJSIP_DIAL_CONTACTS` and rings the moment the woken app re-registers (instead of always waiting the full timeout); the wait is read live from the `MOBILE_WAKE_WAIT` setting.
+- **Web Push (browser)**: Optional VAPID Web Push wakes a fully closed/backgrounded browser tab for incoming calls. Enabled by generating VAPID keys (`python backend/generate_vapid_keys.py`) and setting `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`; cleanly disabled (no-op) when unset. The service worker relays the push to open tabs and shows a notification.
+- **Service worker**: Enables incoming-call notifications while the browser tab is backgrounded (tab alive). Notification tap focuses an existing app tab or opens one.
 - **Mobile diagnostic logging**: Optional remote log sink (`?debug=1` URL flag, persisted to localStorage). The frontend batches entries and ships them via `navigator.sendBeacon()` — survives `pagehide`/freeze so SIP teardown events at call drop are captured. Lands in the backend log under `CLIENT[session]`; never stored to DB.
 
 ---
@@ -249,6 +254,11 @@ The service runs as the user who executed the installer, restarts automatically 
 | Topic | Summary |
 |-------|--------|
 | **Auth** | Username or extension + password; JWT. Admin sees all; Supervisor sees only assigned extensions/queues. |
+| **Dashboard** | Live landing tab: active calls, waiting/ringing/longest-wait, workforce-availability bar, today's KPIs, and a live queue board (KPIs/board admin+supervisor only). |
+| **Do Not Disturb** | Bell toggle on each Extensions card (disabled while on a call). Writes the Asterisk DB `DND` flag via AMI; broadcasts live. Works on FreePBX and Issabel. |
+| **Queue Login/Logout** | In the softphone header: Login adds your extension to your assigned queues, Logout removes it; the status menu sets Ready or Not-Ready (with a reason). Uses the same `QueueAdd`/`QueueRemove`/`QueuePause` mechanism as the Queues panel. |
+| **Not-Ready Codes** | Settings → Not-Ready Codes (admin): create/edit/delete pause reasons (code, label, colour, productive). Agents pick one when going Not-Ready. |
+| **Web Push** | Run `python backend/generate_vapid_keys.py`, paste the keys into `backend/.env`, restart. The browser subscribes after login; incoming calls wake even a closed tab. Disabled/no-op without keys. |
 | **Softphone** | Requires HTTPS (granted automatically by the Nginx setup). `WEBRTC_PBX_SERVER` is computed dynamically from the request host — no manual configuration needed. SIP WebSocket is proxied at `wss://<host>/sip-ws` → Asterisk plain WS on `127.0.0.1:8088`. SIP clients that include `Sec-WebSocket-Protocol: sip` when connecting to the root path (`wss://<host>/`) are automatically detected and routed to Asterisk — no explicit `/sip-ws` path required. |
 | **Call Journey** | In Call Log: open the journey button (route icon) on a row to see the event timeline (queue, ring, answer, transfer, etc.). |
 | **Call notifications** | Stored in `call_notifications`; MySQL event cleans read notifications after 7 days. |

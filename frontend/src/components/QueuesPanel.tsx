@@ -35,6 +35,22 @@ function memberStatusClass(member: QueueMember): string {
   return '';
 }
 
+/** Readable status label for a queue member — mirrors the extension-card status
+ *  effect: Not-Ready (with reason) / In Call / Unavailable / Ready. */
+function memberStatusLabel(
+  member: QueueMember,
+  t: (k: string, o?: Record<string, unknown>) => string,
+): string {
+  if (member.paused) {
+    const base = t('queues.notReady', { defaultValue: 'Not Ready' });
+    return member.pause_reason ? `${base} · ${member.pause_reason}` : base;
+  }
+  const cls = memberStatusClass(member);
+  if (cls === 'unavailable') return t('queues.memberUnavailable', { defaultValue: 'Unavailable' });
+  if (cls === 'busy') return t('queues.memberInCall', { defaultValue: 'In Call' });
+  return t('queues.memberReady', { defaultValue: 'Ready' });
+}
+
 export function QueuesPanel({ queues, members, entries, sendAction, onSync }: QueuesPanelProps) {
   const { t } = useTranslation();
   const [showAddMember, setShowAddMember] = useState<string | null>(null);
@@ -317,6 +333,9 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                           <div>
                             <div className="queue-member-name">
                               {member.membername || member.interface}
+                              <span className={`queue-member-badge ${memberStatusClass(member) || 'ready'}`}>
+                                {memberStatusLabel(member, t)}
+                              </span>
                             </div>
                             <div className="queue-member-interface">
                               {member.interface}
