@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { WebPhone, type WebPhoneStatus, type WebPhoneCallbacks, type IncomingCallInfo } from '../lib/webPhone';
+import type { CallStats } from '../lib/callStats';
 import { fetchWithAuth } from '../auth';
 
 // Minimal valid silent WAV (8-bit mono 8 kHz, ~100 samples) — used to unlock audio
@@ -30,6 +31,7 @@ export function useWebPhone() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isOnHold, setIsOnHold] = useState(false);
+  const [callStats, setCallStats] = useState<CallStats | null>(null);
   const [dialNumber, setDialNumber] = useState('');
   const [lastDialedNumber, setLastDialedNumber] = useState<string>(
     () => localStorage.getItem('softphone_last_number') ?? ''
@@ -326,6 +328,20 @@ export function useWebPhone() {
     if (isCallAnswered) setIncomingCall(null);
   }, [isCallAnswered]);
 
+  // Poll live WebRTC media quality (MOS / jitter / loss / latency) while answered,
+  // so the softphone can show a signal-strength read-out during the call.
+  useEffect(() => {
+    if (!isCallAnswered) { setCallStats(null); return; }
+    let cancelled = false;
+    const sample = async () => {
+      const s = (await phoneRef.current?.getStats()) ?? null;
+      if (!cancelled) setCallStats(s);
+    };
+    sample();
+    const id = setInterval(sample, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [isCallAnswered]);
+
   // Clear active-call display and dial number when call ends
   useEffect(() => {
     if (!hasActiveCall) {
@@ -387,5 +403,6 @@ export function useWebPhone() {
     isOnHold,
     toggleHold,
     unlockRemoteAudio,
+    callStats,
   };
 }

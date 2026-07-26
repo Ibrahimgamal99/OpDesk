@@ -158,6 +158,13 @@
     "allStatuses": "Todos os status",
     "allDirections": "Todas as direções",
     "allApps": "Todos os aplicativos",
+    "supervisionHidden": "Supervisão oculta ({{count}})",
+    "supervisionShown": "Mostrando supervisão",
+    "supervision": {
+      "LISTEN": "ESCUTA",
+      "WHISPER": "SUSSURRO",
+      "BARGE": "INTERRUPÇÃO"
+    },
     "totalCalls": "Total de chamadas",
     "showing": "Mostrando {{start}} a {{end}} de {{total}} chamadas",
     "previous": "Anterior",
@@ -276,7 +283,16 @@
       "registered": "Registrado",
       "error": "Erro",
       "notRegistered": "Não registrado"
-    }
+    },
+    "qos_na": "Sinal: N/D",
+    "qos_excellent": "Sinal: Excelente",
+    "qos_good": "Sinal: Bom",
+    "qos_fair": "Sinal: Razoável",
+    "qos_poor": "Sinal: Fraco",
+    "quality_mos": "MOS",
+    "quality_jitter": "Jitter",
+    "quality_loss": "Perda",
+    "quality_rtt": "Latência"
   },
   "users": {
     "title": "Todos os usuários",
@@ -496,6 +512,7 @@
       "overview": "Visão geral",
       "queues": "Desempenho de filas",
       "agents": "Desempenho de agentes",
+      "adherence": "Aderência",
       "drilldown": "Explorador"
     },
     "period": {
@@ -597,6 +614,27 @@
       "shortAbandon": "Limite de abandono curto",
       "save": "Salvar configurações de análises",
       "saved": "Salvo!"
+    }
+  },
+  "agent": {
+    "adherence": {
+      "title": "Aderência do agente",
+      "subtitle": "Tempo de login, disponível, em chamada e pausa por agente no período selecionado.",
+      "agent": "Agente",
+      "login": "Entrada",
+      "logout": "Saída",
+      "loggedIn": "Conectado",
+      "ready": "Disponível",
+      "onCall": "Em chamada",
+      "wrapUp": "Pós-atendimento",
+      "notReady": "Indisponível",
+      "occupancy": "Ocupação",
+      "stillIn": "Ativo",
+      "empty": "Sem atividade de agentes neste período",
+      "exportCsv": "CSV",
+      "exportXlsx": "Excel",
+      "exporting": "Exportando…",
+      "exportFailed": "Falha na exportação. Tente novamente."
     }
   }
 }

@@ -49,6 +49,12 @@ except ImportError:  # pragma: no cover
     _gsa = None
     _GoogleAuthRequest = None
 
+try:
+    from pywebpush import webpush as _webpush, WebPushException as _WebPushException
+except ImportError:  # pragma: no cover
+    _webpush = None
+    _WebPushException = Exception
+
 
 # =============================================================================
 # Configuration helpers
@@ -63,6 +69,59 @@ def _fcm_project_id() -> str:
 
 def _fcm_service_account_file() -> str:
     return (os.getenv("FCM_SERVICE_ACCOUNT_FILE", "") or "").strip()
+
+
+# --- Web Push (VAPID) --------------------------------------------------------
+def _vapid_public_key() -> str:
+    return (os.getenv("VAPID_PUBLIC_KEY", "") or "").strip()
+
+
+def _vapid_private_key() -> str:
+    return (os.getenv("VAPID_PRIVATE_KEY", "") or "").strip()
+
+
+def _vapid_subject() -> str:
+    return (os.getenv("VAPID_SUBJECT", "") or "").strip() or "mailto:admin@opdesk.local"
+
+
+def web_push_enabled() -> bool:
+    """Web Push is available only when pywebpush is installed and VAPID keys are set.
+    Everything degrades to a no-op otherwise, so the feature is opt-in and safe."""
+    return bool(_webpush is not None and _vapid_public_key() and _vapid_private_key())
+
+
+def _send_web_push(subscription_json: str, payload: dict) -> bool:
+    """Send one Web Push message to a stored browser subscription (JSON string).
+    Returns True on success. Deletes the stored token on a 404/410 (expired sub)."""
+    if not web_push_enabled():
+        return False
+    try:
+        subscription = json.loads(subscription_json)
+    except (ValueError, TypeError):
+        return False
+    try:
+        _webpush(
+            subscription_info=subscription,
+            data=json.dumps(payload),
+            vapid_private_key=_vapid_private_key(),
+            vapid_claims={"sub": _vapid_subject()},
+            ttl=30,
+        )
+        return True
+    except _WebPushException as e:  # pragma: no cover - network dependent
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status in (404, 410):
+            # Subscription is gone — drop it so we stop trying.
+            try:
+                delete_device_token(subscription_json)
+            except Exception:
+                pass
+        else:
+            log.warning(f"Web push failed: {type(e).__name__}")
+        return False
+    except Exception as e:  # pragma: no cover
+        log.warning(f"Web push error: {type(e).__name__}")
+        return False
 
 
 def fcm_enabled() -> bool:
@@ -298,7 +357,7 @@ async def send_call_wake(
     Android: high-priority FCM sent to any registered token — Android has no PushKit distinction,
     so the FCM token registered as 'alert' is equally valid for call wakes.
     """
-    if not fcm_enabled() and not apns_enabled():
+    if not fcm_enabled() and not apns_enabled() and not web_push_enabled():
         return
     # Fetch all tokens for the extension; we filter by platform + token_type below.
     all_tokens = await asyncio.to_thread(get_device_tokens_for_extension, extension)
@@ -331,6 +390,9 @@ async def send_call_wake(
             tasks.append(_send_apns(
                 token, data, push_type="voip", topic=f"{bundle_id}.voip", collapse_id=call_id
             ))
+        elif platform == "web" and web_push_enabled():
+            # Browser Web Push (the `token` holds the JSON subscription).
+            tasks.append(asyncio.to_thread(_send_web_push, token, data))
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -338,7 +400,7 @@ async def send_call_wake(
 
 async def send_alert(extension: str, title: str, body: str, data: dict) -> None:
     """Send a normal banner notification (e.g. missed call) to the device(s) for `extension`."""
-    if not fcm_enabled() and not apns_enabled():
+    if not fcm_enabled() and not apns_enabled() and not web_push_enabled():
         return
     tokens = await asyncio.to_thread(get_device_tokens_for_extension, extension, "alert")
     if not tokens:
@@ -359,6 +421,8 @@ async def send_alert(extension: str, title: str, body: str, data: dict) -> None:
         elif platform == "ios" and apns_enabled():
             payload = {"aps": {"alert": {"title": title, "body": body}, "sound": "default"}, **str_data}
             tasks.append(_send_apns(token, payload, push_type="alert", topic=bundle_id))
+        elif platform == "web" and web_push_enabled():
+            tasks.append(asyncio.to_thread(_send_web_push, token, {"type": "alert", "title": title, "body": body, **str_data}))
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
