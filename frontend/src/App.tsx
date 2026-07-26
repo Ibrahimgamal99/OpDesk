@@ -835,18 +835,6 @@ function App({ onLogout }: AppProps) {
               onSupervisorAction={handleSupervisorAction}
               onSync={() => sendAction({ action: 'sync' })}
               webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
-              allowedWebrtcExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
-              onWebrtcToggle={async (ext, enabled) => {
-                const res = await fetchWithAuth(`/api/settings/extensions/${ext}/webrtc`, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ enabled }),
-                });
-                if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-                const list = await fetchWithAuth('/api/settings/extensions/webrtc');
-                const data = await list.json();
-                setWebrtcExtensions(data.extensions || []);
-              }}
               allowedDndExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
               onDndToggle={async (ext, enabled) => {
                 const res = await fetchWithAuth(`/api/extensions/${ext}/dnd`, {

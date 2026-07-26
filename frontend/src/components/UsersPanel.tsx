@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  X, Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, ChevronDown, Group, Plus, Phone, Eye, EyeOff,
+  Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, Group, Plus, Phone, Eye, EyeOff, Radio,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
+import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { Toggle } from './ui/Toggle';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
@@ -43,192 +44,6 @@ export interface UsersPanelProps {
   onOpenCreateGroup?: (formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => void;
 }
 
-function MultiSelectDropdown({
-  options,
-  value,
-  onChange,
-  placeholder = 'Select...',
-  emptyMessage = 'No options',
-}: {
-  options: { value: string; label: string }[];
-  value: string[];
-  onChange: (value: string[]) => void;
-  placeholder?: string;
-  emptyMessage?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState('');
-  const [listStyle, setListStyle] = useState<React.CSSProperties | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  const updateListPosition = useCallback(() => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    setListStyle({
-      position: 'fixed' as const,
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: rect.width,
-      maxHeight: 220,
-      overflowY: 'auto' as const,
-      overflowX: 'hidden' as const,
-      overscrollBehavior: 'contain',
-      WebkitOverflowScrolling: 'touch',
-      background: 'var(--bg-secondary)',
-      border: '1px solid var(--border-primary)',
-      borderRadius: 'var(--radius-md)',
-      boxShadow: 'var(--shadow-lg)',
-      zIndex: 10000,
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setListStyle(null);
-      return;
-    }
-    updateListPosition();
-    const onScrollOrResize = () => updateListPosition();
-    window.addEventListener('scroll', onScrollOrResize, true);
-    window.addEventListener('resize', onScrollOrResize);
-    return () => {
-      window.removeEventListener('scroll', onScrollOrResize, true);
-      window.removeEventListener('resize', onScrollOrResize);
-    };
-  }, [open, updateListPosition]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handle = (e: MouseEvent) => {
-      const el = e.target as Node;
-      if (containerRef.current?.contains(el) || listRef.current?.contains(el)) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
-  }, [open]);
-
-  const filtered = filter.trim()
-    ? options.filter(o => o.label.toLowerCase().includes(filter.toLowerCase()) || o.value.toLowerCase().includes(filter.toLowerCase()))
-    : options;
-
-  const toggle = (v: string) => {
-    if (value.includes(v)) onChange(value.filter(x => x !== v));
-    else onChange([...value, v]);
-  };
-
-  const clearAll = () => {
-    onChange([]);
-    setFilter('');
-  };
-
-  const boxStyle: React.CSSProperties = {
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 8,
-    minHeight: 38,
-    padding: '6px 8px 6px 10px',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border-primary)',
-    borderRadius: 'var(--radius-md)',
-    cursor: 'pointer',
-    position: 'relative',
-  };
-
-  const tagStyle: React.CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 4,
-    padding: '4px 8px',
-    background: 'var(--bg-tertiary)',
-    border: '1px solid var(--border-accent)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 12,
-    color: 'var(--text-primary)',
-  };
-
-  const selectedLabels = value.map(v => options.find(o => o.value === v)?.label ?? v);
-
-  const listbox = open && listStyle ? (
-    <div
-      ref={listRef}
-      role="listbox"
-      style={listStyle}
-      onClick={e => e.stopPropagation()}
-      onWheel={e => e.stopPropagation()}
-    >
-      {filtered.length === 0 ? (
-        <div style={{ padding: 12, color: 'var(--text-muted)', fontSize: 13 }}>{emptyMessage}</div>
-      ) : (
-        filtered.map(opt => (
-          <div
-            key={opt.value}
-            role="option"
-            aria-selected={value.includes(opt.value)}
-            onClick={() => toggle(opt.value)}
-            style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, background: value.includes(opt.value) ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)' }}
-          >
-            {opt.label}
-          </div>
-        ))
-      )}
-    </div>
-  ) : null;
-
-  return (
-    <div ref={containerRef} style={{ position: 'relative' }}>
-      <div
-        role="combobox"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        style={boxStyle}
-        onClick={() => setOpen(o => !o)}
-      >
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-          {selectedLabels.map((label, i) => (
-            <span key={value[i]} style={tagStyle} onClick={e => e.stopPropagation()}>
-              {label}
-              <button
-                type="button"
-                onClick={e => { e.stopPropagation(); onChange(value.filter((_, j) => j !== i)); }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-muted)', lineHeight: 1, display: 'flex' }}
-                aria-label="Remove"
-              >
-                <X size={12} />
-              </button>
-            </span>
-          ))}
-          {open && (
-            <input
-              type="text"
-              value={filter}
-              onChange={e => setFilter(e.target.value)}
-              onClick={e => e.stopPropagation()}
-              placeholder={placeholder}
-              style={{ flex: 1, minWidth: 80, border: 'none', background: 'transparent', color: 'var(--text-primary)', outline: 'none', fontSize: 13 }}
-              autoFocus
-            />
-          )}
-          {!open && value.length === 0 && (
-            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{placeholder}</span>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          {value.length > 0 && (
-            <button type="button" onClick={e => { e.stopPropagation(); clearAll(); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--text-muted)', display: 'flex' }} aria-label="Clear all">
-              <X size={14} />
-            </button>
-          )}
-          <ChevronDown size={16} style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-        </div>
-      </div>
-      {listbox && createPortal(listbox, document.body)}
-    </div>
-  );
-}
-
 export function UsersPanel(props: UsersPanelProps = {}) {
   const { t } = useTranslation();
   const { pendingUserForm = null, onClearPendingUserForm, onOpenCreateGroup } = props;
@@ -252,10 +67,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     role: 'supervisor' as 'admin' | 'supervisor' | 'agent',
     monitor_modes: ['listen'] as string[],
     group_ids: [] as string[],
+    webrtc: false,
   });
 
   const handleExtensionSelect = useCallback(async (ext: string) => {
-    setForm(f => ({ ...f, extension: ext }));
+    setForm(f => ({ ...f, extension: ext, webrtc: ext ? f.webrtc : false }));
     if (!ext) return;
     try {
       const res = await fetchWithAuth(`/api/settings/extensions/${ext}/credentials`);
@@ -265,6 +81,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           ...f,
           ...(editingUser ? {} : { username: data.username || ext, password: data.password || '' }),
           name: data.name || f.name,
+          webrtc: data.webrtc === 'yes',
         }));
       }
     } catch { /* ignore */ }
@@ -281,6 +98,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       role: pendingUserForm.role,
       monitor_modes: pendingUserForm.monitor_modes,
       group_ids: pendingUserForm.group_ids,
+      webrtc: false,
     });
     setUsersSubTab('create');
     onClearPendingUserForm();
@@ -332,6 +150,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       role: 'supervisor',
       monitor_modes: ['listen'],
       group_ids: [],
+      webrtc: false,
     });
     setUsersSubTab('list');
   }, []);
@@ -351,8 +170,16 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       role: (u.role as 'admin' | 'supervisor' | 'agent') || 'supervisor',
       monitor_modes: [...modes],
       group_ids: (u.group_ids || []).map(String),
+      webrtc: false,
     });
     setUsersSubTab('create');
+    // Load the current WebRTC state for this user's extension (async).
+    if (u.extension) {
+      fetchWithAuth(`/api/settings/extensions/${u.extension}/credentials`)
+        .then(res => (res.ok ? res.json() : null))
+        .then(data => { if (data) setForm(f => ({ ...f, webrtc: data.webrtc === 'yes' })); })
+        .catch(() => { /* ignore */ });
+    }
   };
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
@@ -404,6 +231,21 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           throw new Error(err.detail || 'Create failed');
         }
         setMessage({ type: 'success', text: t('users.userCreated') });
+      }
+      // Persist WebRTC toggle for the linked extension (best-effort; user save already succeeded).
+      if (form.extension) {
+        try {
+          const wr = await fetchWithAuth(`/api/settings/extensions/${form.extension}/webrtc`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: form.webrtc }),
+          });
+          if (!wr.ok) {
+            setMessage({ type: 'error', text: t('users.webrtcSaveFailed') });
+          }
+        } catch {
+          setMessage({ type: 'error', text: t('users.webrtcSaveFailed') });
+        }
       }
       resetForm();
       loadData();
@@ -585,6 +427,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   value={form.extension ?? ''}
                   onChange={handleExtensionSelect}
                   icon={Phone}
+                  searchPlaceholder={t('users.searchExtension', 'Search extension…')}
                   options={[
                     { value: '', label: t('users.none', 'None') },
                     ...agents.map(a => ({
@@ -598,6 +441,19 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 )}
               </div>
             </div>
+            {form.extension && (
+              <div className="up-form-row single">
+                <div className="up-form-group">
+                  <Toggle
+                    checked={form.webrtc}
+                    onChange={webrtc => setForm(f => ({ ...f, webrtc }))}
+                    label={t('users.webrtcLabel')}
+                    description={t('users.webrtcHint')}
+                    icon={<Radio size={11} />}
+                  />
+                </div>
+              </div>
+            )}
             <div className="up-form-row">
               <div className="up-form-group">
                 <label>{t('users.role')}</label>

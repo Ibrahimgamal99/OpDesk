@@ -5055,6 +5055,8 @@ select.an-filter-select option:checked {
   top: calc(100% + 5px);
   left: 0;
   min-width: 100%;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-card, #1a1f26);
   border: 1px solid var(--border-accent, #484f58);
   border-radius: 9px;
@@ -5062,6 +5064,49 @@ select.an-filter-select option:checked {
   z-index: 200;
   box-shadow: 0 8px 28px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.2);
   animation: an-dropdown-in 0.13s ease;
+}
+
+/* Inner scroll area — keeps the search box pinned while options scroll. */
+.an-select-options {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+/* Type-to-filter search header */
+.an-select-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border-bottom: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
+  flex-shrink: 0;
+}
+
+.an-select-search-icon {
+  color: var(--text-muted, #6e7681);
+  flex-shrink: 0;
+}
+
+.an-select-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-primary, #e6edf3);
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+.an-select-search input::placeholder {
+  color: var(--text-muted, #6e7681);
+}
+
+.an-select-empty {
+  padding: 12px 13px;
+  color: var(--text-muted, #6e7681);
+  font-size: 0.8rem;
 }
 
 @keyframes an-dropdown-in {
@@ -5081,7 +5126,8 @@ select.an-filter-select option:checked {
   white-space: nowrap;
 }
 
-.an-select-option:hover {
+.an-select-option:hover,
+.an-select-option.active {
   background: var(--bg-hover, #21262e);
   color: var(--text-primary, #e6edf3);
 }
@@ -6082,3 +6128,82 @@ select.an-filter-select option:checked {
 .queue-member-badge.busy { background: var(--status-call-bg); color: var(--status-call); }
 .queue-member-badge.unavailable { background: var(--status-unavailable-bg); color: var(--status-unavailable); }
 .queue-member-badge.paused { background: color-mix(in srgb, #d29922 16%, transparent); color: #d29922; }
+
+/* ── WebRTC read-only badge on extension cards (toggle lives in Users) ─── */
+.ext-webrtc-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+
+/* ── Toggle / Switch ─────────────────────────────────────────────────── */
+.ui-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+.ui-toggle-row:hover { border-color: var(--border-accent); background: var(--bg-hover); }
+.ui-toggle-row:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.ui-toggle-row.is-disabled { opacity: 0.55; cursor: not-allowed; pointer-events: none; }
+
+.ui-toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-accent);
+  transition: all var(--transition-normal);
+  flex-shrink: 0;
+}
+.ui-toggle-switch.active {
+  background: var(--accent-primary);
+  border-color: transparent;
+}
+.ui-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bg-primary);
+  font-size: 10px;
+  transition: all var(--transition-normal);
+}
+.ui-toggle-switch.active .ui-toggle-knob {
+  left: 20px;
+  background: #fff;
+  color: var(--accent-primary);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.22);
+}
+[dir="rtl"] .ui-toggle-switch.active .ui-toggle-knob { left: 2px; right: auto; }
+[dir="rtl"] .ui-toggle-knob { left: auto; right: 2px; }
+[dir="rtl"] .ui-toggle-switch.active .ui-toggle-knob { right: 20px; left: auto; }
+
+.ui-toggle-info { display: flex; flex-direction: column; gap: 2px; }
+.ui-toggle-label { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.ui-toggle-desc { font-size: 12px; color: var(--text-muted); }
+[dir="rtl"] .ui-toggle-row { text-align: right; }
+[dir="rtl"] .ui-toggle-info { text-align: right; }
