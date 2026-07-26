@@ -938,15 +938,22 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
               </div>
               <div className="up-form-group" style={{ marginBottom: 16 }}>
                 <label>Recording format</label>
-                <select className="form-input" value={recordingFormat} onChange={e => setRecordingFormat(e.target.value)} style={{ width: 200 }}>
-                  <option value="wav">wav (uncompressed)</option>
-                  <option value="wav49">wav49 (GSM in WAV)</option>
-                  <option value="gsm">gsm</option>
-                  <option value="g722">g722 (HD)</option>
-                  <option value="ulaw">ulaw</option>
-                  <option value="alaw">alaw</option>
-                  <option value="sln">sln</option>
-                </select>
+                <FilterSelect
+                  size="md"
+                  value={recordingFormat}
+                  onChange={setRecordingFormat}
+                  minWidth={200}
+                  style={{ width: 200 }}
+                  options={[
+                    { value: 'wav', label: 'wav (uncompressed)' },
+                    { value: 'wav49', label: 'wav49 (GSM in WAV)' },
+                    { value: 'gsm', label: 'gsm' },
+                    { value: 'g722', label: 'g722 (HD)' },
+                    { value: 'ulaw', label: 'ulaw' },
+                    { value: 'alaw', label: 'alaw' },
+                    { value: 'sln', label: 'sln' },
+                  ]}
+                />
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                   Applies to the mixed file and both single legs. wav is highest quality; wav49/gsm save disk space.
                 </p>

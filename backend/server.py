@@ -1452,10 +1452,12 @@ async def api_get_extension_credentials(
     extension: str,
     current_user: dict = Depends(require_admin),
 ):
-    """Return PBX SIP username, secret, and display name for an extension (admin only)."""
+    """Return PBX SIP username, secret, display name, and WebRTC flag for an extension (admin only)."""
     secret = get_extension_secret_from_db(extension)
     names = get_extension_names_from_db()
-    return {"username": extension, "password": secret or "", "name": names.get(extension, "")}
+    webrtc_list = get_extensions_with_webrtc_from_users()
+    webrtc = next((e.get("webrtc", "no") for e in webrtc_list if str(e.get("extension")) == str(extension)), "no")
+    return {"username": extension, "password": secret or "", "name": names.get(extension, ""), "webrtc": webrtc}
 
 
 @app.put("/api/settings/extensions/{extension}/webrtc")
