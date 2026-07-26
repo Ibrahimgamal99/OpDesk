@@ -74,6 +74,7 @@
     "webrtcDisabled": "WebRTC deshabilitado (haga clic para activar)",
     "webrtcOn": "WebRTC activado",
     "webrtcOff": "WebRTC desactivado",
+    "webrtcBadge": "WebRTC",
     "status": {
       "idle": "Inactivo",
       "ringing": "Sonando",
@@ -312,6 +313,9 @@
     "fullName": "Nombre completo",
     "extension": "Extensión (opcional)",
     "noExtensions": "No hay extensiones en el sistema",
+    "webrtcLabel": "Softphone WebRTC",
+    "webrtcHint": "Permite que esta extensión se registre desde el navegador y la aplicación móvil.",
+    "webrtcSaveFailed": "Usuario guardado, pero falló la actualización de WebRTC.",
     "role": "Rol",
     "monitorModes": "Modos de monitorización (seleccione uno o más)",
     "groupsLabel": "Grupos (el usuario obtiene acceso a agentes y colas de los grupos seleccionados)",
