@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { setLanguage } from './i18n';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -6,6 +7,8 @@ import { useWebPhone } from './hooks/useWebPhone';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
 import { getToken, setUser, getUser, fetchWithAuth } from './auth';
 import { rlog } from './lib/remoteLog';
+import { subscribeWebPush } from './lib/webPush';
+import { DashboardPanel } from './components/DashboardPanel';
 import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
@@ -14,7 +17,7 @@ import { AnalyticsPanel } from './components/AnalyticsPanel';
 import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
-import { SettingsPanel } from './components/CRMSettingsModal';
+import { SettingsPanel, type SettingsTab } from './components/CRMSettingsModal';
 import { FloatingSoftphone } from './components/FloatingSoftphone';
 import {
   Phone,
@@ -41,14 +44,29 @@ import {
   BarChart3,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Menu,
   X,
+  Plug,
+  Signal,
+  ShieldCheck,
+  Smartphone,
+  Disc,
+  PauseCircle,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 
-type TabType = 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics' | 'settings';
+type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics' | 'settings';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
+
+// URL routing: each tab maps 1:1 to a path segment (e.g. 'call-log' -> '/call-log').
+// Deriving the active tab from the URL is what makes a refresh stay on the same page
+// and lets users navigate straight to /dashboard, /extensions, etc.
+const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'groups', 'users', 'analytics', 'settings'];
+const DEFAULT_TAB: TabType = 'dashboard';
+function pathToTab(pathname: string): TabType {
+  const seg = pathname.replace(/^\/+/, '').split('/')[0];
+  return (TAB_PATHS as string[]).includes(seg) ? (seg as TabType) : DEFAULT_TAB;
+}
 
 function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const d = new Date(iso);
@@ -139,10 +157,15 @@ function App({ onLogout }: AppProps) {
     onAuthFailure: handleLogout,
     onCallNotificationNew: fetchNewNotifCount,
   });
-  const [activeTab, setActiveTab] = useState<TabType>('extensions');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const activeTab = pathToTab(location.pathname);
+  const settingsSubTab = activeTab === 'settings' ? (searchParams.get('tab') || 'integrations') : 'integrations';
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['30d']);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [teamExpanded, setTeamExpanded] = useState(true);
+  const [settingsExpanded, setSettingsExpanded] = useState(() => activeTab === 'settings');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
   /** User form preserved when switching to Groups to create a new group (no API call). */
@@ -173,6 +196,25 @@ function App({ onLogout }: AppProps) {
       .catch(() => {});
     return () => ac.abort();
   }, [token]);
+
+  // Web Push: subscribe once authenticated (no-op unless the server has VAPID keys) and
+  // relay service-worker messages back into the app (a push can wake a closed tab).
+  useEffect(() => {
+    if (!token) return;
+    subscribeWebPush().catch(() => { /* optional feature */ });
+    const onSwMessage = (e: MessageEvent) => {
+      const msg = e.data;
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.type === 'opdesk:resubscribe') {
+        subscribeWebPush().catch(() => { /* ignore */ });
+      } else if (msg.type === 'opdesk:incoming-call' || msg.type === 'opdesk:notification-action') {
+        // Refresh notifications; the SIP/WebSocket layer handles the actual ring once the tab is live.
+        fetchNewNotifCount();
+      }
+    };
+    navigator.serviceWorker?.addEventListener?.('message', onSwMessage);
+    return () => navigator.serviceWorker?.removeEventListener?.('message', onSwMessage);
+  }, [token, fetchNewNotifCount]);
 
   // Load WebRTC extension list for Extensions tab (who can toggle and current state)
   useEffect(() => {
@@ -366,19 +408,35 @@ function App({ onLogout }: AppProps) {
     };
   }, [incomingCall]);
 
-  // Agent only has Extensions, Active Calls, Call History; switch away from other tabs
+  // Normalize bare "/" (and unknown paths) to the default tab so the URL always
+  // reflects the visible panel and a refresh has a concrete route to land on.
+  useEffect(() => {
+    const seg = location.pathname.replace(/^\/+/, '').split('/')[0];
+    if (!(TAB_PATHS as string[]).includes(seg)) {
+      navigate(`/${DEFAULT_TAB}`, { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
+  // Agent only has Extensions, Active Calls, Call History; redirect away from other tabs
   const userRole = getUser()?.role;
   useEffect(() => {
-    if (userRole === 'agent' && !['extensions', 'calls', 'call-log'].includes(activeTab)) {
-      setActiveTab('extensions');
+    if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'call-log'].includes(activeTab)) {
+      navigate(`/${DEFAULT_TAB}`, { replace: true });
     }
-  }, [userRole, activeTab]);
+  }, [userRole, activeTab, navigate]);
 
-  // Select a tab and close the mobile drawer (no-op on desktop where it's never open)
+  // Select a tab (navigate to its route) and close the mobile drawer.
   const selectTab = useCallback((tab: TabType) => {
-    setActiveTab(tab);
+    navigate(`/${tab}`);
     setMobileNavOpen(false);
-  }, []);
+  }, [navigate]);
+
+  // Open the Settings screen on a specific sub-tab (driven from the sidebar dropdown).
+  const selectSettingsTab = useCallback((tab: string) => {
+    navigate(`/settings?tab=${tab}`);
+    setSettingsExpanded(true);
+    setMobileNavOpen(false);
+  }, [navigate]);
 
   const handleSupervisorAction = useCallback((
     mode: 'listen' | 'whisper' | 'barge',
@@ -402,6 +460,42 @@ function App({ onLogout }: AppProps) {
     total_queues: 0,
     total_waiting: 0,
   };
+
+  // Per-extension queue presence (Ready / Not-Ready · reason) derived from the live
+  // queue_members, so the Extensions grid reflects agent status like echo.
+  const memberPresence: Record<string, { queueOn: boolean; paused: boolean; reason: string }> = {};
+  for (const m of Object.values(state?.queue_members || {})) {
+    const iface = m.interface || '';
+    // interface looks like "PJSIP/120-xxxx" or "SIP/120" → pull the extension.
+    const ext = iface.split('/').pop()?.split('-')[0] || '';
+    if (!ext) continue;
+    const prev = memberPresence[ext];
+    // A member can be in several queues; treat "logged in anywhere" as queueOn and
+    // "paused everywhere it appears" as Not-Ready (any active queue → Ready wins).
+    memberPresence[ext] = {
+      queueOn: true,
+      paused: prev ? prev.paused && !!m.paused : !!m.paused,
+      reason: m.pause_reason || prev?.reason || '',
+    };
+  }
+
+  // Live agent presence for the softphone status bar (DND + queue login), derived
+  // from the WebSocket state for the logged-in user's own extension.
+  const myExt = String(getUser()?.extension || '');
+  const agentPresence = myExt ? (() => {
+    const e = state?.extensions?.[myExt];
+    const member = Object.values(state?.queue_members || {}).find(
+      (m) => (m.interface || '').split('/').pop()?.split('-')[0] === myExt || (m.interface || '').includes(`/${myExt}`)
+    );
+    return {
+      ext: myExt,
+      dnd: !!e?.dnd,
+      queueOn: !!member,
+      paused: !!member?.paused,
+      reason: member?.pause_reason || '',
+      onCall: e?.status === 'in_call' || e?.status === 'dialing' || e?.status === 'on_hold',
+    };
+  })() : null;
 
 
   const handleLangSwitch = (lang: string) => {
@@ -566,6 +660,10 @@ function App({ onLogout }: AppProps) {
         <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileNavOpen ? ' open' : ''}`}>
           <nav className="sidebar-nav">
 
+            <button className={`sidebar-item${activeTab === 'dashboard' ? ' active' : ''}`} onClick={() => selectTab('dashboard')} title={sidebarCollapsed ? t('nav.dashboard', 'Dashboard') : undefined}>
+              <Activity size={16} />{!sidebarCollapsed && t('nav.dashboard', 'Dashboard')}
+            </button>
+
             <button className={`sidebar-item${activeTab === 'extensions' ? ' active' : ''}`} onClick={() => selectTab('extensions')} title={sidebarCollapsed ? t('nav.extensions') : undefined}>
               <Phone size={16} />{!sidebarCollapsed && t('nav.extensions')}
             </button>
@@ -602,23 +700,26 @@ function App({ onLogout }: AppProps) {
 
                 {/* Team collapsible group — admin only */}
                 {!sidebarCollapsed ? (
-                  <>
-                    <button className="sidebar-group-header" onClick={() => setTeamExpanded(e => !e)}>
-                      <Users size={14} />
+                  <div className="sidebar-group">
+                    <button
+                      className={`sidebar-group-header${(activeTab === 'groups' || activeTab === 'users') ? ' has-active' : ''}`}
+                      onClick={() => setTeamExpanded(e => !e)}
+                    >
+                      <Users size={16} />
                       <span>{t('nav.team', 'Team')}</span>
-                      <ChevronDown size={12} className={`sidebar-group-chevron${teamExpanded ? '' : ' collapsed'}`} />
+                      <ChevronRight size={12} className={`sidebar-group-chevron${teamExpanded ? ' open' : ''}`} />
                     </button>
                     {teamExpanded && (
-                      <div className="sidebar-group-items">
-                        <button className={`sidebar-item sidebar-sub-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')}>
-                          <Group size={16} />{t('nav.groups')}
+                      <>
+                        <button className={`sidebar-subitem${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')}>
+                          <Group size={14} />{t('nav.groups')}
                         </button>
-                        <button className={`sidebar-item sidebar-sub-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')}>
-                          <UserCog size={16} />{t('nav.users')}
+                        <button className={`sidebar-subitem${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')}>
+                          <UserCog size={14} />{t('nav.users')}
                         </button>
-                      </div>
+                      </>
                     )}
-                  </>
+                  </div>
                 ) : (
                   <>
                     <button className={`sidebar-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')} title={t('nav.groups')}>
@@ -632,13 +733,51 @@ function App({ onLogout }: AppProps) {
               </>
             )}
 
-            {/* Settings — admin and supervisor */}
+            {/* Settings — admin and supervisor. Collapsible dropdown of sub-tabs (echo-style). */}
             {(getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && (
               <>
                 {getUser()?.role === 'supervisor' && <div className="sidebar-divider" />}
-                <button className={`sidebar-item${activeTab === 'settings' ? ' active' : ''}`} onClick={() => selectTab('settings')} title={sidebarCollapsed ? t('header.settings', 'Settings') : undefined}>
-                  <Settings size={16} />{!sidebarCollapsed && t('header.settings', 'Settings')}
-                </button>
+                {sidebarCollapsed ? (
+                  <button
+                    className={`sidebar-item${activeTab === 'settings' ? ' active' : ''}`}
+                    onClick={() => selectSettingsTab('integrations')}
+                    title={t('header.settings', 'Settings')}
+                  >
+                    <Settings size={16} />
+                  </button>
+                ) : (
+                  <div className="sidebar-group">
+                    <button
+                      className={`sidebar-group-header${activeTab === 'settings' ? ' has-active' : ''}`}
+                      onClick={() => setSettingsExpanded(e => !e)}
+                    >
+                      <Settings size={16} />
+                      <span>{t('header.settings', 'Settings')}</span>
+                      <ChevronRight size={12} className={`sidebar-group-chevron${settingsExpanded ? ' open' : ''}`} />
+                    </button>
+                    {settingsExpanded && (
+                      <>
+                        {[
+                          { key: 'integrations', icon: Plug, label: t('settings.tabs.integrations', 'Integrations / CRM') },
+                          { key: 'qos', icon: Signal, label: t('settings.tabs.qos', 'QoS') },
+                          { key: 'analytics', icon: BarChart3, label: t('settings.tabs.analytics', 'Analytics') },
+                          { key: 'sip-tls', icon: ShieldCheck, label: t('settings.tabs.sipTls', 'SIP TLS') },
+                          { key: 'mobile-wake', icon: Smartphone, label: t('settings.tabs.mobileWake', 'Mobile Wake') },
+                          { key: 'recording', icon: Disc, label: t('settings.tabs.recording', 'Recording') },
+                          { key: 'not-ready-codes', icon: PauseCircle, label: t('notReady.title', 'Not-Ready Codes') },
+                        ].map(({ key, icon: Icon, label }) => (
+                          <button
+                            key={key}
+                            className={`sidebar-subitem${activeTab === 'settings' && settingsSubTab === key ? ' active' : ''}`}
+                            onClick={() => selectSettingsTab(key)}
+                          >
+                            <Icon size={14} />{label}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </nav>
@@ -686,9 +825,13 @@ function App({ onLogout }: AppProps) {
 
         {/* ── Main content (scrollable) ── */}
         <main className="main-content">
+          {activeTab === 'dashboard' && (
+            <DashboardPanel state={state} connected={connected} lastUpdate={lastUpdate} />
+          )}
           {activeTab === 'extensions' && (
             <ExtensionsPanel
               extensions={state?.extensions || {}}
+              memberPresence={memberPresence}
               onSupervisorAction={handleSupervisorAction}
               onSync={() => sendAction({ action: 'sync' })}
               webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
@@ -703,6 +846,16 @@ function App({ onLogout }: AppProps) {
                 const list = await fetchWithAuth('/api/settings/extensions/webrtc');
                 const data = await list.json();
                 setWebrtcExtensions(data.extensions || []);
+              }}
+              allowedDndExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
+              onDndToggle={async (ext, enabled) => {
+                const res = await fetchWithAuth(`/api/extensions/${ext}/dnd`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ enabled }),
+                });
+                if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+                // DND state flip arrives via the WebSocket state broadcast.
               }}
             />
           )}
@@ -740,11 +893,11 @@ function App({ onLogout }: AppProps) {
               onOpenCreateGroup={(formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => {
                 setPendingUserForm(formSnapshot);
                 setGroupsTabIntent({ prefillGroupName: prefillGroupName ?? '' });
-                setActiveTab('groups');
+                navigate('/groups');
               }}
             />
           )}
-          {activeTab === 'settings' && (getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && <SettingsPanel />}
+          {activeTab === 'settings' && (getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && <SettingsPanel tab={settingsSubTab as SettingsTab} onTabChange={selectSettingsTab} />}
         </main>
       </div>
 
@@ -756,7 +909,7 @@ function App({ onLogout }: AppProps) {
           onSubmit={executeSupervisorAction}
         />
       )}
-      <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} />
+      <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} presence={agentPresence} />
       <div className="notifications">
         {notifications.map((notification, index) => (
           <div key={index} className="notification">{notification}</div>

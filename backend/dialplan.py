@@ -250,7 +250,21 @@ def write_mobile_wake_conf(backend_port: int = None, wait_seconds: int = None) -
     if backend_port is None:
         backend_port = int(os.getenv("PORT", "8765"))
     if wait_seconds is None:
-        wait_seconds = int(os.getenv("MOBILE_WAKE_WAIT", "3"))
+        # Prefer the DB setting (source of truth, editable live from Settings) and fall
+        # back to the .env value, then a sane default. Clamp to a reasonable range.
+        wait_seconds = None
+        try:
+            from db_manager import get_setting
+            wait_seconds = get_setting('MOBILE_WAKE_WAIT', None)
+        except Exception:
+            wait_seconds = None
+        if wait_seconds in (None, ''):
+            wait_seconds = os.getenv("MOBILE_WAKE_WAIT", "3")
+        try:
+            wait_seconds = int(wait_seconds)
+        except (ValueError, TypeError):
+            wait_seconds = 3
+    wait_seconds = max(1, min(int(wait_seconds), 30))
 
     log.info(f"Writing mobile wake dialplan to {EXTENSIONS_MOBILE_WAKE_CONF}")
 
@@ -264,7 +278,13 @@ def write_mobile_wake_conf(backend_port: int = None, wait_seconds: int = None) -
  same => n,Set(CURLOPT(conntimeout)=2)
  same => n,Set(CURLOPT(httptimeout)=3)
  same => n,Set(OPDESKWAKE=${{CURL(http://127.0.0.1:{backend_port}/api/internal/mobile-wake/${{EXTEN}}?caller=${{URIENCODE(${{CALLERID(num)}})}})}})
- same => n,ExecIf($["${{OPDESKWAKE}}"="1"]?Wait({wait_seconds}))
+ same => n,GotoIf($["${{OPDESKWAKE}}"!="1"]?passthru)
+ same => n,Set(WAITLEFT={wait_seconds})
+ same => n(poll),GotoIf($[${{WAITLEFT}}<=0]?passthru)
+ same => n,GotoIf($["${{PJSIP_DIAL_CONTACTS(${{EXTEN}})}}"!=""]?passthru)
+ same => n,Wait(0.25)
+ same => n,Set(WAITLEFT=$[${{WAITLEFT}}-0.25])
+ same => n,Goto(poll)
  same => n(passthru),Goto(from-internal-additional,${{EXTEN}},1)
 """
 

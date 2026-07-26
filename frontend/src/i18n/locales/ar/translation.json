@@ -158,6 +158,13 @@
     "allStatuses": "جميع الحالات",
     "allDirections": "جميع الاتجاهات",
     "allApps": "جميع التطبيقات",
+    "supervisionHidden": "الإشراف مخفي ({{count}})",
+    "supervisionShown": "عرض الإشراف",
+    "supervision": {
+      "LISTEN": "استماع",
+      "WHISPER": "همس",
+      "BARGE": "اقتحام"
+    },
     "totalCalls": "إجمالي المكالمات",
     "showing": "عرض {{start}} إلى {{end}} من أصل {{total}} مكالمة",
     "previous": "السابق",
@@ -276,7 +283,16 @@
       "registered": "مسجّل",
       "error": "خطأ",
       "notRegistered": "غير مسجّل"
-    }
+    },
+    "qos_na": "الإشارة: غير متاح",
+    "qos_excellent": "الإشارة: ممتازة",
+    "qos_good": "الإشارة: جيدة",
+    "qos_fair": "الإشارة: مقبولة",
+    "qos_poor": "الإشارة: ضعيفة",
+    "quality_mos": "MOS",
+    "quality_jitter": "التذبذب",
+    "quality_loss": "الفقد",
+    "quality_rtt": "زمن الاستجابة"
   },
   "users": {
     "title": "جميع المستخدمين",
@@ -496,6 +512,7 @@
       "overview": "نظرة عامة",
       "queues": "أداء الطوابير",
       "agents": "أداء الموظف",
+      "adherence": "الالتزام",
       "drilldown": "استعراض تفصيلي"
     },
     "period": {
@@ -599,6 +616,27 @@
       "shortAbandon": "حد التخلي السريع",
       "save": "حفظ إعدادات التحليلات",
       "saved": "تم الحفظ!"
+    }
+  },
+  "agent": {
+    "adherence": {
+      "title": "التزام الموظفين",
+      "subtitle": "وقت الدخول والجاهزية والمكالمات والاستراحة لكل موظف للفترة المحددة.",
+      "agent": "الموظف",
+      "login": "الدخول",
+      "logout": "الخروج",
+      "loggedIn": "مدة الدخول",
+      "ready": "جاهز",
+      "onCall": "في مكالمة",
+      "wrapUp": "ما بعد المكالمة",
+      "notReady": "غير جاهز",
+      "occupancy": "الإشغال",
+      "stillIn": "الآن",
+      "empty": "لا يوجد نشاط للموظفين في هذه الفترة",
+      "exportCsv": "CSV",
+      "exportXlsx": "Excel",
+      "exporting": "جارٍ التصدير…",
+      "exportFailed": "فشل التصدير. حاول مرة أخرى."
     }
   }
 }

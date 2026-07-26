@@ -34,13 +34,17 @@ from db_manager import (
     get_setting, set_setting, get_all_settings, authenticate_user, get_call_log_count_from_db, get_call_notifications_from_db, get_call_notification_by_id, update_call_notification_status,
     get_cdr_by_linkedid,
     get_all_users, get_user_by_id, get_user_webrtc_credentials, create_user as db_create_user, update_user as db_update_user,
-    delete_user as db_delete_user, get_user_agents_and_queues,get_user_group_ids, set_user_groups,get_groups_list, get_group, 
+    delete_user as db_delete_user, get_user_agents_and_queues, get_agent_login_queues, get_user_group_ids, set_user_groups,get_groups_list, get_group,
     create_group, update_group, set_group_agents, set_group_queues, set_group_users, delete_group,
     get_agents_list, get_queues_list, sync_agents_from_extensions, sync_queues_from_list,
     set_extension_webrtc, get_extensions_with_webrtc_from_users,get_extension_secret_from_db, set_extension_secret_in_pbx, set_extension_username_in_pbx, set_extension_name_in_pbx,
     register_device_token, delete_device_token, get_device_tokens_for_extension,
     get_call_vad_from_db,
+    init_pause_reasons_table, pause_reason_list, pause_reason_create, pause_reason_update, pause_reason_delete,
+    init_call_supervision_table,
+    init_agent_activity_table,
 )
+from agent_presence import PresenceRecorder
 from dialplan import enable_qos, disable_qos, enable_sip_tls, disable_sip_tls, enable_mobile_wake, disable_mobile_wake, enable_recording, disable_recording, reload_asterisk_sip
 from call_log import call_log as get_call_log, build_call_journey_from_cdr
 import analytics as analytics_module
@@ -343,6 +347,7 @@ class AMIEventBridge:
                 "name": self._extension_names.get(ext, ""),
                 "status": status,
                 "status_code": status_code,
+                "dnd": ext in self.monitor.dnd,
                 "call_info": self._format_call_info(ext, call_info) if call_info else None
             }
         
@@ -397,6 +402,7 @@ class AMIEventBridge:
                 "membername": member_info.get('membername', ''),
                 "status": member_info.get('status', ''),
                 "paused": member_info.get('paused', False),
+                "pause_reason": member_info.get('pause_reason', '') or '',
                 "dynamic": member_info.get('dynamic', False)
             }
         
@@ -634,6 +640,7 @@ manager = ConnectionManager()
 monitor: Optional[AMIExtensionsMonitor] = None
 bridge: Optional[AMIEventBridge] = None
 crm_connector: Optional[CRMConnector] = None
+presence: Optional[PresenceRecorder] = None
 
 # Extensions that received a predial VoIP wake push, keyed by extension → loop.time().
 # _on_incoming_call suppresses the second VoIP push while this entry is fresh so the
@@ -649,13 +656,19 @@ _PRE_WAKE_TTL = 12  # seconds — covers Wait(3) + dial setup + clock slop
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - setup and teardown."""
-    global monitor, bridge, crm_connector
-    
+    global monitor, bridge, crm_connector, presence
+
     # Startup
     log.info("Starting Asterisk Operator Panel Server...")
-    
+
     # Initialize settings table
     init_settings_table()
+    # Ensure the Not-Ready Codes (pause reasons) catalog exists + is seeded
+    init_pause_reasons_table()
+    # Ensure the supervision (listen/whisper/barge) events table exists
+    init_call_supervision_table()
+    # Ensure the agent presence segments table (Agent Adherence data source) exists
+    init_agent_activity_table()
 
 
     # WebRTC default host: prefer the configured public domain (its TLS cert matches); otherwise
@@ -757,6 +770,7 @@ async def lifespan(app: FastAPI):
         await monitor.sync_extension_statuses()
         await monitor.sync_active_calls()
         await monitor.sync_queue_status()
+        await monitor.sync_dnd_state()
         
         # 🚀 Log startup summary (data goes to React via WebSocket)
         log_startup_summary(monitor)
@@ -792,6 +806,16 @@ async def lifespan(app: FastAPI):
         # Start event bridge
         bridge = AMIEventBridge(manager, monitor)
         await bridge.start()
+
+        # Agent presence recorder — writes agent_activity segments (Agent Adherence
+        # data source). Reconciles call flow + feature-code actions from AMI events,
+        # then hydrates from the live queue state so already-logged-in agents count.
+        presence = PresenceRecorder(monitor)
+        monitor.register_event_callback(presence.handle_ami_event)
+        try:
+            await presence.hydrate()
+        except Exception as e:
+            log.warning(f"Agent presence hydrate failed: {e}")
 
         # Start analytics pre-aggregation background task
         asyncio.create_task(analytics_module.start_aggregation_loop())
@@ -1088,7 +1112,8 @@ async def register_device_token_endpoint(body: DeviceTokenBody, current_user: di
     token = (body.token or "").strip()
     platform = (body.platform or "").strip().lower()
     token_type = (body.token_type or "alert").strip().lower()
-    if not token or platform not in ("ios", "android") or token_type not in ("voip", "alert"):
+    # platform='web' carries a JSON Web Push subscription in `token`.
+    if not token or platform not in ("ios", "android", "web") or token_type not in ("voip", "alert"):
         raise HTTPException(status_code=400, detail="Invalid token, platform, or token_type")
     ok = register_device_token(
         current_user["id"], current_user.get("extension"), platform, token_type, token, body.app_version
@@ -1105,6 +1130,27 @@ async def delete_device_token_endpoint(body: DeleteDeviceTokenBody, current_user
     if not token:
         raise HTTPException(status_code=400, detail="token required")
     delete_device_token(token)
+    return {"status": "ok"}
+
+
+@app.get("/api/push/vapid-public-key")
+async def get_vapid_public_key():
+    """Public VAPID key for the browser to subscribe to Web Push. Unauthenticated so the
+    service worker / PWA can fetch it early. Returns enabled=false when Web Push is off."""
+    return {"enabled": push_service.web_push_enabled(), "public_key": push_service._vapid_public_key() or None}
+
+
+@app.post("/api/push/web-resubscribe")
+async def web_resubscribe(body: dict, current_user: dict = Depends(get_current_user)):
+    """Re-register a rotated browser subscription. Body: { subscription: {...} }.
+    Stored as a platform='web' device token whose `token` is the JSON subscription."""
+    sub = body.get("subscription")
+    if not sub:
+        raise HTTPException(status_code=400, detail="subscription required")
+    token = json.dumps(sub) if not isinstance(sub, str) else sub
+    ok = register_device_token(current_user["id"], current_user.get("extension"), "web", "alert", token, None)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to store web push subscription")
     return {"status": "ok"}
 
 
@@ -1164,7 +1210,13 @@ async def internal_mobile_wake(extension: str, request: Request, caller: str = "
         _pre_woken[extension] = asyncio.get_event_loop().time()
     except RuntimeError:
         pass
-    asyncio.create_task(push_service.send_call_wake(extension, caller.strip(), f"predial-{extension}"))
+    # Enrich the wake with the caller's display name for internal callers, so the ring
+    # card shows "Alice (101)" instead of a bare number.
+    caller_num = caller.strip()
+    display_name = None
+    if caller_num and bridge is not None:
+        display_name = getattr(bridge, "_extension_names", {}).get(caller_num) or None
+    asyncio.create_task(push_service.send_call_wake(extension, caller_num, f"predial-{extension}", display_name))
     return PlainTextResponse("1")
 
 
@@ -1343,18 +1395,36 @@ async def api_delete_user(
 async def api_list_agents(
     current_user: dict = Depends(get_current_user),
 ):
-    """List all extensions/agents for selection. Syncs from Asterisk if monitor available."""
+    """List extensions/agents for selection. Syncs from Asterisk if monitor available.
+
+    Scoped by role like /api/settings/extensions/webrtc: admin sees all; agent sees only
+    their own extension; supervisor sees their own + allowed_agent_extensions.
+    """
     if monitor and getattr(monitor, "monitored", None):
         exts = list(monitor.monitored)
         names = get_extension_names_from_db()
-        sync_agents_from_extensions(exts, names)
+        # prune against the live PBX set so agents deleted in FreePBX/Issabel drop
+        # out of the selection lists (empty-list guard keeps a failed read safe).
+        sync_agents_from_extensions(exts, names, prune=True)
     agents = get_agents_list()
     if not agents and monitor and getattr(monitor, "monitored", None):
         exts = list(monitor.monitored)
         names = get_extension_names_from_db()
         sync_agents_from_extensions(exts, names)
         agents = get_agents_list()
-    return {"agents": agents}
+
+    role = current_user.get("role")
+    if role == "admin":
+        return {"agents": agents}
+
+    # Non-admins are scoped to their own extension + any explicitly allowed extensions.
+    allow_set = set()
+    user_ext = current_user.get("extension")
+    if user_ext:
+        allow_set.add(str(user_ext))
+    for e in (current_user.get("allowed_agent_extensions") or []):
+        allow_set.add(str(e))
+    return {"agents": [a for a in agents if str(a.get("extension")) in allow_set]}
 
 
 @app.get("/api/settings/extensions/webrtc")
@@ -1424,6 +1494,196 @@ async def api_set_extension_webrtc(
     return {"ok": True, "extension": ext}
 
 
+@app.post("/api/extensions/{extension}/dnd")
+async def api_set_extension_dnd(
+    extension: str,
+    enabled: bool = Body(..., embed=True),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Enable/disable Do Not Disturb for an extension (AstDB DND flag).
+    Permissions mirror the WebRTC toggle:
+      - admin: any extension
+      - agent: only their own extension
+      - supervisor: their own extension or extensions in allowed_agent_extensions
+    """
+    role = current_user.get("role")
+    user_ext = current_user.get("extension")
+    allowed_exts = current_user.get("allowed_agent_extensions") or []
+    ext = str(extension)
+
+    allowed = False
+    if role == "admin":
+        allowed = True
+    elif role == "agent":
+        allowed = bool(user_ext and str(user_ext) == ext)
+    elif role == "supervisor":
+        allowed = (user_ext and str(user_ext) == ext) or ext in [str(e) for e in allowed_exts]
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Not allowed to change DND for this extension")
+
+    if monitor is None:
+        raise HTTPException(status_code=503, detail="AMI monitor not available")
+
+    ok = await monitor.set_dnd(ext, bool(enabled))
+    if not ok:
+        raise HTTPException(status_code=502, detail="Failed to set DND via AMI")
+
+    # Push the new DND state to all connected clients immediately.
+    if bridge is not None:
+        await bridge.broadcast_state_now()
+
+    log.info(f"DND {'enabled' if enabled else 'disabled'} for extension: {ext}")
+    return {"ok": True, "extension": ext, "dnd": bool(enabled)}
+
+
+# ── Not-Ready Codes (pause reasons) ──────────────────────────────────────────
+@app.get("/api/pause-reasons")
+async def api_list_pause_reasons(current_user: dict = Depends(get_current_user)):
+    """List pause reasons. Admins see all; everyone else sees active codes only."""
+    is_admin = current_user.get("role") == "admin"
+    reasons = pause_reason_list(active_only=not is_admin, include_system=True)
+    return {"reasons": reasons}
+
+
+@app.post("/api/pause-reasons")
+async def api_create_pause_reason(body: dict, current_user: dict = Depends(require_admin)):
+    rid = pause_reason_create(
+        code=body.get("code", ""),
+        label=body.get("label", ""),
+        productive=bool(body.get("productive", False)),
+        color=body.get("color"),
+        sort_order=body.get("sort_order", 100),
+        is_active=bool(body.get("is_active", True)),
+    )
+    if not rid:
+        raise HTTPException(status_code=400, detail="Invalid or duplicate pause reason (code + label required)")
+    return {"ok": True, "id": rid}
+
+
+@app.patch("/api/pause-reasons/{reason_id}")
+async def api_update_pause_reason(reason_id: int, body: dict, current_user: dict = Depends(require_admin)):
+    if not pause_reason_update(reason_id, body or {}):
+        raise HTTPException(status_code=400, detail="Nothing to update or update failed")
+    return {"ok": True}
+
+
+@app.delete("/api/pause-reasons/{reason_id}")
+async def api_delete_pause_reason(reason_id: int, current_user: dict = Depends(require_admin)):
+    if not pause_reason_delete(reason_id):
+        raise HTTPException(status_code=400, detail="Cannot delete (not found or system reason)")
+    return {"ok": True}
+
+
+# ── Agent queue Login / Logout / Ready-Not-Ready (softphone) ─────────────────
+def _agent_login_queues(current_user: dict) -> list:
+    """Queues the current user logs into. Resolved from the agent's *extension* group
+    membership (group_agents → group_queues), like echo: drop a queue and an agent in
+    the same group and that agent can log in/out of it. Falls back to the user account's
+    own groups (user_groups) if the extension isn't a group member — covers supervisors
+    whose access is granted via their account rather than their extension."""
+    ext = current_user.get("extension")
+    queues = get_agent_login_queues(str(ext)) if ext else []
+    if not queues:
+        _agents, queues = get_user_agents_and_queues(current_user.get("id"))
+    return [str(q) for q in (queues or []) if q]
+
+
+def _agent_live_queues(interface: str) -> list:
+    """Queues the interface is *actually* a member of right now, read from the AMI
+    live membership cache. Used on logout so we remove exactly what login added,
+    even if the user's group→queue assignment has drifted since (echo parity)."""
+    if monitor is None or not interface:
+        return []
+    return sorted({
+        info.get("queue")
+        for info in getattr(monitor, "queue_members", {}).values()
+        if info.get("interface") == interface and info.get("queue")
+    })
+
+
+@app.post("/api/agent/login")
+async def api_agent_login(body: dict = Body(default={}), current_user: dict = Depends(get_current_user)):
+    """Log the current user's own extension into their assigned queues (queue_add).
+    Optional body {ready: bool} controls whether they start Ready (unpaused) or Not-Ready."""
+    ext = current_user.get("extension")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Your account has no extension")
+    if monitor is None:
+        raise HTTPException(status_code=503, detail="AMI monitor not available")
+    queues = _agent_login_queues(current_user)
+    if not queues:
+        raise HTTPException(status_code=400, detail="No queues are assigned to your account")
+    interface = normalize_interface(str(ext))
+    paused = not bool((body or {}).get("ready", True))
+    ok_any = False
+    for q in queues:
+        success, _msg = await monitor.queue_add(q, interface, 0, str(ext), paused)
+        ok_any = ok_any or success
+    if ok_any and presence is not None:
+        await presence.record_login(str(ext), ready=not paused)
+    if bridge is not None:
+        await bridge.broadcast_state_now()
+    return {"ok": ok_any, "extension": ext, "queues": queues, "ready": not paused}
+
+
+@app.post("/api/agent/logout")
+async def api_agent_logout(current_user: dict = Depends(get_current_user)):
+    """Log the current user's own extension out of their assigned queues (queue_remove)."""
+    ext = current_user.get("extension")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Your account has no extension")
+    if monitor is None:
+        raise HTTPException(status_code=503, detail="AMI monitor not available")
+    interface = normalize_interface(str(ext))
+    # Remove from the queues the agent is *actually* in (live AMI membership), so
+    # assignment drift since login can't strand them. Fall back to their group
+    # queues if the live cache has nothing (echo parity).
+    queues = _agent_live_queues(interface) or _agent_login_queues(current_user)
+    ok_any = False
+    for q in queues:
+        success, _msg = await monitor.queue_remove(q, interface)
+        ok_any = ok_any or success
+    # Clear DND so direct calls ring again after going offline (echo parity).
+    await monitor.set_dnd(str(ext), False)
+    if presence is not None:
+        await presence.record_logout(str(ext))
+    if bridge is not None:
+        await bridge.broadcast_state_now()
+    return {"ok": ok_any, "extension": ext, "queues": queues}
+
+
+@app.post("/api/agent/status")
+async def api_agent_status(body: dict, current_user: dict = Depends(get_current_user)):
+    """Set Ready/Not-Ready for the current user's own extension across their queues.
+    Body: {ready: bool, reason_code?: str}. Not-Ready → queue_pause with reason."""
+    ext = current_user.get("extension")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Your account has no extension")
+    if monitor is None:
+        raise HTTPException(status_code=503, detail="AMI monitor not available")
+    ready = bool((body or {}).get("ready", True))
+    reason = (body or {}).get("reason_code", "") or ""
+    interface = normalize_interface(str(ext))
+    queues = _agent_login_queues(current_user)
+    ok_any = False
+    for q in queues:
+        if ready:
+            success, _msg = await monitor.queue_unpause(q, interface)
+        else:
+            success, _msg = await monitor.queue_pause(q, interface, True, reason)
+        ok_any = ok_any or success
+    if ok_any and presence is not None:
+        if ready:
+            await presence.record_ready(str(ext))
+        else:
+            await presence.record_not_ready(str(ext), reason or None)
+    if bridge is not None:
+        await bridge.broadcast_state_now()
+    return {"ok": ok_any, "extension": ext, "ready": ready, "reason_code": reason}
+
+
 @app.get("/api/settings/queues")
 async def api_list_queues(
     current_user: dict = Depends(get_current_user),
@@ -1431,7 +1691,9 @@ async def api_list_queues(
     """List all queues for selection. Syncs from Asterisk if monitor available, else from DB (like agents). Uses name_map from DB for display names."""
     name_map = get_queue_names_from_db()
     if monitor and getattr(monitor, "queues", None):
-        sync_queues_from_list(list(monitor.queues.keys()), name_map)
+        # monitor.queues is now pruned by sync_queue_status, so this is the live
+        # PBX set — prune the DB queues table to match (drops deleted queues).
+        sync_queues_from_list(list(monitor.queues.keys()), name_map, prune=True)
     else:
         if name_map:
             sync_queues_from_list(list(name_map.keys()), name_map)
@@ -1650,18 +1912,28 @@ async def handle_client_message(websocket: WebSocket, message: dict):
                 })
         
         elif action == "sync":
-            # Full sync: reload extensions from Asterisk DB only if the set changed (new/removed), then sync status/calls/queues
+            # Full sync: reconcile extensions/queues with the PBX (prune removed ones,
+            # refresh names every time), then resync live status/calls/queues.
             if monitor:
                 extensions = get_extensions_from_db()
-                if extensions:
-                    new_set = set(str(e) for e in extensions)
-                    if new_set != getattr(monitor, "monitored", set()):
-                        monitor.monitored = new_set
-                        names = get_extension_names_from_db()
-                        sync_agents_from_extensions(list(monitor.monitored), names)
+                # None == PBX read failed → keep current state, never prune. A real
+                # (possibly empty) list is authoritative and safe to prune against.
+                if extensions is not None:
+                    names = get_extension_names_from_db()
+                    monitor.monitored = set(str(e) for e in extensions)
+                    # Refresh the bridge's name cache so newly added/renamed
+                    # extensions show their display name in the broadcast state
+                    # (get_current_state reads self._extension_names).
+                    if bridge:
+                        bridge._extension_names = names
+                    # Refresh names on every sync (not only when the set changed) and
+                    # prune agents that no longer exist in the PBX.
+                    sync_agents_from_extensions(list(monitor.monitored), names, prune=True)
                 await monitor.sync_extension_statuses()
                 await monitor.sync_active_calls()
                 await monitor.sync_queue_status()
+                # Reconcile the queues table with the live queue set from the monitor.
+                sync_queues_from_list(list(getattr(monitor, "queues", {}).keys()), get_queue_names_from_db(), prune=True)
             await manager.send_personal(websocket, {
                 "type": "action_result",
                 "action": "sync",
@@ -2272,10 +2544,11 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid CRM server URL: {e}")
 
+    warnings = []
     try:
         # Get existing settings to preserve masked values
         existing_settings = get_all_settings()
-        
+
         # Save basic CRM settings
         set_setting('CRM_ENABLED', 'true' if config_data.get('enabled') else 'false')
         set_setting('CRM_SERVER_URL', config_data.get('server_url', ''))
@@ -2337,8 +2610,13 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
             set_setting('CRM_SYNC_ENDPOINT', (config_data.get('sync_endpoint') or '').strip())
         if 'sync_fields' in config_data:
             cleaned = parse_sync_fields(config_data.get('sync_fields')) if parse_sync_fields else []
-            # Never persist an empty selection — fall back to the compatible default.
-            set_setting('CRM_SYNC_FIELDS', ','.join(cleaned) if cleaned else ','.join(DEFAULT_CRM_SYNC_FIELDS))
+            # Never persist an empty selection — fall back to the compatible default,
+            # but tell the operator we did so instead of silently reverting.
+            if cleaned:
+                set_setting('CRM_SYNC_FIELDS', ','.join(cleaned))
+            else:
+                set_setting('CRM_SYNC_FIELDS', ','.join(DEFAULT_CRM_SYNC_FIELDS))
+                warnings.append("No sync fields were selected — reverted to the default field set.")
         set_setting('CRM_SYNC_DIR_INBOUND', 'true' if config_data.get('sync_dir_inbound', True) else 'false')
         set_setting('CRM_SYNC_DIR_OUTBOUND', 'true' if config_data.get('sync_dir_outbound', True) else 'false')
         set_setting('CRM_SYNC_DIR_INTERNAL', 'true' if config_data.get('sync_dir_internal', True) else 'false')
@@ -2349,6 +2627,7 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
         # Apply immediately — rebuild the connector + sync config and hand them to
         # the live AMI monitor so changes take effect without a restart.
         global crm_connector, monitor
+        reload_ok = True
         try:
             crm_connector = init_crm_connector()
             new_sync = load_crm_sync_config()
@@ -2356,11 +2635,16 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
                 monitor.set_crm(crm_connector, new_sync)
             log.info("✅ CRM configuration reloaded live (no restart needed)")
         except Exception as e:
+            reload_ok = False
             log.error(f"CRM config saved but live reload failed (restart to apply): {e}")
+            warnings.append("Configuration saved, but applying it live failed — restart the server to apply.")
 
         return {
             "success": True,
-            "message": "CRM configuration saved and applied."
+            "reload_ok": reload_ok,
+            "warnings": warnings,
+            "message": "CRM configuration saved and applied." if reload_ok
+                       else "CRM configuration saved (restart required to apply)."
         }
 
     except HTTPException:
@@ -2468,6 +2752,7 @@ async def test_crm_connection(config_data: dict = None, current_user: dict = Dep
 async def get_call_log_endpoint(
     limit: int = 100, date: str = None,
     date_from: str = None, date_to: str = None,
+    search: str = None,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -2491,11 +2776,12 @@ async def get_call_log_endpoint(
             date_from = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d')
 
         allowed_ext = None if current_user.get("role") == "admin" else (current_user.get("allowed_agent_extensions") or [])
+        search_q = (search or "").strip() or None
         data = get_call_log(limit=limit, date=date,
                             date_from=date_from, date_to=date_to,
-                            allowed_extensions=allowed_ext)
+                            allowed_extensions=allowed_ext, search=search_q)
         total = get_call_log_count_from_db(date=date, date_from=date_from, date_to=date_to,
-                                           allowed_extensions=allowed_ext)
+                                           allowed_extensions=allowed_ext, search=search_q)
         return {"calls": data, "total": total}
     except Exception as e:
         log.error(f"Error fetching call log: {e}")
@@ -2807,6 +3093,132 @@ async def analytics_agent_performance(
         raise
     except Exception as e:
         log.error(f"analytics agent performance error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/analytics/agent-adherence")
+async def analytics_agent_adherence(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Agent Adherence: Login/Logout/Logged-In/Ready/On-Call/Wrap-up/Not-Ready/Occupancy
+    per agent for the selected period, from agent_activity presence segments. Scope-filtered.
+    Roles: admin, supervisor."""
+    try:
+        _, allowed_agents = _analytics_scope(current_user)
+        return analytics_module.compute_agent_adherence(date_from, date_to, allowed_agents)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"analytics agent adherence error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def _fmt_hms(secs) -> str:
+    """Seconds -> H:MM:SS for spreadsheet readability. Blank on None/negative."""
+    try:
+        s = int(secs or 0)
+    except (TypeError, ValueError):
+        return ''
+    if s < 0:
+        s = 0
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}"
+
+
+@app.get("/api/analytics/agent-adherence/export")
+async def analytics_agent_adherence_export(
+    format: str = "csv",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Export the Agent Adherence report as CSV or XLSX. Roles: admin, supervisor.
+    Columns mirror the on-screen report plus a per-agent Not-Ready breakdown and a
+    server-side 'Generated at' stamp (in the filename and a header line)."""
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO, StringIO
+
+    try:
+        _, allowed_agents = _analytics_scope(current_user)
+        result = analytics_module.compute_agent_adherence(date_from, date_to, allowed_agents)
+        agents = result.get('agents', [])
+
+        generated_at = datetime.now()
+        gen_stamp = generated_at.strftime('%Y-%m-%d %H:%M:%S')
+        gen_file = generated_at.strftime('%Y%m%d-%H%M%S')
+        date_label = f"{date_from or 'all'}_{date_to or 'all'}"
+        filename_base = f"agent_adherence_{date_label}_{gen_file}"
+
+        headers_row = ['Agent', 'Name', 'Login', 'Logout', 'Still Logged In',
+                       'Logged In', 'Ready', 'On Call', 'Wrap-up', 'Not Ready',
+                       'Occupancy %', 'Not Ready Breakdown']
+
+        def row_values(a):
+            breakdown = '; '.join(
+                f"{b.get('label', b.get('code'))}: {_fmt_hms(b.get('secs'))}"
+                for b in a.get('not_ready_breakdown', [])
+            )
+            return [
+                a.get('agent', ''),
+                a.get('name', ''),
+                a.get('login') or '',
+                '' if a.get('logged_in') else (a.get('logout') or ''),
+                'Yes' if a.get('logged_in') else 'No',
+                _fmt_hms(a.get('logged_in_secs')),
+                _fmt_hms(a.get('ready_secs')),
+                _fmt_hms(a.get('on_call_secs')),
+                _fmt_hms(a.get('wrap_secs')),
+                _fmt_hms(a.get('not_ready_secs')),
+                a.get('occupancy_pct', 0),
+                breakdown,
+            ]
+
+        if format.lower() == 'xlsx':
+            try:
+                import openpyxl
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "Agent Adherence"
+                ws.append([f"Generated at: {gen_stamp}"])
+                ws.append([f"Period: {date_from or 'all'} to {date_to or 'all'}"])
+                ws.append([])
+                ws.append(headers_row)
+                for a in agents:
+                    ws.append(row_values(a))
+                buf = BytesIO()
+                wb.save(buf)
+                buf.seek(0)
+                return StreamingResponse(
+                    buf,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{filename_base}.xlsx"'}
+                )
+            except ImportError:
+                raise HTTPException(status_code=500, detail="openpyxl not installed; use CSV export")
+        else:
+            # CSV with UTF-8 BOM for Excel compatibility
+            buf = StringIO()
+            buf.write('﻿')  # BOM
+            buf.write(f'"Generated at: {gen_stamp}"\r\n')
+            buf.write(f'"Period: {date_from or "all"} to {date_to or "all"}"\r\n')
+            buf.write('\r\n')
+            buf.write(','.join(f'"{h}"' for h in headers_row) + '\r\n')
+            for a in agents:
+                vals = [str(v).replace('"', '""') for v in row_values(a)]
+                buf.write(','.join(f'"{v}"' for v in vals) + '\r\n')
+            csv_bytes = buf.getvalue().encode('utf-8')
+            return StreamingResponse(
+                BytesIO(csv_bytes),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename_base}.csv"'}
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"agent adherence export error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

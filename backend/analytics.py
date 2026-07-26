@@ -239,6 +239,135 @@ def get_agent_names() -> dict:
         return {}
 
 
+# ===========================================================================
+# Agent Adherence
+# Aggregates agent_activity presence SEGMENTS (written by the presence recorder)
+# into a per-agent daily summary: Login, Logout, Logged In, Ready, On Call,
+# Wrap-up, Not Ready, Occupancy. Segments are clamped to the selected window so a
+# shift that spans midnight is split correctly. No window functions (MariaDB safe).
+# ===========================================================================
+
+def compute_agent_adherence(date_from: str, date_to: str, allowed_agents=None) -> dict:
+    """Return {'agents': [row, ...], 'reasons': [catalog]} for the Agent Adherence report.
+
+    Each row: agent, name, login (iso|None), logout (iso|None), logged_in (bool),
+    logged_in_secs, ready_secs, on_call_secs, wrap_secs, not_ready_secs,
+    productive_not_ready_secs, occupancy_pct, and not_ready_breakdown[] by reason.
+    Occupancy = (on_call + wrap) / (on_call + wrap + ready)."""
+    date_from, date_to = _default_dates(date_from, date_to)
+    window_start = f"{date_from} 00:00:00"
+    window_end = f"{date_to} 23:59:59"
+
+    agent_names = get_agent_names()
+    # Reason metadata for the productive split + labels.
+    reason_meta = {}
+    try:
+        with _opdesk_db() as cursor:
+            cursor.execute("SELECT code, label, productive, color, is_system FROM pause_reasons")
+            for r in cursor.fetchall():
+                reason_meta[r['code']] = r
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"adherence reason_meta: {e}")
+
+    cond, params = _scope_agent_condition(allowed_agents, col="agent_ext")
+    sql = f"""
+        SELECT agent_ext, state, reason_code,
+               SUM(GREATEST(0, TIMESTAMPDIFF(SECOND,
+                     GREATEST(started_at, %s),
+                     LEAST(COALESCE(ended_at, NOW()), %s)))) AS secs,
+               MIN(started_at)                    AS first_start,
+               MAX(COALESCE(ended_at, NOW()))     AS last_end,
+               MAX(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) AS has_open
+        FROM agent_activity
+        WHERE started_at <= %s AND (ended_at IS NULL OR ended_at >= %s)
+        {cond}
+        GROUP BY agent_ext, state, reason_code
+    """
+    query_params = [window_start, window_end, window_end, window_start] + params
+
+    rows = []
+    try:
+        with _opdesk_db() as cursor:
+            cursor.execute(sql, query_params)
+            rows = cursor.fetchall()
+    except Exception as e:  # noqa: BLE001
+        log.error(f"compute_agent_adherence query: {e}")
+        return {"agents": [], "reasons": list(reason_meta.values())}
+
+    win_start_dt = datetime.strptime(window_start, '%Y-%m-%d %H:%M:%S')
+    win_end_dt = datetime.strptime(window_end, '%Y-%m-%d %H:%M:%S')
+
+    agents = {}
+    for r in rows:
+        ext = str(r['agent_ext'])
+        a = agents.setdefault(ext, {
+            "agent": ext, "name": agent_names.get(ext, ""),
+            "ready_secs": 0, "on_call_secs": 0, "wrap_secs": 0, "not_ready_secs": 0,
+            "productive_not_ready_secs": 0, "_first": None, "_last": None, "_open": False,
+            "not_ready_breakdown": {},
+        })
+        secs = int(r['secs'] or 0)
+        state = r['state']
+        if state == 'ready':
+            a["ready_secs"] += secs
+        elif state == 'on_call':
+            a["on_call_secs"] += secs
+        elif state == 'wrap_up':
+            a["wrap_secs"] += secs
+        elif state == 'not_ready':
+            a["not_ready_secs"] += secs
+            code = r.get('reason_code') or 'unknown'
+            meta = reason_meta.get(code, {})
+            if meta.get('productive'):
+                a["productive_not_ready_secs"] += secs
+            bd = a["not_ready_breakdown"].setdefault(code, {
+                "code": code, "label": meta.get('label', code),
+                "productive": bool(meta.get('productive')), "secs": 0,
+            })
+            bd["secs"] += secs
+        # Login / logout window across all segments
+        fs = r.get('first_start')
+        le = r.get('last_end')
+        if fs and (a["_first"] is None or fs < a["_first"]):
+            a["_first"] = fs
+        if le and (a["_last"] is None or le > a["_last"]):
+            a["_last"] = le
+        if r.get('has_open'):
+            a["_open"] = True
+
+    result = []
+    for ext, a in agents.items():
+        logged_in = a["ready_secs"] + a["on_call_secs"] + a["wrap_secs"] + a["not_ready_secs"]
+        handling = a["on_call_secs"] + a["wrap_secs"]
+        avail = handling + a["ready_secs"]
+        occupancy = round((handling / avail) * 100, 1) if avail > 0 else 0.0
+        login_dt = a["_first"]
+        if login_dt and login_dt < win_start_dt:
+            login_dt = win_start_dt
+        logout_dt = None if a["_open"] else a["_last"]
+        if logout_dt and logout_dt > win_end_dt:
+            logout_dt = win_end_dt
+        result.append({
+            "agent": ext,
+            "name": a["name"],
+            "login": login_dt.isoformat() if login_dt else None,
+            "logout": logout_dt.isoformat() if logout_dt else None,
+            "logged_in": a["_open"],
+            "logged_in_secs": logged_in,
+            "ready_secs": a["ready_secs"],
+            "on_call_secs": a["on_call_secs"],
+            "wrap_secs": a["wrap_secs"],
+            "not_ready_secs": a["not_ready_secs"],
+            "productive_not_ready_secs": a["productive_not_ready_secs"],
+            "occupancy_pct": occupancy,
+            "not_ready_breakdown": sorted(a["not_ready_breakdown"].values(),
+                                          key=lambda x: -x["secs"]),
+        })
+
+    result.sort(key=lambda x: (-x["logged_in_secs"], x["agent"]))
+    return {"agents": result, "reasons": list(reason_meta.values())}
+
+
 # ---------------------------------------------------------------------------
 # Core CDR query — queue calls with first_leg/last_leg join
 # ---------------------------------------------------------------------------

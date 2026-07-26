@@ -2,14 +2,15 @@ import { useState, useEffect } from 'react';
 import {
   Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff,
   ChevronDown, ChevronRight, Plug, BarChart3, KeyRound, ShieldCheck, Smartphone, Disc,
-  Link2, Send, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Check, Lock,
+  Link2, Send, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Check, Lock, PauseCircle,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../auth';
 import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
+import { PauseReasonsPanel } from './PauseReasonsPanel';
 
-export type SettingsTab = 'integrations' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording';
+export type SettingsTab = 'integrations' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -79,9 +80,22 @@ const CRM_FIELD_LABELS: Record<string, string> = {
   hangup_cause: 'Hangup cause', agent: 'Agent', answered_extension: 'Answered ext', queue_wait_time: 'Queue wait (s)',
 };
 
-export function SettingsPanel() {
+interface SettingsPanelProps {
+  /** When provided, the active sub-tab is controlled by the parent (sidebar dropdown)
+   *  and the panel's own top tab bar is hidden. */
+  tab?: SettingsTab;
+  onTabChange?: (tab: SettingsTab) => void;
+}
+
+export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<SettingsTab>('integrations');
+  const controlled = tab !== undefined;
+  const [internalTab, setInternalTab] = useState<SettingsTab>('integrations');
+  const activeTab = controlled ? tab : internalTab;
+  const setActiveTab = (next: SettingsTab) => {
+    if (onTabChange) onTabChange(next);
+    if (!controlled) setInternalTab(next);
+  };
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [config, setConfig] = useState<CRMConfig>({
     enabled: false,
@@ -162,8 +176,16 @@ export function SettingsPanel() {
         body: JSON.stringify(config),
       });
       if (response.ok) {
-        setMessage({ type: 'success', text: t('settings.crm.savedSuccess') });
-        setTimeout(() => setMessage(null), 3000);
+        const data = await response.json().catch(() => ({}));
+        const warnings: string[] = Array.isArray(data.warnings) ? data.warnings : [];
+        if (data.reload_ok === false || warnings.length) {
+          // Saved, but something needs the operator's attention (live-reload failed
+          // and/or fields were reverted) — surface it instead of a silent success.
+          setMessage({ type: 'error', text: warnings.join(' ') || t('settings.crm.saveNeedsRestart', 'Saved, but a restart is required to apply.') });
+        } else {
+          setMessage({ type: 'success', text: t('settings.crm.savedSuccess') });
+          setTimeout(() => setMessage(null), 3000);
+        }
       } else {
         const error = await response.json();
         setMessage({ type: 'error', text: error.detail || t('settings.crm.saveError') });
@@ -425,7 +447,7 @@ export function SettingsPanel() {
     <div className="panel settings-panel-full">
       <div className="panel-content up-root">
 
-        <div className="up-tabs">
+        <div className="up-tabs" style={controlled ? { display: 'none' } : undefined}>
           <button type="button" className={`up-tab ${activeTab === 'integrations' ? 'active' : ''}`} onClick={() => setActiveTab('integrations')}>
             <Plug size={18} />
             {t('settings.integrations')}
@@ -449,6 +471,10 @@ export function SettingsPanel() {
           <button type="button" className={`up-tab ${activeTab === 'recording' ? 'active' : ''}`} onClick={() => setActiveTab('recording')}>
             <Disc size={18} />
             Recording
+          </button>
+          <button type="button" className={`up-tab ${activeTab === 'not-ready-codes' ? 'active' : ''}`} onClick={() => setActiveTab('not-ready-codes')}>
+            <PauseCircle size={18} />
+            {t('notReady.title', 'Not-Ready Codes')}
           </button>
         </div>
 
@@ -957,6 +983,22 @@ export function SettingsPanel() {
             </div>
             <div className="up-add-body">
               <AnalyticsSettingsPanel />
+            </div>
+          </div>
+        )}
+
+        {/* ── Not-Ready Codes Tab ── */}
+        {activeTab === 'not-ready-codes' && (
+          <div className="up-add-card">
+            <div className="up-add-header">
+              <div className="up-add-icon"><PauseCircle size={24} /></div>
+              <div>
+                <h2 className="up-add-title">{t('notReady.title', 'Not-Ready Codes')}</h2>
+                <p className="up-add-desc">{t('notReady.description', 'Pause reasons agents select when going Not-Ready.')}</p>
+              </div>
+            </div>
+            <div className="up-add-body">
+              <PauseReasonsPanel />
             </div>
           </div>
         )}
