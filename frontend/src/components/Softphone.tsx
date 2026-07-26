@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   Phone,
   PhoneOff,
-  RefreshCw,
   Trash2,
   Search,
   Delete,
@@ -11,10 +10,28 @@ import {
   ArrowRightLeft,
   Volume2,
   Mic,
+  Signal,
+  SignalHigh,
+  SignalMedium,
+  SignalLow,
+  SignalZero,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { useAudioLevels } from '../hooks/useAudioLevels';
+import { AgentStatusHeader } from './AgentStatusHeader';
+import type { AgentPresence } from './AgentStatusBar';
+
+// Map a live MOS (1–5) to a single signal-strength icon + colour, matching the
+// Call History QoS labels so the live and recorded quality read the same.
+function mosSignal(v: number | null): { Icon: LucideIcon; color: string; labelKey: string } {
+  if (v == null) return { Icon: SignalZero,   color: 'var(--text-muted)', labelKey: 'softphone.qos_na' };
+  if (v >= 4.3)  return { Icon: SignalHigh,    color: '#10b981', labelKey: 'softphone.qos_excellent' };
+  if (v >= 4.0)  return { Icon: Signal,        color: '#22c55e', labelKey: 'softphone.qos_good' };
+  if (v >= 3.5)  return { Icon: SignalMedium,  color: '#f59e0b', labelKey: 'softphone.qos_fair' };
+  return                { Icon: SignalLow,     color: '#ef4444', labelKey: 'softphone.qos_poor' };
+}
 
 const DIAL_PAD = [
   [['1', ''], ['2', 'ABC'], ['3', 'DEF']],
@@ -23,7 +40,7 @@ const DIAL_PAD = [
   [['*', ''], ['0', '+'], ['#', '']],
 ];
 
-export function Softphone() {
+export function Softphone({ presence = null }: { presence?: AgentPresence | null }) {
   const { t } = useTranslation();
   const {
     config,
@@ -32,6 +49,7 @@ export function Softphone() {
     status,
     callStatus,
     callDuration,
+    callStats,
     logs,
     incomingCall,
     activeCallRemoteNumber,
@@ -99,16 +117,13 @@ export function Softphone() {
   if (incomingCall) {
     return (
       <div className="softphone-panel softphone-incoming">
-        <div className="softphone-header">
-          <Phone size={18} className="softphone-header-icon" />
-          <span className="softphone-header-title">{t('softphone.title')}</span>
-          <div className="softphone-header-right">
-            <span
-              className={`softphone-status-dot ${isConnected ? 'registered' : ''}`}
-              title={statusLabel}
-            />
-          </div>
-        </div>
+        <AgentStatusHeader
+          title={t('softphone.title')}
+          icon={<Phone size={18} className="softphone-header-icon" />}
+          isConnected={isConnected}
+          presence={presence}
+          onCall={hasActiveCall}
+        />
         <div className="softphone-incoming-body">
           <div className="softphone-caller-number">{incomingCall.callerNumber}</div>
           <div className="softphone-caller-name">{incomingCall.callerName || t('softphone.incomingCall')}</div>
@@ -157,20 +172,35 @@ export function Softphone() {
   if (isCallAnswered || isOutgoingRinging) {
     return (
       <div className="softphone-panel softphone-incall">
-        <div className="softphone-header">
-          <Phone size={18} className="softphone-header-icon" />
-          <span className="softphone-header-title">{t('softphone.title')}</span>
-          <div className="softphone-header-right">
-            <span
-              className={`softphone-status-dot ${isConnected ? 'registered' : ''}`}
-              title={statusLabel}
-            />
-          </div>
-        </div>
+        <AgentStatusHeader
+          title={t('softphone.title')}
+          icon={<Phone size={18} className="softphone-header-icon" />}
+          isConnected={isConnected}
+          presence={presence}
+          onCall={hasActiveCall}
+        />
         <div className="softphone-incall-body">
           <div className="softphone-incall-number">{inCallNumber || '—'}</div>
           <div className="softphone-incall-name">{inCallName}</div>
           <div className="softphone-incall-duration">{inCallDuration}</div>
+          {isCallAnswered && callStats && callStats.mos != null && (() => {
+            const sig = mosSignal(callStats.mos);
+            return (
+              <div className="softphone-quality" title={t(sig.labelKey)}>
+                <div className="softphone-quality-head">
+                  <sig.Icon size={16} style={{ color: sig.color }} />
+                  <span className="softphone-quality-mos" style={{ color: sig.color }}>
+                    {t('softphone.quality_mos')} {callStats.mos.toFixed(1)}
+                  </span>
+                </div>
+                <span className="softphone-quality-detail">
+                  {callStats.jitterMs != null && <>{t('softphone.quality_jitter')} {Math.round(callStats.jitterMs)}ms</>}
+                  {callStats.packetLossPct != null && <> · {t('softphone.quality_loss')} {callStats.packetLossPct.toFixed(1)}%</>}
+                  {callStats.rttMs != null && <> · {t('softphone.quality_rtt')} {Math.round(callStats.rttMs)}ms</>}
+                </span>
+              </div>
+            );
+          })()}
           <div className="softphone-audio-levels">
             <div className="softphone-level-item" title="Speaker (incoming volume)">
               <Volume2 size={18} className="softphone-level-icon" />
@@ -275,25 +305,15 @@ export function Softphone() {
   // Dialpad view
   return (
     <div className="softphone-panel">
-      <div className="softphone-header">
-        <Phone size={18} className="softphone-header-icon" />
-        <span className="softphone-header-title">{t('softphone.title')}</span>
-        <div className="softphone-header-right">
-          <span
-            className={`softphone-status-dot ${isConnected ? 'registered' : ''}`}
-            title={statusLabel}
-          />
-          <button
-            type="button"
-            className="softphone-header-btn"
-            onClick={refetchConfig}
-            disabled={configLoading}
-            title={t('softphone.refresh')}
-          >
-            <RefreshCw size={14} />
-          </button>
-        </div>
-      </div>
+      <AgentStatusHeader
+        title={t('softphone.title')}
+        icon={<Phone size={18} className="softphone-header-icon" />}
+        isConnected={isConnected}
+        presence={presence}
+        onCall={hasActiveCall}
+        onRefresh={refetchConfig}
+        refreshDisabled={configLoading}
+      />
 
       <div className="softphone-dial-area">
         <div className="softphone-search-wrap">

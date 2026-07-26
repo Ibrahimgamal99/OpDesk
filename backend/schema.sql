@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS device_tokens (
     id INT PRIMARY KEY AUTO_INCREMENT,
     user_id INT NOT NULL,
     extension VARCHAR(20) NULL,
-    platform ENUM('ios', 'android') NOT NULL,
+    platform ENUM('ios', 'android', 'web') NOT NULL,
     token_type ENUM('voip', 'alert') NOT NULL DEFAULT 'alert',
     token TEXT NOT NULL,
     token_hash CHAR(64) NOT NULL,
@@ -285,3 +285,65 @@ CREATE TABLE IF NOT EXISTS analytics_agent_daily (
 INSERT IGNORE INTO OpDesk_settings (setting_key, setting_value) VALUES
 ('SLA_DEFAULT_SECS', '20'),
 ('ANALYTICS_ENABLED', 'true');
+
+-- Not-Ready Codes (pause reasons) — agents pick one when going Not-Ready
+-- (queue_pause reason_code). Also created/seeded at startup by init_pause_reasons_table().
+CREATE TABLE IF NOT EXISTS pause_reasons (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    code        VARCHAR(64) NOT NULL UNIQUE,
+    label       VARCHAR(191) NOT NULL,
+    productive  TINYINT(1) NOT NULL DEFAULT 0,
+    color       VARCHAR(16) DEFAULT NULL,
+    sort_order  INT NOT NULL DEFAULT 100,
+    is_active   TINYINT(1) NOT NULL DEFAULT 1,
+    is_system   TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO pause_reasons (code, label, productive, color, sort_order, is_active, is_system) VALUES
+('break',    'Break',    0, '#d29922', 10, 1, 0),
+('lunch',    'Lunch',    0, '#f85149', 20, 1, 0),
+('meeting',  'Meeting',  1, '#58a6ff', 30, 1, 0),
+('training', 'Training', 1, '#3fb950', 40, 1, 0);
+
+-- Agent presence segments — the Agent Adherence report's data source. One append-only
+-- row per presence period; ended_at IS NULL marks the currently-open segment. Written
+-- by the presence recorder (backend/agent_presence.py) from the agent login/logout/
+-- status endpoints and reconciled from AMI (AgentConnect -> on_call, pause/unpause).
+-- Also created at startup by init_agent_activity_table().
+--   ready       = logged into queue(s), not paused, not on an ACD call
+--   on_call     = connected to an ACD call (AgentConnect -> AgentComplete)
+--   not_ready   = logged in, paused with a pause_reasons.code
+--   wrap_up     = paused with the system reason __WRAPUP (after-call work), if used
+CREATE TABLE IF NOT EXISTS agent_activity (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    agent_ext     VARCHAR(20) NOT NULL,
+    state         VARCHAR(20) NOT NULL,               -- ready / on_call / not_ready / wrap_up
+    reason_code   VARCHAR(64) NULL,                   -- pause_reasons.code when state=not_ready/wrap_up
+    queue         VARCHAR(40) NULL,                   -- ACD queue for on_call, if known
+    linkedid      VARCHAR(64) NULL,                   -- the call, for on_call
+    started_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at      TIMESTAMP NULL DEFAULT NULL,
+    duration_secs INT NULL,                           -- filled when the segment closes
+    source        VARCHAR(20) NOT NULL DEFAULT 'ui',  -- ui / ami / system
+    INDEX idx_agent_started (agent_ext, started_at),
+    INDEX idx_started (started_at),
+    INDEX idx_open (agent_ext, ended_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Supervision events: one row per ChanSpy leg (listen/whisper/barge), keyed by the
+-- spy channel's linkedid (== the deterministic ChannelId set when originating the spy).
+-- Lets the call log flag/hide the standalone ChanSpy CDR row and attach it to the
+-- monitored call it supervised.
+CREATE TABLE IF NOT EXISTS call_supervision (
+    id                    INT PRIMARY KEY AUTO_INCREMENT,
+    spy_linkedid          VARCHAR(64) NOT NULL UNIQUE,   -- linkedid of the ChanSpy leg (its own CDR call); == the ChannelId we set
+    spy_uniqueid          VARCHAR(64) NULL,              -- uniqueid of the ChanSpy leg (usually == spy_linkedid)
+    target_linkedid       VARCHAR(64) NULL,              -- the monitored call this supervision belongs to
+    target_extension      VARCHAR(20) NULL,              -- the spied-on agent's extension
+    supervisor_extension  VARCHAR(20) NULL,              -- the supervisor doing listen/whisper/barge
+    mode                  ENUM('listen','whisper','barge') NOT NULL DEFAULT 'listen',
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_spy_linkedid (spy_linkedid),
+    INDEX idx_target_linkedid (target_linkedid),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

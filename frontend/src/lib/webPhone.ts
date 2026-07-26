@@ -17,6 +17,7 @@ import type { UserAgentOptions } from 'sip.js';
 import type { InviterOptions } from 'sip.js';
 import type { InvitationAcceptOptions } from 'sip.js';
 import { rlog, remoteLogEnabled } from './remoteLog';
+import { computeCallStats, type CallStats } from './callStats';
 
 
 export type WebPhoneStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -91,6 +92,16 @@ export class WebPhone {
 
   get hasActiveCall(): boolean {
     return this.session != null;
+  }
+
+  /**
+   * Live WebRTC media-quality sample (MOS / jitter / latency / loss) for the
+   * active call, read off the session's RTCPeerConnection. null when there is no
+   * active call or no peer connection / inbound audio yet.
+   */
+  async getStats(): Promise<CallStats | null> {
+    const sdh = this.session?.sessionDescriptionHandler as { peerConnection?: RTCPeerConnection } | undefined;
+    return computeCallStats(sdh?.peerConnection);
   }
 
   /** Mute/unmute the microphone for the current call. Toggles if no argument. */

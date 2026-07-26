@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from db_manager import get_call_log_from_db, get_cdr_by_linkedid
+from db_manager import get_call_log_from_db, get_cdr_by_linkedid, get_supervision_by_spy_keys
 from datetime import datetime, timedelta
 
 
@@ -112,10 +112,11 @@ def get_recording_path(file_wav):
     return None
 
 
-def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extensions=None):
+def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extensions=None, search=None):
     call_log = get_call_log_from_db(limit=limit, date=date,
                                      date_from=date_from, date_to=date_to,
-                                     allowed_extensions=allowed_extensions)
+                                     allowed_extensions=allowed_extensions,
+                                     search=search)
     
     result = []
     for cdr in call_log:
@@ -165,9 +166,31 @@ def call_log(limit=None, date=None, date_from=None, date_to=None, allowed_extens
             'call_journey_count':cdr.get('call_journey_count'),
             'linkedid':cdr.get('linkedid'),
             'uniqueid':cdr.get('uniqueid'),
+            # Supervision (listen/whisper/barge). Enriched below; a standalone ChanSpy
+            # leg is flagged here so the UI can hide it behind a "supervision" filter.
+            'is_supervision': False,
+            'supervision': None,
         }
-        
+
         result.append(filtered_cdr)
+
+    # Flag ChanSpy legs (listen/whisper/barge) so the call log can hide them by default.
+    # A supervision row is its own CDR call whose linkedid/uniqueid we recorded when the
+    # spy channel was originated (see AMI _chanspy + call_supervision table).
+    keys = [str(r['linkedid']) for r in result if r.get('linkedid')]
+    keys += [str(r['uniqueid']) for r in result if r.get('uniqueid')]
+    spy_by_key = get_supervision_by_spy_keys(keys) if keys else {}
+    if spy_by_key:
+        for r in result:
+            spy = spy_by_key.get(str(r.get('linkedid'))) or spy_by_key.get(str(r.get('uniqueid')))
+            if spy:
+                r['is_supervision'] = True
+                r['supervision'] = {
+                    'mode': spy.get('mode'),
+                    'supervisor_extension': spy.get('supervisor_extension'),
+                    'target_extension': spy.get('target_extension'),
+                    'target_linkedid': spy.get('target_linkedid'),
+                }
 
     return result
 

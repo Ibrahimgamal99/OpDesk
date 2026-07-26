@@ -9,6 +9,7 @@ and supervisor features (listen/whisper/barge) via Asterisk Manager Interface.
 import logging
 import os
 import re
+import time
 import asyncio
 from typing import Dict, Optional, List, Set, Callable, Awaitable
 from datetime import datetime, timedelta
@@ -31,6 +32,11 @@ try:
     from db_manager import insert_call_notification
 except ImportError:
     insert_call_notification = None
+
+try:
+    from db_manager import record_supervision
+except ImportError:
+    record_supervision = None
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -183,6 +189,7 @@ class AMIExtensionsMonitor:
         self.ch_callerid:  Dict[str, str]  = {}   # channel -> callerid
         self.destch2ext:   Dict[str, str]  = {}   # dest channel -> caller ext (for tracking ringing)
         self.monitored:    Set[str]        = set()
+        self.dnd:          Set[str]        = set()   # extensions with Do-Not-Disturb enabled (AstDB DND family)
         self._refresh_event: Optional[asyncio.Event] = None  # Signal for live monitor refresh
         self._event_callbacks: List[Callable[[Dict[str, str]], Awaitable[None]]] = []  # Event callbacks
         
@@ -510,9 +517,57 @@ class AMIExtensionsMonitor:
         """Query and cache status for all monitored extensions."""
         if not self.connected or not self.monitored:
             return
-        
+
         for ext in self.monitored:
             await self.get_extension_status(ext)
+
+    # ------------------------------------------------------------------
+    # Do Not Disturb (per-extension) — stored in the Asterisk DB "DND" family,
+    # which is honoured by both FreePBX and Issabel dialplans.
+    # ------------------------------------------------------------------
+    async def set_dnd(self, ext: str, enabled: bool) -> bool:
+        """Enable/disable DND for an extension by writing the AstDB DND flag.
+
+        Uses DBPut Family=DND Key=<ext> Val=YES to enable and DBDel to clear — the same
+        flag FreePBX/Issabel check in the dialplan. Updates the in-memory set on success.
+        """
+        ext = str(ext).strip()
+        if not ext:
+            return False
+        if enabled:
+            resp = await self._send_async('DBPut', {'Family': 'DND', 'Key': ext, 'Val': 'YES'})
+        else:
+            resp = await self._send_async('DBDel', {'Family': 'DND', 'Key': ext})
+        ok = bool(resp and 'Response: Success' in resp)
+        if ok:
+            if enabled:
+                self.dnd.add(ext)
+            else:
+                self.dnd.discard(ext)
+        return ok
+
+    async def sync_dnd_state(self):
+        """Hydrate self.dnd from the Asterisk DB via `database show DND`.
+
+        Uses a plain action send: the CLI `Command` action returns its output inline in
+        the response, so we don't wait for a follow-up CommandComplete event (which this
+        action doesn't emit, and which would otherwise stall startup on a timeout)."""
+        if not self.connected:
+            return
+        resp = await self._send_async('Command', {'Command': 'database show DND'})
+        if not resp:
+            return
+        found: Set[str] = set()
+        # Lines look like: /DND/101                    : YES
+        for line in resp.splitlines():
+            line = line.strip()
+            if not line.startswith('/DND/'):
+                continue
+            body = line[len('/DND/'):]
+            key = body.split(':', 1)[0].strip()
+            if key:
+                found.add(key)
+        self.dnd = found
 
     # ------------------------------------------------------------------
     # Active-channel / sync
@@ -2562,7 +2617,23 @@ class AMIExtensionsMonitor:
         """Sync queue status by querying AMI - populates self.queues, self.queue_members, and self.queue_entries."""
         # Get queue summary first
         summary = await self.get_queue_summary()
-        
+
+        # Prune queues that no longer exist in the PBX, so a queue deleted in
+        # FreePBX/Issabel disappears from OpDesk (mirrors how extensions are pruned
+        # by replacing self.monitored wholesale). Without this, sync only ever
+        # upserts and a removed queue lingers forever in memory — and gets
+        # re-seeded into the DB queues table via sync_queues_from_list().
+        # Guard on a non-empty summary: an empty result usually means a failed or
+        # empty AMI read, and pruning everything then would wipe all live queues.
+        if summary:
+            current_queues = set(summary.keys())
+            for stale in [q for q in self.queues if q not in current_queues]:
+                self.queues.pop(stale, None)
+            for mkey in [k for k, m in self.queue_members.items()
+                         if m.get('queue') not in current_queues]:
+                self.queue_members.pop(mkey, None)
+                self.dynamic_members.discard(mkey)
+
         # Clear old queue entries before syncing to avoid stale entries
         # We'll repopulate from the sync, so clear everything first
         old_entries = self.queue_entries.copy()
@@ -2930,16 +3001,44 @@ class AMIExtensionsMonitor:
             log.error(f"❌ No active call on extension {target}")
             return False
 
+        # Capture the MONITORED call's linkedid BEFORE we originate the spy leg, so
+        # the call log can attach this supervision to that call. The spy channel
+        # Asterisk is about to create gets its OWN linkedid (a separate CDR call).
+        target_linkedid = self.ch2linkedid.get(ch) or \
+            self.active_calls.get(target, {}).get('linkedid')
+
+        # Force a deterministic UniqueID/Linkedid on the spy channel via ChannelId,
+        # so we know the spy leg's linkedid without racing the async Newchannel event.
+        # For a ChanSpy app-originate the channel is its own linked group, so its CDR
+        # linkedid == uniqueid == this ChannelId.
+        spy_id = f"spy-{supervisor}-{target}-{int(time.time() * 1000)}"
+        mode = label.lower()  # 'listen' | 'whisper' | 'barge'
+
         base = ch.rsplit('-', 1)[0]
         resp = await self._send_async('Originate', {
             'Channel':     f'PJSIP/{supervisor}',
+            'ChannelId':   spy_id,
             'Application': 'ChanSpy',
             'Data':        f'{base},{options}',
             'CallerID':    f'{label} <{target}>',
             'Timeout':     '30000'
         })
         if resp and 'Response: Success' in resp:
-            log.info(f"✅ {supervisor} is now {label.lower()}ing {target}'s call")
+            log.info(f"✅ {supervisor} is now {mode}ing {target}'s call")
+            # Best-effort: never let a bookkeeping failure break the supervision itself.
+            if record_supervision is not None:
+                try:
+                    await asyncio.to_thread(
+                        record_supervision,
+                        spy_id,             # spy_linkedid (== ChannelId)
+                        target_linkedid,    # the monitored call
+                        target,             # spied-on extension
+                        supervisor,         # supervisor extension
+                        mode,               # listen/whisper/barge
+                        spy_id,             # spy_uniqueid (== ChannelId)
+                    )
+                except Exception as e:
+                    log.warning(f"⚠️  Could not record supervision ({spy_id}): {e}")
             return True
         err = _parse(resp or '').get('Message','Unknown error')
         log.error(f"❌ {label} failed: {err}")
