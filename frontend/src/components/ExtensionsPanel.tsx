@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2, Wifi, WifiOff, BellOff, Bell, PauseCircle, CircleDot } from 'lucide-react';
+import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2, Radio, BellOff, MinusCircle, PauseCircle, CircleDot } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Extension, ExtensionStatus } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
@@ -14,11 +14,8 @@ interface ExtensionsPanelProps {
   memberPresence?: Record<string, MemberPresence>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   onSync?: () => void;
-  /** Extension -> webrtc 'yes'|'no' for extensions current user can manage */
+  /** Extension -> webrtc 'yes'|'no'; shown as a read-only badge (toggling now lives in Users → Create/Edit). */
   webrtcMap?: Record<string, string>;
-  /** Extensions the current user is allowed to toggle WebRTC for */
-  allowedWebrtcExtensions?: Set<string>;
-  onWebrtcToggle?: (extension: string, enabled: boolean) => Promise<void>;
   /** Extensions the current user is allowed to toggle DND for */
   allowedDndExtensions?: Set<string>;
   onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
@@ -39,8 +36,6 @@ export function ExtensionsPanel({
   onSupervisorAction,
   onSync,
   webrtcMap = {},
-  allowedWebrtcExtensions = new Set(),
-  onWebrtcToggle,
   allowedDndExtensions = new Set(),
   onDndToggle,
 }: ExtensionsPanelProps) {
@@ -78,8 +73,6 @@ export function ExtensionsPanel({
                   extension={ext}
                   onSupervisorAction={onSupervisorAction}
                   webrtcEnabled={webrtcMap[ext.extension] === 'yes'}
-                  canToggleWebrtc={allowedWebrtcExtensions.has(ext.extension)}
-                  onWebrtcToggle={onWebrtcToggle}
                   canToggleDnd={allowedDndExtensions.has(ext.extension)}
                   onDndToggle={onDndToggle}
                   presence={memberPresence[ext.extension]}
@@ -97,16 +90,13 @@ interface ExtensionCardProps {
   extension: Extension;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   webrtcEnabled: boolean;
-  canToggleWebrtc: boolean;
-  onWebrtcToggle?: (extension: string, enabled: boolean) => Promise<void>;
   canToggleDnd: boolean;
   onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
   presence?: MemberPresence;
 }
 
-function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggleWebrtc, onWebrtcToggle, canToggleDnd, onDndToggle, presence }: ExtensionCardProps) {
+function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggleDnd, onDndToggle, presence }: ExtensionCardProps) {
   const { t } = useTranslation();
-  const [webrtcSaving, setWebrtcSaving] = useState(false);
   const [dndSaving, setDndSaving] = useState(false);
   const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
   const isRinging = extension.status === 'ringing';
@@ -133,16 +123,6 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
     statusLabel = t('extensions.status.ready', { defaultValue: 'Ready' });
   }
 
-  const handleWebrtcClick = async () => {
-    if (!canToggleWebrtc || !onWebrtcToggle || webrtcSaving) return;
-    setWebrtcSaving(true);
-    try {
-      await onWebrtcToggle(extension.extension, !webrtcEnabled);
-    } finally {
-      setWebrtcSaving(false);
-    }
-  };
-
   const handleDndClick = async () => {
     // DND cannot be toggled while the extension is on a call.
     if (!canToggleDnd || !onDndToggle || dndSaving || isInCall) return;
@@ -162,51 +142,40 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
       transition={{ duration: 0.2 }}
       className={`extension-card status-${displayStatus}`}
     >
-      <div className="extension-header" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div className="extension-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="extension-number">{extension.extension}</div>
           {extension.name && (
             <div className="extension-name">{extension.name}</div>
           )}
         </div>
-        {canToggleDnd && (
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={(e) => { e.stopPropagation(); handleDndClick(); }}
-            disabled={dndSaving || isInCall}
-            title={dndOn ? t('extensions.dndOn', { defaultValue: 'Do Not Disturb: on' }) : t('extensions.dndOff', { defaultValue: 'Do Not Disturb: off' })}
-            style={{ flexShrink: 0, padding: 4 }}
-            aria-label={dndOn ? 'DND on' : 'DND off'}
-          >
-            {dndSaving ? (
-              <Loader2 size={18} className="spinner" />
-            ) : dndOn ? (
-              <BellOff size={18} style={{ color: 'var(--status-ringing, #f85149)' }} />
-            ) : (
-              <Bell size={18} style={{ color: 'var(--text-muted)' }} />
-            )}
-          </button>
-        )}
-        {canToggleWebrtc && (
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={(e) => { e.stopPropagation(); handleWebrtcClick(); }}
-            disabled={webrtcSaving}
-            title={webrtcEnabled ? t('extensions.webrtcEnabled') : t('extensions.webrtcDisabled')}
-            style={{ flexShrink: 0, padding: 4 }}
-            aria-label={webrtcEnabled ? t('extensions.webrtcOn') : t('extensions.webrtcOff')}
-          >
-            {webrtcSaving ? (
-              <Loader2 size={18} className="spinner" />
-            ) : webrtcEnabled ? (
-              <Wifi size={18} style={{ color: 'var(--status-idle)' }} />
-            ) : (
-              <WifiOff size={18} style={{ color: 'var(--text-muted)' }} />
-            )}
-          </button>
-        )}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+          {webrtcEnabled && (
+            <span className="ext-webrtc-tag" title={t('extensions.webrtcOn')}>
+              <Radio size={11} />
+              {t('extensions.webrtcBadge')}
+            </span>
+          )}
+          {canToggleDnd && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={dndOn}
+              className={`agent-dnd-toggle${dndOn ? ' on' : ''}`}
+              style={{ ['--dt-color' as string]: dndOn ? 'var(--accent-danger)' : 'var(--status-unavailable)' }}
+              onClick={(e) => { e.stopPropagation(); handleDndClick(); }}
+              disabled={dndSaving || isInCall}
+              title={dndOn ? t('extensions.dndOn', { defaultValue: 'Do Not Disturb: on' }) : t('extensions.dndOff', { defaultValue: 'Do Not Disturb: off' })}
+              aria-label={dndOn ? 'DND on' : 'DND off'}
+            >
+              <span className="agent-dnd-toggle-track">
+                <span className="agent-dnd-toggle-knob">
+                  {dndSaving ? <Loader2 size={12} className="spinner" /> : dndOn ? <MinusCircle size={12} /> : <CircleDot size={12} />}
+                </span>
+              </span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className={`extension-status ${displayStatus}`}>

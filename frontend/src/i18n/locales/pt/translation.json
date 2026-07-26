@@ -74,6 +74,7 @@
     "webrtcDisabled": "WebRTC desabilitado (clique para ativar)",
     "webrtcOn": "WebRTC ativado",
     "webrtcOff": "WebRTC desativado",
+    "webrtcBadge": "WebRTC",
     "status": {
       "idle": "Ocioso",
       "ringing": "Tocando",
@@ -312,6 +313,9 @@
     "fullName": "Nome completo",
     "extension": "Ramal (opcional)",
     "noExtensions": "Não há ramais no sistema",
+    "webrtcLabel": "Softphone WebRTC",
+    "webrtcHint": "Permite que este ramal registre pelo navegador e pelo aplicativo móvel.",
+    "webrtcSaveFailed": "Usuário salvo, mas a atualização do WebRTC falhou.",
     "role": "Função",
     "monitorModes": "Modos de monitoramento (selecione um ou mais)",
     "groupsLabel": "Grupos (o usuário terá acesso a agentes e filas dos grupos selecionados)",

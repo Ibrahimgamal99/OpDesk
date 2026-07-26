@@ -74,6 +74,7 @@
     "webrtcDisabled": "WebRTC disabled (click to enable)",
     "webrtcOn": "WebRTC on",
     "webrtcOff": "WebRTC off",
+    "webrtcBadge": "WebRTC",
     "status": {
       "idle": "Idle",
       "ringing": "Ringing",
@@ -312,6 +313,9 @@
     "fullName": "Full name",
     "extension": "Extension (optional)",
     "noExtensions": "No extensions in system",
+    "webrtcLabel": "WebRTC softphone",
+    "webrtcHint": "Let this extension register from the browser and the mobile app.",
+    "webrtcSaveFailed": "User saved, but updating WebRTC failed.",
     "role": "Role",
     "monitorModes": "Monitor modes (select one or more)",
     "groupsLabel": "Groups (user gets access to agents and queues from selected groups)",
