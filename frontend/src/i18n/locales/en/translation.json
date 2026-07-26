@@ -158,6 +158,13 @@
     "allStatuses": "All Statuses",
     "allDirections": "All Directions",
     "allApps": "All Apps",
+    "supervisionHidden": "Supervision hidden ({{count}})",
+    "supervisionShown": "Showing supervision",
+    "supervision": {
+      "LISTEN": "LISTEN",
+      "WHISPER": "WHISPER",
+      "BARGE": "BARGE"
+    },
     "totalCalls": "Total Calls",
     "showing": "Showing {{start}} to {{end}} of {{total}} calls",
     "previous": "Previous",
@@ -276,7 +283,16 @@
       "registered": "Registered",
       "error": "Error",
       "notRegistered": "Not registered"
-    }
+    },
+    "qos_na": "Signal: N/A",
+    "qos_excellent": "Signal: Excellent",
+    "qos_good": "Signal: Good",
+    "qos_fair": "Signal: Fair",
+    "qos_poor": "Signal: Poor",
+    "quality_mos": "MOS",
+    "quality_jitter": "Jitter",
+    "quality_loss": "Loss",
+    "quality_rtt": "Latency"
   },
   "users": {
     "title": "All users",
@@ -496,6 +512,7 @@
       "overview": "Overview",
       "queues": "Queue Performance",
       "agents": "Agent Performance",
+      "adherence": "Adherence",
       "drilldown": "Drilldown"
     },
     "period": {
@@ -599,6 +616,27 @@
       "shortAbandon": "Short abandon threshold",
       "save": "Save Analytics Settings",
       "saved": "Saved!"
+    }
+  },
+  "agent": {
+    "adherence": {
+      "title": "Agent Adherence",
+      "subtitle": "Login, ready, on-call and break time per agent for the selected period.",
+      "agent": "Agent",
+      "login": "Login",
+      "logout": "Logout",
+      "loggedIn": "Logged In",
+      "ready": "Ready",
+      "onCall": "On Call",
+      "wrapUp": "Wrap-up",
+      "notReady": "Not Ready",
+      "occupancy": "Occupancy",
+      "stillIn": "In",
+      "empty": "No agent activity for this period",
+      "exportCsv": "CSV",
+      "exportXlsx": "Excel",
+      "exporting": "Exporting…",
+      "exportFailed": "Export failed. Please try again."
     }
   }
 }

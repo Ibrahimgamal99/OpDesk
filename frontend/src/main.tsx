@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { Login } from './components/Login'
 import { getToken, removeToken } from './auth'
@@ -46,6 +47,8 @@ if ('serviceWorker' in navigator) {
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <Root />
+  <BrowserRouter>
+    <Root />
+  </BrowserRouter>
 )
 

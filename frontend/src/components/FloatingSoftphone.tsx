@@ -4,10 +4,13 @@ import { Headphones, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { Softphone } from './Softphone';
+import { type AgentPresence } from './AgentStatusBar';
 
 interface FloatingSoftphoneProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Live agent presence (DND / queue-login) derived from the WebSocket state. */
+  presence?: AgentPresence | null;
 }
 
 /**
@@ -19,7 +22,7 @@ interface FloatingSoftphoneProps {
  * remoteStream (useWebPhone.ts); unmounting it mid-call would silently drop call
  * audio, so we animate visibility instead of conditionally rendering it.
  */
-export function FloatingSoftphone({ open, onOpenChange }: FloatingSoftphoneProps) {
+export function FloatingSoftphone({ open, onOpenChange, presence = null }: FloatingSoftphoneProps) {
   const { t } = useTranslation();
   const {
     isConnected,
@@ -95,7 +98,7 @@ export function FloatingSoftphone({ open, onOpenChange }: FloatingSoftphoneProps
         }
         transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
       >
-        <Softphone />
+        <Softphone presence={presence} />
       </motion.div>
 
       <button

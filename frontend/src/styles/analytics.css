@@ -16,6 +16,8 @@
 .an-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -46,6 +48,102 @@
   -ms-overflow-style: none;
 }
 .an-subtabs-wrap::-webkit-scrollbar { display: none; }
+
+/* ── Generic ui-tabs pill container (shared Tabs component) ───────────── */
+.ui-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-tertiary, #1a1f26);
+  padding: 5px;
+  border-radius: var(--radius-lg, 10px);
+  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
+  width: fit-content;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.ui-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-md, 8px);
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.15s);
+  font-family: inherit;
+  white-space: nowrap;
+}
+.ui-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ui-tab.active {
+  background: var(--accent-primary);
+  color: #fff;
+  box-shadow: var(--shadow-md);
+}
+.ui-tab-count {
+  background: rgba(255,255,255,0.18);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.ui-tab.active .ui-tab-count { background: rgba(255,255,255,0.25); }
+
+/* Override the generic ui-tabs pill container to become a flat nav rail */
+.an-subtabs-wrap .ui-tabs {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0 var(--space-5, 20px);
+  gap: 0;
+  width: 100%;
+  min-width: fit-content;
+  margin-bottom: 0;
+  flex-wrap: nowrap;
+}
+.an-subtabs-wrap .ui-tab {
+  padding: 12px 20px;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  gap: 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+.an-subtabs-wrap .ui-tab svg {
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+.an-subtabs-wrap .ui-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+.an-subtabs-wrap .ui-tab:hover svg { opacity: 1; }
+.an-subtabs-wrap .ui-tab.active {
+  background: transparent;
+  color: var(--accent-primary);
+  font-weight: 600;
+  border-bottom-color: var(--accent-primary);
+  box-shadow: none;
+}
+.an-subtabs-wrap .ui-tab.active svg { opacity: 1; color: var(--accent-primary); }
+
+.an-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.panel-header-actions { display: flex; align-items: center; gap: var(--space-2, 8px); flex-wrap: wrap; }
 
 .an-subtabs {
   display: flex;

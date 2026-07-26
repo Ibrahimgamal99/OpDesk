@@ -25,6 +25,7 @@ export interface Extension {
   name?: string;
   status: ExtensionStatus;
   status_code: string;
+  dnd?: boolean;
   call_info: CallInfo | null;
 }
 
@@ -34,6 +35,7 @@ export interface QueueMember {
   membername: string;
   status: string;
   paused: boolean;
+  pause_reason?: string;  // Not-Ready reason code/label when paused
   dynamic?: boolean;  // True if added via AMI (can be removed), false/undefined if static (from config)
 }
 
@@ -58,6 +60,23 @@ export interface Stats {
   active_calls_count: number;
   total_queues: number;
   total_waiting: number;
+}
+
+/** One row of the Agent Adherence report. */
+export interface AgentAdherenceRow {
+  agent: string;
+  name: string;
+  login: string | null;      // ISO, or null if no activity
+  logout: string | null;     // ISO, or null if still logged in
+  logged_in: boolean;        // true = currently logged in
+  logged_in_secs: number;
+  ready_secs: number;
+  on_call_secs: number;
+  wrap_secs: number;
+  not_ready_secs: number;
+  productive_not_ready_secs: number;
+  occupancy_pct: number;
+  not_ready_breakdown: { code: string; label: string; productive: boolean; secs: number }[];
 }
 
 export interface AppState {
@@ -103,6 +122,17 @@ export interface CallLogRecord {
   call_journey_count?: number | null;
   linkedid?: string | null;
   uniqueid?: string | null;
+  // Supervision (listen/whisper/barge). `is_supervision` marks the standalone ChanSpy
+  // row (hidden by default in the UI); `supervision` carries the spy metadata.
+  is_supervision?: boolean;
+  supervision?: CallSupervisionInfo | null;
+}
+
+export interface CallSupervisionInfo {
+  mode: 'listen' | 'whisper' | 'barge' | string;
+  supervisor_extension?: string | null;
+  target_extension?: string | null;
+  target_linkedid?: string | null;
 }
 
 // Call journey event (from API)

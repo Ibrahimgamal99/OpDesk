@@ -11,3 +11,4 @@ backend/**/*.pyc
 cert/
 nginx/
 .env
+./claude
