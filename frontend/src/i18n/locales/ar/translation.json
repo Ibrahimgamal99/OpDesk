@@ -74,6 +74,7 @@
     "webrtcDisabled": "WebRTC معطّل (انقر للتفعيل)",
     "webrtcOn": "WebRTC مفعّل",
     "webrtcOff": "WebRTC معطّل",
+    "webrtcBadge": "WebRTC",
     "status": {
       "idle": "خامل",
       "ringing": "يرنّ",
@@ -312,6 +313,9 @@
     "fullName": "الاسم الكامل",
     "extension": "الفرع (اختياري)",
     "noExtensions": "لا توجد فروع في النظام",
+    "webrtcLabel": "هاتف WebRTC",
+    "webrtcHint": "السماح لهذا التحويلة بالتسجيل من المتصفح وتطبيق الجوال.",
+    "webrtcSaveFailed": "تم حفظ المستخدم، لكن فشل تحديث WebRTC.",
     "role": "الدور",
     "monitorModes": "أوضاع المراقبة (اختر واحداً أو أكثر)",
     "groupsLabel": "المجموعات (يحصل المستخدم على صلاحية الوصول إلى المشغّلين وقوائم الانتظار من المجموعات المحددة)",
