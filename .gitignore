@@ -12,3 +12,5 @@ cert/
 nginx/
 .env
 .claude/
+
+secrets/
