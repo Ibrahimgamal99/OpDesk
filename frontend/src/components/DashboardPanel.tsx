@@ -160,11 +160,17 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
           const data: ExecutiveKPIResponse = await r.json();
           const cur = data.current;
           if (cancelled) return;
+          // Total calls / Answered render the COMBINED (inbound + outbound) figures,
+          // so the answer rate must come from the same pair — deriving it from the
+          // inbound-only fields made the percentage contradict the two numbers
+          // displayed beside it whenever there was outbound traffic.
+          const rateTotal = cur.combined?.total_calls ?? cur.total_calls;
+          const rateAnswered = cur.combined?.answered_calls ?? cur.answered_calls;
           setToday({
-            totalCalls: cur.combined?.total_calls ?? cur.total_calls,
-            answered: cur.combined?.answered_calls ?? cur.answered_calls,
+            totalCalls: rateTotal,
+            answered: rateAnswered,
             missed: cur.abandoned_calls,
-            answerRate: cur.total_calls > 0 ? (cur.answered_calls / cur.total_calls) * 100 : null,
+            answerRate: rateTotal > 0 ? (rateAnswered / rateTotal) * 100 : null,
             slaPct: cur.sla_pct,
             avgWaitSecs: cur.avg_wait_secs,
             ahtSecs: cur.aht_secs,

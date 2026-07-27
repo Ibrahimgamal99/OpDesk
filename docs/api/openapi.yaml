@@ -1,0 +1,1005 @@
+openapi: 3.0.3
+
+info:
+  title: OpDesk API
+  version: "1.2.0"
+  description: |
+    The machine-reachable surface of OpDesk, the operator panel for Asterisk.
+
+    Two authentication schemes are supported: JWT bearer tokens for users, and
+    `opd_`-prefixed API keys for machine-to-machine integrations. API keys are
+    fail-closed — they work only on the endpoints documented here, each of which
+    enforces a specific scope. Configuration, user management and the logs are
+    JWT-only and reject keys outright.
+
+    This spec covers the supported integration contract. FastAPI additionally serves
+    generated documentation for every route at `/docs` and `/redoc`.
+  license:
+    name: MIT
+
+servers:
+  - url: https://your-opdesk-host
+    description: Your OpDesk installation
+
+tags:
+  - name: Auth
+    description: Obtaining and inspecting a token
+  - name: Calls
+    description: Live extensions, calls and queues
+  - name: Integration
+    description: Actions an external system can trigger
+  - name: CDR
+    description: Call history and recordings
+  - name: Analytics
+    description: KPIs, trends and exports
+  - name: API Keys
+    description: Machine credential management (admin, JWT only)
+  - name: Logs
+    description: AMI event stream and CRM delivery log (admin, JWT only)
+  - name: System
+    description: Health and specification
+
+security:
+  - bearerAuth: []
+  - apiKey: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        A JWT from POST /api/auth/login. An `opd_`-prefixed API key may also be sent
+        on this header; the prefix is what distinguishes the two.
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: An API key created under Settings → API Keys. Always starts with `opd_`.
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid, disabled or expired credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            badKey:
+              value: { detail: "Invalid or expired API key" }
+    Forbidden:
+      description: Authenticated, but not permitted
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            missingScope:
+              value: { detail: "API key missing required scope: cdr:read" }
+    NotFound:
+      description: No such resource
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  parameters:
+    DateFrom:
+      name: date_from
+      in: query
+      schema: { type: string, format: date, example: "2026-07-01" }
+      description: Inclusive start of the period (YYYY-MM-DD).
+    DateTo:
+      name: date_to
+      in: query
+      schema: { type: string, format: date, example: "2026-07-27" }
+      description: Inclusive end of the period (YYYY-MM-DD).
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        detail: { type: string }
+      required: [detail]
+
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          description: Username or extension.
+          example: "admin"
+        password: { type: string, format: password }
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, example: bearer }
+        user:
+          type: object
+          properties:
+            id: { type: integer }
+            username: { type: string }
+            name: { type: string, nullable: true }
+            role: { type: string, enum: [admin, supervisor, agent] }
+            extension: { type: string, nullable: true }
+            monitor_modes:
+              type: array
+              items: { type: string, enum: [listen, whisper, barge] }
+
+    CallOutcome:
+      type: string
+      description: OpDesk's canonical call outcome, shared by call history, analytics and the CRM push.
+      enum: [ANSWERED, NO_ANSWER, BUSY, FAILURE, ABANDONED, CANCELED, DROPPED, OUT_OF_REACH]
+
+    Extension:
+      type: object
+      properties:
+        extension: { type: string, example: "1001" }
+        name: { type: string, nullable: true }
+        status: { type: string, example: "Idle" }
+        dnd: { type: boolean }
+
+    ActiveCall:
+      type: object
+      properties:
+        caller: { type: string }
+        destination: { type: string }
+        call_type: { type: string, enum: [inbound, outbound, internal] }
+        queue: { type: string, nullable: true }
+        duration: { type: integer, description: Seconds elapsed so far. }
+
+    Queue:
+      type: object
+      properties:
+        name: { type: string }
+        members: { type: integer }
+        waiting: { type: integer }
+
+    Status:
+      type: object
+      properties:
+        ami_connected: { type: boolean }
+        monitored_extensions: { type: integer }
+
+    ClickToCallRequest:
+      type: object
+      required: [extension, number]
+      properties:
+        extension:
+          type: string
+          description: Monitored extension to ring first.
+          example: "1001"
+        number:
+          type: string
+          description: >
+            Number dialled once the extension answers. Spaces, dashes, dots and
+            brackets are stripped; the result must match `\+?[0-9*#]{2,20}`.
+          example: "+201001234567"
+        caller_id:
+          type: string
+          nullable: true
+          description: Caller ID presented on the outbound leg.
+        timeout:
+          type: integer
+          minimum: 5
+          maximum: 120
+          default: 30
+          description: Seconds to ring the extension.
+
+    ClickToCallResponse:
+      type: object
+      properties:
+        accepted: { type: boolean, example: true }
+        action_id:
+          type: string
+          description: The channel id Asterisk was asked to use; correlate the outcome with it.
+          example: "c2c-1001-1753600000123"
+        extension: { type: string }
+        number: { type: string }
+
+    CallLogRecord:
+      type: object
+      properties:
+        calldate: { type: string, format: date-time }
+        src: { type: string }
+        dst: { type: string }
+        phone_number: { type: string, description: "The external party, whichever side that is." }
+        customer_name: { type: string, nullable: true }
+        duration: { type: integer, description: Wall-clock seconds. }
+        talk: { type: integer, description: Billed (talk) seconds. }
+        disposition: { type: string, description: "Raw CDR disposition, kept alongside the canonical status.", example: ANSWERED }
+        status: { $ref: '#/components/schemas/CallOutcome' }
+        call_type: { type: string, enum: [IN, OUT, INTERNAL] }
+        extension: { type: string, nullable: true }
+        recording_path: { type: string, nullable: true }
+        linkedid: { type: string }
+        uniqueid: { type: string }
+        is_supervision: { type: boolean }
+
+    ApiKey:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        key_prefix:
+          type: string
+          description: Leading characters of the key, for display. The full key is never returned after creation.
+          example: "opd_9f2c1a4b"
+        scopes:
+          type: array
+          items: { type: string, enum: [calls:read, calls:write, cdr:read, analytics:read] }
+        enabled: { type: boolean }
+        created_by: { type: integer, nullable: true }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true, description: null means never expires. }
+        created_at: { type: string, format: date-time, nullable: true }
+
+    ApiKeyCreateRequest:
+      type: object
+      required: [name, scopes]
+      properties:
+        name: { type: string, example: "Reporting integration" }
+        scopes:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [calls:read, calls:write, cdr:read, analytics:read] }
+        expires_at:
+          type: string
+          nullable: true
+          description: "'YYYY-MM-DD' or ISO 8601. Omit for a key that never expires."
+
+    ApiKeyCreated:
+      allOf:
+        - $ref: '#/components/schemas/ApiKey'
+        - type: object
+          properties:
+            key:
+              type: string
+              description: The plaintext key. Returned exactly once, at creation.
+              example: "opd_9f2c1a4b7e3d5c8a1f6b2e9d4c7a0f3b6e1d8c5a"
+
+    ApiKeyUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        scopes:
+          type: array
+          items: { type: string, enum: [calls:read, calls:write, cdr:read, analytics:read] }
+        enabled: { type: boolean }
+        expires_at:
+          type: string
+          nullable: true
+          description: An empty string clears the expiry.
+
+    AmiEvent:
+      type: object
+      properties:
+        seq: { type: integer, description: Monotonic cursor; pass the highest seen as `since`. }
+        event: { type: string, example: Hangup }
+        ts: { type: number, format: double, description: Epoch seconds. }
+        summary: { type: string }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+
+    WebhookDelivery:
+      type: object
+      description: One CRM push attempt. Bodies are omitted from list responses.
+      properties:
+        id: { type: integer }
+        created_at: { type: string, format: date-time }
+        call_id: { type: string, nullable: true, description: Asterisk Linkedid. }
+        uniqueid: { type: string, nullable: true }
+        caller: { type: string, nullable: true }
+        destination: { type: string, nullable: true }
+        call_type: { type: string, nullable: true, enum: [inbound, outbound, internal] }
+        call_status: { $ref: '#/components/schemas/CallOutcome' }
+        method: { type: string, enum: [POST, PUT] }
+        url: { type: string, description: "Redacted — no query string, no userinfo." }
+        status_code: { type: integer, nullable: true, description: null means the request never reached the CRM. }
+        success: { type: boolean }
+        error: { type: string, nullable: true }
+        duration_ms: { type: integer, nullable: true }
+        attempt: { type: integer, description: "1 = original, >1 = manual resend." }
+        parent_id: { type: integer, nullable: true, description: The delivery this resend derives from. }
+        resent_by: { type: integer, nullable: true }
+        truncated: { type: boolean, description: "Request body was clipped when logged, so it cannot be resent." }
+
+    WebhookDeliveryDetail:
+      allOf:
+        - $ref: '#/components/schemas/WebhookDelivery'
+        - type: object
+          properties:
+            request_body: { type: string, nullable: true, description: The JSON actually sent. }
+            response_body: { type: string, nullable: true, description: Raw response text; may not be JSON. }
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange credentials for a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: Too many failed attempts from this IP; see the Retry-After header.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: The caller's own profile and effective scope
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/extensions:
+    get:
+      tags: [Calls]
+      summary: Monitored extensions and their current state
+      description: 'Scope: `calls:read`'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Extension' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/calls:
+    get:
+      tags: [Calls]
+      summary: Calls currently in progress
+      description: 'Scope: `calls:read`'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ActiveCall' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/queues:
+    get:
+      tags: [Calls]
+      summary: Queues with members and waiting callers
+      description: 'Scope: `calls:read`'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Queue' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/status:
+    get:
+      tags: [Calls]
+      summary: Server and AMI connection state
+      description: 'Scope: `calls:read`'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/integration/click-to-call:
+    post:
+      tags: [Integration]
+      summary: Originate a call from an extension to a number
+      description: |
+        Rings `extension`; when it answers, dials `number`.
+
+        Scope: `calls:write`. Returns 202 — Asterisk acknowledges the origination long
+        before the call connects, so correlate the real outcome via `action_id`, the
+        WebSocket stream, or the CDR.
+
+        A JWT is accepted as a fallback, but a non-admin user may only originate from
+        their own extension or one in their assigned groups.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClickToCallRequest' }
+      responses:
+        '202':
+          description: Asterisk accepted the origination
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClickToCallResponse' }
+        '400':
+          description: Malformed number, missing extension, or timeout out of range
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Not a monitored extension
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                unknown: { value: { detail: "Unknown extension: 1001" } }
+        '502':
+          description: Asterisk rejected the origination
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: AMI is not connected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/call-log:
+    get:
+      tags: [CDR]
+      summary: Call history
+      description: 'Scope: `cdr:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Matches caller, destination or call id.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 500 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CallLogRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/call-log/journey:
+    get:
+      tags: [CDR]
+      summary: Per-leg timeline for one call
+      description: 'Scope: `cdr:read`. Derived on demand from the CDR — not stored.'
+      parameters:
+        - name: linkedid
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/call-log/vad/{uniqueid}:
+    get:
+      tags: [CDR]
+      summary: Talk/silence analysis for a recorded call
+      description: 'Scope: `cdr:read`'
+      parameters:
+        - name: uniqueid
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/recordings/{path}:
+    get:
+      tags: [CDR]
+      summary: Stream a call recording
+      description: |
+        Scope: `cdr:read`. Also accepts `?token=<jwt>` because an `<audio src>` cannot
+        set headers. Paths are confined to the recording root.
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The audio file
+          content:
+            audio/wav: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/analytics/overview:
+    get:
+      tags: [Analytics]
+      summary: Headline KPIs for a period
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/queue-performance:
+    get:
+      tags: [Analytics]
+      summary: Per-queue volumes, answer rate, SLA and abandons
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/agent-performance:
+    get:
+      tags: [Analytics]
+      summary: Per-agent handled calls, talk time and availability
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/agent-adherence:
+    get:
+      tags: [Analytics]
+      summary: Scheduled vs actual agent presence
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/agent-adherence/export:
+    get:
+      tags: [Analytics]
+      summary: Agent adherence as CSV or XLSX
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv, xlsx], default: csv }
+      responses:
+        '200':
+          description: The export file
+          content:
+            text/csv: { schema: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/heatmap:
+    get:
+      tags: [Analytics]
+      summary: Call volume by hour and weekday
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/trend:
+    get:
+      tags: [Analytics]
+      summary: A KPI over time
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/drilldown:
+    get:
+      tags: [Analytics]
+      summary: The individual calls behind a KPI
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/analytics/export:
+    get:
+      tags: [Analytics]
+      summary: Full period export
+      description: 'Scope: `analytics:read`'
+      parameters:
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv, xlsx], default: csv }
+      responses:
+        '200':
+          description: The export file
+          content:
+            text/csv: { schema: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/api-keys/permissions:
+    get:
+      tags: [API Keys]
+      summary: Scope tokens available to grant
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/api-keys:
+    get:
+      tags: [API Keys]
+      summary: List API keys (metadata only)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_keys:
+                    type: array
+                    items: { $ref: '#/components/schemas/ApiKey' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [API Keys]
+      summary: Create an API key
+      description: The response includes the plaintext key. It is never returned again.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApiKeyCreateRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeyCreated' }
+        '400':
+          description: Blank name, empty scope list, or an unknown scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/api-keys/{key_id}:
+    patch:
+      tags: [API Keys]
+      summary: Update an API key
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApiKeyUpdateRequest' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKey' }
+        '400':
+          description: Unknown scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [API Keys]
+      summary: Revoke an API key
+      description: The key stops authenticating immediately.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/logs:
+    get:
+      tags: [Logs]
+      summary: Buffered AMI events newer than a cursor
+      description: |
+        Admin JWT only — API keys are rejected. Capture is off by default; turn it on
+        with `POST /api/logs/ami`. The buffer is in memory, capped at 3000 events and
+        lost on restart.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: since
+          in: query
+          schema: { type: integer, default: 0 }
+          description: Return only events with a higher `seq`.
+        - name: event
+          in: query
+          schema: { type: string }
+          description: Case-insensitive substring match on the event name.
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Free-text match over the event name and summary.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lines:
+                    type: array
+                    items: { $ref: '#/components/schemas/AmiEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/logs/events:
+    get:
+      tags: [Logs]
+      summary: Distinct event names currently buffered
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/logs/ami:
+    get:
+      tags: [Logs]
+      summary: Whether AMI event capture is on
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { enabled: { type: boolean } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Logs]
+      summary: Turn AMI event capture on or off
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties: { enabled: { type: boolean } }
+      responses:
+        '200':
+          description: The resulting state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { enabled: { type: boolean } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/logs/deliveries:
+    get:
+      tags: [Logs]
+      summary: Page through CRM push attempts
+      description: |
+        Admin JWT only. Request and response bodies are omitted here — fetch them from
+        the detail route — because a 50-row page carrying both would be hundreds of KB.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: success
+          in: query
+          schema: { type: boolean }
+          description: Filter to delivered (true) or failed (false).
+        - name: call_id
+          in: query
+          schema: { type: string }
+        - name: call_type
+          in: query
+          schema: { type: string, enum: [inbound, outbound, internal] }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Matches caller, destination, call_id or uniqueid.
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deliveries:
+                    type: array
+                    items: { $ref: '#/components/schemas/WebhookDelivery' }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/logs/deliveries/{delivery_id}:
+    get:
+      tags: [Logs]
+      summary: One delivery attempt in full
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: delivery_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookDeliveryDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/logs/deliveries/{delivery_id}/resend:
+    post:
+      tags: [Logs]
+      summary: Replay a delivery
+      description: |
+        Re-sends the **stored request body** verbatim through the CRM configuration
+        currently in effect. The payload is not rebuilt — the body is the historical
+        fact worth replaying, while credentials and endpoint are re-read because a
+        wrong endpoint is usually why the original failed. The retry is inserted as a
+        new row with `parent_id` set.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: delivery_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '202':
+          description: Resend queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: boolean }
+                  delivery_id: { type: integer }
+                  original_created_at: { type: string, format: date-time }
+        '400':
+          description: The stored body was truncated when logged, or is not valid JSON
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: No CRM connector configured
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  ami_connected: { type: boolean }
+
+  /api/openapi.yaml:
+    get:
+      tags: [System]
+      summary: This specification
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document
+          content:
+            application/yaml: { schema: { type: string } }
+        '404':
+          description: The docs directory is not present in this deployment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }

@@ -7,9 +7,11 @@ Configuration (via .env):
 """
 
 import hashlib
+import json
 import logging
 import os
-from typing import Any, Optional, List
+import secrets
+from typing import Any, Dict, Optional, List, Tuple
 from dotenv import load_dotenv
 
 try:
@@ -396,8 +398,12 @@ def get_cdr_by_linkedid(linkedid):
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
+        # `sequence` orders the legs (origin -> final); uniqueid/linkedid identify
+        # them. crm_identity_from_cdr collapses multi-leg calls using sequence, so
+        # omitting it would silently produce an arbitrary leg order.
         query = """
-        SELECT calldate, billsec, duration, disposition, src, dst, dcontext, channel, dstchannel, lastapp
+        SELECT sequence, calldate, billsec, duration, disposition, src, dst,
+               dcontext, channel, dstchannel, lastapp, uniqueid, linkedid
         FROM cdr
         WHERE linkedid = %s
         """
@@ -435,6 +441,26 @@ def get_call_log_from_db(limit: int = None, date: str = None,
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
 
+        # Push the date window INTO each GROUP BY linkedid subquery so they scan
+        # only the relevant slice of `cdr` (using an index on calldate) instead of
+        # grouping the entire table three times and filtering afterwards. A 2-day
+        # upper buffer keeps legs of calls that span midnight; the outer WHERE
+        # below still applies the precise 1-day-granular bound. No date filter (a
+        # CRM uniqueid search reaching all history) → no pushdown, as before.
+        sub_conds: list = []
+        sub_params: list = []
+        if date:
+            sub_conds.append("calldate >= %s AND calldate < DATE_ADD(%s, INTERVAL 2 DAY)")
+            sub_params.extend([date, date])
+        else:
+            if date_from:
+                sub_conds.append("calldate >= %s")
+                sub_params.append(date_from)
+            if date_to:
+                sub_conds.append("calldate < DATE_ADD(%s, INTERVAL 2 DAY)")
+                sub_params.append(date_to)
+        sub_where = ("WHERE " + " AND ".join(sub_conds)) if sub_conds else ""
+
         # Build the base query: first leg (min sequence) + last leg (max sequence) per linkedid,
         # with call_app derived from dcontext (queue/ivr/direct) and leg count for call journey.
         query = """
@@ -469,6 +495,7 @@ def get_call_log_from_db(limit: int = None, date: str = None,
                     JOIN (
                         SELECT linkedid, MIN(sequence) AS min_seq
                         FROM cdr
+                        {sub_where}
                         GROUP BY linkedid
                     ) x ON c.linkedid = x.linkedid AND c.sequence = x.min_seq
                 ) first_leg
@@ -478,44 +505,60 @@ def get_call_log_from_db(limit: int = None, date: str = None,
                     JOIN (
                         SELECT linkedid, MAX(sequence) AS max_seq
                         FROM cdr
+                        {sub_where}
                         GROUP BY linkedid
                     ) x ON c.linkedid = x.linkedid AND c.sequence = x.max_seq
                 ) last_leg ON first_leg.linkedid = last_leg.linkedid
             JOIN (
                 SELECT linkedid, COUNT(*) AS total_legs
                 FROM cdr
+                {sub_where}
                 GROUP BY linkedid
             ) leg_count ON first_leg.linkedid = leg_count.linkedid
-        """
-        
-        # Build WHERE conditions (use first_leg for calldate/src, last_leg for dstchannel)
+        """.format(sub_where=sub_where)
+
+        # Build WHERE conditions (use first_leg for calldate/src, last_leg for dstchannel).
+        # The three GROUP BY subqueries reference {sub_where} left-to-right, so their
+        # date params come first (once per subquery), then these outer params.
         conditions = []
-        params = []
-        
+        params = list(sub_params) * 3
+
+        # Precise outer date bound. Compared against the bare column (no DATE()
+        # wrapper) so an index on calldate is usable; range form is equivalent to
+        # the old DATE()-based equality/inclusive-range comparisons.
         if date:
-            conditions.append("DATE(first_leg.calldate) = %s")
-            params.append(date)
+            conditions.append("first_leg.calldate >= %s AND first_leg.calldate < DATE_ADD(%s, INTERVAL 1 DAY)")
+            params.extend([date, date])
         if date_from:
-            conditions.append("DATE(first_leg.calldate) >= %s")
+            conditions.append("first_leg.calldate >= %s")
             params.append(date_from)
         if date_to:
-            conditions.append("DATE(first_leg.calldate) <= %s")
+            conditions.append("first_leg.calldate < DATE_ADD(%s, INTERVAL 1 DAY)")
             params.append(date_to)
         # Filter by agent extension.
-        # Include calls where the agent is either:
-        #   - the destination leg (from dstchannel: part after '/' and before '-', e.g. SIP/1001-xxx -> 1001), OR
-        #   - the source (first_leg.src = agent extension)
+        # The agent's extension lives in a DIFFERENT place per direction: on an
+        # OUTBOUND call it is the origin `channel` (dstchannel is the trunk, src is
+        # the outbound caller-ID), on an INBOUND/queue call it is the `dstchannel`,
+        # and it is rarely first_leg.src. It is also usually on an intermediate leg
+        # (queue answer / transfer), not the first or last. Checking only
+        # first_leg.src + last_leg.dstchannel therefore dropped most agent calls,
+        # which is what made the agent/supervisor Dashboard tiles read low or zero.
+        # Scan all legs and collapse via linkedid so any matching leg surfaces the
+        # one call-log row (kept identical to get_call_log_count_from_db).
         if allowed_extensions is not None:
             if not allowed_extensions:
                 conditions.append("1 = 0")
             else:
                 placeholders = ", ".join(["%s"] * len(allowed_extensions))
                 conditions.append(
-                    "("
-                    "SUBSTRING_INDEX(SUBSTRING_INDEX(last_leg.dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
-                    "OR first_leg.src IN (" + placeholders + ")"
+                    "first_leg.linkedid IN ("
+                    "SELECT linkedid FROM cdr WHERE "
+                    "SUBSTRING_INDEX(SUBSTRING_INDEX(dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
+                    "OR SUBSTRING_INDEX(SUBSTRING_INDEX(channel, '-', 1), '/', -1) IN (" + placeholders + ") "
+                    "OR src IN (" + placeholders + ")"
                     ")"
                 )
+                params.extend(allowed_extensions)
                 params.extend(allowed_extensions)
                 params.extend(allowed_extensions)
 
@@ -577,14 +620,16 @@ def get_call_log_count_from_db(date: str = None,
         conditions: list = []
         params: list = []
 
+        # Bare-column range comparisons (no DATE() wrapper) so an index on
+        # calldate can be used; equivalent to the previous DATE()-based bounds.
         if date:
-            conditions.append("DATE(calldate) = %s")
-            params.append(date)
+            conditions.append("calldate >= %s AND calldate < DATE_ADD(%s, INTERVAL 1 DAY)")
+            params.extend([date, date])
         if date_from:
-            conditions.append("DATE(calldate) >= %s")
+            conditions.append("calldate >= %s")
             params.append(date_from)
         if date_to:
-            conditions.append("DATE(calldate) <= %s")
+            conditions.append("calldate < DATE_ADD(%s, INTERVAL 1 DAY)")
             params.append(date_to)
 
         if allowed_extensions is not None:
@@ -594,12 +639,17 @@ def get_call_log_count_from_db(date: str = None,
                 conn.close()
                 return 0
             placeholders = ", ".join(["%s"] * len(allowed_extensions))
+            # Match the agent on origin channel (outbound), destination channel
+            # (inbound/queue) or src — same predicate as get_call_log_from_db so
+            # the total stays consistent with the rows actually shown.
             conditions.append(
                 "("
                 "SUBSTRING_INDEX(SUBSTRING_INDEX(dstchannel, '-', 1), '/', -1) IN (" + placeholders + ") "
+                "OR SUBSTRING_INDEX(SUBSTRING_INDEX(channel, '-', 1), '/', -1) IN (" + placeholders + ") "
                 "OR src IN (" + placeholders + ")"
                 ")"
             )
+            params.extend(allowed_extensions)
             params.extend(allowed_extensions)
             params.extend(allowed_extensions)
 
@@ -1687,6 +1737,33 @@ def _safe_close(cursor=None, conn=None) -> None:
             pass
 
 
+def get_agent_name_by_extension(extension: str) -> Optional[str]:
+    """Return the display name for an extension from the OpDesk users table, or None.
+
+    Used to populate the CRM payload's `agent_name` and the CDR identity overlay.
+    """
+    if not extension:
+        return None
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT name FROM users WHERE extension = %s "
+            "AND name IS NOT NULL AND name != '' LIMIT 1",
+            (str(extension),),
+        )
+        row = cursor.fetchone()
+        return (row.get('name') or None) if row else None
+    except Error as e:
+        log.warning(f"get_agent_name_by_extension({extension}): {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
 def get_groups_list() -> list:
     """Return all groups (excluding auto-created user_<id> ones) with agents, queues, and user ids."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
@@ -2499,6 +2576,498 @@ def agent_activity_close_all_open(source: str = 'system') -> int:
         return n
     except Error as e:
         log.warning(f"⚠️  Database error agent_activity_close_all_open: {e}")
+        return 0
+    finally:
+        _safe_close(cursor, conn)
+
+
+# ===========================================================================
+# API keys (machine-to-machine credentials)
+# ===========================================================================
+# Keys are system-level credentials identified by name and scoped by an explicit
+# permission list. The plaintext key (prefix "opd_") is returned exactly once, at
+# creation; only its SHA-256 hash is stored. Validation of a presented key lives in
+# lookup_api_key().
+#
+# The hash is a plain unsalted SHA-256 rather than bcrypt deliberately: it has to be
+# a deterministic lookup key (WHERE key_hash = %s) and the input is 160 bits of
+# CSPRNG output, so there is nothing for a salt or a work factor to defend against.
+
+API_KEY_PREFIX = "opd_"
+
+
+def _hash_api_key(plaintext: str) -> str:
+    """SHA-256 hex digest of a plaintext API key (what we store and look up by)."""
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+
+def _normalize_expiry(expires_at: Optional[str]) -> Optional[str]:
+    """Normalize an incoming expiry string to a MySQL DATETIME ('YYYY-MM-DD HH:MM:SS').
+
+    Accepts a plain date ('YYYY-MM-DD'), an ISO 8601 datetime (with 'T'/'Z'/millis),
+    or empty/None (=> NULL, i.e. never expires)."""
+    if not expires_at:
+        return None
+    s = expires_at.strip()
+    if not s:
+        return None
+    # ISO 8601 -> MySQL: drop trailing 'Z', swap the date/time 'T' separator, trim millis.
+    s = s.replace("Z", "").replace("T", " ")
+    if "." in s:
+        s = s.split(".", 1)[0]
+    s = s.strip()
+    # Plain date -> midnight.
+    if len(s) == 10:
+        s += " 00:00:00"
+    return s
+
+
+def init_api_keys_table() -> None:
+    """Create the api_keys table (if missing). Idempotent; called at startup.
+
+    Required in addition to the schema.sql definition: init_settings_table() only
+    executes schema.sql when the OpDesk database does not already exist, so an
+    upgraded install would never get this table from the schema file alone.
+    """
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id           INT PRIMARY KEY AUTO_INCREMENT,
+                name         VARCHAR(191) NOT NULL,
+                key_prefix   VARCHAR(16)  NOT NULL,
+                key_hash     CHAR(64)     NOT NULL,
+                scopes       TEXT         NOT NULL,
+                enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+                created_by   INT          NULL,
+                last_used_at TIMESTAMP    NULL,
+                expires_at   TIMESTAMP    NULL,
+                created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_api_key_hash (key_hash),
+                INDEX idx_api_key_prefix (key_prefix)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Error as e:
+        log.warning(f"⚠️  Database error init_api_keys_table: {e}")
+    finally:
+        _safe_close(cursor, conn)
+
+
+def _row_to_api_key(row: dict) -> dict:
+    """Shape a DB row into the public metadata dict (never includes the hash)."""
+    try:
+        scopes = json.loads(row.get("scopes") or "[]")
+    except (ValueError, TypeError):
+        scopes = []
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "key_prefix": row["key_prefix"],
+        "scopes": scopes,
+        "enabled": bool(row["enabled"]),
+        "created_by": row.get("created_by"),
+        "last_used_at": row["last_used_at"].isoformat() if row.get("last_used_at") else None,
+        "expires_at": row["expires_at"].isoformat() if row.get("expires_at") else None,
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+def create_api_key(name: str, scopes: List[str], created_by: Optional[int] = None,
+                   expires_at: Optional[str] = None) -> Optional[dict]:
+    """Create an API key. Returns the metadata dict plus the one-time plaintext `key`.
+
+    `expires_at` is an optional 'YYYY-MM-DD' or ISO datetime string (NULL => never expires).
+    """
+    plaintext = API_KEY_PREFIX + secrets.token_hex(20)
+    key_hash = _hash_api_key(plaintext)
+    key_prefix = plaintext[:12]  # e.g. "opd_ab12cd34"
+    scopes_json = json.dumps(list(scopes or []))
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO api_keys (name, key_prefix, key_hash, scopes, created_by, expires_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (name, key_prefix, key_hash, scopes_json, created_by, _normalize_expiry(expires_at)),
+        )
+        conn.commit()
+        key_id = cursor.lastrowid
+    except Error as e:
+        log.error(f"❌ Error creating API key: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+    result = get_api_key(key_id)
+    if result:
+        result["key"] = plaintext  # shown exactly once, never recoverable afterwards
+    return result
+
+
+def list_api_keys() -> List[dict]:
+    """Return all API keys (metadata only, newest first)."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM api_keys ORDER BY created_at DESC, id DESC")
+        return [_row_to_api_key(r) for r in cursor.fetchall()]
+    except Error as e:
+        log.warning(f"⚠️  Error listing API keys: {e}")
+        return []
+    finally:
+        _safe_close(cursor, conn)
+
+
+def get_api_key(key_id: int) -> Optional[dict]:
+    """Return a single API key's metadata, or None."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM api_keys WHERE id = %s", (key_id,))
+        row = cursor.fetchone()
+        return _row_to_api_key(row) if row else None
+    except Error as e:
+        log.warning(f"⚠️  Error getting API key {key_id}: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+def update_api_key(key_id: int, name: Optional[str] = None, scopes: Optional[List[str]] = None,
+                   enabled: Optional[bool] = None, expires_at: Optional[str] = None) -> Optional[dict]:
+    """Update mutable fields of an API key. Only provided fields change.
+
+    An `expires_at` of "" clears the expiry (never expires). Returns updated metadata.
+    """
+    fields: List[str] = []
+    values: List[Any] = []
+    if name is not None:
+        fields.append("name = %s")
+        values.append(name)
+    if scopes is not None:
+        fields.append("scopes = %s")
+        values.append(json.dumps(list(scopes)))
+    if enabled is not None:
+        fields.append("enabled = %s")
+        values.append(1 if enabled else 0)
+    if expires_at is not None:
+        fields.append("expires_at = %s")
+        values.append(_normalize_expiry(expires_at))
+    if not fields:
+        return get_api_key(key_id)
+    values.append(key_id)
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE api_keys SET {', '.join(fields)} WHERE id = %s", values)
+        conn.commit()
+    except Error as e:
+        log.error(f"❌ Error updating API key {key_id}: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+    return get_api_key(key_id)
+
+
+def delete_api_key(key_id: int) -> bool:
+    """Delete (revoke) an API key. Returns True if a row was removed."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM api_keys WHERE id = %s", (key_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Error as e:
+        log.error(f"❌ Error deleting API key {key_id}: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def lookup_api_key(plaintext: str) -> Optional[dict]:
+    """Validate a presented plaintext key.
+
+    Returns its metadata (incl. scopes) if the key exists, is enabled and has not
+    expired; otherwise None. `enabled` and the expiry are enforced in SQL so a
+    disabled or lapsed key can never authenticate. Stamps last_used_at on success.
+    """
+    if not plaintext or not plaintext.startswith(API_KEY_PREFIX):
+        return None
+    key_hash = _hash_api_key(plaintext)
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT * FROM api_keys WHERE key_hash = %s AND enabled = 1 "
+            "AND (expires_at IS NULL OR expires_at > NOW())",
+            (key_hash,),
+        )
+        row = cursor.fetchone()
+        if row:
+            cursor.execute("UPDATE api_keys SET last_used_at = NOW() WHERE id = %s", (row["id"],))
+            conn.commit()
+        return _row_to_api_key(row) if row else None
+    except Error as e:
+        log.warning(f"⚠️  Error looking up API key: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+# ===========================================================================
+# Webhook delivery log
+# ===========================================================================
+# One row per CRM push attempt: what we sent, what came back, how long it took.
+# The push itself is fire-and-forget, so without this a failed delivery leaves no
+# trace an operator can act on.
+#
+# PII: rows hold call metadata (phone numbers, caller/agent names, extensions) and
+# the full request body. Request HEADERS are deliberately NOT stored — that is where
+# the CRM credentials live, and omitting the column means there is no redaction bug
+# to have. URLs are stored pre-redacted by the caller (crm.redact_url).
+# Access is admin-only, and rows are pruned by prune_webhook_deliveries().
+
+# Max characters retained per stored body/error. Bounds row size and caps the blast
+# radius of a verbose upstream error page.
+DELIVERY_BODY_MAX = 8192
+
+# Columns returned by the list view. Bodies are excluded on purpose: a 50-row page
+# carrying request + response JSON would be hundreds of KB per request.
+_DELIVERY_LIST_COLS = (
+    "id, created_at, call_id, uniqueid, caller, destination, call_type, call_status, "
+    "method, url, status_code, success, error, duration_ms, attempt, parent_id, "
+    "resent_by, truncated"
+)
+
+
+def init_webhook_deliveries_table() -> None:
+    """Create the webhook_deliveries table (if missing). Idempotent; called at startup."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS webhook_deliveries (
+                id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+                created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                call_id       VARCHAR(64)   NULL,
+                uniqueid      VARCHAR(64)   NULL,
+                caller        VARCHAR(64)   NULL,
+                destination   VARCHAR(64)   NULL,
+                call_type     VARCHAR(16)   NULL,
+                call_status   VARCHAR(24)   NULL,
+                method        VARCHAR(8)    NOT NULL DEFAULT 'POST',
+                url           VARCHAR(1024) NOT NULL,
+                request_body  MEDIUMTEXT    NULL,
+                status_code   SMALLINT      NULL,
+                success       TINYINT(1)    NOT NULL DEFAULT 0,
+                response_body MEDIUMTEXT    NULL,
+                error         TEXT          NULL,
+                duration_ms   INT UNSIGNED  NULL,
+                attempt       SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+                parent_id     BIGINT        NULL,
+                resent_by     INT           NULL,
+                truncated     TINYINT(1)    NOT NULL DEFAULT 0,
+                INDEX idx_created (created_at),
+                INDEX idx_call (call_id),
+                INDEX idx_success_created (success, created_at),
+                INDEX idx_parent (parent_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Error as e:
+        log.warning(f"⚠️  Database error init_webhook_deliveries_table: {e}")
+    finally:
+        _safe_close(cursor, conn)
+
+
+def _clip(value: Optional[str]) -> Tuple[Optional[str], bool]:
+    """Truncate a stored body/error to DELIVERY_BODY_MAX. Returns (value, was_truncated)."""
+    if value is None:
+        return None, False
+    s = str(value)
+    if len(s) <= DELIVERY_BODY_MAX:
+        return s, False
+    return s[:DELIVERY_BODY_MAX] + "…[truncated]", True
+
+
+def insert_webhook_delivery(*, url: str, method: str = 'POST',
+                            call_id: Optional[str] = None, uniqueid: Optional[str] = None,
+                            caller: Optional[str] = None, destination: Optional[str] = None,
+                            call_type: Optional[str] = None, call_status: Optional[str] = None,
+                            request_body: Optional[str] = None,
+                            status_code: Optional[int] = None, success: bool = False,
+                            response_body: Optional[str] = None, error: Optional[str] = None,
+                            duration_ms: Optional[int] = None, attempt: int = 1,
+                            parent_id: Optional[int] = None,
+                            resent_by: Optional[int] = None) -> Optional[int]:
+    """Record one CRM push attempt. Returns the new row id, or None on error."""
+    req, req_trunc = _clip(request_body)
+    resp, _ = _clip(response_body)
+    err, _ = _clip(error)
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO webhook_deliveries "
+            "(call_id, uniqueid, caller, destination, call_type, call_status, method, url, "
+            " request_body, status_code, success, response_body, error, duration_ms, "
+            " attempt, parent_id, resent_by, truncated) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (call_id, uniqueid, caller, destination, call_type, call_status,
+             (method or 'POST')[:8], (url or '')[:1024], req, status_code,
+             1 if success else 0, resp, err, duration_ms, int(attempt or 1),
+             parent_id, resent_by, 1 if req_trunc else 0),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Error as e:
+        log.warning(f"⚠️  Database error insert_webhook_delivery: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+def list_webhook_deliveries(success: Optional[bool] = None, call_id: Optional[str] = None,
+                            call_type: Optional[str] = None, search: Optional[str] = None,
+                            date_from: Optional[str] = None, date_to: Optional[str] = None,
+                            limit: int = 50, offset: int = 0) -> Tuple[List[dict], int]:
+    """Return (rows, total) for the delivery log. Bodies are omitted — see the detail route.
+
+    Pagination is server-side: deliveries accrue one row per pushed call indefinitely,
+    so there is no bounded window to fetch and slice client-side.
+    """
+    limit = max(1, min(int(limit or 50), 200))
+    offset = max(0, int(offset or 0))
+    where: List[str] = []
+    params: List[Any] = []
+    if success is not None:
+        where.append("success = %s")
+        params.append(1 if success else 0)
+    if call_id:
+        where.append("call_id = %s")
+        params.append(str(call_id))
+    if call_type:
+        where.append("call_type = %s")
+        params.append(str(call_type))
+    if search:
+        where.append("(caller LIKE %s OR destination LIKE %s OR call_id LIKE %s OR uniqueid LIKE %s)")
+        like = f"%{search}%"
+        params += [like, like, like, like]
+    if date_from:
+        where.append("created_at >= %s")
+        params.append(date_from)
+    if date_to:
+        # Inclusive of the whole end day when a bare date is given.
+        where.append("created_at < DATE_ADD(%s, INTERVAL 1 DAY)"
+                     if len(str(date_to)) == 10 else "created_at <= %s")
+        params.append(date_to)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(f"SELECT COUNT(*) AS n FROM webhook_deliveries{clause}", params)
+        total = int((cursor.fetchone() or {}).get('n') or 0)
+        cursor.execute(
+            f"SELECT {_DELIVERY_LIST_COLS} FROM webhook_deliveries{clause} "
+            f"ORDER BY id DESC LIMIT %s OFFSET %s",
+            params + [limit, offset],
+        )
+        rows = []
+        for r in cursor.fetchall():
+            r['success'] = bool(r.get('success'))
+            r['truncated'] = bool(r.get('truncated'))
+            if r.get('created_at') is not None:
+                r['created_at'] = r['created_at'].isoformat()
+            rows.append(r)
+        return rows, total
+    except Error as e:
+        log.warning(f"⚠️  Database error list_webhook_deliveries: {e}")
+        return [], 0
+    finally:
+        _safe_close(cursor, conn)
+
+
+def get_webhook_delivery(delivery_id: int) -> Optional[dict]:
+    """Return one delivery row including the request/response bodies, or None."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM webhook_deliveries WHERE id = %s", (delivery_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        row['success'] = bool(row.get('success'))
+        row['truncated'] = bool(row.get('truncated'))
+        if row.get('created_at') is not None:
+            row['created_at'] = row['created_at'].isoformat()
+        return row
+    except Error as e:
+        log.warning(f"⚠️  Database error get_webhook_delivery {delivery_id}: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+def prune_webhook_deliveries(days: int = 30) -> int:
+    """Delete delivery rows older than `days`. Returns the number removed.
+
+    Called from the daily housekeeping pass rather than a MySQL EVENT: enabling the
+    event scheduler needs SUPER, which the OpDesk DB user does not have (see the note
+    in schema.sql), so a scheduled event may never fire.
+    """
+    try:
+        days = max(1, int(days))
+    except (TypeError, ValueError):
+        days = 30
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM webhook_deliveries WHERE created_at < DATE_SUB(NOW(), INTERVAL %s DAY)",
+            (days,),
+        )
+        conn.commit()
+        return cursor.rowcount or 0
+    except Error as e:
+        log.warning(f"⚠️  Database error prune_webhook_deliveries: {e}")
         return 0
     finally:
         _safe_close(cursor, conn)

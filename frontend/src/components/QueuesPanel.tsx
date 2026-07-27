@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users,
@@ -8,17 +8,122 @@ import {
   Play,
   Phone,
   Clock,
-  RefreshCw
+  RefreshCw,
+  Search,
+  Check
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { Queue, QueueMember, QueueEntry, ActionMessage } from '../types';
+import type { Queue, QueueMember, QueueEntry, Extension, ActionMessage } from '../types';
 
 interface QueuesPanelProps {
   queues: Record<string, Queue>;
   members: Record<string, QueueMember>;
   entries: Record<string, QueueEntry>;
+  /** All monitored extensions, used to populate the Add Member picker. */
+  extensions?: Record<string, Extension>;
   sendAction: (action: ActionMessage) => void;
   onSync?: () => void;
+}
+
+/** Searchable extension picker for the Add Member form. Filters by extension
+ *  number or name; picking one fills in the interface + member name upstream. */
+function ExtensionPicker({
+  options,
+  selected,
+  onPick,
+  placeholder,
+  emptyText,
+}: {
+  options: { ext: string; name?: string; status?: string }[];
+  selected: string;
+  onPick: (ext: string, name?: string) => void;
+  placeholder: string;
+  emptyText: string;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = options
+    .filter(o => !q || o.ext.toLowerCase().includes(q) || (o.name || '').toLowerCase().includes(q))
+    .slice(0, 50);
+
+  return (
+    <div ref={boxRef} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <Search
+          size={14}
+          style={{ position: 'absolute', top: '50%', insetInlineStart: 10, transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }}
+        />
+        <input
+          type="text"
+          className="form-input"
+          style={{ paddingInlineStart: 30 }}
+          placeholder={placeholder}
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+        />
+      </div>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            insetInlineStart: 0,
+            insetInlineEnd: 0,
+            maxHeight: 200,
+            overflowY: 'auto',
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-primary)',
+            borderRadius: 'var(--radius-sm)',
+            boxShadow: 'var(--shadow-md)',
+            zIndex: 20,
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>{emptyText}</div>
+          ) : (
+            filtered.map(o => (
+              <div
+                key={o.ext}
+                onClick={() => { onPick(o.ext, o.name); setQuery(o.name ? `${o.ext} — ${o.name}` : o.ext); setOpen(false); }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  padding: '8px 12px',
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  color: 'var(--text-primary)',
+                  background: selected === o.ext ? 'var(--bg-tertiary)' : 'transparent',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = selected === o.ext ? 'var(--bg-tertiary)' : 'transparent')}
+              >
+                <span style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+                  {o.ext}
+                  {o.name && <span style={{ color: 'var(--text-muted)', marginInlineStart: 8, fontFamily: 'inherit' }}>{o.name}</span>}
+                </span>
+                {selected === o.ext && <Check size={14} style={{ color: 'var(--status-success, var(--accent-primary))' }} />}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Map a queue member's status/paused state to a CSS modifier class.
@@ -51,11 +156,13 @@ function memberStatusLabel(
   return t('queues.memberReady', { defaultValue: 'Ready' });
 }
 
-export function QueuesPanel({ queues, members, entries, sendAction, onSync }: QueuesPanelProps) {
+export function QueuesPanel({ queues, members, entries, extensions, sendAction, onSync }: QueuesPanelProps) {
   const { t } = useTranslation();
   const [showAddMember, setShowAddMember] = useState<string | null>(null);
   const [newMemberInterface, setNewMemberInterface] = useState('');
   const [newMemberName, setNewMemberName] = useState('');
+  // Initial login status for the member being added: false = Ready, true = Not Ready (paused).
+  const [newMemberPaused, setNewMemberPaused] = useState(false);
   // Map of memberKey -> target paused state of the in-flight pause/unpause action.
   const [processingPause, setProcessingPause] = useState<Map<string, boolean>>(new Map());
 
@@ -79,6 +186,12 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
 
   const queueList = Object.values(queues).sort((a, b) => a.name.localeCompare(b.name));
 
+  const resetAddForm = () => {
+    setNewMemberInterface('');
+    setNewMemberName('');
+    setNewMemberPaused(false);
+  };
+
   const handleAddMember = (queueName: string) => {
     if (newMemberInterface) {
       sendAction({
@@ -86,9 +199,11 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
         queue: queueName,
         interface: newMemberInterface,
         membername: newMemberName || undefined,
+        // Log the extension into the queue with the chosen status: Ready (unpaused)
+        // or Not Ready (paused). Backend maps this to QueueAdd's `paused` flag.
+        paused: newMemberPaused,
       });
-      setNewMemberInterface('');
-      setNewMemberName('');
+      resetAddForm();
       setShowAddMember(null);
     }
   };
@@ -147,6 +262,18 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
     }
     membersByQueue[member.queue].push(member);
   });
+
+  // Bare extension number for a member interface, e.g. "PJSIP/100" -> "100".
+  const memberExt = (iface: string) => (iface.includes('/') ? iface.split('/').pop() || iface : iface);
+
+  // Selectable extensions for the Add Member picker, excluding those already in the queue.
+  const extOptions = (queueExt: string) => {
+    const already = new Set((membersByQueue[queueExt] || []).map(m => memberExt(m.interface)));
+    return Object.values(extensions || {})
+      .filter(e => !already.has(e.extension))
+      .map(e => ({ ext: e.extension, name: e.name, status: e.status }))
+      .sort((a, b) => a.ext.localeCompare(b.ext, undefined, { numeric: true }));
+  };
 
   return (
     <div className="panel">
@@ -274,12 +401,15 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                           }}
                         >
                           <div className="form-group" style={{ marginBottom: 8 }}>
-                            <input
-                              type="text"
-                              className="form-input"
-                              placeholder={t('queues.extensionPlaceholder')}
-                              value={newMemberInterface}
-                              onChange={(e) => setNewMemberInterface(e.target.value)}
+                            <ExtensionPicker
+                              options={extOptions(queueExt)}
+                              selected={newMemberInterface}
+                              onPick={(ext, name) => {
+                                setNewMemberInterface(ext);
+                                setNewMemberName(name || '');
+                              }}
+                              placeholder={t('queues.selectExtension')}
+                              emptyText={t('queues.noExtensions')}
                             />
                           </div>
                           <div className="form-group" style={{ marginBottom: 8 }}>
@@ -291,20 +421,46 @@ export function QueuesPanel({ queues, members, entries, sendAction, onSync }: Qu
                               onChange={(e) => setNewMemberName(e.target.value)}
                             />
                           </div>
+                          {/* Initial login status for the extension being added. */}
+                          <div style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              {t('queues.loginStatus')}
+                            </div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                type="button"
+                                className={`btn ${!newMemberPaused ? 'btn-primary' : ''}`}
+                                onClick={() => setNewMemberPaused(false)}
+                                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                              >
+                                <Play size={14} />
+                                {t('queues.statusReady')}
+                              </button>
+                              <button
+                                type="button"
+                                className={`btn ${newMemberPaused ? 'btn-listen' : ''}`}
+                                onClick={() => setNewMemberPaused(true)}
+                                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                              >
+                                <Pause size={14} />
+                                {t('queues.statusNotReady')}
+                              </button>
+                            </div>
+                          </div>
                           <div style={{ display: 'flex', gap: 8 }}>
                             <button
                               className="btn btn-primary"
                               onClick={() => handleAddMember(queueExt)}
-                              style={{ flex: 1 }}
+                              disabled={!newMemberInterface}
+                              style={{ flex: 1, ...(newMemberInterface ? {} : { opacity: 0.5, cursor: 'not-allowed' }) }}
                             >
-                              {t('queues.add')}
+                              {t('queues.login')}
                             </button>
                             <button
                               className="btn"
                               onClick={() => {
                                 setShowAddMember(null);
-                                setNewMemberInterface('');
-                                setNewMemberName('');
+                                resetAddForm();
                               }}
                             >
                               {t('queues.cancel')}

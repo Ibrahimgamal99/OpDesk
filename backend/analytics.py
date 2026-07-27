@@ -42,6 +42,12 @@ try:
 except ImportError:  # pragma: no cover
     _prune_stale_tokens = None
 
+try:
+    from db_manager import prune_webhook_deliveries as _prune_deliveries, get_setting as _get_setting
+except ImportError:  # pragma: no cover
+    _prune_deliveries = None
+    _get_setting = None
+
 _last_prune_day: Optional[date_type] = None
 
 # ---------------------------------------------------------------------------
@@ -778,8 +784,11 @@ def _compute_period_kpis_with_outbound(date_from, date_to, allowed_queues, allow
 
     # Use call_log data source (same as Call History page)
     allowed_extensions = list(allowed_agents) if allowed_agents is not None else None
+    # enrich=False: analytics reuses the call-history data source but never reads
+    # recording paths or supervision flags, so skip that per-row work (no filesystem
+    # index walk, no supervision query) — a real saving when scanning a whole period.
     all_rows = call_log(date_from=date_from, date_to=date_to,
-                        allowed_extensions=allowed_extensions)
+                        allowed_extensions=allowed_extensions, enrich=False)
 
     # Apply queue scope for non-admin users
     if allowed_queues is not None:
@@ -932,8 +941,11 @@ def compute_agent_performance(
 
     # Use call_log data source (same as Call History)
     allowed_extensions = list(allowed_agents) if allowed_agents is not None else None
+    # enrich=False: analytics reuses the call-history data source but never reads
+    # recording paths or supervision flags, so skip that per-row work (no filesystem
+    # index walk, no supervision query) — a real saving when scanning a whole period.
     all_rows = call_log(date_from=date_from, date_to=date_to,
-                        allowed_extensions=allowed_extensions)
+                        allowed_extensions=allowed_extensions, enrich=False)
 
     # Build per-agent stats from all calls
     # Each agent's extension comes from the 'extension' field (dstchannel extraction)
@@ -1113,7 +1125,8 @@ def compute_drilldown(
     Returns paginated call records with analytics fields (wait_secs, sla_met).
     Uses the same data source as Call History (call_log module) for consistency.
     """
-    from call_log import call_log, classify_cdr_direction, convert_channel_to_extension
+    from call_log import (call_log, classify_cdr_direction, convert_channel_to_extension,
+                          map_call_outcome)
 
     date_from, date_to = _default_dates(date_from, date_to)
     thresholds = sla_thresholds or get_sla_thresholds()
@@ -1121,8 +1134,11 @@ def compute_drilldown(
 
     # Use call_log data source (same as Call History page)
     allowed_extensions = list(allowed_agents) if allowed_agents is not None else None
+    # enrich=False: analytics reuses the call-history data source but never reads
+    # recording paths or supervision flags, so skip that per-row work (no filesystem
+    # index walk, no supervision query) — a real saving when scanning a whole period.
     all_rows = call_log(date_from=date_from, date_to=date_to,
-                        allowed_extensions=allowed_extensions)
+                        allowed_extensions=allowed_extensions, enrich=False)
 
     # Apply filters
     filtered = []
@@ -1185,7 +1201,9 @@ def compute_drilldown(
             'duration': duration,
             'talk': talk,
             'disposition': disp,
-            'status': r.get('status', 'completed' if disp == 'ANSWERED' else 'no_answer'),
+            # call_log already computes the canonical outcome; the fallback derives the
+            # same vocabulary rather than the old lowercase literals.
+            'status': r.get('status') or map_call_outcome(disposition=disp, answered=talk > 0),
             'wait_secs': wait,
             'sla_met': sla_met,
             'linkedid': str(r.get('linkedid', '')),
@@ -1453,10 +1471,24 @@ async def start_aggregation_loop():
 
             log.debug(f"analytics: aggregation cycle complete ({now.strftime('%H:%M')})")
 
-            # Daily housekeeping: prune device tokens not refreshed in 90+ days.
+            # Daily housekeeping: prune device tokens not refreshed in 90+ days, and
+            # age out the CRM delivery log. This rides the aggregation loop rather than
+            # a MySQL EVENT because enabling the event scheduler needs SUPER, which the
+            # OpDesk DB user does not have.
             global _last_prune_day
-            if _prune_stale_tokens and now.date() != _last_prune_day:
-                await asyncio.to_thread(_prune_stale_tokens)
+            if now.date() != _last_prune_day:
+                if _prune_stale_tokens:
+                    await asyncio.to_thread(_prune_stale_tokens)
+                if _prune_deliveries:
+                    try:
+                        days = int((_get_setting('WEBHOOK_LOG_RETENTION_DAYS', '30')
+                                    if _get_setting else '30') or 30)
+                    except (TypeError, ValueError):
+                        days = 30
+                    removed = await asyncio.to_thread(_prune_deliveries, days)
+                    if removed:
+                        log.info(f"analytics: pruned {removed} webhook delivery rows "
+                                 f"older than {days} days")
                 _last_prune_day = now.date()
 
         except Exception as e:
