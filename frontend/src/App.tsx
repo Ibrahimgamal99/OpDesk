@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { setLanguage } from './i18n';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWebPhone } from './hooks/useWebPhone';
+import { useTheme } from './hooks/useTheme';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
 import { getToken, setUser, getUser, fetchWithAuth } from './auth';
 import { rlog } from './lib/remoteLog';
@@ -44,6 +45,8 @@ import {
   ChevronDown,
   Menu,
   X,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 
@@ -84,6 +87,7 @@ type AppProps = { onLogout: () => void };
 
 function App({ onLogout }: AppProps) {
   const { t, i18n } = useTranslation();
+  const { theme, toggleTheme } = useTheme();
   const token = getToken();
   const webPhone = useWebPhone();
   const { connect, disconnect, canConnect, isConnected, configLoading, incomingCall, hasActiveCall } = webPhone;
@@ -524,6 +528,16 @@ function App({ onLogout }: AppProps) {
               </span>
             );
           })()}
+
+          {/* Theme toggle */}
+          <button
+            className="btn"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? t('header.lightMode', 'Switch to light mode') : t('header.darkMode', 'Switch to dark mode')}
+            aria-label={theme === 'dark' ? t('header.lightMode', 'Switch to light mode') : t('header.darkMode', 'Switch to dark mode')}
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
 
           {/* Language switcher */}
           <div ref={langMenuRef} className="lang-menu">

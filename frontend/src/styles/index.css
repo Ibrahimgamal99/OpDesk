@@ -64,6 +64,65 @@
   --glass-border: rgba(255, 255, 255, 0.1);
 }
 
+/* ===========================================================================
+   Light theme — same variable set, activated via [data-theme="light"] on
+   <html>. Status/accent hues stay the same as dark mode for brand
+   consistency; surfaces, borders, text, and shadows are re-tuned for
+   readability on a light background. See ThemeToggle in App.tsx.
+   =========================================================================== */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eef1f4;
+  --bg-card: #ffffff;
+  --bg-hover: #eef1f4;
+  --bg-glass: rgba(255, 255, 255, 0.75);
+
+  --border-primary: #d0d7de;
+  --border-accent: #afb8c1;
+  --border-subtle: rgba(31, 35, 40, 0.15);
+
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --text-muted: #6e7781;
+
+  /* Status colors — slightly deeper tints for contrast on white */
+  --status-idle: #1a7f37;
+  --status-idle-bg: rgba(26, 127, 55, 0.1);
+  --status-idle-glow: rgba(26, 127, 55, 0.18);
+  --status-ringing: #cf222e;
+  --status-ringing-bg: rgba(207, 34, 46, 0.1);
+  --status-ringing-glow: rgba(207, 34, 46, 0.2);
+  --status-call: #0969da;
+  --status-call-bg: rgba(9, 105, 218, 0.1);
+  --status-call-glow: rgba(9, 105, 218, 0.18);
+  --status-unavailable: #6e7781;
+  --status-unavailable-bg: rgba(110, 119, 129, 0.12);
+  --status-hold: #6639ba;
+  --status-hold-bg: rgba(102, 57, 186, 0.1);
+
+  /* Accent colors — darkened so text/icons stay legible on white */
+  --accent-primary: #0969da;
+  --accent-primary-hover: #0550ae;
+  --accent-secondary: #0550ae;
+  --accent-teal: #14808a;
+  --accent-purple: #6639ba;
+  --accent-success: #1a7f37;
+  --accent-warning: #9a6700;
+  --accent-danger: #cf222e;
+
+  /* Shadows — much lighter, since dark shadows on white read as heavy */
+  --shadow-sm: 0 1px 3px rgba(31, 35, 40, 0.08);
+  --shadow-md: 0 4px 12px rgba(31, 35, 40, 0.1);
+  --shadow-lg: 0 8px 24px rgba(31, 35, 40, 0.12);
+  --shadow-xl: 0 12px 48px rgba(31, 35, 40, 0.16);
+  --shadow-glow: 0 0 20px rgba(9, 105, 218, 0.12);
+  --shadow-glow-ringing: 0 0 20px rgba(207, 34, 46, 0.18);
+
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(31, 35, 40, 0.08);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -1311,6 +1370,84 @@ body::before {
   gap: 16px;
 }
 
+/* Compact mode — roughly half-size tiles, toggled from the Extensions panel
+   header. Higher specificity than the responsive .extensions-grid rules
+   below (and any that follow), so it wins at every breakpoint. */
+.extensions-grid.compact {
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px;
+}
+
+.extensions-grid.compact .extension-card {
+  padding: 9px;
+  border-radius: var(--radius-sm);
+}
+
+.extensions-grid.compact .extension-card:hover {
+  transform: translateY(-2px);
+}
+
+.extensions-grid.compact .extension-header {
+  margin-bottom: 6px;
+}
+
+.extensions-grid.compact .extension-number {
+  font-size: 15px;
+  margin-bottom: 2px;
+}
+
+.extensions-grid.compact .extension-name {
+  font-size: 10px;
+}
+
+.extensions-grid.compact .extension-status {
+  padding: 3px 7px;
+  font-size: 9px;
+  gap: 4px;
+}
+
+.extensions-grid.compact .extension-status svg {
+  width: 11px;
+  height: 11px;
+}
+
+.extensions-grid.compact .extension-info {
+  margin-top: 7px;
+  padding-top: 6px;
+  font-size: 10px;
+}
+
+.extensions-grid.compact .extension-info-row {
+  margin-top: 2px;
+}
+
+.extensions-grid.compact .extension-actions {
+  margin-top: 8px;
+  gap: 4px;
+}
+
+.extensions-grid.compact .extension-actions .btn-icon {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 4px;
+}
+
+.extensions-grid.compact .extension-actions .btn-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.extensions-grid.compact .extension-header .btn-icon {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 2px;
+}
+
+.extensions-grid.compact .extension-header .btn-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
 .extension-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
@@ -1484,6 +1621,13 @@ body::before {
   gap: 6px;
   margin-top: 4px;
   padding: 2px 0;
+}
+
+.extension-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  justify-content: center;
 }
 
 /* Active calls table - Modern table design */
@@ -4949,10 +5093,12 @@ select.an-filter-select option:checked {
   top: calc(100% + 5px);
   left: 0;
   min-width: 100%;
+  max-height: 260px;
   background: var(--bg-card, #1a1f26);
   border: 1px solid var(--border-accent, #484f58);
   border-radius: 9px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   z-index: 200;
   box-shadow: 0 8px 28px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.2);
   animation: an-dropdown-in 0.13s ease;

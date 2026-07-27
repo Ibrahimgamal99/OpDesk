@@ -8,6 +8,18 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Apply the saved theme before first paint so the app never flashes the
+      // wrong theme on load (React hasn't mounted yet at this point).
+      (function () {
+        try {
+          var saved = localStorage.getItem('opdesk-theme');
+          if (saved === 'light' || saved === 'dark') {
+            document.documentElement.setAttribute('data-theme', saved);
+          }
+        } catch (e) { /* localStorage unavailable — default dark theme applies */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
