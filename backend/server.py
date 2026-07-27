@@ -31,6 +31,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
 import uvicorn
 
+# HTTP contract layer (Rules 4 + 5). Handlers must use these rather than
+# hand-building envelopes or choosing status codes.
+from api import AppError, PageParams, codes, encode_cursor, install_contract, respond, respond_list
+
 from ami import AMIExtensionsMonitor, _format_duration, DIALPLAN_CTX, normalize_interface
 from db_manager import (
     get_extensions_from_db, get_extension_names_from_db, get_queue_names_from_db, init_settings_table,
@@ -1255,6 +1259,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Rules 4 + 5.4 — trace ids and the single error renderer. Installed before any
+# other middleware so the trace id is set for everything downstream, including
+# CORS failures. After this call NO handler formats an error itself: handlers
+# raise AppError (or a legacy HTTPException, which is translated at the
+# boundary) and the middleware renders the envelope.
+install_contract(app)
+
 # CORS for React development
 _cors_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] or ["*"]
@@ -1932,15 +1943,25 @@ async def api_list_deliveries(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     limit: int = 50,
-    offset: int = 0,
+    cursor: Optional[str] = None,
     current_user: dict = Depends(require_admin),
 ):
-    """Page through CRM webhook delivery attempts. Bodies omitted — see the detail route."""
-    rows, total = await asyncio.to_thread(
+    """Page through CRM webhook delivery attempts. Bodies omitted — see the detail route.
+
+    Cursor-paginated (Rule 5.1). `?cursor=` is opaque: it carries the last seen
+    `id`, which the query uses as a keyset seek. Clients must not parse it.
+    """
+    page = PageParams.parse(cursor, limit)
+    after_id = page.keyset.get("id")
+    rows, has_more = await asyncio.to_thread(
         list_webhook_deliveries, success, call_id, call_type, search,
-        date_from, date_to, limit, offset)
-    return {"deliveries": rows, "total": total,
-            "limit": max(1, min(int(limit or 50), 200)), "offset": max(0, int(offset or 0))}
+        date_from, date_to, page.limit, after_id)
+    return respond_list(
+        rows,
+        limit=page.limit,
+        cursor=page.cursor,
+        next_cursor=encode_cursor({"id": rows[-1]["id"]}) if (has_more and rows) else None,
+    )
 
 
 @app.get("/api/logs/deliveries/{delivery_id}")
@@ -3203,7 +3224,7 @@ async def enable_mobile_wake_endpoint(body: MobileWakeConfigBody = MobileWakeCon
         if enable_mobile_wake(wait_seconds=wait):
             set_setting('MOBILE_WAKE_ENABLED', 'true')
             set_setting('MOBILE_WAKE_WAIT', str(wait))
-            return {"success": True, "message": f"Mobile wake enabled (wait={wait}s). Asterisk dialplan reloaded."}
+            return respond({"message": f"Mobile wake enabled (wait={wait}s). Asterisk dialplan reloaded."})
         raise HTTPException(status_code=500, detail="Failed to enable mobile wake. Check server logs.")
     except HTTPException:
         raise
@@ -3218,7 +3239,7 @@ async def disable_mobile_wake_endpoint(current_user: dict = Depends(require_admi
     try:
         if disable_mobile_wake():
             set_setting('MOBILE_WAKE_ENABLED', 'false')
-            return {"success": True, "message": "Mobile wake disabled. Asterisk dialplan reloaded."}
+            return respond({"message": "Mobile wake disabled. Asterisk dialplan reloaded."})
         raise HTTPException(status_code=500, detail="Failed to disable mobile wake. Check server logs.")
     except HTTPException:
         raise
@@ -3253,7 +3274,7 @@ async def enable_recording_endpoint(body: RecordingConfigBody = RecordingConfigB
         if enable_recording(mix_format=fmt):
             set_setting('RECORDING_ENABLED', 'true')
             set_setting('RECORDING_FORMAT', fmt)
-            return {"success": True, "message": f"Call recording enabled (format={fmt}). Asterisk dialplan reloaded."}
+            return respond({"message": f"Call recording enabled (format={fmt}). Asterisk dialplan reloaded."})
         raise HTTPException(status_code=500, detail="Failed to enable call recording. Check server logs.")
     except HTTPException:
         raise
@@ -3268,7 +3289,7 @@ async def disable_recording_endpoint(current_user: dict = Depends(require_admin)
     try:
         if disable_recording():
             set_setting('RECORDING_ENABLED', 'false')
-            return {"success": True, "message": "Call recording disabled. Asterisk dialplan reloaded."}
+            return respond({"message": "Call recording disabled. Asterisk dialplan reloaded."})
         raise HTTPException(status_code=500, detail="Failed to disable call recording. Check server logs.")
     except HTTPException:
         raise
@@ -3295,7 +3316,7 @@ async def enable_sip_tls_endpoint(current_user: dict = Depends(require_admin)):
         success = enable_sip_tls(domain)
         if success:
             set_setting('SIP_TLS_ENABLED', 'true')
-            return {"success": True, "message": f"SIP TLS enabled on port 5061 for {domain}"}
+            return respond({"message": f"SIP TLS enabled on port 5061 for {domain}"})
         raise HTTPException(status_code=500, detail="Failed to enable SIP TLS. Check server logs.")
     except HTTPException:
         raise
@@ -3311,7 +3332,7 @@ async def disable_sip_tls_endpoint(current_user: dict = Depends(require_admin)):
         success = disable_sip_tls()
         if success:
             set_setting('SIP_TLS_ENABLED', 'false')
-            return {"success": True, "message": "SIP TLS disabled. Port 5061 closed."}
+            return respond({"message": "SIP TLS disabled. Port 5061 closed."})
         raise HTTPException(status_code=500, detail="Failed to disable SIP TLS. Check server logs.")
     except HTTPException:
         raise
@@ -3619,14 +3640,19 @@ async def test_crm_connection(config_data: dict = None, current_user: dict = Dep
     sync_endpoint = (config_data.get('sync_endpoint') or get_setting('CRM_SYNC_ENDPOINT', '') or '').strip() or None
     try:
         result = await connector.test_connection(endpoint_path=sync_endpoint)
-        return {
+        return respond({
             "success": bool(result.get('success')),
             "status_code": result.get('status_code'),
             "message": result.get('message', ''),
             "method": result.get('method'),
-        }
+        })
     except Exception as e:
-        return {"success": False, "status_code": None, "message": f"Connection test failed: {e}"}
+        # Was `return {"success": False, ...}` with a 200 status — a failure that
+        # looked like a success to every client. Raising routes it through the
+        # one error path instead (Rules 4.1, 5.1).
+        raise AppError(codes.CRM_LOOKUP_UNAVAILABLE,
+                       "The CRM connection test could not complete. Check the server URL and credentials.",
+                       details={"reason": str(e)}, cause=e) from e
     finally:
         try:
             await connector.close()
@@ -3779,11 +3805,15 @@ async def test_crm_lookup(config_data: dict = None, current_user: dict = Depends
 
     connector = _connector_from_request(config_data)
     try:
-        return await run_lookup_test(connector, cfg, phone)
+        return respond(await run_lookup_test(connector, cfg, phone))
     except Exception as e:
         log.error(f"CRM lookup test failed: {type(e).__name__}")
-        return {"success": False, "status_code": None, "name": None, "matched": False,
-                "verify_detail": "", "raw_excerpt": "", "error": str(e)[:300]}
+        # Same distinction as /api/crm/test: a completed request reporting a
+        # failed probe. `error` is deliberately surfaced — diagnosing why the
+        # CRM rejected the lookup is the entire purpose of this admin-only tool
+        # — and stays truncated so an upstream body cannot flood the response.
+        return respond({"success": False, "status_code": None, "name": None, "matched": False,
+                        "verify_detail": "", "raw_excerpt": "", "error": str(e)[:300]})
     finally:
         try:
             await connector.close()

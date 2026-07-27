@@ -799,7 +799,7 @@
       "truncatedHint": "El cuerpo de la solicitud se truncó al registrarse: no se puede reenviar.",
       "copy": "Copiar",
       "copied": "Copiado",
-      "showing": "Mostrando {{from}}–{{to}} de {{total}}",
+      "showingCount": "Mostrando {{count}}",
       "status": {
         "success": "Entregado",
         "failed": "Fallido"

@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import type { Contact } from '../types';
+import { raiseFor } from '../lib/api';
 
 export interface ContactsPanelProps {
   /** Start a call to this number (fills the softphone dialer and opens it). */
@@ -89,10 +90,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
           notes: form.notes.trim() || null,
         }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || t('contacts.saveError'));
-      }
+      if (!res.ok) await raiseFor(res);
       setMessage({ type: 'success', text: editing ? t('contacts.updated') : t('contacts.created') });
       resetForm();
       loadContacts();
@@ -106,10 +104,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
     setMessage(null);
     try {
       const res = await fetchWithAuth(`/api/contacts/${c.id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || t('contacts.deleteError'));
-      }
+      if (!res.ok) await raiseFor(res);
       setMessage({ type: 'success', text: t('contacts.deleted') });
       if (editing?.id === c.id) resetForm();
       loadContacts();

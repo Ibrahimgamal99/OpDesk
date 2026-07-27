@@ -12,6 +12,7 @@ import { quickRanges } from './analyticsUtils';
 import type { DateRange } from './analyticsUtils';
 import { Tabs } from './ui';
 import type { AmiEvent, WebhookDelivery, WebhookDeliveryDetail } from '../types';
+import { apiList, messageFrom, toApiError } from '../lib/api';
 
 type LogsTab = 'system' | 'deliveries';
 
@@ -215,9 +216,7 @@ function SystemLogsTab({ amiEnabled, amiBusy, onToggleAmi, paused, setPaused }: 
       if (!res.ok) {
         // A failure here is nearly always the tracer not being able to read Asterisk's
         // log file, so surface the server's message rather than a generic error.
-        setSipError(typeof data?.detail === 'string'
-          ? data.detail
-          : t('logs.system.sipFail', 'Failed to toggle SIP trace'));
+        setSipError(messageFrom(data, t('logs.system.sipFail', 'Failed to toggle SIP trace')));
         return;
       }
       setSipEnabled(!!data?.enabled);
@@ -425,7 +424,11 @@ function CopyButton({ text }: { text: string }) {
 function DeliveriesTab() {
   const { t } = useTranslation();
   const [rows, setRows] = useState<WebhookDelivery[]>([]);
-  const [total, setTotal] = useState(0);
+  // Cursor pagination (Rule 5.1). `stack` holds the cursor for each visited page
+  // so Previous can go back -- a forward-only cursor has no way to address the
+  // page before it. stack[0] is always null (the first page).
+  const [stack, setStack] = useState<(string | null)[]>([null]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');       // '' | 'success' | 'failed'
@@ -433,7 +436,7 @@ function DeliveriesTab() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['7d']);
-  const [page, setPage] = useState(1);
+  const pageIndex = stack.length - 1;
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<Record<number, WebhookDeliveryDetail>>({});
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
@@ -448,31 +451,29 @@ function DeliveriesTab() {
   const fetchPage = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String((page - 1) * PAGE_SIZE),
-      });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      const cur = stack[stack.length - 1];
+      if (cur) params.set('cursor', cur);
       if (status) params.set('success', status === 'success' ? 'true' : 'false');
       if (direction) params.set('call_type', direction);
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (dateRange?.from) params.set('date_from', dateRange.from);
       if (dateRange?.to) params.set('date_to', dateRange.to);
-      const res = await fetchWithAuth(`/api/logs/deliveries?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setRows(data.deliveries || []);
-      setTotal(data.total || 0);
+      const { items, page } = await apiList<WebhookDelivery>(`/api/logs/deliveries?${params}`);
+      setRows(items);
+      setNextCursor(page.next_cursor);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(toApiError(e).message);
     } finally {
       setLoading(false);
     }
-  }, [page, status, direction, debouncedSearch, dateRange]);
+  }, [stack, status, direction, debouncedSearch, dateRange]);
 
   useEffect(() => { fetchPage(); }, [fetchPage]);
-  // Any filter change invalidates the current page number.
-  useEffect(() => { setPage(1); }, [debouncedSearch, status, direction, dateRange]);
+  // Any filter change invalidates every cursor: they encode a position within
+  // the OLD result set, so paging on would silently skip or repeat rows.
+  useEffect(() => { setStack([null]); }, [debouncedSearch, status, direction, dateRange]);
 
   const toggleRow = async (id: number) => {
     if (expandedId === id) { setExpandedId(null); return; }
@@ -504,7 +505,7 @@ function DeliveriesTab() {
         setMessage({ type: 'success', text: t('logs.deliveries.resendOk', 'Resend queued — a new attempt will appear shortly.') });
         setTimeout(fetchPage, 1200);   // the new attempt is its own row
       } else {
-        setMessage({ type: 'error', text: data.detail || t('logs.deliveries.resendFail', 'Resend failed.') });
+        setMessage({ type: 'error', text: messageFrom(data, t('logs.deliveries.resendFail', 'Resend failed.')) });
       }
     } catch (e) {
       setMessage({ type: 'error', text: e instanceof Error ? e.message : String(e) });
@@ -513,7 +514,6 @@ function DeliveriesTab() {
     setTimeout(() => setMessage(null), 5000);
   };
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="lg-body">
@@ -686,20 +686,24 @@ function DeliveriesTab() {
         )}
       </div>
 
-      {!loading && !error && total > 0 && (
+      {!loading && !error && rows.length > 0 && (
         <div className="cl-pagination">
           <span className="cl-pagination-info">
-            {t('logs.deliveries.showing', 'Showing {{from}}–{{to}} of {{total}}', {
-              from: (page - 1) * PAGE_SIZE + 1,
-              to: Math.min(page * PAGE_SIZE, total),
-              total,
-            })}
+            {t('logs.deliveries.showingCount', 'Showing {{count}}', { count: rows.length })}
           </span>
-          <button className="cl-page-btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+          <button
+            className="cl-page-btn"
+            disabled={pageIndex === 0}
+            onClick={() => setStack((s) => s.slice(0, -1))}
+          >
             {t('common.prev', 'Previous')}
           </button>
-          <span className="cl-page-current">{page} / {totalPages}</span>
-          <button className="cl-page-btn" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+          <span className="cl-page-current">{pageIndex + 1}</span>
+          <button
+            className="cl-page-btn"
+            disabled={!nextCursor}
+            onClick={() => setStack((s) => [...s, nextCursor])}
+          >
             {t('common.next', 'Next')}
           </button>
         </div>

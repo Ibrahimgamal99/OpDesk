@@ -8,6 +8,7 @@ import { Toggle } from './ui/Toggle';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
+import { raiseFor } from '../lib/api';
 
 export interface OpDeskUser {
   id: number;
@@ -207,10 +208,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Update failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('users.userUpdated') });
       } else {
         const res = await fetchWithAuth('/api/settings/users', {
@@ -226,10 +224,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Create failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('users.userCreated') });
       }
       // Persist WebRTC toggle for the linked extension (best-effort; user save already succeeded).
@@ -266,10 +261,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       const res = await fetchWithAuth(`/api/settings/users/${user.id}`, {
         method: 'DELETE',
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Delete failed');
-      }
+      if (!res.ok) await raiseFor(res);
       setMessage({ type: 'success', text: t('users.userDeleted') });
       resetForm();
       loadData();

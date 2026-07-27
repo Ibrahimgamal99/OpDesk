@@ -801,7 +801,7 @@
       "truncatedHint": "Request body was truncated when logged — cannot be replayed.",
       "copy": "Copy",
       "copied": "Copied",
-      "showing": "Showing {{from}}–{{to}} of {{total}}",
+      "showingCount": "Showing {{count}}",
       "status": {
         "success": "Delivered",
         "failed": "Failed"

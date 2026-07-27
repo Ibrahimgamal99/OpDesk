@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { fetchWithAuth } from '../auth';
 import { Modal } from './ui';
 import type { ApiKey } from '../types';
+import { raiseFor, toApiError } from '../lib/api';
 
 interface ApiKeyCreated extends ApiKey { key: string; }
 
@@ -218,7 +219,7 @@ export function ApiKeysPanel() {
         const res = await fetchWithAuth(`/api/api-keys/${editing.id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
-        if (!res.ok) throw await res.json().catch(() => ({}));
+        if (!res.ok) await raiseFor(res);
         closeModal();
         setMessage({ type: 'success', text: 'API key saved' });
         load();
@@ -228,7 +229,7 @@ export function ApiKeysPanel() {
         const res = await fetchWithAuth('/api/api-keys', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
-        if (!res.ok) throw await res.json().catch(() => ({}));
+        if (!res.ok) await raiseFor(res);
         const created: ApiKeyCreated = await res.json();
         closeModal();
         setCopied(false);
@@ -236,8 +237,7 @@ export function ApiKeysPanel() {
         load();
       }
     } catch (err: unknown) {
-      const detail = (err as { detail?: string })?.detail || 'Failed to save API key';
-      setMessage({ type: 'error', text: detail });
+      setMessage({ type: 'error', text: toApiError(err).message });
     } finally { setSaving(false); }
   }
 

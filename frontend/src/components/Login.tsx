@@ -2,6 +2,7 @@ import { useState, FormEvent } from 'react';
 import { Radio, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { setToken, setUser } from '../auth';
+import { messageFrom } from '../lib/api';
 
 type Props = {
   onSuccess: () => void;
@@ -30,7 +31,7 @@ export function Login({ onSuccess }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.detail || t('login.errorInvalid'));
+        setError(messageFrom(data, t('login.errorInvalid')));
         return;
       }
       if (data.access_token) {

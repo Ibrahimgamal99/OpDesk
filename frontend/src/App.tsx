@@ -62,6 +62,7 @@ import {
   BookUser,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
+import { raiseFor } from './lib/api';
 
 type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
@@ -966,7 +967,7 @@ function App({ onLogout }: AppProps) {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ enabled }),
                 });
-                if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+                if (!res.ok) await raiseFor(res);
                 // DND state flip arrives via the WebSocket state broadcast.
               }}
             />

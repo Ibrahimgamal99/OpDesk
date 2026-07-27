@@ -97,6 +97,50 @@ sys.exit(1 if bad else 0)
 PY
 [ $? -ne 0 ] && fail=1
 
+# --- Rules 4 + 5: the API contract -----------------------------------------
+hdr "Rules 4/5 — API contract"
+
+BE=backend
+
+# Without this wiring none of the guarantees below hold.
+hard "install_contract wired into server.py" \
+  "$(grep -q 'install_contract(app)' "$BE"/server.py && echo 0 || echo 1)"
+
+# Rule 5.4: handlers return domain errors; middleware renders them. A handler
+# building its own JSONResponse has bypassed the single error path.
+hard "handlers writing JSONResponse directly" \
+  "$(grep -c 'JSONResponse(' "$BE"/server.py || true)"
+
+# Rule 5.1: cursor pagination, never offset.
+hard "OFFSET pagination in queries" \
+  "$(grep -ohE 'OFFSET %s' "$BE"/*.py | wc -l)"
+
+# Rule 5.1: no `success` boolean as an envelope key. (A `success` field on a
+# diagnostic RESULT resource is fine and lives inside respond(...).)
+hard "success booleans as envelope keys" \
+  "$(grep -hE 'return \{"success"' "$BE"/*.py | grep -vE '^\s*#' | wc -l)"
+
+# The contract layer's own executable check.
+if (cd "$BE" && python3 -m api.selftest >/tmp/opdesk-selftest.log 2>&1); then
+  printf '  \033[32mPASS\033[0m  %-46s %s\n' "api.selftest" \
+    "$(grep -oE '[0-9]+/[0-9]+ passed' /tmp/opdesk-selftest.log | tail -1)"
+else
+  printf '  \033[31mFAIL\033[0m  %-46s see /tmp/opdesk-selftest.log\n' "api.selftest"
+  fail=1
+fi
+
+hdr "Rules 4/5 — migration backlog (metrics, not gates)"
+soft "raise HTTPException (want AppError)" \
+  "$(grep -ohE 'raise HTTPException' "$BE"/*.py | wc -l)"
+soft "routes on the {data} envelope" \
+  "$(grep -ohE 'return respond(_list)?\(' "$BE"/*.py | wc -l) / $(grep -ohE '@app\.(get|post|put|patch|delete)\(' "$BE"/*.py | wc -l)"
+soft "frontend fetchWithAuth (want lib/api)" \
+  "$(grep -ohE 'fetchWithAuth\(' "$SRC"/components/*.tsx "$SRC"/*.tsx "$SRC"/lib/*.ts "$SRC"/hooks/*.ts 2>/dev/null | wc -l)"
+soft "frontend .detail reads (want 0)" \
+  "$(grep -ohE '\.detail\b' "$SRC"/components/*.tsx "$SRC"/*.tsx 2>/dev/null | wc -l)"
+soft "hand-written response types in types/" \
+  "$(grep -cE '^[[:space:]]*(export )?(interface|type) ' "$SRC"/types/index.ts 2>/dev/null || echo 0)"
+
 # --- Rule 0 / A.1: one implementation per concept ---------------------------
 hdr "Rule 0 / A.1 — consolidation backlog (metrics, not gates)"
 soft "distinct <button> className strings" \
