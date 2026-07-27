@@ -52,6 +52,9 @@ from db_manager import (
     # CRM webhook delivery log
     init_webhook_deliveries_table, list_webhook_deliveries, get_webhook_delivery,
     prune_webhook_deliveries,
+    # Contacts (system phonebook, fed manually and by the CRM lookup)
+    init_contacts_table, list_contacts, create_contact, update_contact,
+    delete_contact, get_contacts_for_resolver,
 )
 from agent_presence import PresenceRecorder
 from dialplan import enable_qos, disable_qos, enable_sip_tls, disable_sip_tls, enable_mobile_wake, disable_mobile_wake, enable_recording, disable_recording, reload_asterisk_sip, set_pjsip_logger
@@ -70,7 +73,9 @@ try:
         RETIRED_CRM_SYNC_FIELDS,
         parse_sync_fields, parse_key_map, parse_status_map,
         default_outbound_keys, validate_crm_url, redact_url,
+        CRMLookupConfig, LOOKUP_NUMBER_FORMATS, lookup_cache_key,
     )
+    from crm_lookup import ContactResolver, run_lookup_test
 except ImportError:
     CRMConnector = None
     create_crm_connector = None
@@ -85,6 +90,18 @@ except ImportError:
     default_outbound_keys = None
     validate_crm_url = None
     redact_url = None
+    CRMLookupConfig = None
+    LOOKUP_NUMBER_FORMATS = ("digits", "as_is", "plus", "zeros")
+    ContactResolver = None
+    run_lookup_test = None
+
+    def lookup_cache_key(raw: str, match_digits: int = 0) -> str:
+        """Fallback when the crm module is unavailable: digits-only key."""
+        import re as _re
+        digits = _re.sub(r"\D", "", raw or "")
+        if match_digits and match_digits > 0:
+            digits = digits[-match_digits:]
+        return digits[:32]
 
 # Filter to suppress "change detected" messages
 class SuppressChangeDetectedFilter(logging.Filter):
@@ -690,11 +707,21 @@ class AMIEventBridge:
         
         # Get talking to number
         talking_to = self.monitor._display_number(info, ext)
-        
+
+        # Resolved CRM contact name for the remote party. resolve_cached is a
+        # memory-only dict lookup (this method runs per call-row per WS client
+        # per broadcast tick) — a miss schedules one background CRM fetch and the
+        # name simply appears on a later tick.
+        contact_name = ""
+        if contact_resolver is not None:
+            contact_name = contact_resolver.resolve_cached(
+                talking_to, getattr(self.monitor, 'monitored', None)) or ""
+
         return {
             "extension": ext,
             "state": info.get('state', ''),
             "talking_to": talking_to,
+            "contact_name": contact_name,
             "duration": duration,
             "talk_time": talk_time,
             "channel": info.get('channel', ''),
@@ -882,6 +909,41 @@ def load_crm_sync_config() -> Optional["CRMSyncConfig"]:
     )
 
 
+def load_crm_lookup_config() -> Optional["CRMLookupConfig"]:
+    """
+    Build the contact-lookup configuration from settings. Like load_crm_sync_config,
+    this is read at startup AND rebuilt on every config save (live reload).
+    """
+    if CRMLookupConfig is None:
+        return None
+
+    def _flag(key: str, default: str = 'false') -> bool:
+        return (get_setting(key, os.getenv(key, default)) or default).lower() in ('true', '1', 'yes')
+
+    def _text(key: str, default: str = '') -> str:
+        return (get_setting(key, os.getenv(key, default)) or default).strip()
+
+    def _int(key: str, default: int, minimum: int) -> int:
+        try:
+            return max(minimum, int(_text(key, str(default)) or default))
+        except (TypeError, ValueError):
+            return default
+
+    number_format = _text('CRM_LOOKUP_NUMBER_FORMAT', 'digits').lower()
+    if number_format not in LOOKUP_NUMBER_FORMATS:
+        number_format = 'digits'
+
+    return CRMLookupConfig(
+        enabled=_flag('CRM_LOOKUP_ENABLED'),
+        url_template=_text('CRM_LOOKUP_URL'),
+        name_template=_text('CRM_LOOKUP_NAME_TEMPLATE'),
+        number_format=number_format,
+        match_digits=_int('CRM_LOOKUP_MATCH_DIGITS', 0, 0),
+        verify_path=_text('CRM_LOOKUP_VERIFY_PATH'),
+        ttl_hours=_int('CRM_LOOKUP_TTL_HOURS', 24, 1),
+    )
+
+
 def _migrate_crm_sync_fields() -> None:
     """One-shot: rewrite retired catalog names in the stored CRM_SYNC_FIELDS.
 
@@ -922,6 +984,9 @@ monitor: Optional[AMIExtensionsMonitor] = None
 bridge: Optional[AMIEventBridge] = None
 crm_connector: Optional[CRMConnector] = None
 presence: Optional[PresenceRecorder] = None
+# Contact-name resolver (CRM lookup). Always constructed so call sites can stay
+# unconditional; it is inert until set_config() gives it a usable config+connector.
+contact_resolver = ContactResolver() if ContactResolver else None
 
 # Extensions that received a predial VoIP wake push, keyed by extension → loop.time().
 # _on_incoming_call suppresses the second VoIP push while this entry is fresh so the
@@ -954,6 +1019,8 @@ async def lifespan(app: FastAPI):
     init_api_keys_table()
     # Ensure the CRM webhook delivery log table exists
     init_webhook_deliveries_table()
+    # Ensure the contacts table (system phonebook) exists
+    init_contacts_table()
 
 
     # WebRTC default host: prefer the configured public domain (its TLS cert matches); otherwise
@@ -981,6 +1048,15 @@ async def lifespan(app: FastAPI):
         'CRM_SYNC_DURATION_FORMAT': 'hms',  # hms | seconds
         'CRM_SYNC_STATUS_MAP': '{}',        # {FROM: TO} outcome remap
         'CRM_SYNC_KEY_MAP': '{}',           # {defaultKey: customKey} rename
+        # Contact lookup (3CX-style): GET template with [Number], name template of
+        # JSON paths, prefix strategy, last-N-digit matching, optional verification.
+        'CRM_LOOKUP_ENABLED': 'false',
+        'CRM_LOOKUP_URL': '',
+        'CRM_LOOKUP_NAME_TEMPLATE': '',
+        'CRM_LOOKUP_NUMBER_FORMAT': 'digits',  # digits | as_is | plus | zeros
+        'CRM_LOOKUP_MATCH_DIGITS': '0',        # compare/cache on last N digits (0 = full)
+        'CRM_LOOKUP_VERIFY_PATH': '',
+        'CRM_LOOKUP_TTL_HOURS': '24',
         'WEBHOOK_LOG_RETENTION_DAYS': '30',
         'CLICK_TO_CALL_CONTEXT': 'from-internal',
         'WEBRTC_PBX_SERVER': f'wss://{webrtc_host}/sip-ws',
@@ -997,7 +1073,13 @@ async def lifespan(app: FastAPI):
 
     # Initialize CRM connector if configured
     crm_connector = init_crm_connector()
-    
+
+    # Arm the contact-name resolver: load the phonebook into memory (resolves
+    # names even with no CRM) and the lookup config (live CRM fetch on miss).
+    if contact_resolver is not None:
+        contact_resolver.set_config(load_crm_lookup_config(), crm_connector)
+        contact_resolver.set_contacts(get_contacts_for_resolver())
+
     # Check and apply QoS configuration from database (fallback to env)
     qos_enabled_str = get_setting('QOS_ENABLED', os.getenv('QOS_ENABLED', ''))
     qos_enabled = qos_enabled_str.lower() in ('true', '1', 'yes')
@@ -1089,6 +1171,11 @@ async def lifespan(app: FastAPI):
         def _on_incoming_call(ext: str, caller: str, call_id: str, display_name: str):
             try:
                 loop = asyncio.get_running_loop()
+                # Warm the CRM contact cache at first ring so the name is usually
+                # resolved by the time the softphone asks for it. Runs before the
+                # pre-wake dedup below — that guard is about VoIP pushes only.
+                if contact_resolver is not None:
+                    contact_resolver.resolve_cached(caller, monitor.monitored if monitor else None)
                 # If a predial VoIP push was already sent for this extension, skip the
                 # second push.  Two VoIP pushes → two CallKit UUIDs → end-call event
                 # lands on the wrong UUID → no SIP BYE → caller stuck.
@@ -3015,6 +3102,17 @@ async def get_crm_config(current_user: dict = Depends(require_admin)):
     config["default_keys"] = default_outbound_keys() if default_outbound_keys else {}
     config["call_outcomes"] = list(CALL_OUTCOMES)
 
+    # Contact lookup configuration (no secrets — reuses the connection auth)
+    lookup = load_crm_lookup_config()
+    if lookup is not None:
+        config["lookup_enabled"] = lookup.enabled
+        config["lookup_url"] = lookup.url_template
+        config["lookup_name_template"] = lookup.name_template
+        config["lookup_number_format"] = lookup.number_format
+        config["lookup_match_digits"] = lookup.match_digits
+        config["lookup_verify_path"] = lookup.verify_path
+        config["lookup_ttl_hours"] = lookup.ttl_hours
+
     return config
 
 
@@ -3237,6 +3335,9 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
         try:
             validate_crm_url(server_url_in, block_private=bool(bp))
         except ValueError as e:
+            # Log the reason — the 400 detail only reaches the browser, and a bare
+            # "400 Bad Request" line in the journal is undiagnosable.
+            log.warning(f"CRM config save rejected: invalid server URL ({e})")
             raise HTTPException(status_code=400, detail=f"Invalid CRM server URL: {e}")
 
     warnings = []
@@ -3355,6 +3456,47 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
                     + ", ".join(sorted(unknown)))
             set_setting('CRM_SYNC_STATUS_MAP', json.dumps(parsed))
 
+        # ── Contact lookup settings ──
+        # The lookup URL is a *path template* appended to the already-SSRF-validated
+        # server URL; refusing absolute URLs keeps that single validation surface.
+        if 'lookup_enabled' in config_data:
+            set_setting('CRM_LOOKUP_ENABLED', 'true' if config_data.get('lookup_enabled') else 'false')
+        if 'lookup_url' in config_data:
+            lookup_url = (config_data.get('lookup_url') or '').strip()
+            if lookup_url and (not lookup_url.startswith('/') or '://' in lookup_url):
+                log.warning(f"CRM config save rejected: lookup_url is not a path ({lookup_url[:80]!r})")
+                raise HTTPException(
+                    status_code=400,
+                    detail="lookup_url must be a path starting with '/' (it is appended to the CRM server URL)")
+            set_setting('CRM_LOOKUP_URL', lookup_url)
+        if 'lookup_name_template' in config_data:
+            set_setting('CRM_LOOKUP_NAME_TEMPLATE', (config_data.get('lookup_name_template') or '').strip())
+        if 'lookup_number_format' in config_data:
+            fmt = str(config_data.get('lookup_number_format') or 'digits').strip().lower()
+            if fmt not in LOOKUP_NUMBER_FORMATS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"lookup_number_format must be one of: {', '.join(LOOKUP_NUMBER_FORMATS)}")
+            set_setting('CRM_LOOKUP_NUMBER_FORMAT', fmt)
+        if 'lookup_match_digits' in config_data:
+            try:
+                match_digits = int(config_data.get('lookup_match_digits') or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="lookup_match_digits must be an integer >= 0")
+            if match_digits < 0:
+                raise HTTPException(status_code=400, detail="lookup_match_digits must be an integer >= 0")
+            set_setting('CRM_LOOKUP_MATCH_DIGITS', str(match_digits))
+        if 'lookup_verify_path' in config_data:
+            set_setting('CRM_LOOKUP_VERIFY_PATH', (config_data.get('lookup_verify_path') or '').strip())
+        if 'lookup_ttl_hours' in config_data:
+            try:
+                ttl_hours = int(config_data.get('lookup_ttl_hours') or 24)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="lookup_ttl_hours must be a positive integer")
+            if ttl_hours < 1:
+                raise HTTPException(status_code=400, detail="lookup_ttl_hours must be a positive integer")
+            set_setting('CRM_LOOKUP_TTL_HOURS', str(ttl_hours))
+
         log.info("CRM configuration saved to database")
 
         # Apply immediately — rebuild the connector + sync config and hand them to
@@ -3366,6 +3508,8 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
             new_sync = load_crm_sync_config()
             if monitor is not None and hasattr(monitor, 'set_crm'):
                 monitor.set_crm(crm_connector, new_sync)
+            if contact_resolver is not None:
+                contact_resolver.set_config(load_crm_lookup_config(), crm_connector)
             log.info("✅ CRM configuration reloaded live (no restart needed)")
         except Exception as e:
             reload_ok = False
@@ -3380,23 +3524,24 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
                        else "CRM configuration saved (restart required to apply)."
         }
 
-    except HTTPException:
+    except HTTPException as e:
+        # The detail only reaches the browser; without this line a rejected save
+        # is just an undiagnosable "400 Bad Request" in the journal.
+        log.warning(f"CRM config save rejected ({e.status_code}): {e.detail}")
         raise
     except Exception as e:
         log.error(f"Failed to save CRM config: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save CRM configuration: {str(e)}")
 
 
-@app.post("/api/crm/test")
-async def test_crm_connection(config_data: dict = None, current_user: dict = Depends(require_admin)):
+def _connector_from_request(config_data: dict) -> "CRMConnector":
     """
-    Test connectivity to the CRM using the values in the request body, falling
-    back to saved secrets when a field is masked ("***") or blank. Persists
-    nothing, so the operator can verify credentials before saving.
+    Build a throwaway connector from posted config values, falling back to saved
+    secrets when a field is masked ("***") or blank. Shared by the connection-test
+    and lookup-test endpoints; persists nothing. Caller must close() it.
     """
     if CRMConnector is None or create_crm_connector is None:
         raise HTTPException(status_code=503, detail="CRM connector module not available")
-    config_data = config_data or {}
 
     def _val(posted_key, setting_key, default=''):
         v = config_data.get(posted_key)
@@ -3455,9 +3600,20 @@ async def test_crm_connection(config_data: dict = None, current_user: dict = Dep
             cfg['oauth2_scope'] = scope
 
     try:
-        connector = create_crm_connector(cfg)
+        return create_crm_connector(cfg)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/crm/test")
+async def test_crm_connection(config_data: dict = None, current_user: dict = Depends(require_admin)):
+    """
+    Test connectivity to the CRM using the values in the request body, falling
+    back to saved secrets when a field is masked ("***") or blank. Persists
+    nothing, so the operator can verify credentials before saving.
+    """
+    config_data = config_data or {}
+    connector = _connector_from_request(config_data)
 
     # Prefer testing the actual push endpoint when one is configured.
     sync_endpoint = (config_data.get('sync_endpoint') or get_setting('CRM_SYNC_ENDPOINT', '') or '').strip() or None
@@ -3471,6 +3627,163 @@ async def test_crm_connection(config_data: dict = None, current_user: dict = Dep
         }
     except Exception as e:
         return {"success": False, "status_code": None, "message": f"Connection test failed: {e}"}
+    finally:
+        try:
+            await connector.close()
+        except Exception:
+            pass
+
+
+@app.get("/api/crm/contact")
+async def get_crm_contact_endpoint(phone: str, current_user: dict = Depends(get_current_user)):
+    """
+    Resolve a phone number to a contact name (phonebook first, then a live CRM
+    lookup if configured). Called by the softphone on ring and on dial, so it
+    is available to every authenticated user, not just admins. Waits briefly
+    for an in-flight CRM fetch; on timeout the background fetch continues and
+    the client may simply retry.
+    """
+    phone = (phone or '').strip()[:64]
+    if contact_resolver is None:
+        return {"phone": phone, "name": None, "enabled": False}
+    try:
+        name = await asyncio.wait_for(
+            contact_resolver.resolve(phone, monitor.monitored if monitor else None),
+            timeout=5)
+    except asyncio.TimeoutError:
+        name = None
+    return {"phone": phone, "name": name, "enabled": True}
+
+
+# ---------------------------------------------------------------------------
+# Contacts (system phonebook). Everyone can read (the same names are already
+# shown on every dashboard); only admins can write. Writes reload the
+# resolver's in-memory phonebook so the change wins on the next broadcast tick.
+# ---------------------------------------------------------------------------
+class ContactBody(BaseModel):
+    name: str
+    phone: str
+    company: Optional[str] = None
+    notes: Optional[str] = None
+
+
+async def _reload_resolver_contacts() -> None:
+    if contact_resolver is not None:
+        contact_resolver.set_contacts(await asyncio.to_thread(get_contacts_for_resolver))
+
+
+def _validated_contact(body: ContactBody) -> tuple:
+    """Normalize + validate a contact payload -> (name, phone, phone_key)."""
+    name = (body.name or '').strip()
+    phone = (body.phone or '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    key = lookup_cache_key(phone, 0)
+    if not key:
+        raise HTTPException(status_code=400, detail="Phone must contain digits")
+    return name, phone, key
+
+
+@app.get("/api/contacts")
+async def api_list_contacts(current_user: dict = Depends(get_current_user)):
+    """All contacts (manual and crm-sourced)."""
+    contacts = await asyncio.to_thread(list_contacts)
+    return {"contacts": contacts}
+
+
+@app.post("/api/contacts")
+async def api_create_contact(body: ContactBody, current_user: dict = Depends(require_admin)):
+    """Create a manual contact (admin only)."""
+    name, phone, key = _validated_contact(body)
+    contact_id = await asyncio.to_thread(
+        create_contact, name, phone, key,
+        (body.company or '').strip() or None, (body.notes or '').strip() or None)
+    if contact_id is None:
+        raise HTTPException(status_code=400, detail="A contact with this phone number already exists")
+    await _reload_resolver_contacts()
+    return {"id": contact_id}
+
+
+@app.put("/api/contacts/{contact_id}")
+async def api_update_contact(contact_id: int, body: ContactBody,
+                             current_user: dict = Depends(require_admin)):
+    """Update a contact (admin only). Editing a crm row makes it manual."""
+    name, phone, key = _validated_contact(body)
+    result = await asyncio.to_thread(
+        update_contact, contact_id, name, phone, key,
+        (body.company or '').strip() or None, (body.notes or '').strip() or None)
+    if result is None:
+        raise HTTPException(status_code=400, detail="A contact with this phone number already exists")
+    if result is False:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    await _reload_resolver_contacts()
+    return {"status": "ok"}
+
+
+@app.delete("/api/contacts/{contact_id}")
+async def api_delete_contact(contact_id: int, current_user: dict = Depends(require_admin)):
+    """Delete a contact (admin only). A crm-sourced row may reappear on the
+    number's next call if the CRM still knows it."""
+    if not await asyncio.to_thread(delete_contact, contact_id):
+        raise HTTPException(status_code=404, detail="Contact not found")
+    await _reload_resolver_contacts()
+    return {"status": "ok"}
+
+
+@app.post("/api/crm/lookup-test")
+async def test_crm_lookup(config_data: dict = None, current_user: dict = Depends(require_admin)):
+    """
+    Run one contact lookup with the values in the request body (masked secrets
+    fall back to saved ones), bypassing all caches and persisting nothing. Returns
+    the resolved name plus a truncated raw-response excerpt so an operator can
+    debug a wrong name template without curl.
+    """
+    if run_lookup_test is None or CRMLookupConfig is None:
+        raise HTTPException(status_code=503, detail="CRM lookup module not available")
+    config_data = config_data or {}
+
+    phone = (config_data.get('phone') or '').strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="phone is required")
+
+    lookup_url = (config_data.get('lookup_url') or get_setting('CRM_LOOKUP_URL', '') or '').strip()
+    if not lookup_url or not lookup_url.startswith('/') or '://' in lookup_url:
+        raise HTTPException(
+            status_code=400,
+            detail="lookup_url must be a path starting with '/' (it is appended to the CRM server URL)")
+    name_template = (config_data.get('lookup_name_template')
+                     or get_setting('CRM_LOOKUP_NAME_TEMPLATE', '') or '').strip()
+    if not name_template:
+        raise HTTPException(status_code=400, detail="lookup_name_template is required")
+
+    number_format = str(config_data.get('lookup_number_format')
+                        or get_setting('CRM_LOOKUP_NUMBER_FORMAT', 'digits') or 'digits').lower()
+    if number_format not in LOOKUP_NUMBER_FORMATS:
+        number_format = 'digits'
+    try:
+        match_digits = max(0, int(config_data.get('lookup_match_digits')
+                                  if config_data.get('lookup_match_digits') is not None
+                                  else get_setting('CRM_LOOKUP_MATCH_DIGITS', '0') or 0))
+    except (TypeError, ValueError):
+        match_digits = 0
+
+    cfg = CRMLookupConfig(
+        enabled=True,
+        url_template=lookup_url,
+        name_template=name_template,
+        number_format=number_format,
+        match_digits=match_digits,
+        verify_path=(config_data.get('lookup_verify_path')
+                     or get_setting('CRM_LOOKUP_VERIFY_PATH', '') or '').strip(),
+    )
+
+    connector = _connector_from_request(config_data)
+    try:
+        return await run_lookup_test(connector, cfg, phone)
+    except Exception as e:
+        log.error(f"CRM lookup test failed: {type(e).__name__}")
+        return {"success": False, "status_code": None, "name": None, "matched": False,
+                "verify_detail": "", "raw_excerpt": "", "error": str(e)[:300]}
     finally:
         try:
             await connector.close()

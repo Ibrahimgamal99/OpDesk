@@ -13,7 +13,9 @@ import base64
 import ipaddress
 import json
 import logging
+import re
 import socket
+import urllib.parse
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Any, Union
@@ -396,6 +398,71 @@ class CRMConnector:
                 "data": None
             }
     
+    async def get_json(
+        self,
+        endpoint_path: str
+    ) -> Dict[str, Union[bool, int, str, Dict[str, Any], None]]:
+        """
+        GET {server_url}{endpoint_path} and parse the JSON response.
+
+        Used by the contact-lookup feature. The path must arrive fully rendered
+        (any [Number] placeholder already substituted and URL-encoded).
+
+        Returns:
+            Response dictionary with keys: success (bool), status_code (int|None),
+            data (dict|list|None), error (str|None) — same shape as send_call_data.
+        """
+        client = await self._get_client()
+        url = f"{self.server_url}{endpoint_path}"
+
+        headers = self._build_headers()
+        headers.pop("Content-Type", None)
+
+        if self.auth_type == AuthType.OAUTH2:
+            token = await self._get_oauth2_token()
+            headers["Authorization"] = f"Bearer {token}"
+
+        try:
+            response = await client.request(method="GET", url=url, headers=headers)
+            response.raise_for_status()
+
+            try:
+                response_data = response.json()
+            except json.JSONDecodeError:
+                response_data = {"message": response.text, "status_code": response.status_code}
+
+            return {
+                "success": True,
+                "status_code": response.status_code,
+                "data": response_data,
+                "error": None
+            }
+
+        except httpx.HTTPStatusError as e:
+            # Sanitize error logging - don't expose response body which may contain secrets
+            log.error(f"HTTP error on CRM lookup: {e.response.status_code}")
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(f"Response body (truncated): {e.response.text[:200]}...")
+
+            return {
+                "success": False,
+                "status_code": e.response.status_code,
+                "error": e.response.text,
+                "data": None
+            }
+
+        except httpx.RequestError as e:
+            log.error(f"Request error on CRM lookup: {type(e).__name__}")
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(f"Request error details: {str(e)}")
+
+            return {
+                "success": False,
+                "status_code": None,
+                "error": str(e),
+                "data": None
+            }
+
     async def test_connection(self, endpoint_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Test connection to CRM system.
@@ -974,6 +1041,137 @@ class CRMSyncConfig:
             return self.dir_internal
         # Unknown/blank direction: push it rather than silently dropping the call.
         return True
+
+
+# ---------------------------------------------------------------------------
+# Contact lookup (3CX-style): number formatting, JSON path extraction,
+# name templates and configuration. Pure functions — no AMI/DB/HTTP.
+# ---------------------------------------------------------------------------
+LOOKUP_NUMBER_FORMATS = ("digits", "as_is", "plus", "zeros")
+
+_PATH_TOKEN_RE = re.compile(r"\[([^\[\]]+)\]")
+
+
+def format_lookup_number(raw: str, fmt: str = "digits") -> str:
+    """
+    Format a caller number the way the CRM expects it (mirrors 3CX's Number
+    element prefix strategies).
+
+      digits — strip everything but digits:      +20 100… -> 20100…
+      as_is  — trimmed raw caller-ID
+      plus   — international prefix as '+':      0020… -> +20…, keeps +20…
+      zeros  — international prefix as '00':     +20…  -> 0020…
+    """
+    raw = (raw or "").strip()
+    if fmt == "as_is":
+        return raw
+    has_plus = raw.startswith("+")
+    digits = re.sub(r"\D", "", raw)
+    if fmt == "plus":
+        if digits.startswith("00"):
+            return "+" + digits[2:]
+        return ("+" + digits) if has_plus else digits
+    if fmt == "zeros":
+        if has_plus and not digits.startswith("00"):
+            return "00" + digits
+        return digits
+    return digits
+
+
+def lookup_cache_key(raw: str, match_digits: int = 0) -> str:
+    """
+    Cache/comparison key for a number: digits only, optionally reduced to the
+    last N digits so prefix variants (+20…, 0020…, 0…) share one entry.
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    if match_digits and match_digits > 0:
+        digits = digits[-match_digits:]
+    return digits[:32]
+
+
+def extract_json_path(data: Any, path: str) -> Optional[str]:
+    """
+    Walk a dot/index path like 'data.0.name' through parsed JSON.
+    Each segment indexes a dict by key or a list by integer.
+    Returns str(leaf) for scalar leaves, None on any miss or type mismatch.
+    """
+    node = data
+    for seg in (path or "").strip().split("."):
+        if not seg:
+            return None
+        if isinstance(node, dict):
+            if seg not in node:
+                return None
+            node = node[seg]
+        elif isinstance(node, list):
+            try:
+                node = node[int(seg)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    if isinstance(node, (str, int, float)) and not isinstance(node, bool):
+        text = str(node).strip()
+        return text or None
+    return None
+
+
+def render_name_template(data: Any, template: str) -> Optional[str]:
+    """
+    Render a contact-name template like '[data.0.first_name] [data.0.last_name]'
+    against a JSON response. Each [path] token is replaced via extract_json_path;
+    a template with no tokens is treated as a single bare path. Returns None when
+    no token resolves to a value (literal-only leftovers don't count as a name).
+    """
+    template = (template or "").strip()
+    if not template:
+        return None
+    if "[" not in template:
+        return extract_json_path(data, template)
+
+    resolved_any = False
+
+    def _sub(m: "re.Match[str]") -> str:
+        nonlocal resolved_any
+        value = extract_json_path(data, m.group(1))
+        if value is not None:
+            resolved_any = True
+            return value
+        return ""
+
+    rendered = _PATH_TOKEN_RE.sub(_sub, template)
+    if not resolved_any:
+        return None
+    rendered = re.sub(r"\s+", " ", rendered).strip()
+    return rendered or None
+
+
+def render_lookup_url(url_template: str, raw_number: str, number_format: str = "digits") -> str:
+    """
+    Substitute the formatted, URL-encoded number into a lookup URL template's
+    [Number] placeholder. A template without the placeholder gets
+    '?phone=[Number]' appended ('&' if it already has a query string).
+    """
+    template = (url_template or "").strip()
+    if "[Number]" not in template:
+        template += ("&" if "?" in template else "?") + "phone=[Number]"
+    number = urllib.parse.quote(format_lookup_number(raw_number, number_format), safe="")
+    return template.replace("[Number]", number)
+
+
+@dataclass
+class CRMLookupConfig:
+    """Resolved contact-lookup configuration (read from settings)."""
+    enabled: bool = False
+    url_template: str = ""      # path template appended to server_url, with [Number]
+    name_template: str = ""     # e.g. "[data.0.first_name] [data.0.last_name]"
+    number_format: str = "digits"
+    match_digits: int = 0       # compare/cache on last N digits (0 = full)
+    verify_path: str = ""       # optional path to the matched record's phone field
+    ttl_hours: int = 24
+
+    def usable(self) -> bool:
+        return self.enabled and bool(self.url_template) and bool(self.name_template)
 
 
 def parse_sync_fields(raw: Union[str, List[str], None]) -> List[str]:

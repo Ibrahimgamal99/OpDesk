@@ -408,3 +408,26 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     INDEX idx_success_created (success, created_at),
     INDEX idx_parent (parent_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
+-- Contacts (system phonebook). One row per phone number; the single source of
+-- truth for caller names on dashboards and the softphone. source says where
+-- the row came from: 'manual' = created/edited by an admin in the Contacts
+-- page, 'crm' = auto-inserted by the CRM lookup the first time a number
+-- resolved. A CRM lookup never overwrites an existing row, so manual data
+-- always wins; editing a crm row flips it to manual (it is curated now).
+-- phone_key is the normalized match key (digits only, reduced to the last N
+-- per CRM_LOOKUP_MATCH_DIGITS for crm rows).
+-- PRIVACY: contains customer phone numbers and names.
+CREATE TABLE IF NOT EXISTS contacts (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    name       VARCHAR(255) NOT NULL,
+    phone      VARCHAR(64)  NOT NULL,     -- as entered / as dialed (display form)
+    phone_key  VARCHAR(32)  NOT NULL,     -- normalized digits (match key)
+    company    VARCHAR(255) NULL,
+    notes      TEXT NULL,
+    source     ENUM('manual','crm') NOT NULL DEFAULT 'manual',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_phone_key (phone_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
