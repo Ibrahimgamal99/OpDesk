@@ -6,27 +6,46 @@ Real-time extension monitoring, call tracking, queue management,
 and supervisor features (listen/whisper/barge) via Asterisk Manager Interface.
 """
 
+import json
 import logging
 import os
 import re
 import time
 import asyncio
-from typing import Dict, Optional, List, Set, Callable, Awaitable
+from typing import Any, Dict, Optional, List, Set, Callable, Awaitable
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from enum import IntEnum
 
 # Import CRM connector + call-data sync helpers
 try:
-    from .crm import CRMConnector, CRMSyncConfig, build_crm_payload
+    from .crm import CRMConnector, CRMSyncConfig, build_crm_payload, redact_url
 except ImportError:
     # Fallback for direct execution
     try:
-        from crm import CRMConnector, CRMSyncConfig, build_crm_payload
+        from crm import CRMConnector, CRMSyncConfig, build_crm_payload, redact_url
     except ImportError:
         CRMConnector = None
         CRMSyncConfig = None
         build_crm_payload = None
+        redact_url = None
+
+# Canonical call-outcome vocabulary. Shared with call history and analytics so the
+# CRM and the UI never disagree about the same call. Falls back to a coarse inline
+# map if call_log is unavailable (direct-execution edge case).
+try:
+    from call_log import (
+        map_call_outcome, ANSWERED as OUTCOME_ANSWERED, NO_ANSWER as OUTCOME_NO_ANSWER,
+        BUSY as OUTCOME_BUSY, FAILURE as OUTCOME_FAILURE,
+        OUT_OF_REACH as OUTCOME_OUT_OF_REACH,
+    )
+except ImportError:
+    map_call_outcome = None
+    OUTCOME_ANSWERED = 'ANSWERED'
+    OUTCOME_NO_ANSWER = 'NO_ANSWER'
+    OUTCOME_BUSY = 'BUSY'
+    OUTCOME_FAILURE = 'FAILURE'
+    OUTCOME_OUT_OF_REACH = 'OUT_OF_REACH'
 
 try:
     from db_manager import insert_call_notification
@@ -37,6 +56,21 @@ try:
     from db_manager import record_supervision
 except ImportError:
     record_supervision = None
+
+try:
+    from db_manager import get_agent_name_by_extension
+except ImportError:
+    get_agent_name_by_extension = None
+
+try:
+    from call_log import crm_identity_from_cdr
+except ImportError:
+    crm_identity_from_cdr = None
+
+try:
+    from db_manager import insert_webhook_delivery
+except ImportError:
+    insert_webhook_delivery = None
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -192,7 +226,10 @@ class AMIExtensionsMonitor:
         self.dnd:          Set[str]        = set()   # extensions with Do-Not-Disturb enabled (AstDB DND family)
         self._refresh_event: Optional[asyncio.Event] = None  # Signal for live monitor refresh
         self._event_callbacks: List[Callable[[Dict[str, str]], Awaitable[None]]] = []  # Event callbacks
-        
+        # Sink for EVERY parsed AMI event (System Logs panel) — see set_raw_event_sink.
+        self._raw_event_sink: Optional[Callable[[Dict[str, str]], None]] = None
+
+
         # Queue state
         self.queues:       Dict[str, Dict] = {}   # queue_name -> queue info (members, calls waiting, etc.)
         self.queue_members: Dict[str, Dict] = {}  # member_interface -> member info (queue, status, paused, etc.)
@@ -732,9 +769,20 @@ class AMIExtensionsMonitor:
         """Async event dispatcher - processes AMI events and calls handlers."""
         p = _parse(raw)
         ev = p.get('Event', '')
+
+        # Raw sink (System Logs panel) — deliberately BEFORE the WATCHED_EVENTS filter.
+        # WATCHED_EVENTS is the ~27 events the app itself acts on, a small fraction of
+        # what Asterisk emits; a post-filter sink would make the log console useless
+        # for the debugging it exists for. The sink must stay cheap and non-blocking.
+        if ev and self._raw_event_sink:
+            try:
+                self._raw_event_sink(p)
+            except Exception as e:
+                log.debug("raw_event_sink error: %s", e)
+
         if ev not in self.WATCHED_EVENTS:
             return
-        
+
         handler = getattr(self, f'_ev_{ev}', None)
         if handler:
             # Only format timestamp if needed (for logging when extensions are monitored)
@@ -772,6 +820,15 @@ class AMIExtensionsMonitor:
         if callback in self._event_callbacks:
             self._event_callbacks.remove(callback)
 
+    def set_raw_event_sink(self, callback: Optional[Callable[[Dict[str, str]], None]]):
+        """Set a sink invoked for EVERY parsed AMI event, before the WATCHED_EVENTS
+        filter (unlike register_event_callback, which only fires for watched events
+        that have an _ev_* handler). Used by the System Logs panel.
+
+        The sink runs synchronously on the AMI read path — it must not block.
+        """
+        self._raw_event_sink = callback
+
     def set_call_notification_callback(self, callback: Optional[Callable[[str], None]]):
         """Set callback invoked when a call_notification is inserted (extension str). Used by server to push WebSocket event."""
         self._call_notification_callback = callback
@@ -797,55 +854,78 @@ class AMIExtensionsMonitor:
             return name
         return ''
     
-    def map_cause_to_status(self, cause, dial_status=None):
+    def map_cause_to_status(self, cause, dial_status=None, answered=False, abandoned=False):
         """
-        Map Asterisk hangup cause code and dial status to CRM call status.
-        
+        Map an Asterisk hangup cause + dial status to the canonical call outcome.
+
         Args:
             cause: Hangup cause code (string)
             dial_status: Dial status (optional, string)
-        
+            answered: whether the call had answer/talk time
+            abandoned: whether the caller left a queue before an agent answered
+
         Returns:
-            CRM call status string (e.g., 'completed', 'busy', 'noanswer', etc.)
+            One of call_log.CALL_OUTCOMES (ANSWERED, NO_ANSWER, BUSY, FAILURE,
+            ABANDONED, CANCELED, DROPPED, OUT_OF_REACH).
         """
-        cause_map = {
-            '16': 'completed',
-            '17': 'busy',
-            '18': 'noanswer',
-            '19': 'noanswer',
-            '20': 'switched_off',
-            '28': 'invalid_number',
-            '34': 'invalid_number',
-            '21': 'failed',
-            '31': 'failed',
-            '127': 'noanswer',
-            '0': 'busy',
-        }
-        status = cause_map.get(cause, 'failed')
-        
-        if dial_status:
-            dial_status = dial_status.upper()
-            dial_overrides = {
-                'CANCEL': 'noanswer',
-                'BUSY': 'busy',
-                'CONGESTION': 'failed',
-                'CHANUNAVAIL': 'failed',
-                'NOANSWER': 'noanswer'
-            }
-            status = dial_overrides.get(dial_status, status)
-        
-        return status
+        if map_call_outcome is not None:
+            return map_call_outcome(cause=cause, dial_status=dial_status,
+                                    answered=answered, abandoned=abandoned)
+        # Coarse fallback if call_log is unavailable (direct-execution edge case).
+        if answered:
+            return OUTCOME_ANSWERED
+        ds = (dial_status or '').strip().upper()
+        if ds == 'BUSY' or str(cause) in ('17', '0'):
+            return OUTCOME_BUSY
+        if ds in ('NOANSWER', 'CANCEL') or str(cause) in ('18', '19', '127'):
+            return OUTCOME_NO_ANSWER
+        if str(cause) == '20':
+            return OUTCOME_OUT_OF_REACH
+        return OUTCOME_FAILURE
+
+    # Canonical outcome -> the legacy lowercase `reason` vocabulary used by the
+    # missed-call notification bell. Deliberately NOT the canonical enum: the bell's
+    # CSS badge classes (styles/index.css) and its i18n keys (reason.*, x4 locales)
+    # are keyed on these five values, and rows already in call_notifications use
+    # them. Mapping here keeps that column single-vocabulary forever.
+    _OUTCOME_TO_NOTIFY_REASON = {
+        OUTCOME_BUSY: 'busy',
+        OUTCOME_NO_ANSWER: 'noanswer',
+        OUTCOME_OUT_OF_REACH: 'switched_off',
+        OUTCOME_FAILURE: 'failed',
+        'ABANDONED': 'noanswer',
+        'CANCELED': 'noanswer',
+        'DROPPED': 'failed',
+        OUTCOME_ANSWERED: 'completed',
+    }
+
+    # Causes the bell reports as 'invalid_number'. Checked before the enum because the
+    # canonical vocabulary collapses these into FAILURE, and dropping the distinction
+    # would change what existing notifications render as.
+    _NOTIFY_INVALID_NUMBER_CAUSES = {'28', '34'}
+
+    def _notify_reason(self, cause) -> str:
+        """Legacy lowercase reason for call_notifications.reason (see the map above)."""
+        if str(cause or '').strip() in self._NOTIFY_INVALID_NUMBER_CAUSES:
+            return 'invalid_number'
+        outcome = self.map_cause_to_status(cause, None)
+        return self._OUTCOME_TO_NOTIFY_REASON.get(outcome, 'failed')
 
     def _should_notify_missed_or_busy(self, cause: str, call_info: Optional[Dict] = None) -> bool:
         """
         Return True only when the hangup is a missed call, busy, no answer, or similar
-        (so we create a call_notification). Normal completed calls (cause 16) or answered
-        calls do not create a notification.
+        (so we create a call_notification). Normal completed calls or answered calls do
+        not create a notification.
+
+        CANCELED (cause 16 unanswered — the caller hung up before it rang out),
+        ABANDONED (a queue-level event, not a per-extension miss) and DROPPED (the
+        call *was* answered) are all deliberately excluded, which preserves the
+        pre-enum behaviour for cause 16.
         """
         if call_info and call_info.get('answer_time'):
             return False
         status = self.map_cause_to_status(cause, None)
-        return status in ('busy', 'noanswer', 'switched_off', 'failed', 'invalid_number')
+        return status in (OUTCOME_BUSY, OUTCOME_NO_ANSWER, OUTCOME_OUT_OF_REACH, OUTCOME_FAILURE)
 
     def set_crm(self, crm_connector, crm_sync_config=None):
         """
@@ -933,6 +1013,7 @@ class AMIExtensionsMonitor:
             # For queue calls that are still waiting (no agent answered):
             # Only send CRM if the caller hangs up (abandons the queue)
             # Don't send CRM when agents' ring attempts timeout
+            is_queue_abandon = False
             if queue_waiting and not queue_answered:
                 # Check if this hangup is from the caller's channel
                 is_caller_hangup = (queue_caller_channel and hangup_channel == queue_caller_channel)
@@ -950,20 +1031,18 @@ class AMIExtensionsMonitor:
                     log.debug(f"⏸️ Queue call still waiting - skipping CRM for {ext} (not caller channel)")
                     return
                 else:
-                    # This is the caller hanging up (abandoning the queue)
+                    # This is the caller hanging up (abandoning the queue). The caller
+                    # left before any agent answered — a distinct outcome (ABANDONED),
+                    # not the "normal clearing" the raw cause 16 would suggest.
+                    is_queue_abandon = True
                     log.info(f"📤 Queue caller abandoned - sending CRM for caller {ext}")
-            
+
             # Extract hangup cause and dial status
             cause = hangup_event.get('Cause', '')
             dial_status = call_info.get('dialstatus', '')
-            
-            # Map to CRM status
-            call_status = self.map_cause_to_status(cause, dial_status)
-            
-            # Log if status seems incorrect (Cause=16 should be completed unless dial_status overrides)
-            if cause == '16' and call_status == 'noanswer' and dial_status:
-                log.debug(f"Status mapped to 'noanswer' for Cause=16 due to dial_status={dial_status}")
-            
+            # call_status is computed further down, once `answered` is known — the
+            # canonical outcome needs all three signals (cause, dial_status, answered).
+
             # Get queue from parameter or from call_info (stored when call entered queue)
             if not queue:
                 queue = call_info.get('queue')
@@ -1045,11 +1124,11 @@ class AMIExtensionsMonitor:
                     # This might happen if the call didn't connect to an agent
                     # In this case, keep destination as queue (call didn't reach agent)
             
-            # Override call_status if queue_answered is set (agent answered the queue call)
-            if queue_answered and call_status in ('noanswer', 'failed'):
-                call_status = 'completed'
-                log.debug(f"Overriding call_status to 'completed' because queue_answered=True")
-            
+            # NOTE: the old "override call_status to completed when queue_answered" hack
+            # is gone. queue_answered now feeds `answered` into map_call_outcome, whose
+            # first branch already returns ANSWERED — the override would be dead code
+            # comparing against strings that can no longer occur.
+
             # If destination is still the queue and we have answered_agent, use that instead
             answered_agent = call_info.get('answered_agent', '')
             if queue and destination == queue and _meaningful(answered_agent):
@@ -1110,12 +1189,13 @@ class AMIExtensionsMonitor:
                 return
 
             cause_raw = str(cause or '')
-            disposition_map = {
-                'completed': 'ANSWERED', 'busy': 'BUSY', 'noanswer': 'NO ANSWER',
-                'switched_off': 'NO ANSWER', 'invalid_number': 'FAILED', 'failed': 'FAILED',
-            }
             answered = bool(call_info.get('answer_time')) or bool(queue_answered)
-            disposition = 'ANSWERED' if answered else disposition_map.get(call_status, 'FAILED')
+            # One canonical outcome for both fields. `disposition` is retained as a
+            # separate catalog field only because CRMs commonly expect that key name —
+            # it carries the same value, not a second vocabulary.
+            call_status = self.map_cause_to_status(
+                cause, dial_status, answered=answered, abandoned=is_queue_abandon)
+            disposition = call_status
 
             # Agent / answered extension (queue + direct answered calls)
             agent = str(answered_agent or '') or str(call_info.get('membername') or '')
@@ -1135,6 +1215,18 @@ class AMIExtensionsMonitor:
 
             queue_wait_time = self._crm_queue_wait_seconds(call_info, queue, queue_caller) if queue else ''
 
+            # Linkedid groups every leg of the call — it is what the CDR keys on and
+            # therefore the CRM's cross-reference handle back into OpDesk.
+            _call_linkedid = str(hangup_event.get('Linkedid') or call_info.get('linkedid') or '')
+
+            # Display name of the answering agent, when we can resolve one.
+            agent_name = ''
+            if agent and get_agent_name_by_extension is not None:
+                try:
+                    agent_name = await asyncio.to_thread(get_agent_name_by_extension, agent) or ''
+                except Exception as e:
+                    log.debug("agent_name lookup failed for %s: %s", agent, e)
+
             full_fields = {
                 "caller": str(caller or ''),
                 "destination": dest_s,
@@ -1145,14 +1237,49 @@ class AMIExtensionsMonitor:
                 "call_type": call_type,
                 "queue": str(queue or ''),
                 "caller_name": caller_name,
+                "call_id": _call_linkedid,
                 "uniqueid": str(hangup_event.get('Uniqueid') or ''),
-                "linkedid": str(hangup_event.get('Linkedid') or ''),
                 "disposition": disposition,
                 "hangup_cause": cause_raw,
                 "agent": agent,
+                "agent_name": agent_name,
                 "answered_extension": answered_extension,
                 "queue_wait_time": queue_wait_time,
             }
+
+            # ── CDR identity overlay ──
+            # The finalized CDR is the same source the call log renders, so preferring
+            # it for *identity* keeps the CRM and the call log telling the same story
+            # about direction, which party is the destination, the agent and talk time.
+            # The live-AMI values above are digit-length heuristics by comparison.
+            #
+            # The live OUTCOME always wins: the CDR carries only the coarse disposition,
+            # so letting it through would erase CANCELED / DROPPED / OUT_OF_REACH /
+            # ABANDONED — exactly the outcomes the canonical enum exists to produce.
+            #
+            # Frequently a no-op: OpDesk pushes at hangup and Asterisk writes the CDR row
+            # in its own hangup handler, so the row often isn't there yet. That's safe by
+            # design — an empty result leaves the heuristics in place.
+            if crm_identity_from_cdr is not None and _call_linkedid:
+                try:
+                    cdr_ident = await asyncio.to_thread(crm_identity_from_cdr, _call_linkedid)
+                except Exception as e:
+                    cdr_ident = None
+                    log.debug("CDR identity fetch failed for %s: %s", _call_linkedid, e)
+                if cdr_ident:
+                    live_status = full_fields.get('call_status')
+                    live_disp = full_fields.get('disposition')
+                    full_fields.update(cdr_ident)
+                    if live_status:
+                        full_fields['call_status'] = live_status
+                    if live_disp:
+                        full_fields['disposition'] = live_disp
+                    # Re-read into the locals: the direction gate and the log line below
+                    # both use them.
+                    caller = full_fields.get('caller', caller)
+                    destination = full_fields.get('destination', destination)
+                    call_type = full_fields.get('call_type', call_type)
+                    log.debug("CDR identity overlay applied for %s", _call_linkedid)
 
             # ── Apply the operator's sync config: enabled? direction allowed? ──
             sync_cfg = self.crm_sync_config
@@ -1165,7 +1292,12 @@ class AMIExtensionsMonitor:
 
             selected = list(sync_cfg.fields) if (sync_cfg and sync_cfg.fields) else None
             if build_crm_payload is not None and selected is not None:
-                call_data = build_crm_payload(full_fields, selected)
+                call_data = build_crm_payload(
+                    full_fields, selected,
+                    duration_format=getattr(sync_cfg, 'duration_format', 'hms'),
+                    status_map=getattr(sync_cfg, 'status_map', None),
+                    key_map=getattr(sync_cfg, 'key_map', None),
+                )
             else:
                 # Fallback (sync helpers unavailable): the legacy fixed 8-field body.
                 _legacy = ('caller', 'destination', 'duration', 'talk_time',
@@ -1175,6 +1307,18 @@ class AMIExtensionsMonitor:
             method = (sync_cfg.method if sync_cfg else 'POST') or 'POST'
             endpoint = (sync_cfg.endpoint if sync_cfg else None) or None
 
+            # Call identity for logging and the delivery log, taken from full_fields
+            # (always internal snake_case) rather than call_data — an operator
+            # key_map rename must not break our own indexing.
+            meta = {
+                'call_id': full_fields.get('call_id') or '',
+                'uniqueid': full_fields.get('uniqueid') or '',
+                'caller': full_fields.get('caller') or '',
+                'destination': full_fields.get('destination') or '',
+                'call_type': full_fields.get('call_type') or '',
+                'call_status': full_fields.get('call_status') or '',
+            }
+
             log.info(f"📤 Preparing CRM push: {caller} -> {destination} "
                      f"(status: {call_status}, type: {call_type}, fields: {len(call_data)}, "
                      f"method: {method}, queue: {queue or 'N/A'})")
@@ -1182,23 +1326,37 @@ class AMIExtensionsMonitor:
             # Fire-and-forget — never block hangup processing.
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._send_crm_data_async(call_data, method=method, endpoint_path=endpoint))
+                loop.create_task(self._send_crm_data_async(
+                    call_data, method=method, endpoint_path=endpoint, meta=meta))
             except RuntimeError:
                 # No running event loop, try to get/create one
                 try:
-                    asyncio.ensure_future(self._send_crm_data_async(call_data, method=method, endpoint_path=endpoint))
+                    asyncio.ensure_future(self._send_crm_data_async(
+                        call_data, method=method, endpoint_path=endpoint, meta=meta))
                 except Exception as e:
                     log.error(f"Could not schedule CRM send task: {e}")
 
         except Exception as e:
             log.error(f"Error preparing CRM data for call: {e}")
     
-    async def _send_crm_data_async(self, call_data: Dict, method: str = "POST", endpoint_path: Optional[str] = None):
-        """Async helper to send CRM data without blocking."""
+    async def _send_crm_data_async(self, call_data: Dict, method: str = "POST",
+                                   endpoint_path: Optional[str] = None,
+                                   meta: Optional[Dict[str, Any]] = None):
+        """Send the CRM push without blocking, and record the attempt.
+
+        This is the single choke point where both the outbound body and the
+        transport result are available, so it is also where the delivery log row is
+        written. `meta` carries the call's identity in internal snake_case (see
+        _send_crm_data) so an operator key_map rename can't corrupt the log's own
+        indexing.
+        """
+        meta = meta or {}
+        caller = meta.get('caller') or call_data.get('caller') or 'unknown'
+        destination = meta.get('destination') or call_data.get('destination') or 'unknown'
+        started = time.monotonic()
+        result: Dict[str, Any] = {}
         try:
             if self.crm_connector:
-                caller = call_data.get('caller', 'unknown')
-                destination = call_data.get('destination', 'unknown')
                 log.info(f"📤 Sending call data to CRM: {caller} -> {destination}")
                 # require_fields=False: the operator chose the field set; the push
                 # must not raise if caller/destination were de-selected.
@@ -1211,9 +1369,57 @@ class AMIExtensionsMonitor:
                     status_code = result.get('status_code', 'N/A')
                     log.error(f"❌ Failed to send call data to CRM: {caller} -> {destination} (HTTP {status_code}): {error_msg}")
             else:
-                log.warning(f"CRM connector not available when trying to send call data: {call_data.get('caller')} -> {call_data.get('destination')}")
+                # Recorded, not just logged: a misconfigured connector would otherwise
+                # look identical to "no calls happened" in the deliveries view.
+                log.warning(f"CRM connector not available when trying to send call data: {caller} -> {destination}")
+                result = {'success': False, 'status_code': None,
+                          'error': 'CRM connector not configured'}
         except Exception as e:
             log.error(f"❌ Error sending call data to CRM: {e}", exc_info=True)
+            result = {'success': False, 'status_code': None, 'error': f"{type(e).__name__}: {e}"}
+
+        await self._record_crm_delivery(
+            call_data, result, method=method, endpoint_path=endpoint_path,
+            meta=meta, duration_ms=int((time.monotonic() - started) * 1000))
+        return result
+
+    async def _record_crm_delivery(self, call_data: Dict, result: Dict, *,
+                                   method: str, endpoint_path: Optional[str],
+                                   meta: Dict[str, Any], duration_ms: int):
+        """Write one webhook_deliveries row. Never raises — this is observability
+        riding on a fire-and-forget hangup task, so a logging failure must not
+        surface as a lost push."""
+        if insert_webhook_delivery is None:
+            return
+        try:
+            conn = self.crm_connector
+            base = str(getattr(conn, 'server_url', '') or '')
+            path = endpoint_path or str(getattr(conn, 'endpoint_path', '') or '')
+            url = f"{base}{path}"
+            await asyncio.to_thread(
+                insert_webhook_delivery,
+                call_id=meta.get('call_id') or None,
+                uniqueid=meta.get('uniqueid') or None,
+                caller=meta.get('caller') or None,
+                destination=meta.get('destination') or None,
+                call_type=meta.get('call_type') or None,
+                call_status=meta.get('call_status') or None,
+                method=method,
+                # redact_url strips the query string and any embedded credentials.
+                url=(redact_url(url) if (redact_url and url) else url),
+                request_body=json.dumps(call_data, default=str),
+                status_code=result.get('status_code'),
+                success=bool(result.get('success')),
+                response_body=(json.dumps(result.get('data'), default=str)
+                               if result.get('data') is not None else None),
+                error=result.get('error'),
+                duration_ms=duration_ms,
+                attempt=int(meta.get('attempt') or 1),
+                parent_id=meta.get('parent_id'),
+                resent_by=meta.get('resent_by'),
+            )
+        except Exception as e:
+            log.debug("webhook delivery log write failed: %s", e)
 
     def _ev_ExtensionStatus(self, p, ts):
         ext  = p.get('Exten', '')
@@ -1496,7 +1702,7 @@ class AMIExtensionsMonitor:
                             if insert_call_notification and actual_ext and self._should_notify_missed_or_busy(cause, caller_info):
                                 caller_val = caller_info.get('caller') or caller_info.get('callerid') or caller_ext or ''
                                 queue_for_notif = queue or caller_info.get('queue')
-                                insert_call_notification(extension=actual_ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                                insert_call_notification(extension=actual_ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self._notify_reason(cause))
                                 if self._call_notification_callback:
                                     try:
                                         self._call_notification_callback(actual_ext)
@@ -1528,7 +1734,7 @@ class AMIExtensionsMonitor:
                         if insert_call_notification and notif_ext and self._should_notify_missed_or_busy(cause, caller_info):
                             caller_val = caller_info.get('caller') or caller_info.get('callerid') or caller_ext or ''
                             queue_for_notif = queue or caller_info.get('queue')
-                            insert_call_notification(extension=notif_ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                            insert_call_notification(extension=notif_ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self._notify_reason(cause))
                             if self._call_notification_callback:
                                 try:
                                     self._call_notification_callback(notif_ext)
@@ -1584,7 +1790,7 @@ class AMIExtensionsMonitor:
                             if caller_val == ext:
                                 caller_val = ''
                             queue_for_notif = queue or ext_info.get('queue')
-                            insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                            insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self._notify_reason(cause))
                             if self._call_notification_callback:
                                 try:
                                     self._call_notification_callback(ext)
@@ -1600,7 +1806,7 @@ class AMIExtensionsMonitor:
                         if caller_val == ext:
                             caller_val = ''
                         queue_for_notif = queue or ext_info.get('queue')
-                        insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                        insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self._notify_reason(cause))
                         if self._call_notification_callback:
                             try:
                                 self._call_notification_callback(ext)
@@ -1632,8 +1838,15 @@ class AMIExtensionsMonitor:
                     else:
                         log.debug(f"Skipping hangup log for {ext}: caller={caller}, dialed_exten={dialed_exten} - conditions not met")
                 
-                # Remove the extension from active calls
-                self.active_calls.pop(ext, None)
+                # Remove the extension from active calls — but only when this was
+                # the final hangup. If sibling legs are still active (a transfer, or
+                # a dialer/bridge topology where the agent's own channel dies before
+                # the trunk leg), keep the entry so the truly-final hangup can still
+                # find the call context and send CRM data. Popping here would destroy
+                # that context and the later "final channel" hangups would have
+                # nothing left to send.
+                if is_final_hangup:
+                    self.active_calls.pop(ext, None)
             elif ext_info and ext_info.get('destchannel') == ch:
                 # This was a destination channel, just remove the reference
                 ext_info.pop('destchannel', None)
@@ -1669,7 +1882,7 @@ class AMIExtensionsMonitor:
                             if caller_val == ext:
                                 caller_val = ''
                             queue_for_notif = queue or ext_info.get('queue')
-                            insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self.map_cause_to_status(cause, None))
+                            insert_call_notification(extension=ext, caller_from=caller_val or None, queue=queue_for_notif or None, call_id=uniqueid or None, reason=self._notify_reason(cause))
                             if self._call_notification_callback:
                                 try:
                                     self._call_notification_callback(ext)
@@ -2992,6 +3205,68 @@ class AMIExtensionsMonitor:
     # ------------------------------------------------------------------
     # Supervisor: listen / whisper / barge
     # ------------------------------------------------------------------
+    # Numbers accepted for origination. `*`/`#` allow feature codes. This allow-list is
+    # the ONLY thing standing between a caller-supplied string and AMI header
+    # injection: _send_async writes raw "Key: value\r\n" with no escaping, so a CRLF
+    # inside Exten would inject arbitrary AMI actions. Must stay a fullmatch.
+    _ORIGINATE_NUMBER_RE = re.compile(r'\+?[0-9*#]{2,20}')
+
+    @staticmethod
+    def normalize_dial_number(raw: str) -> Optional[str]:
+        """Strip formatting from a dialable number and validate it. None if unusable."""
+        s = re.sub(r'[\s\-().]', '', str(raw or ''))
+        if not s:
+            return None
+        return s if AMIExtensionsMonitor._ORIGINATE_NUMBER_RE.fullmatch(s) else None
+
+    async def originate_call(self, extension: str, number: str, *,
+                             context: Optional[str] = None,
+                             timeout_ms: int = 30000,
+                             caller_id: Optional[str] = None) -> tuple:
+        """Ring `extension`; when it answers, dial `number` in `context`.
+
+        Returns (ok, message). `ok` means Asterisk ACCEPTED the Originate, not that the
+        call connected — hence the 202 on the HTTP route.
+
+        Async: true is mandatory. Without it Asterisk withholds the AMI response until
+        the call is answered or times out, and _send_async holds self._read_lock for
+        that whole window (AMI_TIMEOUT is 5s), stalling every other AMI action.
+        """
+        if not self.connected:
+            return False, "AMI not connected"
+        num = self.normalize_dial_number(number)
+        if not num:
+            return False, "Invalid destination number"
+        ext = str(extension or '').strip()
+        if not ext or not ext.isdigit():
+            return False, "Invalid extension"
+
+        # NOT self.context: AMI_CONTEXT defaults to ext-local, where only local
+        # extensions resolve — a PSTN number dialled there fails. Click-to-call needs
+        # FreePBX's from-internal so outbound routes apply.
+        ctx = (context or '').strip() or 'from-internal'
+        channel_id = f'c2c-{ext}-{int(time.time() * 1000)}'
+        resp = await self._send_async('Originate', {
+            'Channel':   f'PJSIP/{ext}',
+            'Context':   ctx,
+            'Exten':     num,
+            'Priority':  '1',
+            'CallerID':  caller_id or f'{ext} <{ext}>',
+            'Timeout':   str(int(timeout_ms)),
+            'Async':     'true',
+            'ChannelId': channel_id,
+        })
+        if resp and 'Response: Success' in resp:
+            log.info("📞 Click-to-call: %s -> %s (context=%s, id=%s)", ext, num, ctx, channel_id)
+            return True, channel_id
+        msg = ''
+        if resp:
+            m = re.search(r'Message:\s*(.+)', resp)
+            if m:
+                msg = m.group(1).strip()
+        log.warning("Click-to-call refused by Asterisk: %s -> %s: %s", ext, num, msg or resp)
+        return False, msg or "Asterisk rejected the Originate"
+
     async def _chanspy(self, supervisor: str, target: str, options: str, label: str) -> bool:
         if not self.connected:
             return False

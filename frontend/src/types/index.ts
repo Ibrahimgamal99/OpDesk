@@ -272,3 +272,61 @@ export interface AnalyticsSettings {
   short_abandon_secs: number;
 }
 
+
+// ---------------------------------------------------------------------------
+// Logs page
+// ---------------------------------------------------------------------------
+
+/** One buffered Asterisk Manager Interface event (System Logs tab). */
+export interface AmiEvent {
+  seq: number;
+  event: string;
+  ts: number;              // epoch seconds
+  summary: string;
+  fields: Record<string, string>;
+}
+
+/** A CRM webhook delivery attempt — list row. Bodies are excluded so the table stays light. */
+export interface WebhookDelivery {
+  id: number;
+  created_at: string;
+  call_id?: string | null;
+  uniqueid?: string | null;
+  caller?: string | null;
+  destination?: string | null;
+  call_type?: string | null;
+  call_status?: string | null;
+  method: string;
+  url: string;             // already redacted server-side (no query string, no userinfo)
+  status_code?: number | null;
+  success: boolean;
+  error?: string | null;
+  duration_ms?: number | null;
+  attempt: number;
+  parent_id?: number | null;
+  resent_by?: number | null;
+  truncated: boolean;      // request body was clipped when logged => not resendable
+}
+
+/** Full delivery row, fetched lazily when a row is expanded. */
+export interface WebhookDeliveryDetail extends WebhookDelivery {
+  request_body?: string | null;
+  response_body?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// API keys
+// ---------------------------------------------------------------------------
+export interface ApiKey {
+  id: number;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  enabled: number | boolean;   // MySQL returns 1/0
+  created_by?: number | null;
+  last_used_at?: string | null;
+  expires_at?: string | null;
+  created_at?: string | null;
+  /** Present ONLY in the POST /api/api-keys response — the one-time plaintext (opd_…). */
+  key?: string;
+}

@@ -13,6 +13,7 @@ import { ExtensionsPanel } from './components/ExtensionsPanel';
 import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
 import { CallLogPanel } from './components/CallLogPanel';
+import { LogsPanel } from './components/LogsPanel';
 import { AnalyticsPanel } from './components/AnalyticsPanel';
 import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
@@ -44,6 +45,9 @@ import {
   BarChart3,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  Moon,
+  Sun,
   Menu,
   X,
   Plug,
@@ -52,16 +56,20 @@ import {
   Smartphone,
   Disc,
   PauseCircle,
+  Terminal,
+  KeyRound,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 
-type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics' | 'settings';
+type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
+/** Kept in sync with the pre-paint theme script in index.html. */
+const THEME_KEY = 'opdesk:theme';
 
 // URL routing: each tab maps 1:1 to a path segment (e.g. 'call-log' -> '/call-log').
 // Deriving the active tab from the URL is what makes a refresh stay on the same page
 // and lets users navigate straight to /dashboard, /extensions, etc.
-const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'groups', 'users', 'analytics', 'settings'];
+const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'groups', 'users', 'analytics', 'logs', 'settings'];
 const DEFAULT_TAB: TabType = 'dashboard';
 function pathToTab(pathname: string): TabType {
   const seg = pathname.replace(/^\/+/, '').split('/')[0];
@@ -162,6 +170,47 @@ function App({ onLogout }: AppProps) {
   const [searchParams] = useSearchParams();
   const activeTab = pathToTab(location.pathname);
   const settingsSubTab = activeTab === 'settings' ? (searchParams.get('tab') || 'integrations') : 'integrations';
+  // Theme. Default follows the device (prefers-color-scheme) until the user makes an
+  // explicit choice, which is then persisted in localStorage and wins from then on.
+  // Initial value is applied to <html data-theme> synchronously so there's no flash.
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(THEME_KEY); } catch { /* ignore */ }
+    let initial: 'dark' | 'light';
+    if (stored === 'light' || stored === 'dark') {
+      initial = stored;
+    } else if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      initial = 'light';
+    } else {
+      initial = 'dark';
+    }
+    if (typeof document !== 'undefined') document.documentElement.dataset.theme = initial;
+    return initial;
+  });
+  const selectTheme = useCallback((next: 'dark' | 'light') => {
+    setTheme(prev => {
+      if (prev === next) return prev;
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem(THEME_KEY, next); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  // While the user hasn't explicitly chosen a theme, keep following the device so a
+  // change in OS appearance (e.g. day/night auto-switch) is reflected live.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = (e: MediaQueryListEvent) => {
+      let stored: string | null = null;
+      try { stored = localStorage.getItem(THEME_KEY); } catch { /* ignore */ }
+      if (stored === 'light' || stored === 'dark') return; // user override wins
+      const next: 'dark' | 'light' = e.matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      setTheme(next);
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['30d']);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [teamExpanded, setTeamExpanded] = useState(true);
@@ -182,9 +231,9 @@ function App({ onLogout }: AppProps) {
   const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
   const [notifList, setNotifList] = useState<{ id: number; extension: string; caller_from: string | null; queue: string | null; status_flag: string; event_time: string; reason: string | null }[]>([]);
   const [notifUpdatingId, setNotifUpdatingId] = useState<number | null>(null);
-  const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const notifDropdownRef = useRef<HTMLDivElement>(null);
-  const langMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
 
   // Refresh user (role, extension, scope) from server so scope is up to date
   useEffect(() => {
@@ -238,13 +287,13 @@ function App({ onLogout }: AppProps) {
   useEffect(() => {
     const onOutside = (e: MouseEvent) => {
       if (notifDropdownRef.current && !notifDropdownRef.current.contains(e.target as Node)) setNotifDropdownOpen(false);
-      if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) setLangMenuOpen(false);
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) setProfileMenuOpen(false);
     };
-    if (notifDropdownOpen || langMenuOpen) {
+    if (notifDropdownOpen || profileMenuOpen) {
       document.addEventListener('click', onOutside, true);
       return () => document.removeEventListener('click', onOutside, true);
     }
-  }, [notifDropdownOpen, langMenuOpen]);
+  }, [notifDropdownOpen, profileMenuOpen]);
 
   const updateNotifStatus = useCallback(async (id: number, status: 'read' | 'archived') => {
     setNotifUpdatingId(id);
@@ -422,6 +471,12 @@ function App({ onLogout }: AppProps) {
   useEffect(() => {
     if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'call-log'].includes(activeTab)) {
       navigate(`/${DEFAULT_TAB}`, { replace: true });
+      return;
+    }
+    // Admin-only tabs. Without this a supervisor navigating to /logs gets a blank
+    // <main> rather than being sent somewhere useful.
+    if (userRole !== 'admin' && ['logs', 'groups', 'users'].includes(activeTab)) {
+      navigate(`/${DEFAULT_TAB}`, { replace: true });
     }
   }, [userRole, activeTab, navigate]);
 
@@ -500,7 +555,6 @@ function App({ onLogout }: AppProps) {
 
   const handleLangSwitch = (lang: string) => {
     setLanguage(lang);
-    setLangMenuOpen(false);
   };
 
   return (
@@ -606,45 +660,95 @@ function App({ onLogout }: AppProps) {
             )}
           </div>
 
-          {/* Monitor mode badge */}
-          {getUser()?.role !== 'agent' && (() => {
-            const modes = getUser()?.monitor_modes;
-            const modesLabel = (modes && modes.length > 0 ? modes : ['listen'])
-              .map(m => t(`users.monitor.${m}`, { defaultValue: m })).join(', ');
-            return (
-              <span className="header-monitor-mode" title={`${t('header.monitor')}: ${modesLabel}`}>
-                <Monitor size={16} className="header-monitor-icon" />
-                <span className="header-monitor-label">{modesLabel}</span>
-              </span>
-            );
-          })()}
-
-          {/* Language switcher */}
-          <div ref={langMenuRef} className="lang-menu">
-            <button className="btn" onClick={() => setLangMenuOpen(o => !o)} title={t('language.select')} aria-label={t('language.select')}>
-              <Globe size={14} />
+          {/* Profile menu: identity + preferences (appearance, language) + sign out */}
+          <div ref={profileMenuRef} className="header-profile">
+            <button
+              type="button"
+              className="btn header-profile-btn"
+              onClick={() => setProfileMenuOpen(o => !o)}
+              title={t('header.profile')}
+              aria-label={t('header.profile')}
+              aria-expanded={profileMenuOpen}
+            >
+              <span className="header-profile-avatar"><User size={16} /></span>
+              <span className="header-profile-name">{getUser()?.name || getUser()?.username || getUser()?.extension}</span>
+              <ChevronDown size={14} className={`header-profile-caret${profileMenuOpen ? ' open' : ''}`} />
             </button>
-            {langMenuOpen && (
-              <div className="lang-menu-dropdown">
-                {LANGUAGE_OPTIONS.map(lang => (
-                  <button
-                    key={lang}
-                    type="button"
-                    onClick={() => handleLangSwitch(lang)}
-                    className={`lang-menu-item${i18n.language === lang ? ' active' : ''}`}
-                  >
-                    {t(`language.${lang}`)}
-                  </button>
-                ))}
+
+            {profileMenuOpen && (
+              <div className="header-profile-dropdown">
+                {/* Identity */}
+                <div className="header-profile-identity">
+                  <span className="header-profile-avatar header-profile-avatar-lg"><User size={20} /></span>
+                  <div className="header-profile-identity-text">
+                    <div className="header-profile-identity-name">{getUser()?.name || getUser()?.username || getUser()?.extension}</div>
+                    <div className="header-profile-identity-meta">
+                      <span className="header-profile-role">{t(`users.roles.${getUser()?.role}`, { defaultValue: getUser()?.role || '' })}</span>
+                      {getUser()?.extension && <span className="header-profile-ext">· {t('header.ext')} {getUser()?.extension}</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="header-profile-divider" />
+                <div className="header-profile-section-label">{t('header.preferences')}</div>
+
+                {/* Appearance (theme) */}
+                <div className="header-profile-row">
+                  <span className="header-profile-row-label">
+                    {theme === 'dark' ? <Moon size={15} /> : <Sun size={15} />}
+                    {t('header.appearance')}
+                  </span>
+                  <div className="header-profile-segmented" role="group" aria-label={t('header.appearance')}>
+                    <button type="button" className={`header-profile-seg${theme === 'light' ? ' active' : ''}`} onClick={() => selectTheme('light')}>
+                      <Sun size={13} />{t('header.light')}
+                    </button>
+                    <button type="button" className={`header-profile-seg${theme === 'dark' ? ' active' : ''}`} onClick={() => selectTheme('dark')}>
+                      <Moon size={13} />{t('header.dark')}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Language */}
+                <div className="header-profile-row">
+                  <span className="header-profile-row-label">
+                    <Globe size={15} />{t('language.select')}
+                  </span>
+                  <div className="header-profile-segmented" role="group" aria-label={t('language.select')}>
+                    {LANGUAGE_OPTIONS.map(lang => (
+                      <button
+                        key={lang}
+                        type="button"
+                        onClick={() => handleLangSwitch(lang)}
+                        className={`header-profile-seg${i18n.language === lang ? ' active' : ''}`}
+                      >
+                        {t(`language.${lang}`)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Monitor mode (non-agent only) */}
+                {getUser()?.role !== 'agent' && (() => {
+                  const modes = getUser()?.monitor_modes;
+                  const modesLabel = (modes && modes.length > 0 ? modes : ['listen'])
+                    .map(m => t(`users.monitor.${m}`, { defaultValue: m })).join(', ');
+                  return (
+                    <div className="header-profile-row">
+                      <span className="header-profile-row-label"><Monitor size={15} />{t('header.monitor')}</span>
+                      <span className="header-profile-row-value">{modesLabel}</span>
+                    </div>
+                  );
+                })()}
+
+                <div className="header-profile-divider" />
+
+                {/* Sign out */}
+                <button type="button" className="header-profile-signout" onClick={handleLogout}>
+                  <LogOut size={15} />{t('header.signOut')}
+                </button>
               </div>
             )}
           </div>
-
-          {/* Logout */}
-          <button className="btn" onClick={handleLogout} title={t('header.signOut')}>
-            <LogOut size={14} />
-            <span className="header-btn-label">{t('header.logout')}</span>
-          </button>
         </div>
       </header>
 
@@ -730,6 +834,17 @@ function App({ onLogout }: AppProps) {
                     </button>
                   </>
                 )}
+
+                {/* Logs — one route with in-panel tabs, so a flat item rather than a
+                    collapsible group (Team/Settings are groups because they fan out
+                    to several routes). */}
+                <button
+                  className={`sidebar-item${activeTab === 'logs' ? ' active' : ''}`}
+                  onClick={() => selectTab('logs')}
+                  title={sidebarCollapsed ? t('nav.logs', 'Logs') : undefined}
+                >
+                  <Terminal size={16} />{!sidebarCollapsed && t('nav.logs', 'Logs')}
+                </button>
               </>
             )}
 
@@ -759,13 +874,15 @@ function App({ onLogout }: AppProps) {
                       <>
                         {[
                           { key: 'integrations', icon: Plug, label: t('settings.tabs.integrations', 'Integrations / CRM') },
+                          { key: 'api-keys', icon: KeyRound, label: t('settings.tabs.apiKeys', 'API Keys'), adminOnly: true },
                           { key: 'qos', icon: Signal, label: t('settings.tabs.qos', 'QoS') },
                           { key: 'analytics', icon: BarChart3, label: t('settings.tabs.analytics', 'Analytics') },
                           { key: 'sip-tls', icon: ShieldCheck, label: t('settings.tabs.sipTls', 'SIP TLS') },
                           { key: 'mobile-wake', icon: Smartphone, label: t('settings.tabs.mobileWake', 'Mobile Wake') },
                           { key: 'recording', icon: Disc, label: t('settings.tabs.recording', 'Recording') },
                           { key: 'not-ready-codes', icon: PauseCircle, label: t('notReady.title', 'Not-Ready Codes') },
-                        ].map(({ key, icon: Icon, label }) => (
+                        ].filter(x => !(x as { adminOnly?: boolean }).adminOnly || getUser()?.role === 'admin')
+                         .map(({ key, icon: Icon, label }) => (
                           <button
                             key={key}
                             className={`sidebar-subitem${activeTab === 'settings' && settingsSubTab === key ? ' active' : ''}`}
@@ -862,6 +979,7 @@ function App({ onLogout }: AppProps) {
               queues={state?.queues || {}}
               members={state?.queue_members || {}}
               entries={state?.queue_entries || {}}
+              extensions={state?.extensions || {}}
               sendAction={sendAction}
               onSync={() => sendAction({ action: 'sync' })}
             />
@@ -885,6 +1003,7 @@ function App({ onLogout }: AppProps) {
               }}
             />
           )}
+          {activeTab === 'logs' && getUser()?.role === 'admin' && <LogsPanel />}
           {activeTab === 'settings' && (getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && <SettingsPanel tab={settingsSubTab as SettingsTab} onTabChange={selectSettingsTab} />}
         </main>
       </div>

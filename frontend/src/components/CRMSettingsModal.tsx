@@ -1,16 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Save, Loader2, CheckCircle2, AlertCircle, Database, Signal, Power, PowerOff,
   ChevronDown, ChevronRight, Plug, BarChart3, KeyRound, ShieldCheck, Smartphone, Disc,
-  Link2, Send, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Check, Lock, PauseCircle,
+  Link2, Send, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Check, PauseCircle,
+  Clock, AlertTriangle, Braces, Copy, ClipboardCheck, Tags, Lock, Radio,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
-import { fetchWithAuth } from '../auth';
+import { fetchWithAuth, getUser } from '../auth';
 import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
 import { PauseReasonsPanel } from './PauseReasonsPanel';
+import { ApiKeysPanel } from './ApiKeysPanel';
 
-export type SettingsTab = 'integrations' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
+export type SettingsTab = 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
 
 export interface CRMConfig {
   enabled: boolean;
@@ -37,7 +39,16 @@ export interface CRMConfig {
   sync_dir_outbound?: boolean;
   sync_dir_internal?: boolean;
   block_private?: boolean;
+  sync_duration_format?: 'hms' | 'seconds';
+  /** {defaultOutboundKey: customKey} — operator overrides of the wire key names. */
+  sync_key_map?: Record<string, string>;
+  /** {FROM: TO} — remaps outcome values (call_status / disposition). */
+  sync_status_map?: Record<string, string>;
   field_catalog?: string[];
+  /** Read-only, server-derived: catalog field -> the JSON key it goes out under. */
+  default_keys?: Record<string, string>;
+  /** Read-only, server-derived: the canonical outcome enum values. */
+  call_outcomes?: string[];
 }
 
 // Reusable toggle switch matching the app's dark theme.
@@ -58,27 +69,118 @@ function CrmToggle({ checked, onChange, label, desc }: {
   );
 }
 
-// Identity fields always included in the push (cannot be de-selected).
-const CRM_ALWAYS_FIELDS = ['caller', 'destination'];
-
 // Icons + labels for the direction segmented control.
 const CRM_DIRECTIONS = [
-  { key: 'sync_dir_inbound' as const, label: 'Inbound', Icon: PhoneIncoming },
-  { key: 'sync_dir_outbound' as const, label: 'Outbound', Icon: PhoneOutgoing },
-  { key: 'sync_dir_internal' as const, label: 'Internal', Icon: ArrowLeftRight },
+  { key: 'sync_dir_inbound' as const,  i18n: 'settings.crm.dirInbound',  label: 'Inbound',  Icon: PhoneIncoming },
+  { key: 'sync_dir_outbound' as const, i18n: 'settings.crm.dirOutbound', label: 'Outbound', Icon: PhoneOutgoing },
+  { key: 'sync_dir_internal' as const, i18n: 'settings.crm.dirInternal', label: 'Internal', Icon: ArrowLeftRight },
 ];
 
 const CRM_AUTH_LABELS: Record<string, string> = {
   api_key: 'API Key', basic_auth: 'Basic Auth', bearer_token: 'Bearer Token', oauth2: 'OAuth2',
 };
 
-// Friendly labels for the field-picker chips; unknown keys fall back to the raw name.
+// Friendly labels for the field rows; unknown keys fall back to the raw name.
 const CRM_FIELD_LABELS: Record<string, string> = {
   caller: 'Caller', destination: 'Destination', duration: 'Duration', talk_time: 'Talk time',
   datetime: 'Date / time', call_status: 'Call status', call_type: 'Direction', queue: 'Queue',
-  caller_name: 'Caller name', uniqueid: 'Unique ID', linkedid: 'Linked ID', disposition: 'Disposition',
-  hangup_cause: 'Hangup cause', agent: 'Agent', answered_extension: 'Answered ext', queue_wait_time: 'Queue wait (s)',
+  caller_name: 'Caller name', call_id: 'Call ID', uniqueid: 'Unique ID', disposition: 'Disposition',
+  hangup_cause: 'Hangup cause', agent: 'Agent', agent_name: 'Agent name',
+  answered_extension: 'Answered ext', queue_wait_time: 'Queue wait (s)',
 };
+
+// One-line "what is this value" for each catalog field, shown under its label in
+// the mapping table so an operator doesn't have to read the API docs to decide.
+const CRM_FIELD_DESCS: Record<string, string> = {
+  caller: 'Caller number or extension',
+  destination: 'Number that was dialed',
+  caller_name: 'CallerID name, when Asterisk provides one',
+  call_id: "Asterisk linkedid — the call's cross-reference handle",
+  uniqueid: 'Channel uniqueid (per-leg de-dup key)',
+  datetime: 'Call start, ISO 8601',
+  duration: 'Total call length',
+  talk_time: 'Answer → hangup',
+  queue_wait_time: 'Seconds waiting in queue before answer',
+  call_status: 'Canonical outcome enum',
+  disposition: 'Same outcome enum as call status',
+  hangup_cause: 'Raw Asterisk hangup cause code',
+  call_type: 'inbound · outbound · internal',
+  queue: 'Queue name (queue calls only)',
+  agent: 'Answering extension, sent as a number',
+  agent_name: 'Display name of the answering agent',
+  answered_extension: 'Extension that answered the call',
+};
+
+// The mapping table groups the catalog so 17 rows stay scannable. Any catalog
+// field not listed here is rendered under "Other" — a field added to the backend
+// catalog must never silently vanish from this UI.
+const CRM_FIELD_GROUPS: { title: string; fields: string[] }[] = [
+  { title: 'Identity',      fields: ['caller', 'destination', 'caller_name', 'call_id', 'uniqueid'] },
+  { title: 'Timing',        fields: ['datetime', 'duration', 'talk_time', 'queue_wait_time'] },
+  { title: 'Outcome',       fields: ['call_status', 'disposition', 'hangup_cause'] },
+  { title: 'Routing',       fields: ['call_type', 'queue', 'agent', 'agent_name', 'answered_extension'] },
+];
+
+// Illustrative values for the live payload preview. Shapes match what the push
+// really sends (agent as an int, datetime as ISO 8601, HH:MM:SS durations).
+const CRM_SAMPLE: Record<string, string | number> = {
+  caller: '01001234567', destination: '2001', duration: '00:05:23', talk_time: '00:04:58',
+  datetime: '2026-07-27T14:32:07+03:00', call_status: 'ANSWERED', call_type: 'inbound',
+  queue: 'sales', caller_name: 'Ahmed Fathy', call_id: '1753619527.482',
+  uniqueid: '1753619527.483', disposition: 'ANSWERED', hangup_cause: '16', agent: 2001,
+  agent_name: 'Sara Khaled', answered_extension: '2001', queue_wait_time: 12,
+};
+const CRM_SAMPLE_SECONDS: Record<string, number> = { duration: 323, talk_time: 298 };
+
+/**
+ * Build the example push body exactly the way `crm.build_crm_payload()` does:
+ * selection order → duration format (value *and* key) → outcome remap → the
+ * operator's key renames, with the same collision rule (a rename onto a key that
+ * already exists is dropped and the field keeps its default key).
+ *
+ * Mirroring the backend matters — a preview that diverges from the wire format is
+ * worse than no preview.
+ */
+function buildCrmPreview(config: CRMConfig): [string, string | number][] {
+  const catalog = config.field_catalog || [];
+  const selected = (config.sync_fields || []).filter(f => catalog.includes(f));
+  const toSeconds = config.sync_duration_format === 'seconds';
+  const defaults = config.default_keys || {};
+  const statusMap = config.sync_status_map || {};
+  const keyMap = config.sync_key_map || {};
+
+  // Pass 1 — resolve each field to its default wire key and formatted value.
+  const pre = selected.map((f) => {
+    let value: string | number = CRM_SAMPLE[f] ?? f;
+    if (toSeconds && f in CRM_SAMPLE_SECONDS) value = CRM_SAMPLE_SECONDS[f];
+    if ((f === 'call_status' || f === 'disposition') && typeof value === 'string') {
+      value = statusMap[value.toUpperCase()] || value;
+    }
+    // The rename map is keyed on the HH:MM:SS form of the duration keys; the
+    // backend translates them when seconds mode is active.
+    const renameSrc = defaults[f] || f;
+    let key = renameSrc;
+    if (toSeconds && f === 'duration') key = 'durationInSeconds';
+    if (toSeconds && f === 'talk_time') key = 'talkTimeInSeconds';
+    return { key, renameSrc, value };
+  });
+
+  // Pass 2 — apply renames with the backend's collision guard.
+  const existing = new Set(pre.map(p => p.key));
+  const out: [string, string | number][] = [];
+  const emitted = new Set<string>();
+  for (const p of pre) {
+    let target = (keyMap[p.renameSrc] || '').trim() || p.key;
+    if (target !== p.key && existing.has(target)) target = p.key;  // refuse, keep default
+    if (emitted.has(target)) {
+      target = p.key;
+      if (emitted.has(target)) continue;  // nothing safe to send under
+    }
+    emitted.add(target);
+    out.push([target, p.value]);
+  }
+  return out;
+}
 
 interface SettingsPanelProps {
   /** When provided, the active sub-tab is controlled by the parent (sidebar dropdown)
@@ -90,6 +192,9 @@ interface SettingsPanelProps {
 export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   const { t } = useTranslation();
   const controlled = tab !== undefined;
+  // The settings sidebar is shown to supervisors too, but the API-key surface is
+  // admin-only on the backend — gate the tab rather than showing a form that 403s.
+  const isAdmin = getUser()?.role === 'admin';
   const [internalTab, setInternalTab] = useState<SettingsTab>('integrations');
   const activeTab = controlled ? tab : internalTab;
   const setActiveTab = (next: SettingsTab) => {
@@ -113,6 +218,11 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     block_private: false,
     field_catalog: [],
   });
+  // Snapshot of the last loaded/saved config — drives the "unsaved changes"
+  // indicator in the action bar. A long settings form with a footer Save button
+  // needs it; otherwise edits are silently lost on tab-away.
+  const [baseline, setBaseline] = useState('');
+  const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -148,6 +258,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
       if (response.ok) {
         const data = await response.json();
         setConfig(data);
+        setBaseline(JSON.stringify(data));
       } else {
         setConfig({
           enabled: false,
@@ -157,6 +268,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
           timeout: 30,
           verify_ssl: true,
         });
+        setBaseline('');
       }
     } catch (error) {
       console.error('Failed to load CRM config:', error);
@@ -166,18 +278,35 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     }
   };
 
+  /** Re-read the stored config without flashing the form's loading state.
+   *  Run after a save so the operator sees what the backend actually kept —
+   *  invalid key renames are dropped server-side (parse_key_map), and this is
+   *  what refreshes field_catalog / default_keys on a first-time setup. */
+  const refreshConfigQuietly = async () => {
+    try {
+      const res = await fetchWithAuth('/api/crm/config');
+      if (!res.ok) return;
+      const data = await res.json();
+      setConfig(data);
+      setBaseline(JSON.stringify(data));
+    } catch { /* keep the in-memory config; the save already succeeded */ }
+  };
+
   const saveConfig = async () => {
     setSaving(true);
     setMessage(null);
+    const posted = JSON.stringify(config);
     try {
       const response = await fetchWithAuth('/api/crm/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: posted,
       });
       if (response.ok) {
         const data = await response.json().catch(() => ({}));
         const warnings: string[] = Array.isArray(data.warnings) ? data.warnings : [];
+        setBaseline(posted);
+        refreshConfigQuietly();
         if (data.reload_ok === false || warnings.length) {
           // Saved, but something needs the operator's attention (live-reload failed
           // and/or fields were reverted) — surface it instead of a silent success.
@@ -231,16 +360,76 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   };
 
   // ── Field-picker helpers ──
-  const isFieldOn = (f: string) =>
-    CRM_ALWAYS_FIELDS.includes(f) || (config.sync_fields || []).includes(f);
+  // Every field is opt-in — including caller/destination. The backend no longer
+  // force-injects an identity field, so "Select all" must not subtract anything.
+  const isFieldOn = (f: string) => (config.sync_fields || []).includes(f);
   const toggleField = (f: string) => {
-    if (CRM_ALWAYS_FIELDS.includes(f)) return; // identity fields are always sent
     const cur = config.sync_fields || [];
     updateConfig({ sync_fields: cur.includes(f) ? cur.filter(x => x !== f) : [...cur, f] });
   };
   const selectAllFields = () =>
-    updateConfig({ sync_fields: (config.field_catalog || []).filter(f => !CRM_ALWAYS_FIELDS.includes(f)) });
+    updateConfig({ sync_fields: [...(config.field_catalog || [])] });
   const clearFields = () => updateConfig({ sync_fields: [] });
+
+  // ── Outbound key-rename helpers ──
+  // The server tells us the real wire key for each catalog field (default_keys);
+  // never hardcode it here or the grid drifts from what actually gets sent.
+  const defaultKeyFor = (f: string) => (config.default_keys || {})[f] || f;
+  const renameForKey = (k: string) => (config.sync_key_map || {})[k] || '';
+  const setRenameForKey = (k: string, value: string) => {
+    const next = { ...(config.sync_key_map || {}) };
+    const v = value.trim();
+    if (!v || v === k) delete next[k]; else next[k] = v;  // never persist no-ops
+    updateConfig({ sync_key_map: next });
+  };
+  // One row per *selected* field, keyed by its real outbound key.
+  const renameRows = (config.field_catalog || [])
+    .filter(isFieldOn)
+    .map(f => ({ field: f, key: defaultKeyFor(f), label: CRM_FIELD_LABELS[f] || f }));
+  const finalKeyFor = (r: { key: string }) => renameForKey(r.key) || r.key;
+  const keyCounts: Record<string, number> = {};
+  renameRows.forEach(r => { const k = finalKeyFor(r); keyCounts[k] = (keyCounts[k] || 0) + 1; });
+  const isColliding = (r: { key: string }) => keyCounts[finalKeyFor(r)] > 1;
+  const collisionKeys = Object.keys(keyCounts).filter(k => keyCounts[k] > 1);
+
+  // ── Outcome (status) remap helpers ──
+  const statusMapFor = (outcome: string) => (config.sync_status_map || {})[outcome] || '';
+  const setStatusMapFor = (outcome: string, value: string) => {
+    const next = { ...(config.sync_status_map || {}) };
+    const v = value.trim();
+    if (!v || v === outcome) delete next[outcome]; else next[outcome] = v;
+    updateConfig({ sync_status_map: next });
+  };
+
+  // ── Derived view state ──
+  const dirty = baseline !== '' && JSON.stringify(config) !== baseline;
+  const previewRows = useMemo(() => buildCrmPreview(config), [config]);
+  const previewJson = useMemo(
+    () => JSON.stringify(Object.fromEntries(previewRows), null, 2), [previewRows]);
+  const selectedCount = (config.field_catalog || []).filter(isFieldOn).length;
+  const activeDirections = CRM_DIRECTIONS.filter(d => (config as any)[d.key] !== false);
+  const syncPath = config.sync_endpoint || config.endpoint_path || '/api/calls';
+  // Concatenated the same way the connector does: server_url.rstrip('/') + path.
+  // Showing the raw join (not a tidied-up version) is deliberate — it exposes a
+  // missing leading slash instead of hiding it.
+  const pushUrl = (config.server_url || 'https://your-crm.example.com').replace(/\/+$/, '') + syncPath;
+  const pathNeedsSlash = !syncPath.startsWith('/');
+  // Catalog fields the group map doesn't know about — surfaced rather than dropped.
+  const groupedFields = new Set(CRM_FIELD_GROUPS.flatMap(g => g.fields));
+  const fieldGroups = [
+    ...CRM_FIELD_GROUPS.map(g => ({
+      title: g.title,
+      fields: g.fields.filter(f => (config.field_catalog || []).includes(f)),
+    })),
+    { title: 'Other', fields: (config.field_catalog || []).filter(f => !groupedFields.has(f)) },
+  ].filter(g => g.fields.length > 0);
+
+  const copyPreview = () => {
+    navigator.clipboard?.writeText(previewJson).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    }).catch(() => {});
+  };
 
   const handleQosEnable = async () => {
     setQosLoading(true);
@@ -452,6 +641,12 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
             <Plug size={18} />
             {t('settings.integrations')}
           </button>
+          {isAdmin && (
+            <button type="button" className={`up-tab ${activeTab === 'api-keys' ? 'active' : ''}`} onClick={() => setActiveTab('api-keys')}>
+              <KeyRound size={18} />
+              {t('settings.tabs.apiKeys', 'API Keys')}
+            </button>
+          )}
           <button type="button" className={`up-tab ${activeTab === 'qos' ? 'active' : ''}`} onClick={() => setActiveTab('qos')}>
             <Signal size={18} />
             {t('settings.qualityOfService')}
@@ -478,322 +673,576 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
           </button>
         </div>
 
-        {/* ── Integrations Tab ── */}
+        {/* ── Integrations Tab (CRM) ──
+            Layout: hero (master switch) → at-a-glance meta strip → two columns,
+            config steps on the left and a live payload preview on the right →
+            sticky action bar. The preview is the point of the redesign: the whole
+            config only exists to shape one JSON body, so show that body. */}
         {activeTab === 'integrations' && (
           loading ? (
-            <div className="up-add-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 64 }}>
-              <Loader2 size={32} className="spinner" />
-              <p style={{ marginTop: 20, color: 'var(--text-secondary)', fontSize: 14 }}>{t('settings.loading')}</p>
+            <div className="crmx-loading">
+              <Loader2 size={30} className="spinner" />
+              <p>{t('settings.loading')}</p>
             </div>
           ) : (
-            <div className="up-add-card">
-              <div className="up-add-header">
-                <div className="up-add-icon"><Database size={24} /></div>
-                <div>
-                  <h2 className="up-add-title">{t('settings.crm.title')}</h2>
-                  <p className="up-add-desc">{t('settings.crm.description')}</p>
-                </div>
-              </div>
-              <form onSubmit={handleSubmit} className="up-add-body">
-                {message && (
-                  <div className={`up-alert ${message.type === 'success' ? 'success' : 'error'}`}>
-                    {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-                    <span>{message.text}</span>
+            <form onSubmit={handleSubmit} className="crmx">
+
+              <header className={`crmx-hero ${config.enabled ? 'on' : ''}`}>
+                <div className="crmx-hero-ico"><Database size={22} /></div>
+                <div className="crmx-hero-main">
+                  <div className="crmx-hero-titles">
+                    <h2>{t('settings.crm.title')}</h2>
+                    <span className={`crm-badge ${config.enabled ? 'on' : 'off'}`}>
+                      {config.enabled ? t('settings.crm.stateLive', 'Live') : t('settings.crm.stateOff', 'Off')}
+                    </span>
                   </div>
-                )}
-                <div className={`crm-master ${config.enabled ? 'on' : ''}`}>
-                  <CrmToggle
-                    checked={config.enabled}
-                    onChange={(v) => updateConfig({ enabled: v })}
-                    label={t('settings.crm.enable')}
-                    desc={t('settings.crm.enableDesc')}
-                  />
-                  <span className={`crm-badge ${config.enabled ? 'on' : 'off'}`}>
-                    {config.enabled ? 'Enabled' : 'Disabled'}
-                  </span>
+                  <p>{t('settings.crm.description')}</p>
                 </div>
+                <CrmToggle
+                  checked={config.enabled}
+                  onChange={(v) => updateConfig({ enabled: v })}
+                  label={config.enabled
+                    ? t('settings.crm.enabled', 'Enabled')
+                    : t('settings.crm.disabled', 'Disabled')}
+                />
+              </header>
 
-                {config.enabled && (
-                  <>
-                    <div className="crm-summary">
-                      <span className={`crm-badge ${config.sync_enabled !== false ? 'on' : 'off'}`}>
-                        {config.sync_enabled !== false ? 'Sync on' : 'Sync off'}
-                      </span>
-                      <span>Push target&nbsp;
-                        <code>{(config.server_url || 'https://…') + (config.sync_endpoint || config.endpoint_path || '/api/calls')}</code>
-                      </span>
-                      <span>· Auth&nbsp;<code>{CRM_AUTH_LABELS[config.auth_type] || config.auth_type}</code></span>
+              {message && (
+                <div className={`up-alert ${message.type === 'success' ? 'success' : 'error'}`}>
+                  {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+                  <span>{message.text}</span>
+                </div>
+              )}
+
+              {!config.enabled ? (
+                <div className="crmx-empty">
+                  <div className="crmx-empty-ico"><Plug size={26} /></div>
+                  <h3>{t('settings.crm.offTitle', 'CRM integration is off')}</h3>
+                  <p>{t('settings.crm.enableDesc')}</p>
+                </div>
+              ) : (
+                <>
+                  <div className="crmx-meta">
+                    <div className="crmx-meta-cell">
+                      <span className="crmx-meta-k">{t('settings.crm.pushTarget', 'Push target')}</span>
+                      <span className="crmx-meta-v mono" title={pushUrl}>{pushUrl}</span>
                     </div>
+                    <div className="crmx-meta-cell">
+                      <span className="crmx-meta-k">{t('settings.crm.authType')}</span>
+                      <span className="crmx-meta-v">{CRM_AUTH_LABELS[config.auth_type] || config.auth_type}</span>
+                    </div>
+                    <div className="crmx-meta-cell">
+                      <span className="crmx-meta-k">{t('settings.crm.sync', 'Call-data sync')}</span>
+                      <span className="crmx-meta-v">
+                        <span className={`crmx-dot ${config.sync_enabled !== false ? 'ok' : 'off'}`} />
+                        {config.sync_enabled !== false
+                          ? `${config.sync_method || 'POST'} · ${activeDirections.length}/${CRM_DIRECTIONS.length} directions`
+                          : t('settings.crm.syncPaused', 'Paused')}
+                      </span>
+                    </div>
+                    <div className="crmx-meta-cell">
+                      <span className="crmx-meta-k">{t('settings.crm.fields', 'Fields')}</span>
+                      <span className="crmx-meta-v crmx-num">
+                        {selectedCount} / {(config.field_catalog || []).length}
+                      </span>
+                    </div>
+                  </div>
 
-                    {/* ── Connection ── */}
-                    <div className="crm-section">
-                      <div className="crm-section-head">
-                        <div className="crm-section-ico"><Link2 size={18} /></div>
-                        <div>
-                          <div className="crm-section-title">Connection</div>
-                          <div className="crm-section-sub">Where OpDesk reaches your CRM and how it authenticates.</div>
-                        </div>
-                      </div>
-                      <div className="crm-section-body">
+                  <div className="crmx-grid">
+                    <div className="crmx-col">
 
-                      <div className="up-form-group" style={{ marginBottom: 16 }}>
-                        <label>{t('settings.crm.serverUrl')}</label>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="https://crm.example.com or http://192.168.1.100:8080"
-                          value={config.server_url}
-                          onChange={(e) => updateConfig({ server_url: e.target.value })}
-                          required
-                        />
-                      </div>
-
-                      <div className="up-form-group" style={{ marginBottom: 16 }}>
-                        <label>{t('settings.crm.authType')}</label>
-                        <FilterSelect
-                          size="md"
-                          value={config.auth_type}
-                          onChange={v => updateConfig({ auth_type: v as CRMConfig['auth_type'] })}
-                          icon={KeyRound}
-                          options={[
-                            { value: 'api_key',       label: 'API Key',       dot: 'blue'    },
-                            { value: 'basic_auth',    label: 'Basic Auth',    dot: 'neutral' },
-                            { value: 'bearer_token',  label: 'Bearer Token',  dot: 'green'   },
-                            { value: 'oauth2',        label: 'OAuth2',        dot: 'orange'  },
-                          ]}
-                        />
-                      </div>
-
-                    {config.auth_type === 'api_key' && (
-                      <>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.apiKey')}</label>
-                          <input type="password" className="form-input" placeholder="Your API key" value={config.api_key || ''} onChange={(e) => updateConfig({ api_key: e.target.value })} required />
-                        </div>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.apiKeyHeader')}</label>
-                          <input type="text" className="form-input" placeholder="X-API-Key" value={config.api_key_header || ''} onChange={(e) => updateConfig({ api_key_header: e.target.value })} />
-                          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{t('settings.crm.defaultApiKeyHeader')}</p>
-                        </div>
-                      </>
-                    )}
-
-                    {config.auth_type === 'basic_auth' && (
-                      <>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.username')}</label>
-                          <input type="text" className="form-input" placeholder="Username" value={config.username || ''} onChange={(e) => updateConfig({ username: e.target.value })} required />
-                        </div>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.password')}</label>
-                          <input type="password" className="form-input" placeholder="Password" value={config.password || ''} onChange={(e) => updateConfig({ password: e.target.value })} required />
-                        </div>
-                      </>
-                    )}
-
-                    {config.auth_type === 'bearer_token' && (
-                      <div className="up-form-group">
-                        <label>{t('settings.crm.bearerToken')}</label>
-                        <input type="password" className="form-input" placeholder="Your bearer token" value={config.bearer_token || ''} onChange={(e) => updateConfig({ bearer_token: e.target.value })} required />
-                      </div>
-                    )}
-
-                    {config.auth_type === 'oauth2' && (
-                      <>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.clientId')}</label>
-                          <input type="text" className="form-input" placeholder="OAuth2 Client ID" value={config.oauth2_client_id || ''} onChange={(e) => updateConfig({ oauth2_client_id: e.target.value })} required />
-                        </div>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.clientSecret')}</label>
-                          <input type="password" className="form-input" placeholder="OAuth2 Client Secret" value={config.oauth2_client_secret || ''} onChange={(e) => updateConfig({ oauth2_client_secret: e.target.value })} required />
-                        </div>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.tokenUrl')}</label>
-                          <input type="text" className="form-input" placeholder="https://crm.example.com/oauth/token" value={config.oauth2_token_url || ''} onChange={(e) => updateConfig({ oauth2_token_url: e.target.value })} />
-                        </div>
-                        <div className="up-form-group">
-                          <label>{t('settings.crm.scope')}</label>
-                          <input type="text" className="form-input" placeholder="read write" value={config.oauth2_scope || ''} onChange={(e) => updateConfig({ oauth2_scope: e.target.value })} />
-                        </div>
-                      </>
-                    )}
-
-                      <button type="button" className="settings-advanced-toggle" onClick={() => setAdvancedOpen((o) => !o)}>
-                        {advancedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                        {t('settings.crm.advancedOptions')}
-                      </button>
-                      {advancedOpen && (
-                        <div className="settings-advanced-body">
-                          <div className="up-form-row">
-                            <div className="up-form-group">
-                              <label>{t('settings.crm.endpointPath')}</label>
-                              <input type="text" className="form-input" placeholder="/api/calls" value={config.endpoint_path || ''} onChange={(e) => updateConfig({ endpoint_path: e.target.value })} />
-                            </div>
-                            <div className="up-form-group">
-                              <label>{t('settings.crm.timeout')}</label>
-                              <input type="number" className="form-input" placeholder="30" value={config.timeout || 30} onChange={(e) => updateConfig({ timeout: parseInt(e.target.value) || 30 })} min={1} max={300} />
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
-                            <CrmToggle
-                              checked={config.verify_ssl !== false}
-                              onChange={(v) => updateConfig({ verify_ssl: v })}
-                              label={t('settings.crm.verifySSL')}
-                            />
-                            <CrmToggle
-                              checked={config.block_private === true}
-                              onChange={(v) => updateConfig({ block_private: v })}
-                              label="Block private / LAN addresses (strict SSRF)"
-                              desc="Loopback and cloud-metadata are always blocked. Enable only if your CRM is public — it rejects on-prem/LAN URLs."
-                            />
+                      {/* ── Step 1 · Connection ── */}
+                      <section className="crmx-card">
+                        <div className="crmx-card-head">
+                          <span className="crmx-step">1</span>
+                          <div className="crmx-card-ico"><Link2 size={17} /></div>
+                          <div className="crmx-card-titles">
+                            <h3>{t('settings.crm.connection', 'Connection')}</h3>
+                            <p>{t('settings.crm.connectionSub', 'Where OpDesk reaches your CRM and how it authenticates.')}</p>
                           </div>
                         </div>
-                      )}
-                      </div>{/* /crm-section-body */}
-                    </div>{/* /crm-section Connection */}
+                        <div className="crmx-card-body">
+                          <div className="up-form-group">
+                            <label>{t('settings.crm.serverUrl')}</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="https://crm.example.com or http://192.168.1.100:8080"
+                              dir="ltr"
+                              value={config.server_url}
+                              onChange={(e) => updateConfig({ server_url: e.target.value })}
+                              required
+                            />
+                          </div>
 
-                    {/* ── Call-Data Sync (push after each call) ── */}
-                    <div className="crm-section">
-                      <div className="crm-section-head">
-                        <div className="crm-section-ico"><Send size={18} /></div>
-                        <div>
-                          <div className="crm-section-title">Call-Data Sync</div>
-                          <div className="crm-section-sub">Push call records to the CRM when each call ends.</div>
-                        </div>
-                        <CrmToggle
-                          checked={config.sync_enabled !== false}
-                          onChange={(v) => updateConfig({ sync_enabled: v })}
-                          label=""
-                        />
-                      </div>
-                      <div className="crm-section-body">
-                      {config.sync_enabled !== false && (
-                        <>
-                          <div className="up-form-row">
+                          <div className="crmx-fields">
                             <div className="up-form-group">
-                              <label>Sync endpoint path</label>
-                              <input
-                                type="text"
-                                className="form-input"
-                                placeholder={config.endpoint_path || '/api/calls'}
-                                value={config.sync_endpoint || ''}
-                                onChange={(e) => updateConfig({ sync_endpoint: e.target.value })}
-                              />
-                            </div>
-                            <div className="up-form-group">
-                              <label>HTTP method</label>
+                              <label>{t('settings.crm.authType')}</label>
                               <FilterSelect
                                 size="md"
-                                value={config.sync_method || 'POST'}
-                                onChange={(v) => updateConfig({ sync_method: v as 'POST' | 'PUT' })}
-                                icon={Send}
+                                value={config.auth_type}
+                                onChange={v => updateConfig({ auth_type: v as CRMConfig['auth_type'] })}
+                                icon={KeyRound}
                                 options={[
-                                  { value: 'POST', label: 'POST', dot: 'green' },
-                                  { value: 'PUT', label: 'PUT', dot: 'blue' },
+                                  { value: 'api_key',       label: 'API Key',       dot: 'blue'    },
+                                  { value: 'basic_auth',    label: 'Basic Auth',    dot: 'neutral' },
+                                  { value: 'bearer_token',  label: 'Bearer Token',  dot: 'green'   },
+                                  { value: 'oauth2',        label: 'OAuth2',        dot: 'orange'  },
                                 ]}
                               />
                             </div>
-                          </div>
-                          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: -8, marginBottom: 18 }}>
-                            Endpoint is appended to the server URL. Leave blank to use the connection endpoint path.
-                          </p>
 
-                          <div className="up-form-group">
-                            <label>Push these call directions</label>
-                            <div className="crm-seg">
-                              {CRM_DIRECTIONS.map(({ key, label, Icon }) => {
-                                const on = (config as any)[key] !== false;
-                                return (
-                                  <button
-                                    type="button"
-                                    key={key}
-                                    className={`crm-seg-btn ${on ? 'on' : ''}`}
-                                    onClick={() => updateConfig({ [key]: !on } as Partial<CRMConfig>)}
-                                  >
-                                    <Icon size={15} />{label}{on && <Check size={14} />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
+                            {config.auth_type === 'api_key' && (
+                              <>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.apiKey')}{config.api_key === '***' && <span className="crmx-saved"><Lock size={10} />{t('settings.crm.stored', 'stored')}</span>}</label>
+                                  <input type="password" className="form-input" placeholder="Your API key" value={config.api_key || ''} onChange={(e) => updateConfig({ api_key: e.target.value })} required />
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.apiKeyHeader')}</label>
+                                  <input type="text" className="form-input" placeholder="X-API-Key" value={config.api_key_header || ''} onChange={(e) => updateConfig({ api_key_header: e.target.value })} />
+                                  <p className="crm-hint">{t('settings.crm.defaultApiKeyHeader')}</p>
+                                </div>
+                              </>
+                            )}
 
-                          <div className="up-form-group">
-                            <div className="crm-field-head">
-                              <div className="crm-field-head-left">
-                                <label style={{ margin: 0 }}>Fields to send</label>
-                                <span className="crm-count">{(config.field_catalog || []).filter(isFieldOn).length} selected</span>
+                            {config.auth_type === 'basic_auth' && (
+                              <>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.username')}</label>
+                                  <input type="text" className="form-input" placeholder="Username" value={config.username || ''} onChange={(e) => updateConfig({ username: e.target.value })} required />
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.password')}{config.password === '***' && <span className="crmx-saved"><Lock size={10} />{t('settings.crm.stored', 'stored')}</span>}</label>
+                                  <input type="password" className="form-input" placeholder="Password" value={config.password || ''} onChange={(e) => updateConfig({ password: e.target.value })} required />
+                                </div>
+                              </>
+                            )}
+
+                            {config.auth_type === 'bearer_token' && (
+                              <div className="up-form-group">
+                                <label>{t('settings.crm.bearerToken')}{config.bearer_token === '***' && <span className="crmx-saved"><Lock size={10} />{t('settings.crm.stored', 'stored')}</span>}</label>
+                                <input type="password" className="form-input" placeholder="Your bearer token" value={config.bearer_token || ''} onChange={(e) => updateConfig({ bearer_token: e.target.value })} required />
                               </div>
-                              <div className="crm-field-actions">
-                                <button type="button" className="crm-link-btn" onClick={selectAllFields}>Select all</button>
-                                <button type="button" className="crm-link-btn" onClick={clearFields}>Clear</button>
-                              </div>
-                            </div>
-                            <div className="crm-chips">
-                              {(config.field_catalog || []).map((f) => {
-                                const on = isFieldOn(f);
-                                const locked = CRM_ALWAYS_FIELDS.includes(f);
-                                return (
-                                  <button
-                                    type="button"
-                                    key={f}
-                                    onClick={() => toggleField(f)}
-                                    disabled={locked}
-                                    className={`crm-chip ${on ? 'on' : ''} ${locked ? 'locked' : ''}`}
-                                    title={locked ? 'Always sent (call identity)' : ''}
-                                  >
-                                    <span className="crm-chip-ico">
-                                      {locked ? <Lock size={12} /> : on ? <Check size={13} /> : null}
-                                    </span>
-                                    {CRM_FIELD_LABELS[f] || f}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {(config.field_catalog || []).length === 0 && (
-                              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-                                Save once to load the list of available fields.
-                              </p>
+                            )}
+
+                            {config.auth_type === 'oauth2' && (
+                              <>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.clientId')}</label>
+                                  <input type="text" className="form-input" placeholder="OAuth2 Client ID" value={config.oauth2_client_id || ''} onChange={(e) => updateConfig({ oauth2_client_id: e.target.value })} required />
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.clientSecret')}{config.oauth2_client_secret === '***' && <span className="crmx-saved"><Lock size={10} />{t('settings.crm.stored', 'stored')}</span>}</label>
+                                  <input type="password" className="form-input" placeholder="OAuth2 Client Secret" value={config.oauth2_client_secret || ''} onChange={(e) => updateConfig({ oauth2_client_secret: e.target.value })} required />
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.tokenUrl')}</label>
+                                  <input type="text" className="form-input" dir="ltr" placeholder="https://crm.example.com/oauth/token" value={config.oauth2_token_url || ''} onChange={(e) => updateConfig({ oauth2_token_url: e.target.value })} />
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.scope')}</label>
+                                  <input type="text" className="form-input" placeholder="read write" value={config.oauth2_scope || ''} onChange={(e) => updateConfig({ oauth2_scope: e.target.value })} />
+                                </div>
+                              </>
                             )}
                           </div>
-                        </>
+
+                          <button type="button" className="crmx-disclose" onClick={() => setAdvancedOpen((o) => !o)}>
+                            {advancedOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                            {t('settings.crm.advancedOptions')}
+                          </button>
+                          {advancedOpen && (
+                            <div className="crmx-disclose-body">
+                              <div className="crmx-fields">
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.endpointPath')}</label>
+                                  <input type="text" className="form-input" dir="ltr" placeholder="/api/calls" value={config.endpoint_path || ''} onChange={(e) => updateConfig({ endpoint_path: e.target.value })} />
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.timeout')}</label>
+                                  <input type="number" className="form-input" placeholder="30" value={config.timeout || 30} onChange={(e) => updateConfig({ timeout: parseInt(e.target.value) || 30 })} min={1} max={300} />
+                                </div>
+                              </div>
+                              <div className="crmx-toggle-list">
+                                <CrmToggle
+                                  checked={config.verify_ssl !== false}
+                                  onChange={(v) => updateConfig({ verify_ssl: v })}
+                                  label={t('settings.crm.verifySSL')}
+                                  desc={t('settings.crm.verifySSLDesc', 'Turn off only for a CRM using a self-signed certificate.')}
+                                />
+                                <CrmToggle
+                                  checked={config.block_private === true}
+                                  onChange={(v) => updateConfig({ block_private: v })}
+                                  label={t('settings.crm.blockPrivate', 'Block private / LAN addresses (strict SSRF)')}
+                                  desc={t('settings.crm.blockPrivateDesc', 'Loopback and cloud-metadata are always blocked. Enable only if your CRM is public — it rejects on-prem/LAN URLs.')}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </section>
+
+                      {/* ── Step 2 · Delivery ── */}
+                      <section className="crmx-card">
+                        <div className="crmx-card-head">
+                          <span className="crmx-step">2</span>
+                          <div className="crmx-card-ico"><Send size={17} /></div>
+                          <div className="crmx-card-titles">
+                            <h3>{t('settings.crm.delivery', 'Delivery')}</h3>
+                            <p>{t('settings.crm.deliverySub', 'When a call ends, where the record goes and which calls qualify.')}</p>
+                          </div>
+                          <CrmToggle
+                            checked={config.sync_enabled !== false}
+                            onChange={(v) => updateConfig({ sync_enabled: v })}
+                            label=""
+                          />
+                        </div>
+                        <div className="crmx-card-body">
+                          {config.sync_enabled === false ? (
+                            <p className="crmx-muted-note">
+                              {t('settings.crm.syncOffNote', 'Call-data sync is paused — no call records are pushed. The connection above stays configured.')}
+                            </p>
+                          ) : (
+                            <>
+                              <div className="crmx-fields">
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.syncEndpoint', 'Sync endpoint path')}</label>
+                                  <input
+                                    type="text"
+                                    className="form-input"
+                                    dir="ltr"
+                                    placeholder={config.endpoint_path || '/api/calls'}
+                                    value={config.sync_endpoint || ''}
+                                    onChange={(e) => updateConfig({ sync_endpoint: e.target.value })}
+                                  />
+                                  <p className="crm-hint">
+                                    {t('settings.crm.syncEndpointHint', 'Appended to the server URL. Leave blank to use the connection endpoint path.')}
+                                  </p>
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.httpMethod', 'HTTP method')}</label>
+                                  <FilterSelect
+                                    size="md"
+                                    value={config.sync_method || 'POST'}
+                                    onChange={(v) => updateConfig({ sync_method: v as 'POST' | 'PUT' })}
+                                    icon={Send}
+                                    options={[
+                                      { value: 'POST', label: 'POST', dot: 'green' },
+                                      { value: 'PUT', label: 'PUT', dot: 'blue' },
+                                    ]}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="up-form-group">
+                                <label>{t('settings.crm.directions', 'Push these call directions')}</label>
+                                <div className="crmx-seg">
+                                  {CRM_DIRECTIONS.map(({ key, i18n, label, Icon }) => {
+                                    const on = (config as any)[key] !== false;
+                                    return (
+                                      <button
+                                        type="button"
+                                        key={key}
+                                        aria-pressed={on}
+                                        className={`crmx-seg-btn ${on ? 'on' : ''}`}
+                                        onClick={() => updateConfig({ [key]: !on } as Partial<CRMConfig>)}
+                                      >
+                                        <Icon size={15} />{t(i18n, label)}
+                                        {on && <Check size={14} className="crmx-seg-check" />}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {activeDirections.length === 0 && (
+                                  <p className="crmx-inline-warn">
+                                    <AlertTriangle size={13} />
+                                    {t('settings.crm.noDirections', 'No direction selected — nothing will be pushed.')}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="up-form-group crmx-half">
+                                <label>{t('settings.crm.durationFormat', 'Duration format')}</label>
+                                <FilterSelect
+                                  size="md"
+                                  value={config.sync_duration_format || 'hms'}
+                                  onChange={(v) => updateConfig({ sync_duration_format: v as 'hms' | 'seconds' })}
+                                  icon={Clock}
+                                  options={[
+                                    { value: 'hms', label: 'HH:MM:SS (00:05:23)', dot: 'blue' },
+                                    { value: 'seconds', label: 'Seconds (323)', dot: 'green' },
+                                  ]}
+                                />
+                                <p className="crm-hint">
+                                  {t('settings.crm.durationHint',
+                                    'How duration and talk time are sent. In seconds mode the keys become durationInSeconds / talkTimeInSeconds, so the receiver cannot misread the unit.')}
+                                </p>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </section>
+
+                      {/* ── Step 3 · Fields & key names ──
+                          One table instead of the old chip-picker + separate rename
+                          grid: pick the field and name its wire key in the same row. */}
+                      {config.sync_enabled !== false && (
+                        <section className="crmx-card">
+                          <div className="crmx-card-head">
+                            <span className="crmx-step">3</span>
+                            <div className="crmx-card-ico"><Tags size={17} /></div>
+                            <div className="crmx-card-titles">
+                              <h3>{t('settings.crm.payload', 'Payload fields')}</h3>
+                              <p>{t('settings.crm.payloadSub', 'Choose the values to send and, if needed, the key each one lands under.')}</p>
+                            </div>
+                            <span className="crm-count">{selectedCount} {t('settings.crm.selected', 'selected')}</span>
+                          </div>
+                          <div className="crmx-card-body">
+                            {(config.field_catalog || []).length === 0 ? (
+                              <p className="crmx-muted-note">
+                                {t('settings.crm.noCatalog', 'The field catalog could not be loaded. Reload the page and try again.')}
+                              </p>
+                            ) : (
+                              <>
+                                <div className="crmx-map-bar">
+                                  <p className="crm-hint" style={{ margin: 0 }}>
+                                    {t('settings.crm.keyNamesHint',
+                                      'Rename any field to the key your CRM expects. Leave blank to use the default.')}
+                                  </p>
+                                  <div className="crmx-map-bar-actions">
+                                    <button type="button" className="crm-link-btn" onClick={selectAllFields}>{t('settings.crm.selectAll', 'Select all')}</button>
+                                    <span className="crmx-sep" />
+                                    <button type="button" className="crm-link-btn" onClick={clearFields}>{t('settings.crm.clear', 'Clear')}</button>
+                                  </div>
+                                </div>
+
+                                {collisionKeys.length > 0 && (
+                                  <div className="crm-keymap-warn">
+                                    <AlertTriangle size={14} />
+                                    <span>
+                                      {t('settings.crm.collisionWarn',
+                                        'Two fields would be sent under the same key ({{keys}}). The duplicate rename is dropped and the field keeps its default key.',
+                                        { keys: collisionKeys.join(', ') })}
+                                    </span>
+                                  </div>
+                                )}
+
+                                <div className="crmx-map">
+                                  <div className="crmx-map-header">
+                                    <span>{t('settings.crm.colField', 'Field')}</span>
+                                    <span>{t('settings.crm.colSentAs', 'Sent as')}</span>
+                                    <span>{t('settings.crm.colRename', 'Rename to')}</span>
+                                  </div>
+                                  {fieldGroups.map((group) => (
+                                    <div className="crmx-map-group" key={group.title}>
+                                      <div className="crmx-map-group-title">{group.title}</div>
+                                      {group.fields.map((f) => {
+                                        const on = isFieldOn(f);
+                                        const key = defaultKeyFor(f);
+                                        // Show the key that will really go out — the
+                                        // duration fields carry their unit in the name.
+                                        const wireKey = config.sync_duration_format === 'seconds'
+                                          ? (f === 'duration' ? 'durationInSeconds' : f === 'talk_time' ? 'talkTimeInSeconds' : key)
+                                          : key;
+                                        const collide = on && isColliding({ key });
+                                        return (
+                                          <div className={`crmx-map-row${on ? ' on' : ''}${collide ? ' collide' : ''}`} key={f}>
+                                            <button
+                                              type="button"
+                                              role="checkbox"
+                                              aria-checked={on}
+                                              className="crmx-map-pick"
+                                              onClick={() => toggleField(f)}
+                                            >
+                                              <span className="crmx-check">{on && <Check size={12} />}</span>
+                                              <span className="crmx-map-name">
+                                                {CRM_FIELD_LABELS[f] || f}
+                                                {CRM_FIELD_DESCS[f] && <em>{CRM_FIELD_DESCS[f]}</em>}
+                                              </span>
+                                            </button>
+                                            <code className="crmx-map-key">{wireKey}</code>
+                                            <input
+                                              className="crmx-map-input"
+                                              spellCheck={false}
+                                              placeholder={on ? wireKey : ''}
+                                              disabled={!on}
+                                              aria-label={`${CRM_FIELD_LABELS[f] || f} — ${t('settings.crm.colRename', 'Rename to')}`}
+                                              value={renameForKey(key)}
+                                              onChange={(e) => setRenameForKey(key, e.target.value)}
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </section>
                       )}
-                      </div>{/* /crm-section-body */}
-                    </div>{/* /crm-section Sync */}
 
-                    {testResult && (
-                      <div className={`up-alert ${testResult.type === 'success' ? 'success' : 'error'}`} style={{ marginTop: 12 }}>
-                        {testResult.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-                        <span>{testResult.text}</span>
+                      {/* ── Step 4 · Outcome values ── */}
+                      {config.sync_enabled !== false && (config.call_outcomes || []).length > 0 && (
+                        <section className="crmx-card">
+                          <div className="crmx-card-head">
+                            <span className="crmx-step">4</span>
+                            <div className="crmx-card-ico"><Radio size={17} /></div>
+                            <div className="crmx-card-titles">
+                              <h3>{t('settings.crm.outcomeMap', 'Outcome values')}</h3>
+                              <p>{t('settings.crm.outcomeMapHint',
+                                'Remap an outcome to what your CRM expects (e.g. BUSY → NO_ANSWER). Applies to both status and disposition. Leave blank to send unchanged.')}</p>
+                            </div>
+                            <span className="opt-tag">{t('settings.crm.optional', 'optional')}</span>
+                          </div>
+                          <div className="crmx-card-body">
+                            <div className="crmx-outcomes">
+                              {(config.call_outcomes || []).map((o) => (
+                                <div className={`crmx-outcome${statusMapFor(o) ? ' mapped' : ''}`} key={o}>
+                                  <code>{o}</code>
+                                  <span className="crm-keymap-arrow">→</span>
+                                  <input
+                                    className="crmx-map-input"
+                                    spellCheck={false}
+                                    placeholder={o}
+                                    aria-label={`${o} → ?`}
+                                    value={statusMapFor(o)}
+                                    onChange={(e) => setStatusMapFor(o, e.target.value)}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </section>
+                      )}
+                    </div>
+
+                    {/* ── Live payload preview ── */}
+                    <aside className="crmx-rail">
+                      <div className="crmx-preview">
+                        <div className="crmx-preview-head">
+                          <Braces size={15} />
+                          <span>{t('settings.crm.previewTitle', 'Payload preview')}</span>
+                          <button
+                            type="button"
+                            className="crmx-icon-btn"
+                            onClick={copyPreview}
+                            title={t('settings.crm.copyJson', 'Copy JSON')}
+                            aria-label={t('settings.crm.copyJson', 'Copy JSON')}
+                          >
+                            {copied ? <ClipboardCheck size={14} /> : <Copy size={14} />}
+                          </button>
+                        </div>
+
+                        <div className="crmx-req">
+                          <span className={`crmx-verb ${(config.sync_method || 'POST').toLowerCase()}`}>
+                            {config.sync_method || 'POST'}
+                          </span>
+                          <code>{pushUrl}</code>
+                        </div>
+                        {pathNeedsSlash && (
+                          <p className="crmx-inline-warn">
+                            <AlertTriangle size={13} />
+                            {t('settings.crm.slashWarn', 'The endpoint path has no leading slash — it is joined to the server URL exactly as shown above.')}
+                          </p>
+                        )}
+
+                        {config.sync_enabled === false ? (
+                          <p className="crmx-preview-note">
+                            {t('settings.crm.previewPaused', 'Call-data sync is paused — nothing is pushed.')}
+                          </p>
+                        ) : previewRows.length === 0 ? (
+                          <p className="crmx-inline-warn">
+                            <AlertTriangle size={13} />
+                            {t('settings.crm.previewEmpty', 'No fields selected — the CRM would receive an empty body.')}
+                          </p>
+                        ) : (
+                          <pre className="crmx-json">
+                            <span className="j-p">{'{'}</span>
+                            {previewRows.map(([k, v], i) => (
+                              <span className="crmx-json-line" key={`${k}-${i}`}>
+                                {'  '}
+                                <span className="j-k">"{k}"</span>
+                                <span className="j-p">: </span>
+                                {typeof v === 'number'
+                                  ? <span className="j-n">{v}</span>
+                                  : <span className="j-s">"{v}"</span>}
+                                {i < previewRows.length - 1 && <span className="j-p">,</span>}
+                              </span>
+                            ))}
+                            <span className="j-p">{'}'}</span>
+                          </pre>
+                        )}
+
+                        <p className="crm-hint">
+                          {activeDirections.length === CRM_DIRECTIONS.length
+                            ? t('settings.crm.previewHintAll', 'Example values — pushed after every call.')
+                            : activeDirections.length === 0
+                              ? t('settings.crm.previewHintNone', 'Example values. No direction is selected, so nothing is pushed.')
+                              : t('settings.crm.previewHintSome', 'Example values — pushed after every {{dirs}} call.',
+                                  { dirs: activeDirections.map(d => t(d.i18n, d.label)).join(' / ') })}
+                        </p>
+
+                        {testResult && (
+                          <div className={`crmx-test ${testResult.type}`}>
+                            {testResult.type === 'success' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+                            <span>{testResult.text}</span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </>
-                )}
+                    </aside>
+                  </div>
+                </>
+              )}
 
-                <div className="crm-actions">
+              {/* Sticky action bar — the form is long enough that a footer-only
+                  Save is easy to miss, and unsaved edits were silently lost. */}
+              <div className="crmx-bar">
+                <span className={`crmx-bar-state ${dirty ? 'dirty' : ''}`}>
+                  <span className={`crmx-dot ${dirty ? 'warn' : 'ok'}`} />
+                  {dirty
+                    ? t('settings.crm.unsaved', 'Unsaved changes')
+                    : t('settings.crm.allSaved', 'All changes saved')}
+                </span>
+                <div className="crmx-bar-actions">
                   <button
                     type="button"
                     className="btn"
                     onClick={testConnection}
                     disabled={testing || !config.enabled || !config.server_url}
-                    style={{ opacity: (testing || !config.enabled || !config.server_url) ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 8 }}
                   >
                     {testing ? <Loader2 size={14} className="spinner" /> : <Plug size={14} />}
-                    {testing ? 'Testing…' : 'Test connection'}
+                    {testing ? t('settings.crm.testing', 'Testing…') : t('settings.crm.test', 'Test connection')}
                   </button>
                   <button
                     type="submit"
                     className="btn btn-primary"
                     disabled={saving || (config.enabled && !config.server_url)}
-                    style={{ opacity: (saving || (config.enabled && !config.server_url)) ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 8 }}
                   >
                     {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
                     {saving ? t('settings.saving') : t('settings.save')}
                   </button>
                 </div>
-              </form>
-            </div>
+              </div>
+            </form>
           )
+        )}
+
+        {/* ── API Keys Tab (admin only) ── */}
+        {activeTab === 'api-keys' && (
+          <div className="up-add-card">
+            {isAdmin ? (
+              <ApiKeysPanel />
+            ) : (
+              <div className="up-add-body">
+                <div className="up-alert error">
+                  <AlertCircle size={20} />
+                  <span>{t('settings.adminOnly', 'Administrator access required.')}</span>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* ── QoS Tab ── */}

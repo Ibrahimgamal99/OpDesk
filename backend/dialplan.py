@@ -143,6 +143,35 @@ exten => s,1,NoOp(-- QoS Handler Start --)
         return False
 
 
+def set_pjsip_logger(enabled: bool) -> bool:
+    """Enable/disable Asterisk SIP message tracing via the CLI.
+
+    Toggles the PJSIP logger ('pjsip set logger on|off') and, best-effort, chan_sip's
+    debug ('sip set debug on|off') for legacy stacks — a no-op if chan_sip is not
+    loaded. Asterisk emits the SIP messages to its logger output, which the System
+    Logs SIP tailer reads.
+    """
+    state = 'on' if enabled else 'off'
+    ok = False
+    for cmd in (f'pjsip set logger {state}', f'sip set debug {state}'):
+        try:
+            result = subprocess.run(
+                ['sudo', 'asterisk', '-rx', cmd],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                ok = True
+            else:
+                log.debug("'%s' returned %s: %s", cmd, result.returncode, result.stderr.strip())
+        except subprocess.TimeoutExpired:
+            log.warning("Timeout running '%s'", cmd)
+        except Exception as e:
+            log.warning("Error running '%s': %s", cmd, e)
+    if ok:
+        log.info("SIP tracing %s", 'enabled' if enabled else 'disabled')
+    return ok
+
+
 def reload_asterisk_dialplan():
     """Reload Asterisk dialplan using 'asterisk -rx dialplan reload'."""
     log.info("Reloading Asterisk dialplan...")

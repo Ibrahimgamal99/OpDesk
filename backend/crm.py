@@ -512,6 +512,34 @@ class CRMConnector:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     
     @staticmethod
+    def duration_to_seconds(duration: Union[int, str, None]) -> Optional[int]:
+        """Parse a duration into integer seconds.
+
+        Accepts an int (seconds), a plain numeric string ("323"), or an
+        "HH:MM:SS"/"MM:SS" string. Returns None if it can't be parsed.
+        """
+        if duration is None or duration == "":
+            return None
+        if isinstance(duration, bool):
+            return None
+        if isinstance(duration, int):
+            return duration
+        s = str(duration).strip()
+        if ":" in s:
+            try:
+                parts = [int(p) for p in s.split(":")]
+            except ValueError:
+                return None
+            total = 0
+            for p in parts:  # H:M:S or M:S — each part is the next-smaller unit
+                total = total * 60 + p
+            return total
+        try:
+            return int(s)
+        except ValueError:
+            return None
+
+    @staticmethod
     def format_call_data_for_crm(
         caller: str,
         destination: str,
@@ -652,7 +680,9 @@ def create_crm_connector(config: Dict[str, Any]) -> CRMConnector:
     # Extract auth-specific parameters
     if auth_type == AuthType.API_KEY:
         kwargs["api_key"] = config.get("api_key")
-        kwargs["api_key_header"] = config.get("api_key_header", "X-API-Key")
+        # `or` rather than a get() default: a stored-but-empty header name would
+        # otherwise produce a nameless auth header and a "missing apikey" from the CRM.
+        kwargs["api_key_header"] = config.get("api_key_header") or "X-API-Key"
     
     elif auth_type == AuthType.BASIC_AUTH:
         kwargs["username"] = config.get("username")
@@ -690,37 +720,145 @@ def create_crm_connector(config: Dict[str, Any]) -> CRMConnector:
 # time a call hangs up. `caller`/`destination` are the call's identity and are
 # always sent (see build_crm_payload); the rest are opt-in.
 CRM_SYNC_FIELD_CATALOG: List[str] = [
-    "caller",             # caller number/extension (always sent)
-    "destination",        # destination number/extension (always sent)
-    "duration",           # total call time, HH:MM:SS
-    "talk_time",          # answer→hangup time, HH:MM:SS
+    "caller",             # caller number/extension
+    "destination",        # destination number/extension
+    "duration",           # total call time (see duration_format)
+    "talk_time",          # answer→hangup time (see duration_format)
     "datetime",           # call start, ISO 8601
-    "call_status",        # completed | busy | noanswer | failed | ...
+    "call_status",        # canonical outcome enum (see call_log.CALL_OUTCOMES)
     "call_type",          # inbound | outbound | internal
     "queue",              # queue name (queue calls only)
     "caller_name",        # CallerID name, when Asterisk provides it
-    "uniqueid",           # Asterisk channel Uniqueid
-    "linkedid",           # Asterisk Linkedid (groups the call legs)
-    "disposition",        # ANSWERED | NO ANSWER | BUSY | FAILED (CDR-style)
+    "call_id",            # Asterisk Linkedid — the call's cross-reference handle
+    "uniqueid",           # Asterisk channel Uniqueid (per-leg de-dup key)
+    "disposition",        # same canonical outcome enum as call_status
     "hangup_cause",       # raw Asterisk hangup cause code
     "agent",              # agent/extension that answered (queue calls)
+    "agent_name",         # display name of the answering agent
     "answered_extension", # extension that answered the call
     "queue_wait_time",    # seconds spent waiting in queue before answer
 ]
 
 _CRM_SYNC_FIELD_SET = set(CRM_SYNC_FIELD_CATALOG)
 
+# Catalog names that no longer exist, mapped to their replacement. Used by the
+# one-shot settings migration so an upgraded install doesn't silently lose a
+# selected field (parse_sync_fields drops anything not in the catalog).
+RETIRED_CRM_SYNC_FIELDS: Dict[str, str] = {
+    "linkedid": "call_id",
+}
+
 # Default selection when nothing has been configured yet. This is exactly the
 # field set the connector sent before the sync layer existed, so enabling CRM on
-# an upgraded install keeps producing the identical payload.
+# an upgraded install keeps sending the same *values* — only the JSON key names
+# change (see CRM_SYNC_JSON_KEYS).
 DEFAULT_CRM_SYNC_FIELDS: List[str] = [
     "caller", "destination", "duration", "talk_time",
     "datetime", "call_status", "call_type", "queue",
 ]
 
-# Fields that are always included in the payload regardless of selection — they
-# are the call's identity and keep the body meaningful for any receiver.
-CRM_SYNC_ALWAYS_FIELDS = ("caller", "destination")
+# Outbound JSON key names. The internal catalog uses snake_case, Asterisk-ish
+# names; the CRM receiver gets camelCase keys. Any field not listed keeps its
+# internal name — notably `caller`/`destination` (call identity, and the push
+# path logs key off them), plus already-clean single words like `queue` and
+# `disposition`. The duration fields are named dynamically (see
+# _outbound_json_key) so the key reflects whether the value is seconds or HH:MM:SS.
+CRM_SYNC_JSON_KEYS: Dict[str, str] = {
+    "datetime": "startTime",
+    "call_status": "status",
+    "call_type": "callType",
+    "caller_name": "callerName",
+    "call_id": "callId",
+    "uniqueid": "uniqueId",
+    "hangup_cause": "hangupCause",
+    "agent": "agentExt",
+    "agent_name": "agentName",
+    "answered_extension": "answeredExtension",
+    "queue_wait_time": "queueWaitTime",
+}
+
+
+def _outbound_json_key(field_name: str, *, to_seconds: bool) -> str:
+    """Map an internal payload key to its outbound JSON key.
+
+    The duration fields carry their unit in the name so the receiver isn't left
+    guessing: when the push sends integer seconds they become
+    `durationInSeconds`/`talkTimeInSeconds`; in HH:MM:SS mode they are the plain
+    `duration`/`talkTime`.
+    """
+    if field_name == "duration":
+        return "durationInSeconds" if to_seconds else "duration"
+    if field_name == "talk_time":
+        return "talkTimeInSeconds" if to_seconds else "talkTime"
+    return CRM_SYNC_JSON_KEYS.get(field_name, field_name)
+
+
+def default_outbound_keys() -> Dict[str, str]:
+    """Map every catalog field to the outbound JSON key it uses by default.
+
+    This is what the Settings UI shows beside each field so an operator knows the
+    key their CRM will receive (and can override it via CRM_SYNC_KEY_MAP). The
+    duration fields are shown in their HH:MM:SS form (`duration`/`talkTime`); the
+    seconds variants are chosen at send time by duration_format.
+    """
+    return {f: _outbound_json_key(f, to_seconds=False) for f in CRM_SYNC_FIELD_CATALOG}
+
+
+def parse_key_map(raw: Union[str, Dict[str, str], None]) -> Dict[str, str]:
+    """Normalise a stored outbound-key rename map into a clean {from: to} dict.
+
+    Lets an operator rename any outbound JSON key to whatever their CRM expects
+    (e.g. {"agentExt": "agentId"}). Accepts a dict or a JSON string. Keys/values
+    are trimmed; blank entries and no-op (from == to) renames are dropped. Only
+    renames of *known* default outbound keys are kept, so a stale UI value can't
+    inject arbitrary keys. Unknown/malformed input yields an empty map.
+    """
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    # Valid rename sources: every outbound key a field can produce, including the
+    # seconds-variant duration keys (either form may be the active one).
+    valid_sources = set(default_outbound_keys().values())
+    valid_sources.update({"durationInSeconds", "talkTimeInSeconds"})
+    out: Dict[str, str] = {}
+    for k, v in raw.items():
+        k = str(k or "").strip()
+        v = str(v or "").strip()
+        if k and v and k != v and k in valid_sources:
+            out[k] = v
+    return out
+
+
+def parse_status_map(raw: Union[str, Dict[str, str], None]) -> Dict[str, str]:
+    """Normalise a stored outcome value-map into an upper-cased {from: to} dict.
+
+    Lets an operator translate OpDesk's canonical outcome enum to whatever their
+    CRM accepts (e.g. {"BUSY": "NO_ANSWER"} for a CRM whose enum has no BUSY).
+    Accepts a dict or a JSON string; keys/values are upper-cased and blanks are
+    dropped. Unknown/malformed input yields an empty map (no remapping).
+    """
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for k, v in raw.items():
+        k = str(k or "").strip().upper()
+        v = str(v or "").strip().upper()
+        if k and v:
+            out[k] = v
+    return out
 
 
 def is_crm_sync_field(name: str) -> bool:
@@ -822,6 +960,9 @@ class CRMSyncConfig:
     dir_outbound: bool = True
     dir_internal: bool = True
     block_private: bool = False
+    duration_format: str = "hms"                              # "hms" | "seconds"
+    status_map: Dict[str, str] = field(default_factory=dict)  # {FROM: TO}, upper-cased
+    key_map: Dict[str, str] = field(default_factory=dict)     # {defaultKey: newKey}
 
     def direction_allowed(self, call_type: Optional[str]) -> bool:
         """Whether a call of this direction should be pushed."""
@@ -856,23 +997,121 @@ def parse_sync_fields(raw: Union[str, List[str], None]) -> List[str]:
     return out
 
 
-def build_crm_payload(all_fields: Dict[str, Any], selected: List[str]) -> Dict[str, Any]:
+_DURATION_FIELDS = ("duration", "talk_time")
+
+# The outcome-enum fields whose values a status map may rewrite. Both carry the
+# same canonical outcome enum (see call_log.CALL_OUTCOMES).
+_STATUS_MAPPED_FIELDS = ("call_status", "disposition")
+
+# Fields always emitted as an integer rather than a string (the agent extension
+# is a plain number, and CRMs that key on it expect a numeric id). A value that
+# can't be parsed as an int is left as-is.
+_INT_FIELDS = ("agent",)
+
+
+def build_crm_payload(all_fields: Dict[str, Any], selected: List[str],
+                      duration_format: str = "hms",
+                      status_map: Optional[Dict[str, str]] = None,
+                      key_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """
     Build the CRM push body from the full set of available call values, keeping
-    only the operator-selected fields that are actually present. `caller` and
-    `destination` (the call identity) are always included when available. A value
-    is "present" unless it is None or an empty string — numeric 0 is kept.
+    only the operator-selected fields that are actually present. Every field is
+    opt-in, including `caller`/`destination` — nothing is forced into the body. A
+    value is "present" unless it is None or an empty string — numeric 0 is kept.
+
+    duration_format controls how the time fields (duration, talk_time) are
+    rendered: "hms" -> "HH:MM:SS" (default), "seconds" -> integer seconds. The
+    conversion is applied whatever the stored form (int or "HH:MM:SS"), so the
+    receiver always gets the configured shape.
+
+    The returned dict uses the outbound JSON key names (camelCase, e.g.
+    `startTime`, `agentExt`, `status`) — see CRM_SYNC_JSON_KEYS. Internally fields
+    are still referenced by their catalog (snake_case) names everywhere else.
     """
     def present(v: Any) -> bool:
         return v is not None and v != ""
 
     keys: List[str] = []
-    for f in CRM_SYNC_ALWAYS_FIELDS:
-        if f not in keys:
-            keys.append(f)
     for f in selected:
         if f in _CRM_SYNC_FIELD_SET and f not in keys:
             keys.append(f)
 
-    return {f: all_fields[f] for f in keys if f in all_fields and present(all_fields[f])}
+    payload = {f: all_fields[f] for f in keys if f in all_fields and present(all_fields[f])}
+
+    to_seconds = (duration_format == "seconds")
+    for f in _DURATION_FIELDS:
+        if f not in payload:
+            continue
+        if to_seconds:
+            secs = CRMConnector.duration_to_seconds(payload[f])
+            if secs is not None:
+                payload[f] = secs
+        else:
+            payload[f] = CRMConnector.normalize_duration(payload[f])
+
+    # Status remap: translate the canonical outcome enum to whatever this CRM
+    # accepts (e.g. BUSY -> NO_ANSWER for a CRM enum without BUSY). Matched
+    # case-insensitively on the value; an unmapped value passes through unchanged.
+    # Applied to the internal keys before the camelCase rename.
+    if status_map:
+        for f in _STATUS_MAPPED_FIELDS:
+            if f in payload and payload[f] is not None:
+                payload[f] = status_map.get(str(payload[f]).strip().upper(), payload[f])
+
+    # Numeric fields: always send as an integer, not a string (e.g. the agent
+    # extension "305" -> 305). A value that can't be parsed as an int is left
+    # as-is rather than dropped or nulled.
+    for f in _INT_FIELDS:
+        if f in payload and not isinstance(payload[f], bool):
+            try:
+                payload[f] = int(str(payload[f]).strip())
+            except (TypeError, ValueError):
+                pass  # unparseable -> leave the original value untouched
+
+    # Rename internal snake_case keys to their outbound camelCase JSON names,
+    # preserving insertion order. This is the single place the wire format is
+    # decided.
+    out = {_outbound_json_key(k, to_seconds=to_seconds): v for k, v in payload.items()}
+
+    # Operator outbound-key rename: any default key may be renamed to whatever the
+    # CRM expects (e.g. agentExt -> agentId). Applied last, on the already-camelCased
+    # keys, preserving order.
+    #
+    # Collision guard: a rename target that would land on a key already in the body
+    # (another rename's target, or an unrenamed default key) is DROPPED — the source
+    # keeps its original key instead of clobbering the other value. This prevents a
+    # mis-configured map (two fields -> the same key) from silently losing a value;
+    # without it, dict-build would let the last writer win.
+    if key_map:
+        # In seconds mode the duration fields go out as talkTimeInSeconds/
+        # durationInSeconds, but the Settings UI keys the rename on the HH:MM:SS
+        # form (talkTime/duration). Translate those source keys to the active form
+        # so the rename matches the real wire key.
+        if to_seconds:
+            key_map = {
+                {"talkTime": "talkTimeInSeconds", "duration": "durationInSeconds"}.get(k, k): v
+                for k, v in key_map.items()
+            }
+        renamed: Dict[str, Any] = {}
+        for k, v in out.items():
+            target = key_map.get(k, k)
+            if target != k and target in out:
+                # Target is (or will be) a real key from another field — refuse the
+                # rename and keep the original key so no value is dropped.
+                log.warning(
+                    "CRM key rename %r -> %r skipped: target collides with an "
+                    "existing field; keeping %r", k, target, k)
+                target = k
+            if target in renamed:
+                # Two sources already resolved to the same target this pass — keep
+                # the first, drop the rename for the later one to avoid overwrite.
+                log.warning(
+                    "CRM key %r skipped: %r already emitted by another field", k, target)
+                target = k
+                if target in renamed:
+                    continue  # even the original key is taken; nothing safe to do
+            renamed[target] = v
+        out = renamed
+
+    return out
 

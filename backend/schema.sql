@@ -347,3 +347,64 @@ CREATE TABLE IF NOT EXISTS call_supervision (
     INDEX idx_target_linkedid (target_linkedid),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
+-- Machine-to-machine API keys
+-- ---------------------------------------------------------------------------
+-- Long-lived system credentials scoped to an explicit permission list. The
+-- plaintext key (prefix "opd_") is shown once at creation; only its SHA-256 hash
+-- is stored. `scopes` is a JSON array of permission tokens, kept as TEXT rather
+-- than a native JSON column for MariaDB 5.5 compatibility (see the header note).
+CREATE TABLE IF NOT EXISTS api_keys (
+    id           INT PRIMARY KEY AUTO_INCREMENT,
+    name         VARCHAR(191) NOT NULL,
+    key_prefix   VARCHAR(16)  NOT NULL,   -- leading chars of the token, for display ("opd_ab12cd34…")
+    key_hash     CHAR(64)     NOT NULL,   -- SHA-256 hex of the full plaintext key
+    scopes       TEXT         NOT NULL,   -- JSON array of permission strings
+    enabled      TINYINT(1)   NOT NULL DEFAULT 1,
+    created_by   INT          NULL,       -- users.id of the admin who created it
+    last_used_at TIMESTAMP    NULL,
+    expires_at   TIMESTAMP    NULL,       -- NULL => never expires
+    created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_api_key_hash (key_hash),
+    INDEX idx_api_key_prefix (key_prefix)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
+-- CRM webhook delivery log
+-- ---------------------------------------------------------------------------
+-- One row per CRM push attempt (Logs -> Deliveries in the UI). The push is
+-- fire-and-forget with no automatic retry, so this is the only record an operator
+-- has of a failed delivery, and the source a manual Resend replays from.
+--
+-- PRIVACY: rows contain call metadata (phone numbers, caller/agent names,
+-- extensions) and the full request body, so this table inherits the database's
+-- backup and retention posture. Request headers are deliberately NOT stored — that
+-- is where the CRM credentials are. `url` is stored with its query string and any
+-- embedded credentials stripped. Rows are pruned per WEBHOOK_LOG_RETENTION_DAYS.
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    call_id       VARCHAR(64)   NULL,      -- Linkedid; joins to the call log
+    uniqueid      VARCHAR(64)   NULL,      -- per-leg id (receiver de-dup key)
+    caller        VARCHAR(64)   NULL,
+    destination   VARCHAR(64)   NULL,
+    call_type     VARCHAR(16)   NULL,      -- inbound | outbound | internal
+    call_status   VARCHAR(24)   NULL,      -- canonical outcome at send time
+    method        VARCHAR(8)    NOT NULL DEFAULT 'POST',
+    url           VARCHAR(1024) NOT NULL,  -- redacted: no query string, no userinfo
+    request_body  MEDIUMTEXT    NULL,      -- JSON actually sent, truncated
+    status_code   SMALLINT      NULL,      -- NULL => transport error, never reached the CRM
+    success       TINYINT(1)    NOT NULL DEFAULT 0,
+    response_body MEDIUMTEXT    NULL,      -- truncated; may be non-JSON
+    error         TEXT          NULL,      -- truncated
+    duration_ms   INT UNSIGNED  NULL,
+    attempt       SMALLINT UNSIGNED NOT NULL DEFAULT 1,  -- 1 = original, >1 = manual resend
+    parent_id     BIGINT        NULL,      -- the delivery a resend derives from
+    resent_by     INT           NULL,      -- users.id who clicked Resend
+    truncated     TINYINT(1)    NOT NULL DEFAULT 0,      -- request_body was clipped => not resendable
+    INDEX idx_created (created_at),
+    INDEX idx_call (call_id),
+    INDEX idx_success_created (success, created_at),
+    INDEX idx_parent (parent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

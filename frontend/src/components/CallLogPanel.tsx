@@ -151,13 +151,17 @@ function getAudioSummary(qos: QoSData, t: TFunction): string {
   return parts.join('; ') || t('callLog.audioDesc.noData');
 }
 
+// Keyed on the canonical outcome enum (backend/call_log.py CALL_OUTCOMES).
 const STATUS_CONFIG: Record<string, { color: string; bg: string }> = {
-  completed:   { color: '#3fb950', bg: 'rgba(63,185,80,0.12)' },
-  failed:      { color: '#f85149', bg: 'rgba(248,81,73,0.12)' },
-  no_answer:   { color: '#d29922', bg: 'rgba(210,153,34,0.12)' },
-  in_progress: { color: '#58a6ff', bg: 'rgba(88,166,255,0.12)' },
-  busy:        { color: '#f0883e', bg: 'rgba(240,136,62,0.12)' },
-  switched_off:{ color: '#6e7681', bg: 'rgba(110,118,129,0.12)' },
+  ANSWERED:     { color: '#3fb950', bg: 'rgba(63,185,80,0.12)' },
+  NO_ANSWER:    { color: '#d29922', bg: 'rgba(210,153,34,0.12)' },
+  BUSY:         { color: '#f0883e', bg: 'rgba(240,136,62,0.12)' },
+  FAILURE:      { color: '#f85149', bg: 'rgba(248,81,73,0.12)' },
+  ABANDONED:    { color: '#db6d28', bg: 'rgba(219,109,40,0.12)' },
+  CANCELED:     { color: '#8b949e', bg: 'rgba(139,148,158,0.12)' },
+  DROPPED:      { color: '#da3633', bg: 'rgba(218,54,51,0.12)' },
+  OUT_OF_REACH: { color: '#6e7681', bg: 'rgba(110,118,129,0.12)' },
+  in_progress:  { color: '#58a6ff', bg: 'rgba(88,166,255,0.12)' },
 };
 
 const ITEMS_PER_PAGE = 25;
@@ -757,8 +761,8 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
 
   function statusDot(s: string): SelectOption['dot'] {
     if (s === 'ANSWERED') return 'green';
-    if (s === 'NO ANSWER' || s === 'BUSY') return 'orange';
-    if (s === 'FAILED') return 'red';
+    if (s === 'NO_ANSWER' || s === 'BUSY' || s === 'ABANDONED') return 'orange';
+    if (s === 'FAILURE' || s === 'DROPPED') return 'red';
     return 'neutral';
   }
 
@@ -1012,8 +1016,8 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                       <span
                         className="cl-status-badge"
                         style={{ color: st.color, background: st.bg, borderColor: st.color }}
-                        onClick={() => { if (call.status === 'completed' && hasQos) handleOpenQos(call); }}
-                        role={call.status === 'completed' && hasQos ? 'button' : undefined}
+                        onClick={() => { if (call.status === 'ANSWERED' && hasQos) handleOpenQos(call); }}
+                        role={call.status === 'ANSWERED' && hasQos ? 'button' : undefined}
                       >
                         {stLabel}
                       </span>

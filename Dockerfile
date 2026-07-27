@@ -34,6 +34,10 @@ COPY backend/ /opt/opdesk/backend/
 # Copy built frontend into the location server.py expects: ../frontend/dist
 COPY --from=frontend_builder /opt/opdesk/frontend/dist /opt/opdesk/frontend/dist
 
+# API docs — GET /api/openapi.yaml resolves ../docs/api/openapi.yaml relative to
+# backend/, so the docs tree has to ship in the image or that route 404s.
+COPY docs/ /opt/opdesk/docs/
+
 # Optional: include start.sh (not required, but useful)
 COPY start.sh /opt/opdesk/start.sh
 RUN chmod +x /opt/opdesk/start.sh

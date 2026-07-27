@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote
@@ -21,7 +22,9 @@ from dotenv import load_dotenv
 
 import jwt
 from pydantic import BaseModel
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Body, Request
+from fastapi import (FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends,
+                     Body, Request, Response, Query)
+from fastapi.routing import APIRoute
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -43,10 +46,16 @@ from db_manager import (
     init_pause_reasons_table, pause_reason_list, pause_reason_create, pause_reason_update, pause_reason_delete,
     init_call_supervision_table,
     init_agent_activity_table,
+    # Machine-to-machine API keys
+    API_KEY_PREFIX, init_api_keys_table, create_api_key, list_api_keys, get_api_key,
+    update_api_key, delete_api_key, lookup_api_key,
+    # CRM webhook delivery log
+    init_webhook_deliveries_table, list_webhook_deliveries, get_webhook_delivery,
+    prune_webhook_deliveries,
 )
 from agent_presence import PresenceRecorder
-from dialplan import enable_qos, disable_qos, enable_sip_tls, disable_sip_tls, enable_mobile_wake, disable_mobile_wake, enable_recording, disable_recording, reload_asterisk_sip
-from call_log import call_log as get_call_log, build_call_journey_from_cdr
+from dialplan import enable_qos, disable_qos, enable_sip_tls, disable_sip_tls, enable_mobile_wake, disable_mobile_wake, enable_recording, disable_recording, reload_asterisk_sip, set_pjsip_logger
+from call_log import call_log as get_call_log, build_call_journey_from_cdr, CALL_OUTCOMES
 import analytics as analytics_module
 import push_service
 
@@ -58,7 +67,9 @@ try:
     from crm import (
         CRMConnector, create_crm_connector, AuthType,
         CRM_SYNC_FIELD_CATALOG, DEFAULT_CRM_SYNC_FIELDS, CRMSyncConfig,
-        parse_sync_fields, validate_crm_url, redact_url,
+        RETIRED_CRM_SYNC_FIELDS,
+        parse_sync_fields, parse_key_map, parse_status_map,
+        default_outbound_keys, validate_crm_url, redact_url,
     )
 except ImportError:
     CRMConnector = None
@@ -67,7 +78,11 @@ except ImportError:
     CRM_SYNC_FIELD_CATALOG = []
     DEFAULT_CRM_SYNC_FIELDS = []
     CRMSyncConfig = None
+    RETIRED_CRM_SYNC_FIELDS = {}
     parse_sync_fields = None
+    parse_key_map = None
+    parse_status_map = None
+    default_outbound_keys = None
     validate_crm_url = None
     redact_url = None
 
@@ -86,6 +101,228 @@ watchfiles_logger.setLevel(logging.WARNING)
 # Apply filter to root logger to catch all "change detected" messages
 root_logger = logging.getLogger()
 root_logger.addFilter(SuppressChangeDetectedFilter())
+
+
+# ---------------------------------------------------------------------------
+# System Logs — live Asterisk AMI event stream
+# ---------------------------------------------------------------------------
+# The System Logs panel shows the raw AMI event feed. The monitor calls our
+# raw-event sink for every parsed event (ami.set_raw_event_sink) BEFORE the
+# WATCHED_EVENTS filter, so the panel sees the whole stream rather than the ~27
+# events the app itself acts on.
+#
+# In memory only — capped at _AMI_BUFFER_CAPACITY events and lost on restart. That
+# is deliberate: this is a live debugging console, not an audit trail, and
+# persisting a high-rate event feed would cost far more than it is worth. Buffering
+# is OFF by default so the steady-state cost is one attribute read per AMI event.
+
+from collections import deque
+import threading
+import time as _time
+
+# AMI fields that are pure plumbing/noise — hidden from the one-line summary (kept
+# in `fields` so the expanded view still has them).
+_AMI_SUMMARY_SKIP = {"Event", "Privilege", "SystemName", "Timestamp"}
+# Capacity is generous because AMI can be chatty under load.
+_AMI_BUFFER_CAPACITY = 3000
+
+
+class AMIEventBuffer:
+    """Retains the most recent AMI events in memory for the System Logs panel."""
+
+    def __init__(self, capacity: int = _AMI_BUFFER_CAPACITY):
+        self._buf: deque = deque(maxlen=capacity)
+        self._seq = 0
+        self._lock = threading.Lock()
+        self.enabled: bool = False
+
+    def add(self, event: dict):
+        """Sink: record one parsed AMI event.
+
+        Runs on the AMI read path for EVERY event, so it must stay synchronous and
+        cheap — never add a DB write or a broadcast here or AMI event processing
+        stalls globally.
+        """
+        if not self.enabled:
+            return
+        ev = event.get("Event", "")
+        if not ev:
+            return
+        fields = {k: v for k, v in event.items() if k != "Event"}
+        summary = " ".join(
+            f"{k}={v}" for k, v in event.items()
+            if k not in _AMI_SUMMARY_SKIP and v
+        )
+        with self._lock:
+            self._seq += 1
+            self._buf.append({
+                "seq": self._seq,
+                "event": ev,
+                "ts": _time.time(),
+                "summary": summary,
+                "fields": fields,
+            })
+
+    def snapshot(self, since: int = 0, event: str = "", q: str = "", limit: int = 2000) -> list:
+        """Return buffered events newer than `since`, optionally filtered by event-name
+        substring and free-text `q` (matches event name or summary). Oldest first."""
+        ev_l = (event or "").lower()
+        q_l = (q or "").lower()
+        with self._lock:
+            rows = [
+                e for e in self._buf
+                if e["seq"] > since
+                and (not ev_l or ev_l in e["event"].lower())
+                and (not q_l or q_l in e["event"].lower() or q_l in e["summary"].lower())
+            ]
+        if len(rows) > limit:
+            rows = rows[-limit:]
+        return rows
+
+    def add_sip(self, summary: str, raw: str):
+        """Record a SIP message captured by the SIP tracer as a synthetic 'SIP' entry.
+
+        Not gated on `enabled`: the SIP toggle is its own switch, so a trace can be
+        watched without also buffering the whole AMI feed.
+        """
+        with self._lock:
+            self._seq += 1
+            self._buf.append({
+                "seq": self._seq,
+                "event": "SIP",
+                "ts": _time.time(),
+                "summary": summary,
+                "fields": {"Message": raw},
+            })
+
+    def event_names(self) -> list:
+        """Distinct event names currently buffered (sorted), for the filter dropdown."""
+        with self._lock:
+            names = {e["event"] for e in self._buf}
+        return sorted(names)
+
+
+ami_event_buffer = AMIEventBuffer()
+
+
+# ---------------------------------------------------------------------------
+# System Logs — raw SIP message trace
+# ---------------------------------------------------------------------------
+# Asterisk writes SIP messages to its own log file when the PJSIP logger is on, not
+# over AMI. To interleave them with the AMI feed we tail that file, reassemble each
+# multi-line SIP block, and push it into the same buffer as a 'SIP' entry.
+
+# Default FreePBX/Issabel path; override with ASTERISK_LOG_FILE if needed.
+ASTERISK_LOG_FILE = os.getenv("ASTERISK_LOG_FILE", "/var/log/asterisk/full")
+
+_SIP_START_RE = re.compile(r"<---\s*(Received|Transmitting|Sending)", re.IGNORECASE)
+_SIP_END_RE = re.compile(r"^<-{3,}>$")
+
+
+class SipTracer:
+    """Tails the Asterisk log file and feeds reassembled SIP messages to the buffer.
+
+    Runs in a daemon thread because the tail is blocking file IO. Start/stop is driven
+    by the panel's SIP toggle; `last_error` surfaces a path/permission problem back to
+    the UI instead of failing silently.
+    """
+
+    def __init__(self, buffer: AMIEventBuffer, log_path: str):
+        self.buffer = buffer
+        self.log_path = log_path
+        self.enabled = False
+        self.last_error: Optional[str] = None
+        self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+
+    def start(self) -> bool:
+        if self.enabled:
+            return True
+        # Verify the file is actually readable before claiming success — the common
+        # failure here is a permission or path problem, not a runtime one.
+        try:
+            open(self.log_path, "r").close()
+        except OSError as e:
+            self.last_error = f"Cannot read {self.log_path}: {e.strerror or e}"
+            log.warning("SIP tracer: %s", self.last_error)
+            return False
+        self.last_error = None
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="sip-tracer")
+        self._thread.start()
+        self.enabled = True
+        return True
+
+    def stop(self):
+        self._stop.set()
+        self.enabled = False
+
+    def _emit(self, block: list):
+        header = block[0]
+        idx = header.find("<---")
+        htext = header[idx:] if idx >= 0 else header
+        summary = htext.replace("<---", "").replace("--->", "").strip()
+        self.buffer.add_sip(summary or "SIP message", "\n".join(block))
+
+    def _run(self):
+        f = None
+        inode = None
+        block: list = []
+        in_block = False
+        while not self._stop.is_set():
+            try:
+                if f is None:
+                    f = open(self.log_path, "r", errors="replace")
+                    f.seek(0, os.SEEK_END)
+                    inode = os.fstat(f.fileno()).st_ino
+                line = f.readline()
+                if not line:
+                    # No new data: check for log rotation, then wait briefly.
+                    try:
+                        if os.stat(self.log_path).st_ino != inode:
+                            f.close()
+                            f = None
+                            continue
+                    except OSError:
+                        pass
+                    self._stop.wait(0.4)
+                    continue
+                line = line.rstrip("\n")
+                stripped = line.strip()
+                if _SIP_START_RE.search(line):
+                    # A new block starts; flush any unterminated previous block.
+                    if in_block and len(block) > 1:
+                        self._emit(block)
+                    in_block = True
+                    block = [line]
+                elif in_block:
+                    if _SIP_END_RE.match(stripped):
+                        self._emit(block)
+                        in_block = False
+                        block = []
+                    else:
+                        block.append(line)
+                        if len(block) > 300:  # safety cap against a runaway block
+                            self._emit(block)
+                            in_block = False
+                            block = []
+            except Exception as e:
+                log.debug("SIP tracer tail error: %s", e)
+                try:
+                    if f:
+                        f.close()
+                except Exception:
+                    pass
+                f = None
+                self._stop.wait(1.0)
+        if f:
+            try:
+                f.close()
+            except Exception:
+                pass
+
+
+sip_tracer = SipTracer(ami_event_buffer, ASTERISK_LOG_FILE)
 
 
 def detect_local_ip() -> str:
@@ -621,6 +858,15 @@ def load_crm_sync_config() -> Optional["CRMSyncConfig"]:
     if not fields:
         fields = list(DEFAULT_CRM_SYNC_FIELDS)
 
+    duration_format = (get_setting('CRM_SYNC_DURATION_FORMAT',
+                                   os.getenv('CRM_SYNC_DURATION_FORMAT', 'hms'))
+                       or 'hms').strip().lower()
+    if duration_format not in ('hms', 'seconds'):
+        duration_format = 'hms'
+
+    status_map = parse_status_map(get_setting('CRM_SYNC_STATUS_MAP', '')) if parse_status_map else {}
+    key_map = parse_key_map(get_setting('CRM_SYNC_KEY_MAP', '')) if parse_key_map else {}
+
     return CRMSyncConfig(
         enabled=_flag('CRM_SYNC_ENABLED'),
         endpoint=sync_endpoint,
@@ -630,7 +876,42 @@ def load_crm_sync_config() -> Optional["CRMSyncConfig"]:
         dir_outbound=_flag('CRM_SYNC_DIR_OUTBOUND'),
         dir_internal=_flag('CRM_SYNC_DIR_INTERNAL'),
         block_private=_flag('CRM_BLOCK_PRIVATE', 'false'),
+        duration_format=duration_format,
+        status_map=status_map,
+        key_map=key_map,
     )
+
+
+def _migrate_crm_sync_fields() -> None:
+    """One-shot: rewrite retired catalog names in the stored CRM_SYNC_FIELDS.
+
+    parse_sync_fields() silently discards any field not in the current catalog, so
+    without this an upgraded install would lose a selected field (e.g. `linkedid`,
+    now `call_id`) with no warning. Idempotent — after the first run the stored
+    value contains no retired names.
+    """
+    if not RETIRED_CRM_SYNC_FIELDS:
+        return
+    try:
+        raw = get_setting('CRM_SYNC_FIELDS', '')
+        if not raw:
+            return
+        out, seen, changed = [], set(), False
+        for name in str(raw).split(','):
+            name = name.strip()
+            if not name:
+                continue
+            if name in RETIRED_CRM_SYNC_FIELDS:
+                name = RETIRED_CRM_SYNC_FIELDS[name]
+                changed = True
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+        if changed:
+            set_setting('CRM_SYNC_FIELDS', ','.join(out))
+            log.info("Migrated retired CRM_SYNC_FIELDS names -> %s", ','.join(out))
+    except Exception as e:
+        log.warning("CRM_SYNC_FIELDS migration skipped: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +950,10 @@ async def lifespan(app: FastAPI):
     init_call_supervision_table()
     # Ensure the agent presence segments table (Agent Adherence data source) exists
     init_agent_activity_table()
+    # Ensure the machine-to-machine API key table exists
+    init_api_keys_table()
+    # Ensure the CRM webhook delivery log table exists
+    init_webhook_deliveries_table()
 
 
     # WebRTC default host: prefer the configured public domain (its TLS cert matches); otherwise
@@ -693,15 +978,23 @@ async def lifespan(app: FastAPI):
         'CRM_SYNC_DIR_OUTBOUND': 'true',
         'CRM_SYNC_DIR_INTERNAL': 'true',
         'CRM_BLOCK_PRIVATE': 'false',  # allow on-prem/LAN CRM by default
+        'CRM_SYNC_DURATION_FORMAT': 'hms',  # hms | seconds
+        'CRM_SYNC_STATUS_MAP': '{}',        # {FROM: TO} outcome remap
+        'CRM_SYNC_KEY_MAP': '{}',           # {defaultKey: customKey} rename
+        'WEBHOOK_LOG_RETENTION_DAYS': '30',
+        'CLICK_TO_CALL_CONTEXT': 'from-internal',
         'WEBRTC_PBX_SERVER': f'wss://{webrtc_host}/sip-ws',
     }
-    
+
     for key, default_value in default_settings.items():
         current_value = get_setting(key)
         if current_value is None or current_value == '':
             set_setting(key, default_value)
             log.info(f"Initialized default setting: {key}={default_value}")
-    
+
+    # Rewrite retired catalog names before any sync config is read.
+    _migrate_crm_sync_fields()
+
     # Initialize CRM connector if configured
     crm_connector = init_crm_connector()
     
@@ -788,6 +1081,10 @@ async def lifespan(app: FastAPI):
             except RuntimeError:
                 pass
         monitor.set_call_notification_callback(_on_call_notification_new)
+
+        # Feed the System Logs panel. The buffer is disabled by default, so until an
+        # admin turns it on this costs one attribute read per AMI event.
+        monitor.set_raw_event_sink(ami_event_buffer.add)
 
         def _on_incoming_call(ext: str, caller: str, call_id: str, display_name: str):
             try:
@@ -939,10 +1236,8 @@ def _get_user_scope(user_id: int) -> dict:
     }
 
 
-async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> dict:
-    """Dependency: require valid JWT. Returns user with id, username, role, extension, allowed_agent_extensions, allowed_queue_names."""
+def _user_from_jwt(credentials: Optional[HTTPAuthorizationCredentials]) -> dict:
+    """Resolve a bearer JWT into the principal dict. Raises 401 if it is missing or invalid."""
     if not credentials or not credentials.credentials:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = decode_token(credentials.credentials)
@@ -959,6 +1254,105 @@ async def get_current_user(
         "allowed_agent_extensions": scope.get("allowed_agent_extensions"),
         "allowed_queue_names": scope.get("allowed_queue_names"),
     }
+
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> dict:
+    """Dependency: require a valid JWT. Returns id, username, role, extension,
+    allowed_agent_extensions, allowed_queue_names.
+
+    ⚠️  DELIBERATELY JWT-ONLY — it must NEVER consult _extract_api_key(). This is the
+    fail-closed property of the whole API-key design: a machine key works only on the
+    routes explicitly wired with require_scope(), so every other route — all of
+    /api/settings*, /api/crm/*, /api/api-keys*, /api/logs*, /api/users* — is
+    unreachable by a key. "Unifying" the two dependencies would silently promote every
+    API key to a full admin credential.
+    """
+    return _user_from_jwt(credentials)
+
+
+# ---------------------------------------------------------------------------
+# Machine-to-machine API keys
+# ---------------------------------------------------------------------------
+API_KEY_HEADER = "X-API-Key"
+
+# Permission tokens a key can be granted, in `resource:verb` form. Every one of these
+# gates at least one real route (see require_scope call sites) — unreachable
+# "reserved" scopes are deliberately not offered, because showing them in the
+# Settings picker invites operators to grant access that does not exist.
+ALL_PERMISSIONS = [
+    "calls:read",      # live calls, extensions, queues, AMI status
+    "calls:write",     # call origination (click-to-call)
+    "cdr:read",        # call history, journey, VAD, recordings
+    "analytics:read",  # dashboards, KPIs, CSV/XLSX export
+]
+
+
+def _extract_api_key(request: Request) -> Optional[str]:
+    """Pull a presented API key from the request, or None.
+
+    Accepted as `X-API-Key`, or as `Authorization: Bearer opd_…` — the key prefix is
+    what disambiguates a key from a JWT on the shared Authorization header.
+    """
+    key = request.headers.get(API_KEY_HEADER)
+    if key and key.strip():
+        return key.strip()
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        if API_KEY_PREFIX and token.startswith(API_KEY_PREFIX):
+            return token
+    return None
+
+
+def _apikey_principal(meta: dict) -> dict:
+    """Shape a validated key into a principal dict.
+
+    role is "admin" and the row-scoping lists are None so downstream per-user
+    filtering (call-log extension scoping, _analytics_scope) returns unrestricted
+    data — a machine credential is a *system* principal, not a person. What the key
+    can actually reach is bounded by its scopes, not by this role.
+    """
+    return {
+        "id": None,
+        "username": f"apikey:{meta['name']}",
+        "role": "admin",
+        "extension": None,
+        "monitor_modes": ["listen", "whisper", "barge"],
+        "allowed_agent_extensions": None,
+        "allowed_queue_names": None,
+        "api_key": True,
+        "api_key_id": meta["id"],
+        "scopes": meta.get("scopes") or [],
+    }
+
+
+def require_scope(scope: str):
+    """Dependency factory for the integration surface: accept an API key holding
+    `scope`, or fall back to a normal JWT.
+
+    Note the JWT fallback performs NO role check — that is correct for the read
+    routes, which already scope their rows by the caller's groups, but any route with
+    a side effect must add its own authorisation check on top (see click-to-call).
+    """
+    async def dependency(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    ) -> dict:
+        raw_key = _extract_api_key(request)
+        if raw_key:
+            meta = lookup_api_key(raw_key) if lookup_api_key else None
+            if not meta:
+                raise HTTPException(status_code=401, detail="Invalid or expired API key")
+            if scope not in (meta.get("scopes") or []):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"API key missing required scope: {scope}")
+            return _apikey_principal(meta)
+        return _user_from_jwt(credentials)
+
+    return dependency
 
 
 # ---------------------------------------------------------------------------
@@ -1225,6 +1619,298 @@ def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
     return current_user
+
+
+# ---------------------------------------------------------------------------
+# API key management (admin only)
+# ---------------------------------------------------------------------------
+# These routes are require_admin, i.e. JWT-only, so a key can never mint, inspect or
+# escalate another key.
+class ApiKeyCreateBody(BaseModel):
+    name: str
+    scopes: list
+    expires_at: Optional[str] = None  # 'YYYY-MM-DD' or ISO; omit/empty => never expires
+
+
+class ApiKeyUpdateBody(BaseModel):
+    name: Optional[str] = None
+    scopes: Optional[list] = None
+    enabled: Optional[bool] = None
+    expires_at: Optional[str] = None  # "" clears the expiry
+
+
+def _validate_scopes(scopes: list) -> list:
+    unknown = [s for s in scopes if s not in ALL_PERMISSIONS]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown scope(s): {', '.join(unknown)}")
+    return list(scopes)
+
+
+# Declared BEFORE /api/api-keys/{key_id} — otherwise "permissions" is parsed as the
+# int path param and the route 422s.
+@app.get("/api/api-keys/permissions")
+async def api_list_permissions(current_user: dict = Depends(require_admin)):
+    """The permission tokens a key can be granted (drives the Settings scope picker)."""
+    return {"permissions": ALL_PERMISSIONS}
+
+
+@app.get("/api/api-keys")
+async def api_list_api_keys(current_user: dict = Depends(require_admin)):
+    """List API keys. Metadata only — the plaintext is unrecoverable after creation."""
+    keys = await asyncio.to_thread(list_api_keys)
+    return {"api_keys": keys}
+
+
+@app.post("/api/api-keys", status_code=201)
+async def api_create_api_key(body: ApiKeyCreateBody, current_user: dict = Depends(require_admin)):
+    """Create an API key. The response carries the plaintext `key` — shown exactly once."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    scopes = _validate_scopes(body.scopes or [])
+    if not scopes:
+        raise HTTPException(status_code=400, detail="At least one scope is required")
+    result = await asyncio.to_thread(
+        create_api_key, name, scopes, current_user.get("id"), body.expires_at)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to create API key")
+    log.info("API key created: %s (scopes=%s) by %s",
+             name, ",".join(scopes), current_user.get("username"))
+    return result
+
+
+@app.patch("/api/api-keys/{key_id}")
+async def api_update_api_key(key_id: int, body: ApiKeyUpdateBody,
+                             current_user: dict = Depends(require_admin)):
+    """Update an API key's name, scopes, enabled flag or expiry. Partial update."""
+    existing = await asyncio.to_thread(get_api_key, key_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="API key not found")
+    scopes = _validate_scopes(body.scopes) if body.scopes is not None else None
+    result = await asyncio.to_thread(
+        update_api_key, key_id, body.name, scopes, body.enabled, body.expires_at)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to update API key")
+    return result
+
+
+@app.delete("/api/api-keys/{key_id}", status_code=204)
+async def api_delete_api_key(key_id: int, current_user: dict = Depends(require_admin)):
+    """Revoke (hard-delete) an API key. It stops authenticating immediately."""
+    ok = await asyncio.to_thread(delete_api_key, key_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="API key not found")
+    log.info("API key #%s revoked by %s", key_id, current_user.get("username"))
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Integration API (machine-to-machine)
+# ---------------------------------------------------------------------------
+class ClickToCallBody(BaseModel):
+    """Ring `extension` first; when it answers, dial `number`."""
+    extension: str
+    number: str
+    caller_id: Optional[str] = None
+    timeout: Optional[int] = 30  # seconds, 5..120
+
+
+@app.post("/api/integration/click-to-call", status_code=202)
+async def api_click_to_call(body: ClickToCallBody,
+                            current_user: dict = Depends(require_scope("calls:write"))):
+    """Originate a call from an extension to a number.
+
+    202, not 200: Asterisk acknowledges the Originate long before the call connects.
+    Correlate the outcome via the returned action_id, the WebSocket feed, or the CDR.
+    """
+    if monitor is None or not getattr(monitor, 'connected', False):
+        raise HTTPException(status_code=503, detail="AMI not connected")
+
+    ext = str(body.extension or '').strip()
+    if not ext:
+        raise HTTPException(status_code=400, detail="extension is required")
+    if ext not in monitor.monitored:
+        # Checked before anything is passed to AMI — never let an unvalidated string
+        # reach the Channel field.
+        raise HTTPException(status_code=404, detail=f"Unknown extension: {ext}")
+
+    # Authorisation. require_scope falls back to a JWT with NO role check, so without
+    # this any logged-in agent could dial from a colleague's phone.
+    if not current_user.get("api_key"):
+        if current_user.get("role") != "admin":
+            allowed = current_user.get("allowed_agent_extensions")
+            own = str(current_user.get("extension") or '')
+            if ext != own and not (allowed and ext in allowed):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Not permitted to originate calls from this extension")
+
+    num = monitor.normalize_dial_number(body.number)
+    if not num:
+        raise HTTPException(
+            status_code=400,
+            detail="number must be 2-20 digits, optionally starting with '+' "
+                   "(spaces, dashes, dots and brackets are stripped)")
+
+    try:
+        timeout_s = int(body.timeout or 30)
+    except (TypeError, ValueError):
+        timeout_s = 30
+    if not 5 <= timeout_s <= 120:
+        raise HTTPException(status_code=400, detail="timeout must be between 5 and 120 seconds")
+
+    ctx = get_setting('CLICK_TO_CALL_CONTEXT', os.getenv('CLICK_TO_CALL_CONTEXT', 'from-internal'))
+    ok, msg = await monitor.originate_call(
+        ext, num, context=ctx, timeout_ms=timeout_s * 1000, caller_id=body.caller_id)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Asterisk rejected the call: {msg}")
+
+    log.info("Click-to-call accepted: %s -> %s (by %s)", ext, num, current_user.get("username"))
+    return {"accepted": True, "action_id": msg, "extension": ext, "number": num}
+
+
+# ---------------------------------------------------------------------------
+# Logs (admin only): live AMI event stream + CRM webhook delivery log
+# ---------------------------------------------------------------------------
+# Admin-only and deliberately NOT require_scope: the delivery log holds raw CRM
+# request bodies, so a cdr:read integration key must not be able to read them.
+#
+# Literal sub-paths are declared before any /api/logs/{param} route so they are not
+# swallowed by a path parameter.
+class AmiLogToggleBody(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/logs")
+async def api_get_logs(since: int = 0, event: str = "", q: str = "",
+                       current_user: dict = Depends(require_admin)):
+    """Live AMI events newer than `since`. The panel polls this with a seq cursor."""
+    return {"lines": ami_event_buffer.snapshot(since=since, event=event, q=q)}
+
+
+@app.get("/api/logs/events")
+async def api_get_log_event_names(current_user: dict = Depends(require_admin)):
+    """Distinct AMI event names currently buffered (drives the filter dropdown)."""
+    return {"events": ami_event_buffer.event_names()}
+
+
+@app.get("/api/logs/ami")
+async def api_get_ami_logging(current_user: dict = Depends(require_admin)):
+    """Whether AMI event buffering is currently on."""
+    return {"enabled": ami_event_buffer.enabled}
+
+
+@app.post("/api/logs/ami")
+async def api_set_ami_logging(body: AmiLogToggleBody, current_user: dict = Depends(require_admin)):
+    """Turn AMI event buffering on/off. Off by default — this is a debugging tool."""
+    ami_event_buffer.enabled = bool(body.enabled)
+    log.info("AMI event buffering %s by %s",
+             "enabled" if body.enabled else "disabled", current_user.get("username"))
+    return {"enabled": ami_event_buffer.enabled}
+
+
+@app.get("/api/logs/siptrace")
+async def api_get_sip_trace(current_user: dict = Depends(require_admin)):
+    """Whether the raw SIP message trace is running, plus the last start failure."""
+    return {"enabled": sip_tracer.enabled, "error": sip_tracer.last_error}
+
+
+@app.post("/api/logs/siptrace")
+async def api_set_sip_trace(body: AmiLogToggleBody, current_user: dict = Depends(require_admin)):
+    """Turn the SIP message trace on/off.
+
+    Two moving parts: Asterisk's PJSIP logger (so it writes SIP messages at all) and
+    our log tailer (so they reach the panel). The tailer starts first — if it cannot
+    read the log file there is no point enabling the logger.
+    """
+    if body.enabled:
+        if not sip_tracer.start():
+            raise HTTPException(status_code=500,
+                                detail=sip_tracer.last_error or "Could not start SIP trace")
+        await asyncio.to_thread(set_pjsip_logger, True)
+    else:
+        await asyncio.to_thread(set_pjsip_logger, False)
+        sip_tracer.stop()
+    log.info("SIP trace %s by %s",
+             "enabled" if body.enabled else "disabled", current_user.get("username"))
+    return {"enabled": sip_tracer.enabled, "error": sip_tracer.last_error}
+
+
+@app.get("/api/logs/deliveries")
+async def api_list_deliveries(
+    success: Optional[bool] = None,
+    call_id: Optional[str] = None,
+    call_type: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    current_user: dict = Depends(require_admin),
+):
+    """Page through CRM webhook delivery attempts. Bodies omitted — see the detail route."""
+    rows, total = await asyncio.to_thread(
+        list_webhook_deliveries, success, call_id, call_type, search,
+        date_from, date_to, limit, offset)
+    return {"deliveries": rows, "total": total,
+            "limit": max(1, min(int(limit or 50), 200)), "offset": max(0, int(offset or 0))}
+
+
+@app.get("/api/logs/deliveries/{delivery_id}")
+async def api_get_delivery(delivery_id: int, current_user: dict = Depends(require_admin)):
+    """One delivery attempt in full, including the request and response bodies."""
+    row = await asyncio.to_thread(get_webhook_delivery, delivery_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+    return row
+
+
+@app.post("/api/logs/deliveries/{delivery_id}/resend", status_code=202)
+async def api_resend_delivery(delivery_id: int, current_user: dict = Depends(require_admin)):
+    """Replay a delivery through the CURRENT connector configuration.
+
+    The stored request body is replayed verbatim — build_crm_payload is deliberately
+    NOT re-run. The body is the historical fact worth replaying, and a resend that
+    sends different data than the UI is displaying is a debugging trap. The
+    credentials and URL, by contrast, are re-read from current config: a wrong
+    endpoint is usually why the original failed.
+    """
+    row = await asyncio.to_thread(get_webhook_delivery, delivery_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+    if row.get('truncated'):
+        raise HTTPException(
+            status_code=400,
+            detail="Request body was truncated when logged and cannot be replayed safely.")
+    try:
+        body = json.loads(row.get('request_body') or '')
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Stored request body is not valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Stored request body is not a JSON object")
+    if crm_connector is None:
+        raise HTTPException(status_code=503, detail="CRM connector is not configured")
+    if monitor is None:
+        raise HTTPException(status_code=503, detail="AMI monitor unavailable")
+
+    cfg = load_crm_sync_config()
+    meta = {
+        'call_id': row.get('call_id'), 'uniqueid': row.get('uniqueid'),
+        'caller': row.get('caller'), 'destination': row.get('destination'),
+        'call_type': row.get('call_type'), 'call_status': row.get('call_status'),
+        'attempt': int(row.get('attempt') or 1) + 1,
+        'parent_id': delivery_id,
+        'resent_by': current_user.get('id'),
+    }
+    asyncio.create_task(monitor._send_crm_data_async(
+        body,
+        method=(cfg.method if cfg else 'POST'),
+        endpoint_path=(cfg.endpoint if cfg else None),
+        meta=meta,
+    ))
+    log.info("Delivery #%s resent by %s", delivery_id, current_user.get("username"))
+    return {"accepted": True, "delivery_id": delivery_id,
+            "original_created_at": row.get('created_at')}
 
 
 # ---------------------------------------------------------------------------
@@ -2157,7 +2843,7 @@ async def handle_client_message(websocket: WebSocket, message: dict):
 # REST API Endpoints (protected)
 # ---------------------------------------------------------------------------
 @app.get("/api/extensions")
-async def get_extensions(current_user: dict = Depends(get_current_user)):
+async def get_extensions(current_user: dict = Depends(require_scope("calls:read"))):
     """Get list of monitored extensions (filtered by user role/agents for supervisors)."""
     if not monitor:
         raise HTTPException(status_code=503, detail="AMI not connected")
@@ -2180,7 +2866,7 @@ async def get_extensions(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/calls")
-async def get_active_calls(current_user: dict = Depends(get_current_user)):
+async def get_active_calls(current_user: dict = Depends(require_scope("calls:read"))):
     """Get list of active calls (filtered by user allowed extensions for supervisors)."""
     if not monitor:
         raise HTTPException(status_code=503, detail="AMI not connected")
@@ -2229,7 +2915,7 @@ async def api_transfer_call(
 
 
 @app.get("/api/queues")
-async def get_queues(current_user: dict = Depends(get_current_user)):
+async def get_queues(current_user: dict = Depends(require_scope("calls:read"))):
     """Get queue information (filtered by user allowed queues for supervisors). Default queue is hidden."""
     if not monitor:
         raise HTTPException(status_code=503, detail="AMI not connected")
@@ -2250,7 +2936,7 @@ async def get_queues(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/status")
-async def get_status(current_user: dict = Depends(get_current_user)):
+async def get_status(current_user: dict = Depends(require_scope("calls:read"))):
     """Get server status."""
     return {
         "connected": monitor.connected if monitor else False,
@@ -2320,7 +3006,14 @@ async def get_crm_config(current_user: dict = Depends(require_admin)):
         config["sync_dir_outbound"] = sync.dir_outbound
         config["sync_dir_internal"] = sync.dir_internal
         config["block_private"] = sync.block_private
+        config["sync_duration_format"] = sync.duration_format
+        config["sync_status_map"] = sync.status_map
+        config["sync_key_map"] = sync.key_map
     config["field_catalog"] = list(CRM_SYNC_FIELD_CATALOG)
+    # Read-only, server-derived. The UI renders the rename grid and the outcome-map
+    # editor from these, so it never hardcodes wire key names or outcome values.
+    config["default_keys"] = default_outbound_keys() if default_outbound_keys else {}
+    config["call_outcomes"] = list(CALL_OUTCOMES)
 
     return config
 
@@ -2616,6 +3309,12 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
             # but tell the operator we did so instead of silently reverting.
             if cleaned:
                 set_setting('CRM_SYNC_FIELDS', ','.join(cleaned))
+                # No field is forced into the body any more, so a selection with
+                # neither identity field produces calls the CRM cannot attribute.
+                if 'caller' not in cleaned and 'destination' not in cleaned:
+                    warnings.append(
+                        "Neither Caller nor Destination is selected — the CRM will "
+                        "receive calls it cannot identify.")
             else:
                 set_setting('CRM_SYNC_FIELDS', ','.join(DEFAULT_CRM_SYNC_FIELDS))
                 warnings.append("No sync fields were selected — reverted to the default field set.")
@@ -2623,6 +3322,38 @@ async def save_crm_config(config_data: dict, current_user: dict = Depends(requir
         set_setting('CRM_SYNC_DIR_OUTBOUND', 'true' if config_data.get('sync_dir_outbound', True) else 'false')
         set_setting('CRM_SYNC_DIR_INTERNAL', 'true' if config_data.get('sync_dir_internal', True) else 'false')
         set_setting('CRM_BLOCK_PRIVATE', 'true' if config_data.get('block_private', False) else 'false')
+
+        # ── Payload shaping: duration unit, outcome remap, outbound key rename ──
+        # Validated before persisting rather than silently coerced: a dropped rename
+        # or a bad unit is invisible in the payload, so the operator has to be told.
+        if 'sync_duration_format' in config_data:
+            fmt = str(config_data.get('sync_duration_format') or 'hms').strip().lower()
+            if fmt not in ('hms', 'seconds'):
+                raise HTTPException(
+                    status_code=400,
+                    detail="sync_duration_format must be 'hms' or 'seconds'")
+            set_setting('CRM_SYNC_DURATION_FORMAT', fmt)
+
+        if 'sync_key_map' in config_data and parse_key_map:
+            raw_map = config_data.get('sync_key_map') or {}
+            parsed = parse_key_map(raw_map)
+            if isinstance(raw_map, dict):
+                dropped = [k for k in raw_map if k not in parsed and str(raw_map.get(k) or '').strip()]
+                if dropped:
+                    warnings.append(
+                        "Ignored key rename(s) for unknown outbound key(s): "
+                        + ", ".join(sorted(dropped)))
+            set_setting('CRM_SYNC_KEY_MAP', json.dumps(parsed))
+
+        if 'sync_status_map' in config_data and parse_status_map:
+            raw_map = config_data.get('sync_status_map') or {}
+            parsed = parse_status_map(raw_map)
+            unknown = [k for k in parsed if k not in CALL_OUTCOMES]
+            if unknown:
+                warnings.append(
+                    "Outcome remap source(s) not produced by OpDesk (will never match): "
+                    + ", ".join(sorted(unknown)))
+            set_setting('CRM_SYNC_STATUS_MAP', json.dumps(parsed))
 
         log.info("CRM configuration saved to database")
 
@@ -2755,7 +3486,7 @@ async def get_call_log_endpoint(
     limit: int = 100, date: str = None,
     date_from: str = None, date_to: str = None,
     search: str = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("cdr:read")),
 ):
     """
     Get call log / CDR history.
@@ -2793,7 +3524,7 @@ async def get_call_log_endpoint(
 @app.get("/api/call-log/journey")
 async def get_call_journey_endpoint(
     linkedid: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("cdr:read")),
 ):
     """
     Get call journey (event timeline) for a call by linkedid.
@@ -2815,7 +3546,7 @@ async def get_call_journey_endpoint(
 @app.get("/api/call-log/vad/{uniqueid}")
 async def get_call_vad_endpoint(
     uniqueid: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("cdr:read")),
 ):
     """Get VAD (Voice Activity Detection) analysis for a call by uniqueid."""
     if not uniqueid or uniqueid.strip() == "":
@@ -2908,18 +3639,32 @@ async def update_call_notification_endpoint(
 
 @app.get("/api/recordings/{file_path:path}")
 async def serve_recording(
+    request: Request,
     file_path: str,
     token: Optional[str] = None,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ):
-    """Serve a recording audio file. Auth via Bearer header or ?token= query (for audio src)."""
+    """Serve a recording audio file.
+
+    Auth is hand-rolled rather than require_scope("cdr:read") because this route must
+    also accept a `?token=` query param — an <audio src> cannot set headers.
+    """
     from fastapi.responses import FileResponse as AudioFileResponse
     import mimetypes
 
-    # Validate auth: Bearer header or query token
-    jwt_token = (credentials.credentials if credentials else None) or token
-    if not jwt_token or not decode_token(jwt_token):
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    # Validate auth: API key, Bearer header, or query token
+    raw_key = _extract_api_key(request)
+    if raw_key:
+        meta = lookup_api_key(raw_key) if lookup_api_key else None
+        if not meta:
+            raise HTTPException(status_code=401, detail="Invalid or expired API key")
+        if "cdr:read" not in (meta.get("scopes") or []):
+            raise HTTPException(status_code=403,
+                                detail="API key missing required scope: cdr:read")
+    else:
+        jwt_token = (credentials.credentials if credentials else None) or token
+        if not jwt_token or not decode_token(jwt_token):
+            raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Security: only allow serving files from the recording root directory
     root_dir = os.getenv('ASTERISK_RECORDING_ROOT_DIR')
@@ -3037,7 +3782,7 @@ def _analytics_scope(current_user: dict):
 async def analytics_overview(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """
     Executive KPI overview: SLA%, FCR%, abandonment, AHT, volume with prev-period deltas.
@@ -3061,7 +3806,7 @@ async def analytics_overview(
 async def analytics_queue_performance(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """Per-queue KPI table. Roles: admin, supervisor."""
     try:
@@ -3082,7 +3827,7 @@ async def analytics_queue_performance(
 async def analytics_agent_performance(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """Per-agent KPI table with 7-day trend. Roles: admin, supervisor."""
     try:
@@ -3102,7 +3847,7 @@ async def analytics_agent_performance(
 async def analytics_agent_adherence(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """Agent Adherence: Login/Logout/Logged-In/Ready/On-Call/Wrap-up/Not-Ready/Occupancy
     per agent for the selected period, from agent_activity presence segments. Scope-filtered.
@@ -3135,7 +3880,7 @@ async def analytics_agent_adherence_export(
     format: str = "csv",
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """Export the Agent Adherence report as CSV or XLSX. Roles: admin, supervisor.
     Columns mirror the on-screen report plus a per-agent Not-Ready breakdown and a
@@ -3228,7 +3973,7 @@ async def analytics_agent_adherence_export(
 async def analytics_heatmap(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """7×24 call volume heatmap matrix. Roles: admin, supervisor."""
     try:
@@ -3245,7 +3990,7 @@ async def analytics_heatmap(
 async def analytics_trend(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """Daily volume trend (total / answered / abandoned). Roles: admin, supervisor."""
     try:
@@ -3268,7 +4013,7 @@ async def analytics_drilldown(
     disposition: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """Paginated drilldown with analytics fields (wait_secs, sla_met). Roles: admin, supervisor."""
     try:
@@ -3302,7 +4047,7 @@ async def analytics_export(
     agent: Optional[str] = None,
     direction: Optional[str] = None,
     disposition: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_scope("analytics:read")),
 ):
     """Export drilldown data as CSV or XLSX. Roles: admin, supervisor."""
     from fastapi.responses import StreamingResponse
@@ -3427,6 +4172,46 @@ async def health_check():
     return {"status": "ok", "ami_connected": bool(monitor and getattr(monitor, "connected", False))}
 
 
+@app.get("/api/openapi.yaml", include_in_schema=False)
+async def serve_openapi_spec():
+    """Serve the hand-written OpenAPI 3.0 spec for the public integration API."""
+    spec_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "docs", "api", "openapi.yaml"))
+    if not os.path.exists(spec_path):
+        raise HTTPException(status_code=404, detail="OpenAPI spec not found")
+    return FileResponse(spec_path, media_type="application/yaml", filename="openapi.yaml")
+
+
+# ---------------------------------------------------------------------------
+# API fallback — must be declared AFTER every real /api route, BEFORE the SPA catch-all
+# ---------------------------------------------------------------------------
+# Without this, the GET-only SPA catch-all below FULL-matches any unmatched /api path
+# and returns index.html with a 200: `GET /api/calls/transfer` (a POST-only route) and
+# `GET /api/typo` both looked like a successful page load to an API client. Starlette
+# prefers a FULL match over the PARTIAL match a method-mismatched route produces, so
+# the honest answer has to be produced here rather than left to the default handling.
+@app.api_route("/api/{rest:path}", include_in_schema=False,
+               methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+async def api_fallback(request: Request, rest: str):
+    """404 for an unknown /api path; 405 (with Allow) when the path exists but the
+    method does not."""
+    # Only real /api routes count. Restricted to paths under /api and excluding this
+    # fallback because the SPA catch-all ("/{full_path:path}") also regex-matches every
+    # /api path — counting it would report Allow: GET for paths that do not exist and
+    # turn every 404 into a 405.
+    allowed = set()
+    for r in app.routes:
+        if (isinstance(r, APIRoute)
+                and r.path.startswith("/api")
+                and r.path != "/api/{rest:path}"
+                and r.path_regex.match(request.url.path)):
+            allowed |= set(r.methods or ())
+    if allowed:
+        raise HTTPException(status_code=405, detail="Method Not Allowed",
+                            headers={"Allow": ", ".join(sorted(allowed))})
+    raise HTTPException(status_code=404, detail="Not Found")
+
+
 # ---------------------------------------------------------------------------
 # Serve React Frontend (production)
 # ---------------------------------------------------------------------------
@@ -3435,10 +4220,14 @@ frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"
 frontend_path = os.path.abspath(frontend_path)
 if os.path.exists(frontend_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
-    
-    @app.get("/{full_path:path}")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_frontend(full_path: str):
-        """Serve React frontend."""
+        """Serve the React SPA. Deep links (/call-log, /settings, …) all land here."""
+        # Belt-and-braces: /api/* is handled by api_fallback above, but if route
+        # ordering ever regresses an API client must still not receive HTML.
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
         file_path = os.path.join(frontend_path, full_path)
         resolved = os.path.realpath(file_path)
         if not resolved.startswith(os.path.realpath(frontend_path)):
