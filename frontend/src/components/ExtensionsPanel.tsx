@@ -188,7 +188,14 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
           {extension.call_info.talking_to && extension.call_info.talking_to !== 'Unknown' && (
             <div className="extension-info-row">
               <Phone size={14} />
-              {extension.call_info.talking_to}
+              {extension.call_info.contact_name ? (
+                <>
+                  {extension.call_info.contact_name}{' '}
+                  <span className="call-contact-number">({extension.call_info.talking_to})</span>
+                </>
+              ) : (
+                extension.call_info.talking_to
+              )}
             </div>
           )}
           {extension.call_info.duration && (

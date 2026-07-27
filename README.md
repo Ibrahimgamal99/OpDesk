@@ -21,6 +21,7 @@ Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled
 - **Call management** — CDR browser with whole-history search, recording playback, QoS, and a **Call Journey** timeline for multi-leg calls.
 - **Web softphone** — make and receive calls in the browser over WebRTC: hold, mute, transfer, queue login/logout, and Ready / Not-Ready with a reason code.
 - **Supervision** — listen, whisper and barge, configurable per user.
+- **Contacts** — a shared phonebook that puts names on numbers everywhere (dashboards, panels, softphone). Admins manage it from the UI; the CRM lookup fills it automatically, and manual entries always win. → [contract](docs/api/contact-lookup.md)
 - **Analytics** — 12 KPI cards with period-over-period deltas, per-queue and per-agent breakdowns, a 7×24 heatmap and a call-level drilldown with CSV/XLSX export. → [guide](docs/guides/analytics.md)
 - **CRM integration** — push call data to any CRM (API key, Basic, Bearer or OAuth2) with a selectable field set, configurable wire key names, outcome remapping and per-direction filtering. Every attempt is logged and can be replayed. → [contract](docs/api/webhooks.md)
 - **Integration API** — scoped machine-to-machine API keys for reading live state, call history and analytics, plus click-to-call origination. → [reference](docs/api/endpoints.md)
@@ -196,7 +197,7 @@ FastAPI also serves generated interactive docs at `/docs` and `/redoc`.
 | **Nginx** | Terminates TLS (required for `getUserMedia`), proxies `/ws` to the backend and `/sip-ws` to Asterisk. Also auto-routes root-path connections advertising `Sec-WebSocket-Protocol: sip` straight to Asterisk. |
 | **Databases** | Three: `asterisk` (FreePBX config, read), `asteriskcdrdb` (CDR, read), and OpDesk's own (see below). |
 
-OpDesk's own database holds users, roles and group assignments; cached extension/queue metadata; notifications (`call_notifications`, auto-cleaned after 7 days); VAD results; agent presence segments; supervision events; API keys; the CRM delivery log; and the analytics rollup tables (`analytics_hourly`, `analytics_daily`, `analytics_agent_daily`), refreshed every 15 minutes by a background task.
+OpDesk's own database holds users, roles and group assignments; cached extension/queue metadata; the contacts phonebook (`contacts`, manual + CRM-resolved); notifications (`call_notifications`, auto-cleaned after 7 days); VAD results; agent presence segments; supervision events; API keys; the CRM delivery log; and the analytics rollup tables (`analytics_hourly`, `analytics_daily`, `analytics_agent_daily`), refreshed every 15 minutes by a background task.
 
 Call Journey timelines and the call log are **derived on demand** from the Asterisk CDR — OpDesk does not duplicate CDR storage.
 

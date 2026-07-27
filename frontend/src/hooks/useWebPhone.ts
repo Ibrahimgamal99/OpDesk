@@ -100,6 +100,25 @@ export function useWebPhone() {
     setLogs((prev) => [...prev.slice(-99), { message, type, time: new Date().toLocaleTimeString() }]);
   }, []);
 
+  // CRM contact lookup: generation counter guards async name updates against
+  // landing on a later call; resolvedNameRef carries the name across accept()
+  // (whose closure captured the original SIP display name).
+  const callSeqRef = useRef(0);
+  const resolvedNameRef = useRef('');
+
+  const lookupContact = useCallback(async (number: string): Promise<string | null> => {
+    const digits = number.replace(/\D/g, '');
+    if (digits.length <= 5) return null; // internal extensions are never in the CRM
+    try {
+      const res = await fetchWithAuth(`/api/crm/contact?phone=${encodeURIComponent(number)}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.name || null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const callbacks: WebPhoneCallbacks = {
     onStatus: setStatus,
     onLog: addLog,
@@ -110,12 +129,30 @@ export function useWebPhone() {
     onLocalStream: setLocalStream,
     onMutedChange: setIsMuted,
     onIncomingCall: (info) => {
+      const seq = ++callSeqRef.current;
+      resolvedNameRef.current = '';
+      // Resolve the caller's CRM name while ringing (one retry: the server may
+      // still be fetching on a cold cache). Applies to the ringing screen and,
+      // if the call was already answered, the in-call screen.
+      (async () => {
+        let name = await lookupContact(info.callerNumber);
+        if (!name && seq === callSeqRef.current) {
+          await new Promise((r) => setTimeout(r, 2000));
+          if (seq !== callSeqRef.current) return;
+          name = await lookupContact(info.callerNumber);
+        }
+        if (name && seq === callSeqRef.current) {
+          resolvedNameRef.current = name;
+          setIncomingCall((prev) => (prev ? { ...prev, callerName: name } : prev));
+          setActiveCallRemoteName(name);
+        }
+      })();
       setIncomingCall({
         callerNumber: info.callerNumber,
         callerName: info.callerName,
         accept: () => {
           setActiveCallRemoteNumber(info.callerNumber);
-          setActiveCallRemoteName(info.callerName ?? '');
+          setActiveCallRemoteName(resolvedNameRef.current || info.callerName || '');
           setIncomingCall(null);
           const phone = phoneRef.current;
           if (phone) phone.acceptIncomingCall((stream) => setRemoteStream(stream));
@@ -188,8 +225,15 @@ export function useWebPhone() {
       setLastDialedNumber(target);
       localStorage.setItem('softphone_last_number', target);
     }
+    // Resolve the dialed number's CRM name for the in-call screen.
+    const seq = ++callSeqRef.current;
+    setActiveCallRemoteNumber(target);
+    setActiveCallRemoteName('');
+    lookupContact(target).then((name) => {
+      if (name && seq === callSeqRef.current) setActiveCallRemoteName(name);
+    });
     phone.makeCall(target, (stream) => setRemoteStream(stream));
-  }, [dialNumber, lastDialedNumber]);
+  }, [dialNumber, lastDialedNumber, lookupContact]);
 
   const hangup = useCallback(() => {
     phoneRef.current?.hangup();
@@ -345,6 +389,8 @@ export function useWebPhone() {
   // Clear active-call display and dial number when call ends
   useEffect(() => {
     if (!hasActiveCall) {
+      callSeqRef.current++; // invalidate any in-flight CRM name lookup
+      resolvedNameRef.current = '';
       setActiveCallRemoteNumber('');
       setActiveCallRemoteName('');
       setDialNumber('');

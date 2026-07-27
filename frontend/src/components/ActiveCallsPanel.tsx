@@ -125,7 +125,14 @@ function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }:
       </td>
       <td data-label={t('activeCalls.table.talkingTo')}>
         <span className="call-talking-to">
-          {call.talking_to || '—'}
+          {call.contact_name ? (
+            <>
+              {call.contact_name}{' '}
+              <span className="call-contact-number">({call.talking_to})</span>
+            </>
+          ) : (
+            call.talking_to || '—'
+          )}
         </span>
       </td>
       <td data-label={t('activeCalls.table.duration')}>

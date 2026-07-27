@@ -19,6 +19,7 @@ import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
 import { SettingsPanel, type SettingsTab } from './components/CRMSettingsModal';
+import { ContactsPanel } from './components/ContactsPanel';
 import { FloatingSoftphone } from './components/FloatingSoftphone';
 import {
   Phone,
@@ -58,10 +59,11 @@ import {
   PauseCircle,
   Terminal,
   KeyRound,
+  BookUser,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 
-type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings';
+type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
 /** Kept in sync with the pre-paint theme script in index.html. */
 const THEME_KEY = 'opdesk:theme';
@@ -69,7 +71,7 @@ const THEME_KEY = 'opdesk:theme';
 // URL routing: each tab maps 1:1 to a path segment (e.g. 'call-log' -> '/call-log').
 // Deriving the active tab from the URL is what makes a refresh stay on the same page
 // and lets users navigate straight to /dashboard, /extensions, etc.
-const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'groups', 'users', 'analytics', 'logs', 'settings'];
+const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'contacts', 'groups', 'users', 'analytics', 'logs', 'settings'];
 const DEFAULT_TAB: TabType = 'dashboard';
 function pathToTab(pathname: string): TabType {
   const seg = pathname.replace(/^\/+/, '').split('/')[0];
@@ -469,7 +471,7 @@ function App({ onLogout }: AppProps) {
   // Agent only has Extensions, Active Calls, Call History; redirect away from other tabs
   const userRole = getUser()?.role;
   useEffect(() => {
-    if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'call-log'].includes(activeTab)) {
+    if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'call-log', 'contacts'].includes(activeTab)) {
       navigate(`/${DEFAULT_TAB}`, { replace: true });
       return;
     }
@@ -792,6 +794,11 @@ function App({ onLogout }: AppProps) {
               <History size={16} />{!sidebarCollapsed && t('nav.callHistory')}
             </button>
 
+            {/* Contacts — everyone can browse; editing is admin-only inside the panel */}
+            <button className={`sidebar-item${activeTab === 'contacts' ? ' active' : ''}`} onClick={() => selectTab('contacts')} title={sidebarCollapsed ? t('nav.contacts', 'Contacts') : undefined}>
+              <BookUser size={16} />{!sidebarCollapsed && t('nav.contacts', 'Contacts')}
+            </button>
+
             {getUser()?.role !== 'agent' && (
               <button className={`sidebar-item${activeTab === 'analytics' ? ' active' : ''}`} onClick={() => selectTab('analytics')} title={sidebarCollapsed ? t('nav.analytics') : undefined}>
                 <BarChart3 size={16} />{!sidebarCollapsed && t('nav.analytics')}
@@ -985,6 +992,14 @@ function App({ onLogout }: AppProps) {
             />
           )}
           {activeTab === 'call-log' && <CallLogPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
+          {activeTab === 'contacts' && (
+            <ContactsPanel
+              onDial={(phone) => {
+                webPhone.setDialNumber(phone);
+                setFloatingPhoneOpen(true);
+              }}
+            />
+          )}
           {activeTab === 'analytics' && <AnalyticsPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
           {activeTab === 'groups' && (
             <GroupsPanel

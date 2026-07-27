@@ -292,6 +292,7 @@ the admin role. None are key-reachable.
 | Area | Paths |
 |---|---|
 | Users, groups, agents, queues | `/api/settings/users*`, `/api/settings/groups*`, `/api/settings/agents`, `/api/settings/queues` |
+| Contacts phonebook | `GET /api/contacts` (any role), `POST /api/contacts`, `PUT|DELETE /api/contacts/{id}` (admin) — see [contact-lookup.md](contact-lookup.md) |
 | Raw settings key/value store | `GET|POST /api/settings`, `GET /api/settings/{key}` |
 | WebRTC provisioning | `GET /api/webrtc/config`, `GET /api/settings/extensions/webrtc`, `GET /api/settings/extensions/{extension}/credentials`, `PUT /api/settings/extensions/{extension}/webrtc` |
 | CRM configuration | `GET|POST /api/crm/config`, `POST /api/crm/test` |

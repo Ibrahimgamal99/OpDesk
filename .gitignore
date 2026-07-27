@@ -12,5 +12,6 @@ cert/
 nginx/
 .env
 .claude/
-
 secrets/
+
+crm_test.py

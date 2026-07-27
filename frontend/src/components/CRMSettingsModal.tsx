@@ -4,6 +4,7 @@ import {
   ChevronDown, ChevronRight, Plug, BarChart3, KeyRound, ShieldCheck, Smartphone, Disc,
   Link2, Send, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Check, PauseCircle,
   Clock, AlertTriangle, Braces, Copy, ClipboardCheck, Tags, Lock, Radio,
+  Search, Hash,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { useTranslation } from 'react-i18next';
@@ -49,6 +50,18 @@ export interface CRMConfig {
   default_keys?: Record<string, string>;
   /** Read-only, server-derived: the canonical outcome enum values. */
   call_outcomes?: string[];
+  // Contact lookup (3CX-style) — resolve caller numbers to CRM contact names
+  lookup_enabled?: boolean;
+  /** Path template appended to server_url; [Number] is replaced with the caller's number. */
+  lookup_url?: string;
+  /** Name template of JSON paths, e.g. "[data.0.first_name] [data.0.last_name]". */
+  lookup_name_template?: string;
+  lookup_number_format?: 'digits' | 'as_is' | 'plus' | 'zeros';
+  /** Compare/cache on the last N digits (0 = full number). */
+  lookup_match_digits?: number;
+  /** Optional JSON path to the matched record's phone field (match verification). */
+  lookup_verify_path?: string;
+  lookup_ttl_hours?: number;
 }
 
 // Reusable toggle switch matching the app's dark theme.
@@ -227,6 +240,11 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [lookupTestPhone, setLookupTestPhone] = useState('');
+  const [lookupTesting, setLookupTesting] = useState(false);
+  const [lookupTestResult, setLookupTestResult] = useState<{
+    type: 'success' | 'muted' | 'error'; text: string; raw?: string;
+  } | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [qosLoading, setQosLoading] = useState(false);
   const [qosMessage, setQosMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -356,6 +374,49 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
       setTestResult({ type: 'error', text: 'Connection test failed' });
     } finally {
       setTesting(false);
+    }
+  };
+
+  // Contact-lookup test: runs the full pipeline server-side with the current
+  // (possibly unsaved) form values, bypassing all caches. The raw excerpt is
+  // what lets an operator fix a wrong name template without curl.
+  const testLookup = async () => {
+    const phone = lookupTestPhone.trim();
+    if (!phone) return;
+    setLookupTesting(true);
+    setLookupTestResult(null);
+    try {
+      const res = await fetchWithAuth('/api/crm/lookup-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...config, phone }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.matched && data.name) {
+        setLookupTestResult({
+          type: 'success',
+          text: t('settings.crm.lookupTestFound', 'Contact found: {{name}}', { name: data.name }),
+          raw: data.raw_excerpt || '',
+        });
+      } else if (res.ok && data.success) {
+        setLookupTestResult({
+          type: 'muted',
+          text: data.verify_detail
+            ? t('settings.crm.lookupTestVerifyFail', 'Verification failed — {{detail}}', { detail: data.verify_detail })
+            : t('settings.crm.lookupTestNoMatch', 'The CRM answered, but no name was extracted. Check the name template against the response below.'),
+          raw: data.raw_excerpt || '',
+        });
+      } else {
+        setLookupTestResult({
+          type: 'error',
+          text: data.detail || data.error || t('settings.crm.lookupTestError', 'Lookup test failed'),
+          raw: data.raw_excerpt || '',
+        });
+      }
+    } catch {
+      setLookupTestResult({ type: 'error', text: t('settings.crm.lookupTestError', 'Lookup test failed') });
+    } finally {
+      setLookupTesting(false);
     }
   };
 
@@ -1116,6 +1177,173 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
                           </div>
                         </section>
                       )}
+
+                      {/* ── Step 5 · Contact lookup ──
+                          The reverse direction of the push above: on ring/dial the
+                          server GETs the CRM for the number, caches the contact and
+                          shows the name in the softphone + dashboards. */}
+                      <section className="crmx-card">
+                        <div className="crmx-card-head">
+                          <span className="crmx-step">5</span>
+                          <div className="crmx-card-ico"><Search size={17} /></div>
+                          <div className="crmx-card-titles">
+                            <h3>{t('settings.crm.lookupTitle', 'Contact lookup')}</h3>
+                            <p>{t('settings.crm.lookupSub', 'Resolve caller numbers to CRM contact names, shown on the softphone and dashboards. Results are cached server-side.')}</p>
+                          </div>
+                          <CrmToggle
+                            checked={config.lookup_enabled === true}
+                            onChange={(v) => updateConfig({ lookup_enabled: v })}
+                            label=""
+                          />
+                        </div>
+                        <div className="crmx-card-body">
+                          {config.lookup_enabled !== true ? (
+                            <p className="crmx-muted-note">
+                              {t('settings.crm.lookupOffNote', 'Contact lookup is off — calls show bare numbers. The connection above stays configured.')}
+                            </p>
+                          ) : (
+                            <>
+                              <div className="up-form-group">
+                                <label>{t('settings.crm.lookupUrl', 'Lookup URL')}</label>
+                                <input
+                                  type="text"
+                                  className="form-input"
+                                  dir="ltr"
+                                  spellCheck={false}
+                                  placeholder="/api/v2/contacts?phone=[Number]"
+                                  value={config.lookup_url || ''}
+                                  onChange={(e) => updateConfig({ lookup_url: e.target.value })}
+                                />
+                                <p className="crm-hint">
+                                  {t('settings.crm.lookupUrlHint', 'Appended to the server URL. [Number] is replaced with the caller’s number; without it, ?phone=[Number] is added automatically.')}
+                                </p>
+                              </div>
+
+                              <div className="up-form-group">
+                                <label>{t('settings.crm.lookupNameTemplate', 'Name template')}</label>
+                                <input
+                                  type="text"
+                                  className="form-input"
+                                  dir="ltr"
+                                  spellCheck={false}
+                                  placeholder="[data.0.first_name] [data.0.last_name]"
+                                  value={config.lookup_name_template || ''}
+                                  onChange={(e) => updateConfig({ lookup_name_template: e.target.value })}
+                                />
+                                <p className="crm-hint">
+                                  {t('settings.crm.lookupNameTemplateHint', 'Each [path] is a dot/index path into the JSON response (data.0.name reads response.data[0].name). Multiple paths are joined, e.g. first + last name.')}
+                                </p>
+                              </div>
+
+                              <div className="crmx-fields">
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.lookupNumberFormat', 'Number sent to the CRM')}</label>
+                                  <FilterSelect
+                                    size="md"
+                                    value={config.lookup_number_format || 'digits'}
+                                    onChange={(v) => updateConfig({ lookup_number_format: v as CRMConfig['lookup_number_format'] })}
+                                    icon={Hash}
+                                    options={[
+                                      { value: 'digits', label: t('settings.crm.lookupFmtDigits', 'Digits only (201005551234)'), dot: 'green' },
+                                      { value: 'as_is', label: t('settings.crm.lookupFmtAsIs', 'As received (+20 100 555 1234)'), dot: 'blue' },
+                                      { value: 'plus', label: t('settings.crm.lookupFmtPlus', 'International + (+201005551234)'), dot: 'blue' },
+                                      { value: 'zeros', label: t('settings.crm.lookupFmtZeros', 'International 00 (00201005551234)'), dot: 'blue' },
+                                    ]}
+                                  />
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.lookupMatchDigits', 'Match last N digits')}</label>
+                                  <input
+                                    type="number"
+                                    className="form-input"
+                                    dir="ltr"
+                                    min={0}
+                                    max={32}
+                                    value={config.lookup_match_digits ?? 0}
+                                    onChange={(e) => updateConfig({ lookup_match_digits: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                                  />
+                                  <p className="crm-hint">
+                                    {t('settings.crm.lookupMatchDigitsHint', 'Caching and verification compare only the last N digits, so +20…, 0020… and 0… match the same contact. 0 = full number.')}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="crmx-fields">
+                                <div className="up-form-group">
+                                  <label>
+                                    {t('settings.crm.lookupVerifyPath', 'Verify phone path')}{' '}
+                                    <span className="opt-tag">{t('settings.crm.optional', 'optional')}</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="form-input"
+                                    dir="ltr"
+                                    spellCheck={false}
+                                    placeholder="data.0.phone"
+                                    value={config.lookup_verify_path || ''}
+                                    onChange={(e) => updateConfig({ lookup_verify_path: e.target.value })}
+                                  />
+                                  <p className="crm-hint">
+                                    {t('settings.crm.lookupVerifyPathHint', 'Path to the phone field of the returned record. A result only counts when it matches the searched number — protects against fuzzy-search false positives.')}
+                                  </p>
+                                </div>
+                                <div className="up-form-group">
+                                  <label>{t('settings.crm.lookupTtl', 'Cache freshness (hours)')}</label>
+                                  <input
+                                    type="number"
+                                    className="form-input"
+                                    dir="ltr"
+                                    min={1}
+                                    value={config.lookup_ttl_hours ?? 24}
+                                    onChange={(e) => updateConfig({ lookup_ttl_hours: Math.max(1, parseInt(e.target.value, 10) || 24) })}
+                                  />
+                                  <p className="crm-hint">
+                                    {t('settings.crm.lookupTtlHint', 'How long a cached contact is trusted before the CRM is asked again.')}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="up-form-group">
+                                <label>{t('settings.crm.lookupTestTitle', 'Test lookup')}</label>
+                                <div className="crmx-lookup-test-row">
+                                  <input
+                                    type="text"
+                                    className="form-input"
+                                    dir="ltr"
+                                    placeholder={t('settings.crm.lookupTestPhone', 'Phone number, e.g. +20 100 555 1234')}
+                                    value={lookupTestPhone}
+                                    onChange={(e) => setLookupTestPhone(e.target.value)}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="btn"
+                                    onClick={testLookup}
+                                    disabled={lookupTesting || !config.server_url || !(config.lookup_url || '').trim()
+                                      || !(config.lookup_name_template || '').trim() || !lookupTestPhone.trim()}
+                                  >
+                                    {lookupTesting ? <Loader2 size={14} className="spinner" /> : <Search size={14} />}
+                                    {lookupTesting ? t('settings.crm.testing', 'Testing…') : t('settings.crm.lookupTestRun', 'Test lookup')}
+                                  </button>
+                                </div>
+                                {lookupTestResult && (
+                                  <div className={`crmx-test ${lookupTestResult.type === 'success' ? 'success' : lookupTestResult.type === 'error' ? 'error' : 'muted'}`}>
+                                    {lookupTestResult.type === 'success'
+                                      ? <CheckCircle2 size={15} />
+                                      : <AlertCircle size={15} />}
+                                    <span>{lookupTestResult.text}</span>
+                                  </div>
+                                )}
+                                {lookupTestResult?.raw && (
+                                  <details className="crmx-lookup-raw">
+                                    <summary>{t('settings.crm.lookupTestRaw', 'CRM response (truncated)')}</summary>
+                                    <pre>{lookupTestResult.raw}</pre>
+                                  </details>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </section>
                     </div>
 
                     {/* ── Live payload preview ── */}

@@ -11,6 +11,8 @@ export interface CallInfo {
   extension: string;
   state: string;
   talking_to: string;
+  /** CRM-resolved name of the remote party ("" when unknown or lookup disabled) */
+  contact_name: string;
   duration: string | null;
   talk_time: string | null;
   channel: string;
@@ -312,6 +314,22 @@ export interface WebhookDelivery {
 export interface WebhookDeliveryDetail extends WebhookDelivery {
   request_body?: string | null;
   response_body?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Contacts (system phonebook)
+// ---------------------------------------------------------------------------
+export interface Contact {
+  id: number;
+  name: string;
+  phone: string;        // display form (as entered / as dialed)
+  phone_key: string;    // normalized digits (match key)
+  company?: string | null;
+  notes?: string | null;
+  /** 'manual' = admin-created/edited; 'crm' = auto-added by the CRM lookup. */
+  source: 'manual' | 'crm';
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 // ---------------------------------------------------------------------------

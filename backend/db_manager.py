@@ -1049,11 +1049,24 @@ def execute_sql_file(sql_file_path: str) -> bool:
         return False
 
 
+# set_setting() re-runs init_settings_table() before every write as an
+# ensure-exists safety net. The full check (2-3 connections, SHOW TABLES, a log
+# line) only needs to happen once per process — this flag makes repeats free.
+_settings_init_done = False
+
+
 def init_settings_table():
-    """Check if OpDesk database exists, and if not, create it from schema.sql."""
+    """Check if OpDesk database exists, and if not, create it from schema.sql.
+
+    Runs the real check once per process; afterwards it is a no-op, so callers
+    can invoke it before every settings write without connection/log spam."""
+    global _settings_init_done
+    if _settings_init_done:
+        return True
     # Check if OpDesk database exists
     if check_database_exists('OpDesk'):
         log.info("✅ OpDesk database already exists")
+        _settings_init_done = True
         try:
             config = get_db_config(os.getenv('DB_PASSWORD'),os.getenv('DB_OpDesk', 'OpDesk'))
             conn = mysql.connector.connect(**config)
@@ -1130,6 +1143,7 @@ def init_settings_table():
             cursor.close()
             conn.close()
             log.info("✅ OpDesk database and tables created successfully from schema.sql")
+            _settings_init_done = True
             return True
         except Error as e:
             log.error(f"❌ Failed to create table after database creation: {e}")
@@ -3069,5 +3083,176 @@ def prune_webhook_deliveries(days: int = 30) -> int:
     except Error as e:
         log.warning(f"⚠️  Database error prune_webhook_deliveries: {e}")
         return 0
+    finally:
+        _safe_close(cursor, conn)
+
+
+# ---------------------------------------------------------------------------
+# Contacts (system phonebook; see schema.sql — manual rows are admin-managed,
+# crm rows are auto-inserted by the contact lookup and never overwrite manual)
+# ---------------------------------------------------------------------------
+def init_contacts_table() -> None:
+    """Create the contacts table (if missing). Idempotent; called at startup."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS contacts (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                name       VARCHAR(255) NOT NULL,
+                phone      VARCHAR(64)  NOT NULL,
+                phone_key  VARCHAR(32)  NOT NULL,
+                company    VARCHAR(255) NULL,
+                notes      TEXT NULL,
+                source     ENUM('manual','crm') NOT NULL DEFAULT 'manual',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_phone_key (phone_key)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Error as e:
+        log.warning(f"⚠️  Database error init_contacts_table: {e}")
+    finally:
+        _safe_close(cursor, conn)
+
+
+def list_contacts() -> list:
+    """All contacts, manual and crm, sorted by name."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT id, name, phone, phone_key, company, notes, source, created_at, updated_at "
+            "FROM contacts ORDER BY name, id"
+        )
+        return cursor.fetchall() or []
+    except Error as e:
+        log.warning(f"⚠️  Database error list_contacts: {e}")
+        return []
+    finally:
+        _safe_close(cursor, conn)
+
+
+def create_contact(name: str, phone: str, phone_key: str,
+                   company: Optional[str], notes: Optional[str]) -> Optional[int]:
+    """Insert a manual contact. Returns the new id, or None when phone_key is
+    already taken (unique key) or on DB error."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO contacts (name, phone, phone_key, company, notes, source) "
+            "VALUES (%s,%s,%s,%s,%s,'manual')",
+            (name[:255], phone[:64], phone_key[:32],
+             company[:255] if company else None, notes or None),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Error as e:
+        if getattr(e, 'errno', None) == 1062:  # duplicate phone_key
+            return None
+        log.warning(f"⚠️  Database error create_contact: {e}")
+        return None
+    finally:
+        _safe_close(cursor, conn)
+
+
+def update_contact(contact_id: int, name: str, phone: str, phone_key: str,
+                   company: Optional[str], notes: Optional[str]) -> Optional[bool]:
+    """Update a contact (flips source to manual — the row is curated now).
+    True on success, False when the id does not exist, None when the new
+    phone_key collides with another contact."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE contacts SET name=%s, phone=%s, phone_key=%s, company=%s, notes=%s, "
+            "source='manual' WHERE id=%s",
+            (name[:255], phone[:64], phone_key[:32],
+             company[:255] if company else None, notes or None, contact_id),
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            # rowcount is 0 both for "no such id" and "nothing changed"; tell them apart.
+            cursor.execute("SELECT 1 FROM contacts WHERE id=%s", (contact_id,))
+            return cursor.fetchone() is not None
+        return True
+    except Error as e:
+        if getattr(e, 'errno', None) == 1062:
+            return None
+        log.warning(f"⚠️  Database error update_contact: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def delete_contact(contact_id: int) -> bool:
+    """Delete a contact by id. True when a row was removed."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM contacts WHERE id=%s", (contact_id,))
+        conn.commit()
+        return (cursor.rowcount or 0) > 0
+    except Error as e:
+        log.warning(f"⚠️  Database error delete_contact: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def add_crm_contact_if_new(phone: str, phone_key: str, name: str) -> bool:
+    """Insert a CRM-resolved contact unless the number already exists (manual
+    data must never be overwritten by a lookup). True when a row was added."""
+    if not phone_key or not name:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT IGNORE INTO contacts (name, phone, phone_key, source) VALUES (%s,%s,%s,'crm')",
+            (name[:255], phone[:64], phone_key[:32]),
+        )
+        conn.commit()
+        return (cursor.rowcount or 0) > 0
+    except Error as e:
+        log.warning(f"⚠️  Database error add_crm_contact_if_new: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def get_contacts_for_resolver() -> list:
+    """(phone_key, name) pairs for the ContactResolver's in-memory dict."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("SELECT phone_key, name FROM contacts")
+        return cursor.fetchall() or []
+    except Error as e:
+        log.warning(f"⚠️  Database error get_contacts_for_resolver: {e}")
+        return []
     finally:
         _safe_close(cursor, conn)
