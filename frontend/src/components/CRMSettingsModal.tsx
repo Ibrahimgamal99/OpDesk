@@ -468,7 +468,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   const previewJson = useMemo(
     () => JSON.stringify(Object.fromEntries(previewRows), null, 2), [previewRows]);
   const selectedCount = (config.field_catalog || []).filter(isFieldOn).length;
-  const activeDirections = CRM_DIRECTIONS.filter(d => (config as any)[d.key] !== false);
+  const activeDirections = CRM_DIRECTIONS.filter(d => config[d.key] !== false);
   const syncPath = config.sync_endpoint || config.endpoint_path || '/api/calls';
   // Concatenated the same way the connector does: server_url.rstrip('/') + path.
   // Showing the raw join (not a tidied-up version) is deliberate — it exposes a
@@ -1000,7 +1000,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
                                 <label>{t('settings.crm.directions', 'Push these call directions')}</label>
                                 <div className="crmx-seg">
                                   {CRM_DIRECTIONS.map(({ key, i18n, label, Icon }) => {
-                                    const on = (config as any)[key] !== false;
+                                    const on = config[key] !== false;
                                     return (
                                       <button
                                         type="button"

@@ -777,7 +777,7 @@ function App({ onLogout }: AppProps) {
             <button className={`sidebar-item${activeTab === 'calls' ? ' active' : ''}`} onClick={() => selectTab('calls')} title={sidebarCollapsed ? t('nav.activeCalls') : undefined}>
               <PhoneCall size={16} />{!sidebarCollapsed && t('nav.activeCalls')}
               {stats.active_calls_count > 0 && (
-                <span className="sidebar-badge" style={{ background: 'var(--status-call)', color: '#fff' }}>{stats.active_calls_count}</span>
+                <span className="sidebar-badge" style={{ background: 'var(--status-call)', color: 'var(--text-on-accent)' }}>{stats.active_calls_count}</span>
               )}
             </button>
 
@@ -785,7 +785,7 @@ function App({ onLogout }: AppProps) {
               <button className={`sidebar-item${activeTab === 'queues' ? ' active' : ''}`} onClick={() => selectTab('queues')} title={sidebarCollapsed ? t('nav.queues') : undefined}>
                 <Users size={16} />{!sidebarCollapsed && t('nav.queues')}
                 {stats.total_waiting > 0 && (
-                  <span className="sidebar-badge" style={{ background: 'var(--status-ringing)', color: '#fff' }}>{stats.total_waiting}</span>
+                  <span className="sidebar-badge" style={{ background: 'var(--status-ringing)', color: 'var(--text-on-accent)' }}>{stats.total_waiting}</span>
                 )}
               </button>
             )}

@@ -268,7 +268,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
 
         <div className="an-export-bar">
           {exportError && (
-            <span style={{ color: 'var(--accent-danger, #f85149)', fontSize: '0.78rem' }}>
+            <span style={{ color: 'var(--accent-danger)', fontSize: '0.78rem' }}>
               {exportError}
             </span>
           )}

@@ -84,7 +84,9 @@ export function FilterSelect({
       ...(rtl ? { right: window.innerWidth - rect.right } : { left: rect.left }),
       minWidth: rect.width,
       maxHeight,
-      zIndex: 10000,
+      // Named layer, not a magic number: --z-dropdown sits above --z-modal
+      // so a menu opened inside a dialog is not painted behind it.
+      zIndex: 'var(--z-dropdown)',
     });
   }, []);
 

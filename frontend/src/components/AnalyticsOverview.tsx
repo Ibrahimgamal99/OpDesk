@@ -252,8 +252,8 @@ export function AnalyticsOverview({ dateRange }: Props) {
   }));
 
   const tooltipStyle = {
-    background: 'var(--bg-card, #1a1f26)',
-    border: '1px solid var(--border-accent, #484f58)',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-accent)',
     borderRadius: 8,
     fontSize: 12,
     boxShadow: '0 4px 20px rgba(0,0,0,0.4)',

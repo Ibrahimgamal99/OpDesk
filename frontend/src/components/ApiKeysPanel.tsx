@@ -43,7 +43,7 @@ function TriCheck({ checked, indeterminate }: { checked: boolean; indeterminate:
         : indeterminate ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'transparent',
       display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
     }}>
-      {checked && <Check size={9} color="#fff" strokeWidth={3} />}
+      {checked && <Check size={9} color="var(--text-on-accent)" strokeWidth={3} />}
       {!checked && indeterminate && (
         <span style={{ width: 6, height: 6, background: 'var(--accent-primary)', borderRadius: 1, display: 'block' }} />
       )}
