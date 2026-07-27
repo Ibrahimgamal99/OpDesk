@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, Edit2, Trash2, Pause } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
 import { Modal, Toggle, FormSection, FormRow, FormField } from './ui';
+import { raiseFor } from '../lib/api';
 
 interface PauseReason {
   id: number;
@@ -90,10 +91,7 @@ export function PauseReasonsPanel() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
-      if (!res.ok) {
-        const detail = (await res.json().catch(() => ({}))).detail;
-        throw new Error(detail || t('notReady.saveFailed', 'Save failed'));
-      }
+      if (!res.ok) await raiseFor(res);
       setModal(null);
       load();
     } catch (e) {

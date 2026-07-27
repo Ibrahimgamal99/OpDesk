@@ -799,7 +799,7 @@
       "truncatedHint": "O corpo da requisição foi truncado ao ser registrado — não pode ser reenviado.",
       "copy": "Copiar",
       "copied": "Copiado",
-      "showing": "Mostrando {{from}}–{{to}} de {{total}}",
+      "showingCount": "Mostrando {{count}}",
       "status": {
         "success": "Entregue",
         "failed": "Falhou"

@@ -6,6 +6,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { raiseFor } from '../lib/api';
 
 export interface OpDeskGroup {
   id: number;
@@ -150,10 +151,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             user_ids: form.user_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Update failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('groups.groupUpdated') });
       } else {
         const res = await fetchWithAuth('/api/settings/groups', {
@@ -166,10 +164,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             user_ids: form.user_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Create failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('groups.groupCreated') });
       }
       resetForm();
@@ -187,10 +182,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
       const res = await fetchWithAuth(`/api/settings/groups/${g.id}`, {
         method: 'DELETE',
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Delete failed');
-      }
+      if (!res.ok) await raiseFor(res);
       setMessage({ type: 'success', text: t('groups.groupDeleted') });
       resetForm();
       loadData();

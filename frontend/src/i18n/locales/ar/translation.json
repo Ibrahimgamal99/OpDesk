@@ -801,7 +801,7 @@
       "truncatedHint": "تم اقتطاع نص الطلب عند التسجيل — لا يمكن إعادة إرساله.",
       "copy": "نسخ",
       "copied": "تم النسخ",
-      "showing": "عرض {{from}}–{{to}} من {{total}}",
+      "showingCount": "عرض {{count}}",
       "status": {
         "success": "تم التسليم",
         "failed": "فشل"
