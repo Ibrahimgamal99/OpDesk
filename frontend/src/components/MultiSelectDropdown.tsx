@@ -68,7 +68,9 @@ export function MultiSelectDropdown<T extends string>({
       border: '1px solid var(--border-primary)',
       borderRadius: 'var(--radius-md)',
       boxShadow: 'var(--shadow-lg)',
-      zIndex: 10000,
+      // Named layer, not a magic number: --z-dropdown sits above --z-modal
+      // so a menu opened inside a dialog is not painted behind it.
+      zIndex: 'var(--z-dropdown)',
     });
   }, []);
 

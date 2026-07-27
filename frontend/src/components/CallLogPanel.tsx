@@ -99,24 +99,24 @@ function normalizeMesTo100(mes: number | null): number | null {
 function getMesLabel(mes: number | null, t: TFunction): { emoji: string; label: string; color: string } {
   const normalized = normalizeMesTo100(mes);
   if (normalized === null) return { emoji: '—', label: t('callLog.na'), color: 'var(--text-muted)' };
-  if (normalized >= 80) return { emoji: '⭐', label: t('callLog.audioQuality.excellent'), color: '#10b981' };
-  if (normalized >= 72) return { emoji: '✅', label: t('callLog.audioQuality.good'), color: '#22c55e' };
-  if (normalized >= 60) return { emoji: '⚠️', label: t('callLog.audioQuality.fair'), color: '#f59e0b' };
-  return { emoji: '❌', label: t('callLog.audioQuality.poor'), color: '#ef4444' };
+  if (normalized >= 80) return { emoji: '⭐', label: t('callLog.audioQuality.excellent'), color: 'var(--accent-success)' };
+  if (normalized >= 72) return { emoji: '✅', label: t('callLog.audioQuality.good'), color: 'var(--journey-inbound)' };
+  if (normalized >= 60) return { emoji: '⚠️', label: t('callLog.audioQuality.fair'), color: 'var(--accent-warning)' };
+  return { emoji: '❌', label: t('callLog.audioQuality.poor'), color: 'var(--accent-danger)' };
 }
 
 function getJitterColor(jitter: number | null): string {
   if (jitter === null) return 'var(--text-muted)';
-  if (jitter < 20) return '#3fb950';
-  if (jitter < 50) return '#d29922';
-  return '#f85149';
+  if (jitter < 20) return 'var(--accent-success)';
+  if (jitter < 50) return 'var(--accent-warning)';
+  return 'var(--accent-danger)';
 }
 
 function getLossColor(loss: number | null): string {
   if (loss === null) return 'var(--text-muted)';
-  if (loss < 1) return '#3fb950';
-  if (loss < 5) return '#d29922';
-  return '#f85149';
+  if (loss < 1) return 'var(--accent-success)';
+  if (loss < 5) return 'var(--accent-warning)';
+  return 'var(--accent-danger)';
 }
 
 function calculateLostPackets(lossPercent: number | null, totalPackets: number | null): number | null {
@@ -132,9 +132,9 @@ function getOverallScore(qos: QoSData, t: TFunction): { label: string; color: st
   if (txNormalized !== null) scores.push(txNormalized);
   if (scores.length === 0) return { label: t('callLog.na'), color: 'var(--text-muted)' };
   const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
-  if (avg >= 80) return { label: t('callLog.score.high'), color: '#10b981' };
-  if (avg >= 60) return { label: t('callLog.score.medium'), color: '#f59e0b' };
-  return { label: t('callLog.score.low'), color: '#ef4444' };
+  if (avg >= 80) return { label: t('callLog.score.high'), color: 'var(--accent-success)' };
+  if (avg >= 60) return { label: t('callLog.score.medium'), color: 'var(--accent-warning)' };
+  return { label: t('callLog.score.low'), color: 'var(--accent-danger)' };
 }
 
 function getAudioSummary(qos: QoSData, t: TFunction): string {
@@ -153,15 +153,15 @@ function getAudioSummary(qos: QoSData, t: TFunction): string {
 
 // Keyed on the canonical outcome enum (backend/call_log.py CALL_OUTCOMES).
 const STATUS_CONFIG: Record<string, { color: string; bg: string }> = {
-  ANSWERED:     { color: '#3fb950', bg: 'rgba(63,185,80,0.12)' },
-  NO_ANSWER:    { color: '#d29922', bg: 'rgba(210,153,34,0.12)' },
-  BUSY:         { color: '#f0883e', bg: 'rgba(240,136,62,0.12)' },
-  FAILURE:      { color: '#f85149', bg: 'rgba(248,81,73,0.12)' },
-  ABANDONED:    { color: '#db6d28', bg: 'rgba(219,109,40,0.12)' },
-  CANCELED:     { color: '#8b949e', bg: 'rgba(139,148,158,0.12)' },
-  DROPPED:      { color: '#da3633', bg: 'rgba(218,54,51,0.12)' },
-  OUT_OF_REACH: { color: '#6e7681', bg: 'rgba(110,118,129,0.12)' },
-  in_progress:  { color: '#58a6ff', bg: 'rgba(88,166,255,0.12)' },
+  ANSWERED:     { color: 'var(--accent-success)', bg: 'var(--status-idle-bg)' },
+  NO_ANSWER:    { color: 'var(--accent-warning)', bg: 'var(--warning-bg)' },
+  BUSY:         { color: 'var(--accent-orange)', bg: 'var(--orange-bg)' },
+  FAILURE:      { color: 'var(--accent-danger)', bg: 'var(--status-ringing-bg)' },
+  ABANDONED:    { color: 'var(--accent-orange)', bg: 'var(--orange-bg)' },
+  CANCELED:     { color: 'var(--text-secondary)', bg: 'var(--neutral-bg)' },
+  DROPPED:      { color: 'var(--accent-danger)', bg: 'var(--status-ringing-bg)' },
+  OUT_OF_REACH: { color: 'var(--text-muted)', bg: 'var(--status-unavailable-bg)' },
+  in_progress:  { color: 'var(--accent-primary)', bg: 'var(--status-call-bg)' },
 };
 
 const ITEMS_PER_PAGE = 25;
@@ -980,7 +980,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
             </thead>
             <tbody>
               {pageItems.map((call, idx) => {
-                const st = STATUS_CONFIG[call.status] || { color: '#6e7681', bg: 'rgba(110,118,129,0.12)' };
+                const st = STATUS_CONFIG[call.status] || { color: 'var(--text-muted)', bg: 'var(--status-unavailable-bg)' };
                 const stLabel = t(`callLog.status.${call.status}`, { defaultValue: call.status });
                 const dt = formatCallDate(call.calldate, t);
                 const hasQos = !!parseQoS(call.QoS);
