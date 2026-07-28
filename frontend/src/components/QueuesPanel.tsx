@@ -88,7 +88,7 @@ function ExtensionPicker({
             border: '1px solid var(--border-primary)',
             borderRadius: 'var(--radius-sm)',
             boxShadow: 'var(--shadow-md)',
-            zIndex: 20,
+            zIndex: 'var(--z-dropdown)',
           }}
         >
           {filtered.length === 0 ? (

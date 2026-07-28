@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, Edit2, Trash2, Pause } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
 import { Modal, Toggle, FormSection, FormRow, FormField } from './ui';
+import { raiseFor } from '../lib/api';
 
 interface PauseReason {
   id: number;
@@ -18,7 +19,17 @@ interface PauseReason {
 const truthy = (v: number | boolean | undefined) => v === true || v === 1;
 
 interface ReasonForm { code: string; label: string; productive: boolean; color: string; active: boolean; sort_order: number; }
-const blank: ReasonForm = { code: '', label: '', productive: false, color: '#d29922', active: true, sort_order: 100 };
+
+/**
+ * `color` is persisted per-reason and edited through `<input type="color">`,
+ * which only accepts a literal `#rrggbb` — a `var(--token)` is invalid there
+ * and would silently reset the swatch to black. So these two hex literals are
+ * user data, not styling, and are exempt from the Rule 1 token requirement.
+ */
+// eslint-disable-next-line no-restricted-syntax -- persisted data value, see above
+const DEFAULT_REASON_COLOR = '#d29922';
+
+const blank: ReasonForm = { code: '', label: '', productive: false, color: DEFAULT_REASON_COLOR, active: true, sort_order: 100 };
 
 /**
  * Admin CRUD for Not-Ready / pause reason codes (echo-parity table + modal).
@@ -48,7 +59,7 @@ export function PauseReasonsPanel() {
       code: r.code,
       label: r.label,
       productive: truthy(r.productive),
-      color: r.color || '#d29922',
+      color: r.color || DEFAULT_REASON_COLOR,
       active: truthy(r.is_active),
       sort_order: r.sort_order || 0,
     });
@@ -80,10 +91,7 @@ export function PauseReasonsPanel() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
-      if (!res.ok) {
-        const detail = (await res.json().catch(() => ({}))).detail;
-        throw new Error(detail || t('notReady.saveFailed', 'Save failed'));
-      }
+      if (!res.ok) await raiseFor(res);
       setModal(null);
       load();
     } catch (e) {
@@ -189,7 +197,7 @@ export function PauseReasonsPanel() {
       >
         {error && (
           <div style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, marginBottom: 12,
-            background: 'rgba(248,81,73,0.12)', color: 'var(--status-ringing, #f85149)' }}>
+            background: 'var(--status-ringing-bg)', color: 'var(--status-ringing)' }}>
             {error}
           </div>
         )}

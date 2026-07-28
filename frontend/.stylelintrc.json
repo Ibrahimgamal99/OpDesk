@@ -1,0 +1,81 @@
+{
+  "extends": "stylelint-config-standard",
+  "rules": {
+    "color-no-hex": [
+      true,
+      {
+        "message": "Rule 1: no hex literals outside the token blocks. Use var(--token). Add a stylelint-disable comment inside :root if you are defining a new token."
+      }
+    ],
+    "declaration-property-value-disallowed-list": {
+      "z-index": [
+        "/^\\d+$/"
+      ],
+      "/^(top|right|bottom|left)$/": [],
+      "height": [
+        "/100vh/"
+      ],
+      "min-height": [
+        "/100vh/"
+      ],
+      "max-height": [
+        "/100vh/"
+      ]
+    },
+    "property-disallowed-list": [
+      [
+        "margin-left",
+        "margin-right",
+        "padding-left",
+        "padding-right",
+        "border-left",
+        "border-right",
+        "border-left-color",
+        "border-right-color",
+        "border-left-width",
+        "border-right-width"
+      ],
+      {
+        "severity": "warning",
+        "message": "Rule 1: use logical properties (margin-inline-start, padding-inline, border-inline-end). Physical properties break RTL."
+      }
+    ],
+    "declaration-property-value-no-unknown": true,
+    "comment-empty-line-before": null,
+    "declaration-empty-line-before": null,
+    "rule-empty-line-before": null,
+    "custom-property-empty-line-before": null,
+    "no-descending-specificity": null,
+    "alpha-value-notation": null,
+    "color-function-notation": null,
+    "selector-class-pattern": null,
+    "custom-property-pattern": null,
+    "keyframes-name-pattern": null,
+    "shorthand-property-no-redundant-values": null,
+    "declaration-block-no-redundant-longhand-properties": null,
+    "media-feature-range-notation": null,
+    "value-keyword-case": null,
+    "font-family-name-quotes": null,
+    "number-max-precision": null,
+    "length-zero-no-unit": null,
+    "color-function-alias-notation": null,
+    "declaration-block-single-line-max-declarations": null,
+    "at-rule-empty-line-before": null,
+    "property-no-vendor-prefix": null,
+    "color-hex-length": null,
+    "no-duplicate-selectors": null,
+    "declaration-property-value-keyword-no-deprecated": null,
+    "declaration-block-no-shorthand-property-overrides": null,
+    "font-family-no-missing-generic-family-keyword": null
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/styles/index.css"
+      ],
+      "rules": {
+        "color-no-hex": null
+      }
+    }
+  ]
+}

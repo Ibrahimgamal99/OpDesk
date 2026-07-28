@@ -368,7 +368,10 @@
       "listen": "Listen",
       "whisper": "Whisper",
       "barge": "Barge"
-    }
+    },
+    "searchLabel": "Search users",
+    "searchPlaceholder": "Username, name, extension, group…",
+    "noMatches": "No users match \"{{query}}\""
   },
   "groups": {
     "title": "All groups",
@@ -409,7 +412,10 @@
     "groupUpdated": "Group updated",
     "groupCreated": "Group created",
     "groupDeleted": "Group deleted",
-    "groupNameRequired": "Group name is required"
+    "groupNameRequired": "Group name is required",
+    "searchLabel": "Search groups",
+    "searchPlaceholder": "Group, agent, queue, user…",
+    "noMatches": "No groups match \"{{query}}\""
   },
   "supervisor": {
     "listen": {
@@ -629,7 +635,8 @@
       "last7": "Last 7 Days",
       "last30": "Last 30 Days",
       "thisMonth": "This Month",
-      "custom": "Custom"
+      "custom": "Custom",
+      "label": "Date range"
     },
     "kpi": {
       "sla": "SLA",
@@ -801,7 +808,7 @@
       "truncatedHint": "Request body was truncated when logged — cannot be replayed.",
       "copy": "Copy",
       "copied": "Copied",
-      "showing": "Showing {{from}}–{{to}} of {{total}}",
+      "showingCount": "Showing {{count}}",
       "status": {
         "success": "Delivered",
         "failed": "Failed"
@@ -866,6 +873,7 @@
     "deleted": "Contact deleted",
     "deleteConfirm": "Delete contact \"{{name}}\"?",
     "searchPlaceholder": "Search name, phone or company…",
+    "searchLabel": "Search contacts",
     "noContacts": "No contacts yet. Contacts added here or resolved from the CRM appear on all call screens.",
     "noMatches": "No contacts match your search",
     "sourceManual": "Manual",

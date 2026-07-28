@@ -27,6 +27,25 @@ function estimateMos(rttMs: number, jitterMs: number, lossPct: number): number {
 
 // computeCallStats reads one getStats() sample off a peer connection and reduces
 // it to the inbound audio quality figures the UI shows.
+/**
+ * The subset of RTCStats this reads. Declared locally because it mixes
+ * standard fields with vendor ones (`mediaType`, `roundTripTime` on
+ * remote-inbound-rtp) that lib.dom's RTCStats does not carry.
+ */
+interface RtcStatsEntry {
+  type?: string;
+  kind?: string;
+  mediaType?: string;
+  jitter?: number;
+  packetsLost?: number;
+  packetsReceived?: number;
+  roundTripTime?: number;
+  currentRoundTripTime?: number;
+  /** candidate-pair only; `selected` is the Firefox spelling of `nominated`. */
+  nominated?: boolean;
+  selected?: boolean;
+}
+
 export async function computeCallStats(pc: RTCPeerConnection | null | undefined): Promise<CallStats | null> {
   if (!pc) return null;
   let report: RTCStatsReport;
@@ -38,7 +57,7 @@ export async function computeCallStats(pc: RTCPeerConnection | null | undefined)
   let packetsReceived = 0;
   let sawInbound = false;
 
-  report.forEach((s: any) => {
+  report.forEach((s: RtcStatsEntry) => {
     if (s.type === 'inbound-rtp' && (s.kind === 'audio' || s.mediaType === 'audio')) {
       sawInbound = true;
       if (typeof s.jitter === 'number') jitterMs = s.jitter * 1000;

@@ -2972,14 +2972,19 @@ def insert_webhook_delivery(*, url: str, method: str = 'POST',
 def list_webhook_deliveries(success: Optional[bool] = None, call_id: Optional[str] = None,
                             call_type: Optional[str] = None, search: Optional[str] = None,
                             date_from: Optional[str] = None, date_to: Optional[str] = None,
-                            limit: int = 50, offset: int = 0) -> Tuple[List[dict], int]:
-    """Return (rows, total) for the delivery log. Bodies are omitted — see the detail route.
+                            limit: int = 50, after_id: Optional[int] = None
+                            ) -> Tuple[List[dict], bool]:
+    """Return (rows, has_more) for the delivery log. Bodies omitted — see the detail route.
 
-    Pagination is server-side: deliveries accrue one row per pushed call indefinitely,
-    so there is no bounded window to fetch and slice client-side.
+    KEYSET pagination, not OFFSET (Rule 5.1). Deliveries accrue one row per pushed
+    call indefinitely, so this table is exactly the case where `OFFSET 40000` would
+    scan and discard 40 000 rows on every request. `id` is the primary key and the
+    sort key, so `id < after_id` is an index seek regardless of depth, and it stays
+    correct when new rows are inserted mid-traversal (offset would repeat a row).
+
+    One extra row is fetched to decide `has_more` without a second COUNT query.
     """
     limit = max(1, min(int(limit or 50), 200))
-    offset = max(0, int(offset or 0))
     where: List[str] = []
     params: List[Any] = []
     if success is not None:
@@ -3003,6 +3008,11 @@ def list_webhook_deliveries(success: Optional[bool] = None, call_id: Optional[st
         where.append("created_at < DATE_ADD(%s, INTERVAL 1 DAY)"
                      if len(str(date_to)) == 10 else "created_at <= %s")
         params.append(date_to)
+    # The keyset predicate. Placed with the other filters so it is ANDed into the
+    # same index range scan rather than applied after the fact.
+    if after_id is not None:
+        where.append("id < %s")
+        params.append(int(after_id))
     clause = (" WHERE " + " AND ".join(where)) if where else ""
 
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
@@ -3011,12 +3021,13 @@ def list_webhook_deliveries(success: Optional[bool] = None, call_id: Optional[st
     try:
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
-        cursor.execute(f"SELECT COUNT(*) AS n FROM webhook_deliveries{clause}", params)
-        total = int((cursor.fetchone() or {}).get('n') or 0)
+        # No COUNT(*): Rule 5.1 says expose `total` only where it is cheap, and it is
+        # not cheap here. The lookahead row below answers "is there a next page?",
+        # which is the only thing the UI actually needs.
         cursor.execute(
             f"SELECT {_DELIVERY_LIST_COLS} FROM webhook_deliveries{clause} "
-            f"ORDER BY id DESC LIMIT %s OFFSET %s",
-            params + [limit, offset],
+            f"ORDER BY id DESC LIMIT %s",
+            params + [limit + 1],
         )
         rows = []
         for r in cursor.fetchall():
@@ -3025,10 +3036,11 @@ def list_webhook_deliveries(success: Optional[bool] = None, call_id: Optional[st
             if r.get('created_at') is not None:
                 r['created_at'] = r['created_at'].isoformat()
             rows.append(r)
-        return rows, total
+        has_more = len(rows) > limit
+        return rows[:limit], has_more
     except Error as e:
         log.warning(f"⚠️  Database error list_webhook_deliveries: {e}")
-        return [], 0
+        return [], False
     finally:
         _safe_close(cursor, conn)
 

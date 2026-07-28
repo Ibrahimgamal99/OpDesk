@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield,
   Phone, List, ChevronDown, Group,
@@ -6,6 +6,8 @@ import {
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { SearchInput } from './ui';
+import { raiseFor } from '../lib/api';
 
 export interface OpDeskGroup {
   id: number;
@@ -51,6 +53,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
   const [editingGroup, setEditingGroup] = useState<OpDeskGroup | null>(null);
   const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null);
   const [groupsSubTab, setGroupsSubTab] = useState<'create' | 'list'>('list');
+  const [search, setSearch] = useState('');
   const [form, setForm] = useState({
     name: '',
     agent_extensions: [] as string[],
@@ -150,10 +153,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             user_ids: form.user_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Update failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('groups.groupUpdated') });
       } else {
         const res = await fetchWithAuth('/api/settings/groups', {
@@ -166,10 +166,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             user_ids: form.user_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Create failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('groups.groupCreated') });
       }
       resetForm();
@@ -187,10 +184,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
       const res = await fetchWithAuth(`/api/settings/groups/${g.id}`, {
         method: 'DELETE',
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Delete failed');
-      }
+      if (!res.ok) await raiseFor(res);
       setMessage({ type: 'success', text: t('groups.groupDeleted') });
       resetForm();
       loadData();
@@ -198,6 +192,33 @@ export function GroupsPanel(props: GroupsPanelProps) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Delete failed' });
     }
   };
+
+  // Member labels are built once here and used by BOTH the filter and the card,
+  // so searching can never disagree with what the expanded card lists. They were
+  // previously inlined in the map, which is why they are hoisted rather than
+  // duplicated.
+  const agentLabelsFor = useCallback((g: OpDeskGroup) => (g.agent_extensions || []).map(ext => {
+    const a = agents.find(x => x.extension === ext);
+    return a ? `${a.extension}${a.name && a.name !== a.extension ? ` (${a.name})` : ''}`.trim() || ext : ext;
+  }), [agents]);
+  const queueLabelsFor = useCallback((g: OpDeskGroup) =>
+    (g.queues || []).map(q => q.queue_name || q.extension), []);
+  const userLabelsFor = useCallback((g: OpDeskGroup) =>
+    (g.user_ids || []).map(uid => users.find(x => x.id === uid)?.username ?? String(uid)), [users]);
+
+  // Above the early returns: hooks cannot live after one. Members are searchable
+  // as well as the name — "which group has extension 1005" is the question this
+  // screen exists to answer, and a name-only match cannot answer it.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return groups;
+    return groups.filter(g => [
+      g.name,
+      ...agentLabelsFor(g),
+      ...queueLabelsFor(g),
+      ...userLabelsFor(g),
+    ].some(v => (v || '').toLowerCase().includes(q)));
+  }, [groups, search, agentLabelsFor, queueLabelsFor, userLabelsFor]);
 
   if (!isAdmin) {
     return (
@@ -363,18 +384,34 @@ export function GroupsPanel(props: GroupsPanelProps) {
 
         {groupsSubTab === 'list' && (
           <>
+            {/* Only when there is a list to narrow. A search box above an empty
+                list is a control that cannot do anything. */}
+            {groups.length > 0 && (
+              <div className="up-search">
+                <SearchInput
+                  value={search}
+                  onChange={setSearch}
+                  label={t('groups.searchLabel', 'Search groups')}
+                  placeholder={t('groups.searchPlaceholder', 'Group, agent, queue, user…')}
+                  // Filters a list already in memory: nothing to coalesce, and no
+                  // deep link worth writing from an admin screen.
+                  debounceMs={0}
+                  urlSync={false}
+                />
+              </div>
+            )}
+
             {groups.length === 0 ? (
               <div className="up-empty">{t('groups.noGroups')}</div>
+            ) : filtered.length === 0 ? (
+              <div className="up-empty">{t('groups.noMatches', 'No groups match "{{query}}"', { query: search })}</div>
             ) : (
               <div className="up-users-list">
-                {groups.map(g => {
+                {filtered.map(g => {
                   const isExpanded = expandedGroupId === g.id;
-                  const agentLabels = (g.agent_extensions || []).map(ext => {
-                    const a = agents.find(x => x.extension === ext);
-                    return a ? `${a.extension}${a.name && a.name !== a.extension ? ` (${a.name})` : ''}`.trim() || ext : ext;
-                  });
-                  const queueLabels = (g.queues || []).map(q => q.queue_name || q.extension);
-                  const userLabels = (g.user_ids || []).map(uid => users.find(x => x.id === uid)?.username ?? String(uid));
+                  const agentLabels = agentLabelsFor(g);
+                  const queueLabels = queueLabelsFor(g);
+                  const userLabels = userLabelsFor(g);
                   return (
                     <div key={g.id} className="up-user-card">
                       <div
