@@ -4,50 +4,10 @@
 /* ---------------------------------------------------------------------------
    Layout
    --------------------------------------------------------------------------- */
-.an-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 16px;
-  min-height: 0;
-  overflow-x: clip;
-}
-
-.an-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.an-header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.an-header-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
 
 /* ---------------------------------------------------------------------------
    Sub-tab navigation
    --------------------------------------------------------------------------- */
-.an-subtabs-wrap {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky);
-  background: var(--bg-primary);
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.an-subtabs-wrap::-webkit-scrollbar { display: none; }
 
 /* ── Generic ui-tabs pill container (shared Tabs component) ───────────── */
 .ui-tabs {
@@ -93,48 +53,6 @@
 .ui-tab.active .ui-tab-count { background: rgba(255,255,255,0.25); }
 
 /* Override the generic ui-tabs pill container to become a flat nav rail */
-.an-subtabs-wrap .ui-tabs {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0 var(--space-5, 20px);
-  gap: 0;
-  width: 100%;
-  min-width: fit-content;
-  margin-bottom: 0;
-  flex-wrap: nowrap;
-}
-.an-subtabs-wrap .ui-tab {
-  padding: 12px 20px;
-  border-radius: 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-muted);
-  gap: 7px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
-}
-.an-subtabs-wrap .ui-tab svg {
-  opacity: 0.6;
-  transition: opacity var(--transition-fast);
-}
-.an-subtabs-wrap .ui-tab:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  box-shadow: none;
-}
-.an-subtabs-wrap .ui-tab:hover svg { opacity: 1; }
-.an-subtabs-wrap .ui-tab.active {
-  background: transparent;
-  color: var(--accent-primary);
-  font-weight: 600;
-  border-bottom-color: var(--accent-primary);
-  box-shadow: none;
-}
-.an-subtabs-wrap .ui-tab.active svg { opacity: 1; color: var(--accent-primary); }
 
 .an-tab-content {
   display: flex;
@@ -184,112 +102,10 @@
   box-shadow: 0 1px 6px rgba(88,166,255,0.3);
 }
 
-/* ---------------------------------------------------------------------------
-   Period picker — two-row toolbar
-   Row 1 : individual pill chips (quick select)
-   Row 2 : unified date-range bar
-   --------------------------------------------------------------------------- */
-.an-period-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.an-period-picker.row {
-  flex-direction: row;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-/* ── Row 1 : pill chips ────────────────────────────────────────────────────── */
-.an-period-quick {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  padding-bottom: 1px; /* room for focus ring */
-}
-.an-period-quick::-webkit-scrollbar { display: none; }
-
-.an-period-btn {
-  padding: 5px 15px;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.6));
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 500;
-  white-space: nowrap;
-  flex-shrink: 0;
-  line-height: 1.5;
-  transition: background 150ms, color 150ms, border-color 150ms, box-shadow 150ms;
-}
-
-.an-period-btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-accent);
-  color: var(--text-primary);
-}
-
-.an-period-btn.active {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
-  color: var(--text-on-accent);
-  font-weight: 600;
-  box-shadow: 0 2px 10px rgba(88,166,255,0.28);
-}
-
-/* ── Row 2 : unified date-range bar ───────────────────────────────────────── */
-.an-period-custom {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  width: fit-content;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.6));
-  border-radius: var(--radius-sm);
-  padding: 2px 6px;
-  transition: border-color 150ms, box-shadow 150ms;
-}
-
-.an-period-custom:focus-within {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(88,166,255,0.12);
-}
-
-.an-period-cal-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-  margin-right: 4px;
-}
-
-.an-date-input {
-  padding: 4px 4px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 0.8rem;
-  font-family: inherit;
-  color-scheme: dark;
-  width: auto;
-  min-width: 0;
-  cursor: pointer;
-  box-sizing: content-box;
-}
-
-.an-date-input:focus {
-  outline: none;
-}
-
-.an-period-sep {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  flex-shrink: 0;
-  padding: 0 6px;
-  user-select: none;
-}
+/* The period picker's chip row and custom-date bar lived here. Both are gone:
+   the range is now ui/RangePicker, styled in shell.css with the rest of the ui/
+   layer. Its chips were pills at --radius-xl with an --accent-primary fill on
+   the selected one — the active-tab treatment, on a control that is not a tab. */
 
 /* ---------------------------------------------------------------------------
    KPI cards grid
@@ -675,7 +491,7 @@
   padding: 6px 10px 6px 30px;
   border-radius: var(--radius-md, 12px);
   border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  background: var(--bg-primary);
+  background: var(--control-surface);
   color: var(--text-primary);
   font-size: 0.8rem;
   font-family: inherit;
@@ -691,7 +507,6 @@
   outline: none;
   border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px var(--status-call-glow, rgba(88,166,255,0.2));
-  background: var(--bg-secondary);
 }
 
 .an-filter-input::placeholder {
@@ -703,7 +518,7 @@
   padding: 6px 28px 6px 10px;
   border-radius: var(--radius-md, 12px);
   border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  background: var(--bg-primary);
+  background: var(--control-surface);
   color: var(--text-primary);
   font-size: 0.8rem;
   font-family: inherit;
@@ -944,16 +759,6 @@
 }
 
 @media (max-width: 640px) {
-  .an-panel {
-    padding: 10px;
-    gap: 10px;
-  }
-
-  .an-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
 
   .an-date-input {
     width: 110px;

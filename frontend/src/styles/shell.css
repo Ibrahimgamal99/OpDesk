@@ -1,0 +1,692 @@
+/* ===========================================================================
+   Page shell — ui/Page, ui/Toolbar, ui/SearchInput, ui/Stat
+   ===========================================================================
+   The single source of page chrome. Every value here is a token and every
+   inset/margin is logical, so theme and text direction stay token concerns and
+   no component has to branch on either.
+
+   This file exists because three screens had three unrelated chrome
+   implementations (.lg-head / .cl-header / .an-header) that were each
+   internally consistent and collectively looked like three products.
+   =========================================================================== */
+
+/* --- shared -------------------------------------------------------------- */
+
+.ui-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Page ---------------------------------------------------------------- */
+
+.ui-page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.ui-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-4) var(--space-6);
+  border-block-end: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.ui-page-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+}
+
+.ui-page-title-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.ui-page-status {
+  display: inline-flex;
+  margin-inline-start: var(--space-1);
+}
+
+/* Scope + actions share one trailing group so they stay together when the header
+   wraps, instead of the range dropping to its own line under the title.
+   It must be allowed to shrink: as a flex-shrink:0 item it would keep its
+   max-content width, so its children never get a narrow enough line box to wrap
+   into and the trailing one is clipped by .ui-page's overflow at 320px. */
+.ui-page-trail {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ui-page-scope,
+.ui-page-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* One tab-strip container, product-wide. Pages pass items and nothing else,
+   which is what stops .lg-tabs and .an-subtabs-wrap from reappearing. */
+.ui-page-tabs {
+  padding: 0 var(--space-6);
+  border-block-end: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ui-page-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Overflow is solved once, here: the strip scrolls. The shared .ui-tabs sets
+   flex-wrap: wrap, which put the tabs on a second line at 320px — that changes
+   page height on every navigation, so it is overridden in the slot Page owns.
+   Its physical margin-bottom is dropped too; the slot provides the spacing. */
+.ui-page-tabs .ui-tabs {
+  flex-wrap: nowrap;
+  margin-block: var(--space-3);
+  margin-inline: 0;
+}
+
+.ui-page-toolbar {
+  padding: var(--space-3) var(--space-6);
+  border-block-end: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.ui-page-body {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* --- Toolbar ------------------------------------------------------------- */
+
+/* No border, no background, no padding: .ui-page-toolbar above is already the
+   band that separates this row from the tabs and the body. The card that used to
+   be drawn here put a second outline 12px inside the page's own, and made the
+   Analytics row — which holds nothing but its trailing control — read as an
+   empty box. The band is the container. */
+.ui-toolbar {
+  /* A container, not a viewport query: the toolbar collapses from the space it
+     actually occupies. A page with a sidebar open reaches the collapse width at
+     a wider viewport than one without, and only the toolbar knows which it is. */
+  container: uitoolbar / inline-size;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ui-toolbar-lead,
+.ui-toolbar-trail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ui-toolbar-lead {
+  flex: 1 1 auto;
+}
+
+.ui-toolbar-trail {
+  flex: 0 0 auto;
+}
+
+.ui-toolbar-search {
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 420px;
+}
+
+.ui-toolbar-filter {
+  flex: 0 1 180px;
+  min-width: 0;
+}
+
+/* Which of four grey selects is hiding rows. Border only — a filled control here
+   would compete with the primary action and with the tab strip. */
+.ui-toolbar-filter[data-active] .an-select-trigger {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.ui-toolbar-action {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* --- collapsed filters (narrow toolbar) ---------------------------------- */
+
+/* Wide is the default: inline filters, no button. */
+.ui-toolbar-filters-btn {
+  display: none;
+}
+
+.ui-toolbar-filters-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+}
+
+/* 640px is the `sm` token breakpoint, applied to the toolbar's own width rather
+   than the window's. Below it, search plus three readable selects no longer fit,
+   and the selects were truncating to "…ctions" / "…tuses". */
+@container uitoolbar (max-width: 640px) {
+  .ui-toolbar-filter {
+    display: none;
+  }
+
+  .ui-toolbar-filters-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: var(--control-h);
+    padding-inline: var(--control-pad-inline);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--control-radius);
+    background: var(--control-surface);
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    font-family: inherit;
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+  }
+
+  .ui-toolbar-filters-btn:hover {
+    border-color: var(--border-accent);
+  }
+
+  .ui-toolbar-filters-btn:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* The row's single height and radius, imposed on whatever is slotted in rather
+   than chosen by each control. Scoped to .ui-toolbar so controls used elsewhere
+   keep their own sizing. */
+.ui-toolbar .an-select-trigger,
+.ui-toolbar .ui-search-input,
+.ui-toolbar .btn {
+  height: var(--control-h);
+  padding-block: 0;
+  border-radius: var(--control-radius);
+  font-size: var(--text-base);
+}
+
+.ui-toolbar .an-select {
+  width: 100%;
+}
+
+/* --- RangePicker --------------------------------------------------------- */
+
+.ui-range-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h);
+  padding-inline: var(--control-pad-inline);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--control-radius);
+  background: var(--control-surface);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-family: inherit;
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.ui-range-trigger:hover {
+  border-color: var(--border-accent);
+}
+
+.ui-range-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--status-call-glow);
+}
+
+.ui-range-trigger[data-state='open'] {
+  border-color: var(--accent-primary);
+}
+
+.ui-range-icon,
+.ui-range-caret {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Tabular figures so "Jul 1 – Jul 28" does not change width as the dates change,
+   which would shift the header's whole trailing group. */
+.ui-range-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ui-range-panel {
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.ui-range-presets {
+  display: flex;
+  flex-direction: column;
+}
+
+.ui-range-preset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--space-7);
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  font-family: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.ui-range-preset:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ui-range-preset:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.ui-range-preset[aria-pressed='true'] {
+  color: var(--accent-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.ui-range-custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+  padding-block-start: var(--space-3);
+  padding-inline: var(--space-3);
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.ui-range-custom-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.ui-range-dates {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ui-range-date {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--control-surface);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  /* Follows the theme, so the native calendar widget is not a light popup on a
+     dark panel. */
+  color-scheme: light dark;
+  cursor: pointer;
+}
+
+.ui-range-date:focus-visible {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.ui-range-arrow {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  user-select: none;
+}
+
+/* The 32px row is a pointer affordance. On touch the panel obeys the 44px
+   minimum, the same trade ui/Sheet makes for its fields. */
+@media (pointer: coarse) {
+  .ui-range-preset {
+    min-height: 44px;
+  }
+
+  .ui-range-date {
+    padding-block: var(--space-2);
+  }
+}
+
+/* --- SearchInput --------------------------------------------------------- */
+
+.ui-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.ui-search-icon {
+  position: absolute;
+  inset-inline-start: var(--control-pad-inline);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.ui-search-input {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h);
+  /* Icon and clear button both sit inside the field, so the text has to start
+     and stop clear of them. */
+  padding-inline: calc(var(--control-pad-inline) * 2 + var(--space-3)) calc(var(--control-pad-inline) * 2 + var(--space-2));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--control-radius);
+  background: var(--control-surface);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-family: inherit;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.ui-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.ui-search-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.ui-search-input:hover {
+  border-color: var(--border-accent);
+}
+
+.ui-search-input:focus-visible {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--status-call-glow);
+}
+
+.ui-search-clear,
+.ui-search-spinner {
+  position: absolute;
+  inset-inline-end: var(--control-pad-inline);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.ui-search-clear {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.ui-search-clear:hover {
+  color: var(--text-primary);
+}
+
+.ui-search-clear:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* --- Stat ---------------------------------------------------------------- */
+
+.ui-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--control-radius);
+  background: var(--bg-tertiary);
+}
+
+.ui-stat-icon {
+  display: inline-flex;
+  align-self: center;
+  color: var(--text-muted);
+}
+
+.ui-stat-value {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-stat-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* Tone colours the value, not the surface — a filled tile reads as a status
+   banner, and these are counters. */
+.ui-stat--primary .ui-stat-value { color: var(--accent-primary); }
+.ui-stat--success .ui-stat-value { color: var(--accent-success); }
+.ui-stat--warning .ui-stat-value { color: var(--accent-orange); }
+.ui-stat--danger .ui-stat-value { color: var(--accent-danger); }
+
+/* --- Responsive ---------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .ui-page-head,
+  .ui-page-tabs,
+  .ui-page-toolbar {
+    padding-inline: var(--space-4);
+  }
+
+  /* Search stays visible below md; the filters wrap under it rather than
+     squeezing into a row of 90px fields. */
+  .ui-toolbar-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .ui-toolbar-filter {
+    flex-basis: calc(50% - var(--space-2));
+  }
+
+  .ui-toolbar-trail {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* --- Sheet --------------------------------------------------------------- */
+
+.ui-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: rgb(0 0 0 / 55%);
+}
+
+.ui-sheet {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  /* dvh, not vh: vh is the pre-scroll viewport, so a sheet sized in vh sits
+     partly under the mobile browser chrome. */
+  max-height: 85dvh;
+  padding-block-end: env(safe-area-inset-bottom);
+  border-start-start-radius: var(--radius-lg);
+  border-start-end-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border-block-start: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-xl);
+  transform: translateY(var(--sheet-drag, 0));
+  transition: transform var(--transition-fast);
+}
+
+/* While the finger is down the sheet must track it exactly — easing a drag
+   makes it feel detached from the pointer. */
+.ui-sheet[data-dragging='true'] {
+  transition: none;
+}
+
+.ui-sheet-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* A 44px target: this is the drag affordance, so it obeys the touch minimum
+     even though the bar itself is drawn 4px tall. */
+  min-height: 44px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.ui-sheet-grip-bar {
+  width: var(--space-7);
+  height: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--border-accent);
+}
+
+.ui-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.ui-sheet-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+}
+
+.ui-sheet-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ui-sheet-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* The body is the only scrollable region; grip, head, and foot stay pinned. */
+.ui-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+}
+
+.ui-sheet-foot {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.ui-sheet-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ui-sheet-field-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+
+/* Options are >= 44px in the sheet; the compact row height is a pointer-device
+   affordance and does not carry over to touch. */
+.ui-sheet-field .an-select-trigger {
+  min-height: 44px;
+  border-radius: var(--control-radius);
+  font-size: var(--text-base);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-sheet {
+    transition: none;
+  }
+}
