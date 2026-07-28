@@ -49,6 +49,27 @@ export function matchQuick(range: DateRange): QuickSelect | null {
   return null;
 }
 
+/**
+ * The preset list every ui/RangePicker is given. It lives here rather than in the
+ * component because ui/ carries no i18n dependency, and here rather than at each
+ * call site because three screens offering three different preset lists is the
+ * drift this whole layer exists to stop. `t` is passed in so this module stays
+ * free of react-i18next.
+ */
+export function rangePresets(
+  t: (key: string) => string,
+): { key: QuickSelect; label: string; from: string; to: string }[] {
+  const r = quickRanges();
+  const keys: { key: QuickSelect; i18n: string }[] = [
+    { key: 'today',     i18n: 'analytics.period.today' },
+    { key: 'yesterday', i18n: 'analytics.period.yesterday' },
+    { key: '7d',        i18n: 'analytics.period.last7' },
+    { key: '30d',       i18n: 'analytics.period.last30' },
+    { key: 'month',     i18n: 'analytics.period.thisMonth' },
+  ];
+  return keys.map(k => ({ key: k.key, label: t(k.i18n), ...r[k.key] }));
+}
+
 export function fmtSecs(secs: number | null | undefined): string {
   if (secs === null || secs === undefined) return '—';
   if (secs < 60) return `${secs}s`;

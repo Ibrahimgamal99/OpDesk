@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   BookUser, UserPlus, Pencil, Trash2, Save, Loader2, CheckCircle2, AlertCircle,
-  Phone, PhoneCall, Search, Building2,
+  Phone, PhoneCall, Building2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import type { Contact } from '../types';
 import { raiseFor } from '../lib/api';
+import { SearchInput } from './ui';
 
 export interface ContactsPanelProps {
   /** Start a call to this number (fills the softphone dialer and opens it). */
@@ -242,15 +243,20 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
 
         {subTab === 'list' && (
           <>
-            <div style={{ position: 'relative', maxWidth: 340, marginBottom: 16 }}>
-              <Search size={14} style={{ position: 'absolute', insetInlineStart: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input
-                type="text"
-                className="form-input"
-                style={{ paddingInlineStart: 32 }}
+            {/* ui/SearchInput, not a .form-input with a hand-placed icon: that
+                was a form field pressed into service as a search box, so it
+                carried the form surface and 13px text while every other search
+                field in the product was 14px on the control surface. */}
+            <div className="up-search">
+              <SearchInput
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={setSearch}
+                label={t('contacts.searchLabel', 'Search contacts')}
                 placeholder={t('contacts.searchPlaceholder')}
+                // Filters an already-loaded list, so there is no request to
+                // coalesce and no deep link worth writing to the address bar.
+                debounceMs={0}
+                urlSync={false}
               />
             </div>
 

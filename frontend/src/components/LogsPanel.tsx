@@ -2,15 +2,15 @@ import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  Terminal, Send, Play, Pause, Download, Trash2, Search, X, Tag, Network,
+  Terminal, Send, Play, Pause, Download, Trash2, Tag, Network,
   ChevronRight, ChevronDown, RefreshCw, Copy, Check, ArrowDown, AlertCircle,
 } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
 import { FilterSelect } from './FilterSelect';
-import { PeriodPicker } from './AnalyticsPanel';
+import { PageRange } from './PageRange';
 import { quickRanges } from './analyticsUtils';
 import type { DateRange } from './analyticsUtils';
-import { Tabs } from './ui';
+import { Page, SearchInput, Tabs, Toolbar } from './ui';
 import type { AmiEvent, WebhookDelivery, WebhookDeliveryDetail } from '../types';
 import { apiList, messageFrom, toApiError } from '../lib/api';
 
@@ -54,42 +54,33 @@ export function LogsPanel() {
     setAmiBusy(false);
   };
 
-  return (
-    <div className="panel settings-panel-full lg-panel">
-      {/* The header names the surface the active tab shows, with the stream's state on
-          the trailing edge — the panel title is the tab, not a generic "Logs". */}
-      <div className="lg-head">
-        <h2 className="lg-title">
-          {tab === 'system'
-            ? <><Terminal size={16} className="lg-title-icon" />{t('logs.system.title', 'AMI Event Stream')}</>
-            : <><Send size={16} className="lg-title-icon" />{t('logs.tabs.deliveries', 'CRM Deliveries')}</>}
-        </h2>
-        {tab === 'system' && (
-          <div className="lg-conn">
-            <span className={`lg-badge ${amiEnabled && !paused ? 'lg-badge-live' : 'lg-badge-off'}`}>
-              {!amiEnabled
-                ? t('logs.system.off', 'Off')
-                : paused
-                  ? t('logs.system.paused', 'Paused')
-                  : t('logs.system.live', 'Live')}
-            </span>
-          </div>
-        )}
-      </div>
-      <Tabs
-        className="lg-tabs"
-        tabs={[
-          { key: 'system', label: t('logs.tabs.system', 'System'), icon: <Terminal size={14} /> },
-          { key: 'deliveries', label: t('logs.tabs.deliveries', 'CRM Deliveries'), icon: <Send size={14} /> },
-        ]}
-        active={tab}
-        onChange={(k) => setSearchParams({ tab: k }, { replace: true })}
-      />
-      {tab === 'system'
-        ? <SystemLogsTab amiEnabled={amiEnabled} amiBusy={amiBusy} onToggleAmi={toggleAmi} paused={paused} setPaused={setPaused} />
-        : <DeliveriesTab />}
-    </div>
+  // Both tabs own their own toolbar, so each renders its own <Page> and receives
+  // the shared tab strip to slot in. Only one is mounted at a time, so the
+  // header and tab strip are still rendered exactly once — and neither tab has
+  // to hand-roll chrome to get a toolbar of its own.
+  const tabStrip = (
+    <Tabs
+      tabs={[
+        { key: 'system', label: t('logs.tabs.system', 'System'), icon: <Terminal size={14} /> },
+        { key: 'deliveries', label: t('logs.tabs.deliveries', 'CRM Deliveries'), icon: <Send size={14} /> },
+      ]}
+      active={tab}
+      onChange={(k) => setSearchParams({ tab: k }, { replace: true })}
+    />
   );
+
+  return tab === 'system'
+    ? (
+      <SystemLogsTab
+        tabStrip={tabStrip}
+        amiEnabled={amiEnabled}
+        amiBusy={amiBusy}
+        onToggleAmi={toggleAmi}
+        paused={paused}
+        setPaused={setPaused}
+      />
+    )
+    : <DeliveriesTab tabStrip={tabStrip} />;
 }
 
 // ===========================================================================
@@ -109,6 +100,7 @@ function eventColor(name: string): string {
 }
 
 interface SystemLogsTabProps {
+  tabStrip: React.ReactNode;
   amiEnabled: boolean;
   amiBusy: boolean;
   onToggleAmi: () => void;
@@ -116,7 +108,7 @@ interface SystemLogsTabProps {
   setPaused: (fn: (p: boolean) => boolean) => void;
 }
 
-function SystemLogsTab({ amiEnabled, amiBusy, onToggleAmi, paused, setPaused }: SystemLogsTabProps) {
+function SystemLogsTab({ tabStrip, amiEnabled, amiBusy, onToggleAmi, paused, setPaused }: SystemLogsTabProps) {
   const { t } = useTranslation();
   const [events, setEvents] = useState<AmiEvent[]>([]);
   const [eventNames, setEventNames] = useState<string[]>([]);
@@ -255,69 +247,82 @@ function SystemLogsTab({ amiEnabled, amiBusy, onToggleAmi, paused, setPaused }: 
   };
 
   return (
-    <div className="lg-body">
-      <div className="lg-controls">
-        <div className="lg-control" style={{ minWidth: 200 }}>
-          <label className="lg-control-label"><Tag size={12} />{t('logs.system.eventType', 'Event type')}</label>
-          <FilterSelect
-            size="md"
-            value={eventFilter}
-            onChange={setEventFilter}
-            style={{ width: '100%' }}
-            options={[
-              { value: '', label: t('logs.system.allEvents', 'All events') },
-              ...eventNames.map((n) => ({ value: n, label: n })),
-            ]}
-          />
-        </div>
-        <div className="lg-control" style={{ flex: 1, minWidth: 220 }}>
-          <label className="lg-control-label"><Search size={12} />{t('logs.system.search', 'Search')}</label>
-          <div className="cl-filter-item cl-filter-search">
-            <input
-              className="cl-filter-input lg-input"
+    <Page
+      icon={<Terminal size={18} />}
+      title={t('logs.system.title', 'AMI Event Stream')}
+      status={
+        <span className={`lg-badge ${amiEnabled && !paused ? 'lg-badge-live' : 'lg-badge-off'}`}>
+          {!amiEnabled
+            ? t('logs.system.off', 'Off')
+            : paused
+              ? t('logs.system.paused', 'Paused')
+              : t('logs.system.live', 'Live')}
+        </span>
+      }
+      tabs={tabStrip}
+      toolbar={
+        <Toolbar
+          search={
+            <SearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={setSearch}
+              label={t('logs.system.search', 'Search')}
               placeholder={t('logs.system.searchPlaceholder', 'Channel, caller ID, queue…')}
             />
-            {search && (
-              <button className="cl-filter-clear" onClick={() => setSearch('')} aria-label="Clear">
-                <X size={13} />
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="lg-actions">
-          <button
-            className={`btn ${amiEnabled ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={onToggleAmi}
-            disabled={amiBusy}
-            title={t('logs.system.amiHint', 'Enable or disable AMI event recording')}
-          >
-            {amiBusy ? <RefreshCw size={13} className="spinner" /> : <Terminal size={13} />}
-            {t('logs.system.ami', 'AMI')} {amiEnabled ? t('logs.system.on', 'On') : t('logs.system.off', 'Off')}
-          </button>
-          <button
-            className={`btn ${sipEnabled ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={toggleSip}
-            disabled={sipBusy}
-            title={t('logs.system.sipHint', 'Interleave raw SIP messages into the stream')}
-          >
-            {sipBusy ? <RefreshCw size={13} className="spinner" /> : <Network size={13} />}
-            {t('logs.system.sip', 'SIP')} {sipEnabled ? t('logs.system.on', 'On') : t('logs.system.off', 'Off')}
-          </button>
-          <button className="btn btn-ghost" onClick={() => setPaused((p) => !p)}>
-            {paused ? <Play size={13} /> : <Pause size={13} />}
-            {paused ? t('logs.system.resume', 'Resume') : t('logs.system.pause', 'Pause')}
-          </button>
-          <button className="btn btn-ghost" onClick={exportTxt} disabled={!events.length}>
-            <Download size={13} />{t('logs.system.export', 'Export')}
-          </button>
-          <button className="btn btn-ghost" onClick={() => { setEvents([]); setExpanded(null); }} disabled={!events.length}>
-            <Trash2 size={13} />{t('logs.system.clear', 'Clear')}
-          </button>
-        </div>
-      </div>
-
+          }
+          filtersLabel={t('common.filters', 'Filters')}
+          filters={[
+            {
+              key: 'event',
+              label: t('logs.system.eventType', 'Event type'),
+              active: Boolean(eventFilter),
+              control: (
+                <FilterSelect
+                  size="md"
+                  value={eventFilter}
+                  onChange={setEventFilter}
+                  icon={Tag}
+                  options={[
+                    { value: '', label: t('logs.system.allEvents', 'All events') },
+                    ...eventNames.map((n) => ({ value: n, label: n })),
+                  ]}
+                />
+              ),
+            },
+          ]}
+          actions={[
+            <button
+              className={`btn ${amiEnabled ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={onToggleAmi}
+              disabled={amiBusy}
+              title={t('logs.system.amiHint', 'Enable or disable AMI event recording')}
+            >
+              {amiBusy ? <RefreshCw size={13} className="spinner" /> : <Terminal size={13} />}
+              {t('logs.system.ami', 'AMI')} {amiEnabled ? t('logs.system.on', 'On') : t('logs.system.off', 'Off')}
+            </button>,
+            <button
+              className={`btn ${sipEnabled ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={toggleSip}
+              disabled={sipBusy}
+              title={t('logs.system.sipHint', 'Interleave raw SIP messages into the stream')}
+            >
+              {sipBusy ? <RefreshCw size={13} className="spinner" /> : <Network size={13} />}
+              {t('logs.system.sip', 'SIP')} {sipEnabled ? t('logs.system.on', 'On') : t('logs.system.off', 'Off')}
+            </button>,
+            <button className="btn btn-ghost" onClick={() => setPaused((p) => !p)}>
+              {paused ? <Play size={13} /> : <Pause size={13} />}
+              {paused ? t('logs.system.resume', 'Resume') : t('logs.system.pause', 'Pause')}
+            </button>,
+            <button className="btn btn-ghost" onClick={exportTxt} disabled={!events.length}>
+              <Download size={13} />{t('logs.system.export', 'Export')}
+            </button>,
+            <button className="btn btn-ghost" onClick={() => { setEvents([]); setExpanded(null); }} disabled={!events.length}>
+              <Trash2 size={13} />{t('logs.system.clear', 'Clear')}
+            </button>,
+          ]}
+        />
+      }
+    >
       {(sipError || error) && (
         <div className="lg-error">
           <AlertCircle size={14} /><span>{sipError || error}</span>
@@ -384,7 +389,7 @@ function SystemLogsTab({ amiEnabled, amiBusy, onToggleAmi, paused, setPaused }: 
           )}
         </div>
       </div>
-    </div>
+    </Page>
   );
 }
 
@@ -421,7 +426,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function DeliveriesTab() {
+function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<WebhookDelivery[]>([]);
   // Cursor pagination (Rule 5.1). `stack` holds the cursor for each visited page
@@ -433,8 +438,9 @@ function DeliveriesTab() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');       // '' | 'success' | 'failed'
   const [direction, setDirection] = useState(''); // '' | inbound | outbound | internal
+  // `search` is already the settled term — ui/SearchInput owns the debounce, so
+  // the 400ms timer that used to sit here would only stack on top of it.
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['7d']);
   const pageIndex = stack.length - 1;
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -442,11 +448,6 @@ function DeliveriesTab() {
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
   const [resendingId, setResendingId] = useState<number | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedSearch(search), 400);
-    return () => clearTimeout(id);
-  }, [search]);
 
   const fetchPage = useCallback(async () => {
     setLoading(true);
@@ -456,7 +457,7 @@ function DeliveriesTab() {
       if (cur) params.set('cursor', cur);
       if (status) params.set('success', status === 'success' ? 'true' : 'false');
       if (direction) params.set('call_type', direction);
-      if (debouncedSearch) params.set('search', debouncedSearch);
+      if (search) params.set('search', search);
       if (dateRange?.from) params.set('date_from', dateRange.from);
       if (dateRange?.to) params.set('date_to', dateRange.to);
       const { items, page } = await apiList<WebhookDelivery>(`/api/logs/deliveries?${params}`);
@@ -468,12 +469,12 @@ function DeliveriesTab() {
     } finally {
       setLoading(false);
     }
-  }, [stack, status, direction, debouncedSearch, dateRange]);
+  }, [stack, status, direction, search, dateRange]);
 
   useEffect(() => { fetchPage(); }, [fetchPage]);
   // Any filter change invalidates every cursor: they encode a position within
   // the OLD result set, so paging on would silently skip or repeat rows.
-  useEffect(() => { setStack([null]); }, [debouncedSearch, status, direction, dateRange]);
+  useEffect(() => { setStack([null]); }, [search, status, direction, dateRange]);
 
   const toggleRow = async (id: number) => {
     if (expandedId === id) { setExpandedId(null); return; }
@@ -516,56 +517,70 @@ function DeliveriesTab() {
 
 
   return (
-    <div className="lg-body">
+    <Page
+      icon={<Send size={18} />}
+      title={t('logs.tabs.deliveries', 'CRM Deliveries')}
+      // Only this tab is time-scoped; the System tab's Page has no `scope`, so
+      // the header does not offer a range that would do nothing there.
+      scope={<PageRange value={dateRange} onChange={setDateRange} />}
+      tabs={tabStrip}
+      toolbar={
+        <Toolbar
+          search={
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              label={t('logs.deliveries.search', 'Search deliveries')}
+              placeholder={t('logs.deliveries.searchPlaceholder', 'caller, destination, call ID…')}
+            />
+          }
+          filtersLabel={t('common.filters', 'Filters')}
+          filters={[
+            {
+              key: 'status',
+              label: t('logs.deliveries.result', 'Result'),
+              active: Boolean(status),
+              control: (
+                <FilterSelect
+                  size="md"
+                  value={status}
+                  onChange={setStatus}
+                  options={[
+                    { value: '', label: t('logs.deliveries.allStatuses', 'All results') },
+                    { value: 'success', label: t('logs.deliveries.status.success', 'Delivered'), dot: 'green' },
+                    { value: 'failed', label: t('logs.deliveries.status.failed', 'Failed'), dot: 'red' },
+                  ]}
+                />
+              ),
+            },
+            {
+              key: 'direction',
+              label: t('callLog.table.direction', 'Direction'),
+              active: Boolean(direction),
+              control: (
+                <FilterSelect
+                  size="md"
+                  value={direction}
+                  onChange={setDirection}
+                  options={[
+                    { value: '', label: t('logs.deliveries.allDirections', 'All directions') },
+                    { value: 'inbound', label: t('callLog.type.inbound', 'Inbound'), dot: 'green' },
+                    { value: 'outbound', label: t('callLog.type.outbound', 'Outbound'), dot: 'blue' },
+                    { value: 'internal', label: t('callLog.type.internal', 'Internal'), dot: 'neutral' },
+                  ]}
+                />
+              ),
+            },
+          ]}
+        />
+      }
+    >
       {message && (
         <div className={`up-alert ${message.type} lg-alert`}>
           {message.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}
           <span>{message.text}</span>
         </div>
       )}
-
-      <div className="cl-filters">
-        <div className="cl-filter-item cl-filter-search">
-          <Search size={14} className="cl-filter-icon" />
-          <input
-            className="cl-filter-input"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('logs.deliveries.searchPlaceholder', 'caller, destination, call ID…')}
-          />
-          {search && (
-            <button className="cl-filter-clear" onClick={() => setSearch('')} aria-label="Clear">
-              <X size={13} />
-            </button>
-          )}
-        </div>
-        <div className="cl-filter-item">
-          <FilterSelect
-            value={status}
-            onChange={setStatus}
-            options={[
-              { value: '', label: t('logs.deliveries.allStatuses', 'All results') },
-              { value: 'success', label: t('logs.deliveries.status.success', 'Delivered'), dot: 'green' },
-              { value: 'failed', label: t('logs.deliveries.status.failed', 'Failed'), dot: 'red' },
-            ]}
-          />
-        </div>
-        <div className="cl-filter-item">
-          <FilterSelect
-            value={direction}
-            onChange={setDirection}
-            options={[
-              { value: '', label: t('logs.deliveries.allDirections', 'All directions') },
-              { value: 'inbound', label: t('callLog.type.inbound', 'Inbound'), dot: 'green' },
-              { value: 'outbound', label: t('callLog.type.outbound', 'Outbound'), dot: 'blue' },
-              { value: 'internal', label: t('callLog.type.internal', 'Internal'), dot: 'neutral' },
-            ]}
-          />
-        </div>
-        <div className="cl-filter-item">
-          <PeriodPicker value={dateRange} onChange={setDateRange} />
-        </div>
-      </div>
 
       <div className="cl-table-wrap">
         {loading ? (
@@ -708,6 +723,6 @@ function DeliveriesTab() {
           </button>
         </div>
       )}
-    </div>
+    </Page>
   );
 }

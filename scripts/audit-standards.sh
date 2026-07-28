@@ -56,6 +56,36 @@ hard "raw border-radius (non-zero)" "$raw_r"
 vh=$(grep -hoE '[^d]100vh' "$STYLES"/*.css "$SRC"/components/*.tsx "$SRC"/*.tsx 2>/dev/null | wc -l)
 hard "100vh (must be 100dvh)" "$vh"
 
+# One surface for every text-entry control. The rule the standard did NOT have:
+# a search field was --bg-primary in the Call History toolbar, --bg-tertiary in
+# Contacts and the softphone, and --bg-secondary on the login screen. Every one
+# of those is a legal token, so no other gate here could see it.
+#
+# Counts DISTINCT resting backgrounds across control selectors, so the number is
+# 1 (only --control-surface) and any second value fails regardless of which it
+# is. Hover/open/checked/option states and the transparent field inside a
+# dropdown are excluded -- they are states, not the resting surface. So is
+# :not(:placeholder-shown), which CRM settings uses to tint a field that holds a
+# real value: value-dependent, therefore a state.
+ctrl_surfaces=$(python3 - "$STYLES"/*.css <<'PY'
+import re, sys
+sels = re.compile(r'input|textarea|select-trigger|search-input|filter-input|filter-select', re.I)
+state = re.compile(r':hover|:focus|:disabled|:checked|:not\(|::|option|open |dropdown|switch|clear|spinner|icon|-wrap')
+found = set()
+for f in sys.argv[1:]:
+    css = re.sub(r'/\*.*?\*/', '', open(f).read(), flags=re.S)
+    for sel, body in re.findall(r'([^{}]+)\{([^{}]*)\}', css, re.S):
+        sel = ' '.join(sel.split())
+        if not sels.search(sel) or state.search(sel):
+            continue
+        m = re.search(r'(?<!-)background(?:-color)?:\s*([^;]+);', body)
+        if m:
+            found.add(m.group(1).strip())
+print(len(found - {'none', 'transparent'}))
+PY
+)
+hard "distinct control surfaces (want 1)" "$((ctrl_surfaces > 1 ? ctrl_surfaces - 1 : 0))"
+
 # --- Rule 1/7: contrast verified in the token file --------------------------
 hdr "Rule 1/7 — token contrast (>= 4.5:1 for text)"
 python3 - <<'PY'
