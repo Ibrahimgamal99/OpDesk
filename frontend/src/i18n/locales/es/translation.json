@@ -368,7 +368,10 @@
       "listen": "Escuchar",
       "whisper": "Susurrar",
       "barge": "Intervenir"
-    }
+    },
+    "searchLabel": "Buscar usuarios",
+    "searchPlaceholder": "Usuario, nombre, extensión, grupo…",
+    "noMatches": "Ningún usuario coincide con \"{{query}}\""
   },
   "groups": {
     "title": "Todos los grupos",
@@ -409,7 +412,10 @@
     "groupUpdated": "Grupo actualizado",
     "groupCreated": "Grupo creado",
     "groupDeleted": "Grupo eliminado",
-    "groupNameRequired": "El nombre del grupo es obligatorio"
+    "groupNameRequired": "El nombre del grupo es obligatorio",
+    "searchLabel": "Buscar grupos",
+    "searchPlaceholder": "Grupo, agente, cola, usuario…",
+    "noMatches": "Ningún grupo coincide con \"{{query}}\""
   },
   "supervisor": {
     "listen": {
@@ -629,7 +635,8 @@
       "last7": "Últimos 7 días",
       "last30": "Últimos 30 días",
       "thisMonth": "Este mes",
-      "custom": "Personalizado"
+      "custom": "Personalizado",
+      "label": "Rango de fechas"
     },
     "kpi": {
       "sla": "SLA",
@@ -799,7 +806,7 @@
       "truncatedHint": "El cuerpo de la solicitud se truncó al registrarse: no se puede reenviar.",
       "copy": "Copiar",
       "copied": "Copiado",
-      "showing": "Mostrando {{from}}–{{to}} de {{total}}",
+      "showingCount": "Mostrando {{count}}",
       "status": {
         "success": "Entregado",
         "failed": "Fallido"
@@ -864,6 +871,7 @@
     "deleted": "Contacto eliminado",
     "deleteConfirm": "¿Eliminar el contacto \"{{name}}\"?",
     "searchPlaceholder": "Buscar por nombre, teléfono o empresa…",
+    "searchLabel": "Buscar contactos",
     "noContacts": "Aún no hay contactos. Los contactos añadidos aquí o resueltos desde el CRM aparecen en todas las pantallas de llamadas.",
     "noMatches": "Ningún contacto coincide con tu búsqueda",
     "sourceManual": "Manual",

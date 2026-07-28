@@ -12,16 +12,87 @@
   /* Typography */
   --font-mono: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
 
-  /* Transitions */
-  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* Motion — 3 durations, 2 easings. Nothing else. */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --transition-fast: var(--duration-fast) var(--ease-standard);
+  --transition-normal: var(--duration-normal) var(--ease-standard);
+  --transition-slow: var(--duration-slow) var(--ease-standard);
 
-  /* Spacing */
+  /* Radii — sm/md/lg for surfaces, pill+circle for fully-round shapes */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 20px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+  /* Sub-control radii, derived so they can never drift off the scale */
+  --radius-xs: 4px;
+  --radius-2xs: 2px;
+
+  /* ──────────────────────────────────────────────────────────────────
+     Z-LAYERS — named layers only. A raw z-index number anywhere else
+     is a defect (see scripts/audit-standards.sh).
+
+     Ordering note: --z-dropdown sits ABOVE --z-modal on purpose. A
+     Select or Menu opened inside a Modal portals to <body>, so if the
+     dropdown layer were below the modal layer the panel would render
+     behind the dialog that owns it. This is why the pre-token code had
+     a stray `zIndex: 10000` in the two dropdown portals.
+     ────────────────────────────────────────────────────────────────── */
+  --z-base: 0;
+  --z-raised: 1;      /* local raise inside an existing stacking context */
+  --z-sticky: 10;     /* in-content sticky table headers, subtab bars */
+  --z-chrome: 100;    /* app header / persistent chrome, above content */
+  --z-overlay: 1000;  /* full-screen backdrops (modal, drawer, sheet) */
+  --z-modal: 1100;    /* dialog + drawer surfaces that sit on a backdrop */
+  --z-dropdown: 1200; /* menus, selects, popovers — see ordering note */
+  --z-toast: 1300;
+  --z-tooltip: 1400;
+
+  /* ──────────────────────────────────────────────────────────────────
+     BREAKPOINTS — documentary only. `var()` is not usable inside a
+     @media query, so these cannot be referenced directly; they exist so
+     the allowed set has one written home, and the audit script flags any
+     @media using a width outside it.
+     ────────────────────────────────────────────────────────────────── */
+  --bp-sm: 640px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+  --bp-xl: 1280px;
+  --bp-2xl: 1536px;
+
+  /* Content max-width — text-dense surfaces must not stretch to 3440px */
+  --measure-max: 1440px;
+
+  /* ──────────────────────────────────────────────────────────────────
+     SEMANTIC COLOUR ALIASES (Rule 1)
+
+     These are the names new ui/ components must use. They resolve
+     through the theme-scoped palette below, so they follow
+     [data-theme] automatically with no component branching.
+
+     The older --bg-* / --accent-* names remain valid for now: they are
+     already semantic (there is no --blue-500 anywhere), and renaming
+     ~9k lines of CSS in the same pass as the literal conversion would
+     make the diff unreviewable. They retire per-screen during the
+     ui/ migration.
+     ────────────────────────────────────────────────────────────────── */
+  --surface: var(--bg-primary);
+  --surface-raised: var(--bg-card);
+  --surface-sunken: var(--bg-tertiary);
+  --surface-hover: var(--bg-hover);
+  --border: var(--border-primary);
+  --border-strong: var(--border-accent);
+  --text: var(--text-primary);
+  --primary: var(--accent-primary);
+  --danger: var(--accent-danger);
+  --warning: var(--accent-warning);
+  --success: var(--accent-success);
+  --info: var(--accent-teal);
 
   /* Design tokens (shared with echo-style components: Dashboard etc.) */
   --space-1: 4px;
@@ -35,6 +106,11 @@
   --text-sm: 12px;
   --text-base: 14px;
   --text-lg: 16px;
+  /* Page titles and Stat values used to be raw 18px/22px declarations. Six
+     sizes is the ceiling the standard allows; the scale is now full, so a
+     seventh has to displace one rather than be appended. */
+  --text-xl: 18px;
+  --text-2xl: 22px;
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
@@ -42,6 +118,32 @@
   --leading-tight: 1.2;
   --tracking-tight: -0.01em;
   --transition: 180ms ease;
+
+  /* Toolbar row geometry. "Every control on the row is the same height -- one
+     size token applied by Toolbar, not chosen per control", so ui/Toolbar
+     imposes these on whatever it is given rather than each control picking.
+     40px is the height the existing md controls already resolved to
+     (10px padding + 13px text), kept so the migration is not also a resize. */
+  --control-h: 40px;
+  --control-radius: var(--radius-md);
+  --control-pad-inline: var(--space-3);
+
+  /* THE surface every text-entry control paints, and the reason there is a token
+     for it at all: the product had four. A search field was --bg-primary in the
+     Call History toolbar, --bg-tertiary in Contacts, --bg-tertiary at 52px in the
+     softphone, and --bg-secondary on the login screen; FilterSelect disagreed
+     with itself, --bg-secondary normally and --bg-tertiary at size="md", which is
+     the size every toolbar passes. Each value was a legal token, so no gate
+     caught it.
+
+     It is one step BELOW every container it sits in (--bg-secondary bands,
+     --bg-card panels, in both themes), so a field always reads as recessed. An
+     alias, not a literal, so it follows the theme.
+
+     Focus must NOT change this. Focus changes the border and adds a ring;
+     .form-input:focus used to swap the surface to --bg-secondary, which on dark
+     made a focused field DARKER than its resting state. */
+  --control-surface: var(--bg-primary);
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -65,7 +167,7 @@
   
   --text-primary: #f0f6fc;
   --text-secondary: #8b949e;
-  --text-muted: #6e7681;
+  --text-muted: #7f8792;
   
   /* Status colors - modern and vibrant */
   --status-idle: #3fb950;
@@ -77,7 +179,7 @@
   --status-call: #58a6ff;
   --status-call-bg: rgba(88, 166, 255, 0.12);
   --status-call-glow: rgba(88, 166, 255, 0.2);
-  --status-unavailable: #6e7681;
+  --status-unavailable: #7f8792;
   --status-unavailable-bg: rgba(110, 118, 129, 0.12);
   --status-hold: #a5a5ff;
   --status-hold-bg: rgba(165, 165, 255, 0.12);
@@ -113,6 +215,70 @@
 
   /* Inset top highlight — only reads as depth on dark surfaces */
   --inset-highlight: rgba(255, 255, 255, 0.05);
+
+  /* Text on a solid accent fill. Deliberately near-white in BOTH themes:
+     it is read against --accent-*, not against the page background. */
+  --text-on-accent: #ffffff;
+
+  /* Scrim behind modals / drawers / sheets */
+  --scrim: rgba(0, 0, 0, 0.75);
+  --scrim-soft: rgba(0, 0, 0, 0.45);
+
+  /* Analytics leaderboard rank medals */
+  --rank-gold: #f0c040;
+  --rank-gold-bg: rgba(210, 163, 34, 0.16);
+  --rank-gold-border: rgba(210, 163, 34, 0.3);
+  --rank-silver: #c0c0c0;
+  --rank-silver-bg: rgba(180, 180, 180, 0.12);
+  --rank-silver-border: rgba(180, 180, 180, 0.25);
+  --rank-bronze: #cd7f32;
+  --rank-bronze-bg: rgba(180, 120, 70, 0.16);
+  --rank-bronze-border: rgba(180, 120, 70, 0.3);
+
+  /* Call-journey event colours. These were declared locally on
+     .cl-journey-modal, which pinned them to dark values regardless of
+     theme — theme is a token concern, so they live here now. */
+  --journey-inbound: #22c55e;
+  --journey-outbound: #3b82f6;
+  --journey-queue: #976df7;
+  --journey-ring: #f59e0b;
+  --journey-answer: #06b6d4;
+  --journey-no-answer: #f04b4b;
+  --journey-transfer: #f97316;
+  --journey-hangup: #79899f;
+
+  /* Action-button gradients (call-log row actions).
+     --gradient-purple / --glow-purple were removed with the magenta
+     "N TOTAL CALLS" tile they were added for. Being declared here was not
+     enough to make them in-system: a gradient needs a defined role, and one
+     page's counter is not a role. Numeric callouts are ui/Stat now. */
+  --gradient-success: linear-gradient(135deg, #22c55e, #16a34a);
+  --gradient-success-bar: linear-gradient(90deg, #22c55e, #16a34a);
+  --gradient-info: linear-gradient(135deg, #3b82f6, #2563eb);
+  --glow-success: rgba(34, 197, 94, 0.4);
+  --glow-info: rgba(59, 130, 246, 0.3);
+
+  /* Accent variants used as gradient stops / soft fills */
+  --accent-success-hover: #6dd68a;
+  --accent-danger-hover: #ff7b72;
+  --accent-orange: #f0883e;
+  --accent-purple-soft: #c084fc;
+
+  /* Text on a solid --status-ringing fill. Dark theme uses a LIGHT red
+     (#f85149) so near-black wins on contrast; light theme uses a DARK red
+     (#cf222e) where it must flip to white. Hence a token, not #000. */
+  --text-on-danger: #14181d;
+
+  /* Call-outcome reason chips (notification bell). The class vocabulary
+     these pair with is load-bearing elsewhere — colours only. */
+  --reason-busy: #f0b429;
+  --reason-noanswer: #e3c04a;
+  --reason-failed: #ff7b72;
+
+  /* Soft tinted fills for outcome chips (pair with the matching accent) */
+  --warning-bg: rgba(210, 153, 34, 0.12);
+  --orange-bg: rgba(240, 136, 62, 0.12);
+  --neutral-bg: rgba(139, 148, 158, 0.12);
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -135,7 +301,7 @@
 
   --text-primary: #1c2128;
   --text-secondary: #5a6573;
-  --text-muted: #8b95a3;
+  --text-muted: #677282;
 
   /* Status colors - darkened for contrast on light surfaces */
   --status-idle: #1a7f37;
@@ -144,20 +310,20 @@
   --status-ringing: #cf222e;
   --status-ringing-bg: rgba(207, 34, 46, 0.10);
   --status-ringing-glow: rgba(207, 34, 46, 0.18);
-  --status-call: #1f6feb;
+  --status-call: #186aea;
   --status-call-bg: rgba(31, 111, 235, 0.10);
   --status-call-glow: rgba(31, 111, 235, 0.16);
-  --status-unavailable: #8b95a3;
+  --status-unavailable: #677282;
   --status-unavailable-bg: rgba(139, 149, 163, 0.12);
-  --status-hold: #7c5cff;
+  --status-hold: #7250ff;
   --status-hold-bg: rgba(124, 92, 255, 0.10);
 
   /* Accent colors */
-  --accent-primary: #1f6feb;
+  --accent-primary: #186aea;
   --accent-primary-hover: #1a5fd0;
   --accent-secondary: #1a5fd0;
-  --accent-teal: #0d9aa3;
-  --accent-purple: #7c5cff;
+  --accent-teal: #0b7d84;
+  --accent-purple: #724fff;
   --accent-success: #1a7f37;
   --accent-warning: #9a6700;
   --accent-danger: #cf222e;
@@ -182,6 +348,55 @@
   --bg-tint-3: rgba(124, 92, 255, 0.03);
 
   --inset-highlight: transparent;
+
+  --text-on-accent: #ffffff;
+
+  /* Lighter scrims — a 0.75 black scrim on light chrome reads as a hole */
+  --scrim: rgba(15, 23, 42, 0.45);
+  --scrim-soft: rgba(15, 23, 42, 0.28);
+
+  /* Medals darkened so the text clears 4.5:1 on white */
+  --rank-gold: #8a6d00;
+  --rank-gold-bg: rgba(210, 163, 34, 0.14);
+  --rank-gold-border: rgba(154, 103, 0, 0.3);
+  --rank-silver: #5a6573;
+  --rank-silver-bg: rgba(90, 101, 115, 0.10);
+  --rank-silver-border: rgba(90, 101, 115, 0.24);
+  --rank-bronze: #8a4b1d;
+  --rank-bronze-bg: rgba(180, 120, 70, 0.14);
+  --rank-bronze-border: rgba(138, 75, 29, 0.28);
+
+  /* Journey colours darkened for contrast on white */
+  --journey-inbound: #11813b;
+  --journey-outbound: #2563eb;
+  --journey-queue: #7c3aed;
+  --journey-ring: #b45309;
+  --journey-answer: #0e7490;
+  --journey-no-answer: #dc2626;
+  --journey-transfer: #c2410c;
+  --journey-hangup: #475569;
+
+  --gradient-success: linear-gradient(135deg, #16a34a, #15803d);
+  --gradient-success-bar: linear-gradient(90deg, #16a34a, #15803d);
+  --gradient-info: linear-gradient(135deg, #2563eb, #1d4ed8);
+  --glow-success: rgba(22, 163, 74, 0.28);
+  --glow-info: rgba(37, 99, 235, 0.22);
+
+  --accent-success-hover: #15803d;
+  --accent-danger-hover: #b91c1c;
+  --accent-orange: #c2410c;
+  --accent-purple-soft: #7c3aed;
+
+  /* Flipped to white — light theme's --status-ringing is a dark red */
+  --text-on-danger: #ffffff;
+
+  --reason-busy: #9a6700;
+  --reason-noanswer: #8a6d00;
+  --reason-failed: #b91c1c;
+
+  --warning-bg: rgba(154, 103, 0, 0.10);
+  --orange-bg: rgba(194, 65, 12, 0.10);
+  --neutral-bg: rgba(90, 101, 115, 0.10);
 }
 
 * {
@@ -243,7 +458,7 @@ body::before {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-accent);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -252,7 +467,7 @@ body::before {
 
 /* Login page */
 .login-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -314,7 +529,7 @@ body::before {
 .login-input {
   width: 100%;
   padding: 12px 14px;
-  background: var(--bg-secondary);
+  background: var(--control-surface);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -377,7 +592,7 @@ body::before {
 
 /* App layout */
 .app {
-  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -394,7 +609,7 @@ body::before {
   align-items: center;
   justify-content: space-between;
   position: relative;
-  z-index: 100;
+  z-index: var(--z-chrome);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow: 0 1px 0 var(--inset-highlight) inset;
@@ -537,14 +752,14 @@ body::before {
 
 .header-status .stat-item::before {
   height: 3px;
-  border-radius: 2px 2px 0 0;
+  border-radius: var(--radius-2xs) var(--radius-2xs) 0 0;
 }
 
 .header-status .stat-item:nth-child(1)::before {
   background: linear-gradient(90deg, var(--accent-teal), var(--accent-primary));
 }
 .header-status .stat-item:nth-child(2)::before {
-  background: linear-gradient(90deg, var(--accent-primary), #79c0ff);
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-primary-hover));
 }
 .header-status .stat-item:nth-child(3)::before {
   background: linear-gradient(90deg, var(--accent-purple), var(--accent-primary));
@@ -636,9 +851,9 @@ body::before {
   font-weight: 700;
   line-height: 16px;
   text-align: center;
-  color: #000;
-  background: var(--status-ringing, #eab308);
-  border-radius: 8px;
+  color: var(--text-on-danger);
+  background: var(--status-ringing);
+  border-radius: var(--radius-sm);
   box-shadow: 0 0 0 1px var(--bg-card);
 }
 .header-bell-dropdown {
@@ -654,7 +869,7 @@ body::before {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
-  z-index: 1000;
+  z-index: var(--z-dropdown);
 }
 .header-bell-dropdown-header {
   display: flex;
@@ -675,9 +890,9 @@ body::before {
   font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--status-ringing, #eab308);
-  color: #000;
+  border-radius: var(--radius-sm);
+  background: var(--status-ringing);
+  color: var(--text-on-danger);
 }
 .header-bell-mark-all-btn {
   margin-left: auto;
@@ -771,20 +986,20 @@ body::before {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   margin-left: auto;
 }
 .header-bell-reason-busy {
   background: rgba(245, 158, 11, 0.2);
-  color: #d97706;
+  color: var(--reason-busy);
 }
 .header-bell-reason-noanswer {
   background: rgba(234, 179, 8, 0.2);
-  color: #b45309;
+  color: var(--reason-noanswer);
 }
 .header-bell-reason-failed {
   background: rgba(239, 68, 68, 0.15);
-  color: #dc2626;
+  color: var(--reason-failed);
 }
 .header-bell-reason-switched_off,
 .header-bell-reason-invalid_number {
@@ -1030,11 +1245,11 @@ body::before {
   bottom: 20%;
   width: 3px;
   background: var(--accent-primary);
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius-2xs) var(--radius-2xs) 0;
 }
 
 [dir="rtl"] .sidebar-item.active::before {
-  border-radius: 3px 0 0 3px;
+  border-radius: var(--radius-2xs) 0 0 var(--radius-2xs);
 }
 
 /* Sidebar collapsible group */
@@ -1107,10 +1322,10 @@ body::before {
   bottom: 20%;
   width: 2px;
   background: var(--accent-primary);
-  border-radius: 0 2px 2px 0;
+  border-radius: 0 var(--radius-2xs) var(--radius-2xs) 0;
 }
 [dir="rtl"] .sidebar-subitem { padding: 6px 28px 6px 12px; }
-[dir="rtl"] .sidebar-subitem.active::before { border-radius: 2px 0 0 2px; }
+[dir="rtl"] .sidebar-subitem.active::before { border-radius: var(--radius-2xs) 0 0 var(--radius-2xs); }
 
 /* Legacy alias — kept for any existing sidebar-sub-item usages */
 .sidebar-sub-item { padding-inline-start: 28px; }
@@ -1125,7 +1340,7 @@ body::before {
   font-size: 11px;
   font-weight: 700;
   padding: 2px 7px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   line-height: 1.4;
 }
 
@@ -1560,7 +1775,7 @@ body::before {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -1662,7 +1877,7 @@ body::before {
   background: var(--bg-tertiary);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-sticky);
   backdrop-filter: blur(10px);
 }
 
@@ -1695,7 +1910,7 @@ body::before {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -1912,7 +2127,7 @@ body::before {
   gap: 8px;
   padding: 6px 14px;
   background: var(--status-ringing-bg);
-  border-radius: 24px;
+  border-radius: var(--radius-xl);
   font-size: 12px;
   font-weight: 700;
   color: var(--status-ringing);
@@ -1962,7 +2177,7 @@ body::before {
 .queue-member-status {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--status-idle);
   box-shadow: 0 0 8px var(--status-idle-glow);
   flex-shrink: 0;
@@ -2009,7 +2224,7 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-overlay);
   backdrop-filter: blur(8px);
   animation: fadeIn 0.2s ease;
 }
@@ -2107,7 +2322,7 @@ body::before {
   padding: 10px 14px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--bg-tertiary);
+  background: var(--control-surface);
   color: var(--text-primary);
   font-size: 13px;
   font-family: inherit;
@@ -2119,11 +2334,12 @@ body::before {
   border-color: var(--border-accent);
 }
 
+/* Border + ring only. Swapping the surface on focus made a focused field read
+   as a different control -- and on dark it went darker, not lighter. */
 .form-input:focus {
   outline: none;
   border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px var(--status-call-glow);
-  background: var(--bg-secondary);
 }
 
 .form-input::placeholder {
@@ -2150,14 +2366,14 @@ select.an-filter-select {
 select.form-input:hover,
 select.cl-filter-select:hover,
 select.an-filter-select:hover {
-  border-color: var(--accent-primary, #58a6ff);
-  background-color: var(--bg-hover, #21262e);
+  border-color: var(--accent-primary);
+  background-color: var(--bg-hover);
 }
 
 select.form-input:focus,
 select.cl-filter-select:focus,
 select.an-filter-select:focus {
-  border-color: var(--accent-primary, #58a6ff);
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15), 0 2px 8px rgba(0, 0, 0, 0.2);
   outline: none;
 }
@@ -2165,8 +2381,8 @@ select.an-filter-select:focus {
 select.form-input option,
 select.cl-filter-select option,
 select.an-filter-select option {
-  background: var(--bg-card, #1a1f26);
-  color: var(--text-primary, #e6edf3);
+  background: var(--bg-card);
+  color: var(--text-primary);
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-subtle, rgba(48, 54, 61, 0.5));
 }
@@ -2175,7 +2391,7 @@ select.form-input option:checked,
 select.cl-filter-select option:checked,
 select.an-filter-select option:checked {
   background: rgba(88, 166, 255, 0.15);
-  color: var(--accent-primary, #58a6ff);
+  color: var(--accent-primary);
 }
 
 [dir="rtl"] select.form-input,
@@ -2195,7 +2411,7 @@ select.an-filter-select option:checked {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  z-index: 1001;
+  z-index: var(--z-toast);
 }
 
 .notification {
@@ -2462,18 +2678,31 @@ select.an-filter-select option:checked {
   gap: 10px;
 }
 .cn-badge-new {
-  background: var(--status-ringing, #eab308);
-  color: #000;
+  background: var(--status-ringing);
+  color: var(--text-on-danger);
   font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   margin-left: 4px;
 }
 .btn-icon {
   padding: 6px;
   margin-left: auto;
 }
+/* The search slot for every list panel still on .panel chrome — Contacts, Users,
+   Groups. `up-` because that is already the shared prefix across all three
+   (.up-users-list, .up-user-card, .up-empty, .up-tabs); a cn-/gp-/up- slot each
+   is how one control ends up three widths.
+
+   Only the slot: the field inside is ui/SearchInput and owns its own height,
+   radius, and surface. The cap matches .ui-toolbar-search so the field is not a
+   different width here than on the screens that are on ui/Page. */
+.up-search {
+  max-width: 420px;
+  margin-block-end: var(--space-4);
+}
+
 .cn-filters {
   display: flex;
   gap: 6px;
@@ -2498,7 +2727,7 @@ select.an-filter-select option:checked {
 .cn-filter-btn.active {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 .cn-list-wrap {
   max-height: 60vh;
@@ -3045,7 +3274,7 @@ select.an-filter-select option:checked {
 .up-user-avatar {
   width: 48px;
   height: 48px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-teal));
   color: var(--bg-primary);
   display: flex;
@@ -3081,7 +3310,7 @@ select.an-filter-select option:checked {
   display: inline-flex;
   align-items: center;
   padding: 4px 12px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -3108,7 +3337,7 @@ select.an-filter-select option:checked {
   display: inline-flex;
   align-items: center;
   padding: 4px 12px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -3246,11 +3475,11 @@ select.an-filter-select option:checked {
 }
 .gp-chips::-webkit-scrollbar-track {
   background: var(--bg-tertiary);
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
 }
 .gp-chips::-webkit-scrollbar-thumb {
   background: var(--border-accent);
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
 }
 .gp-chips::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
@@ -3264,7 +3493,7 @@ select.an-filter-select option:checked {
   color: var(--text-primary);
   background: var(--bg-hover);
   border: 1px solid var(--border-subtle);
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   flex-shrink: 0;
   max-width: 100%;
   overflow: hidden;
@@ -3331,169 +3560,17 @@ select.an-filter-select option:checked {
    ================================================================ */
 
 /* Panel container */
-.cl-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xl);
-  overflow: hidden;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-lg);
-  flex-shrink: 0;
-}
 
 /* Header */
-.cl-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 24px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.cl-header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.cl-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
-}
-
-.cl-subtitle {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.cl-header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.cl-stats-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 18px;
-  background: linear-gradient(135deg, #7c3aed, #a855f7);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.3);
-}
-
-.cl-stats-count {
-  font-size: 22px;
-  font-weight: 800;
-  color: #fff;
-  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
-}
-
-.cl-stats-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.8);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
 
 /* Filters & Search */
-.cl-filters {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr;
-  gap: 10px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
-}
-
-.cl-filter-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.cl-filter-search {
-  position: relative;
-}
-
-.cl-filter-icon {
-  position: absolute;
-  left: 12px;
-  color: var(--text-muted);
-  pointer-events: none;
-  z-index: 1;
-}
-
-.cl-filter-input {
-  width: 100%;
-  padding: 10px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: inherit;
-  transition: all var(--transition-fast);
-}
-
-.cl-filter-search .cl-filter-input {
-  padding-left: 38px;
-  padding-right: 32px;
-}
-
-.cl-filter-input:hover {
-  border-color: var(--border-accent);
-}
-
-.cl-filter-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--status-call-glow);
-  background: var(--bg-secondary);
-}
-
-.cl-filter-input::placeholder {
-  color: var(--text-muted);
-  opacity: 0.7;
-}
-
-.cl-filter-date {
-  color-scheme: dark;
-  padding-left: 34px;
-  cursor: pointer;
-}
-
-.cl-filter-clear {
-  position: absolute;
-  right: 10px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  border-radius: 4px;
-  transition: all var(--transition-fast);
-}
-
-.cl-filter-clear:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
 
 .cl-filter-select {
   width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--bg-primary);
+  background: var(--control-surface);
   color: var(--text-primary);
   font-size: 13px;
   font-family: inherit;
@@ -3574,7 +3651,7 @@ select.an-filter-select option:checked {
   border-bottom: 1px solid var(--border-subtle);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-sticky);
   white-space: nowrap;
 }
 
@@ -3621,7 +3698,7 @@ select.an-filter-select option:checked {
   align-items: center;
   gap: 4px;
   padding: 3px 9px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   font-size: 0.72rem;
   font-weight: 600;
   white-space: nowrap;
@@ -3630,30 +3707,30 @@ select.an-filter-select option:checked {
 
 .cl-direction-in {
   background: rgba(63, 185, 80, 0.12);
-  color: #3fb950;
+  color: var(--accent-success);
   border: 1px solid rgba(63, 185, 80, 0.22);
 }
 
 .cl-direction-out {
   background: rgba(88, 166, 255, 0.12);
-  color: #58a6ff;
+  color: var(--accent-primary);
   border: 1px solid rgba(88, 166, 255, 0.22);
 }
 
 .cl-direction-internal {
   background: rgba(165, 165, 255, 0.12);
-  color: #a5a5ff;
+  color: var(--accent-purple);
   border: 1px solid rgba(165, 165, 255, 0.22);
 }
 
 .cl-direction-unknown {
   background: rgba(110, 118, 129, 0.12);
-  color: #6e7681;
+  color: var(--text-muted);
 }
 
 .cl-direction-supervision {
   background: rgba(168, 85, 247, 0.10);
-  color: #c084fc;
+  color: var(--accent-purple-soft);
   border: 1px solid rgba(168, 85, 247, 0.25);
 }
 
@@ -3662,7 +3739,7 @@ select.an-filter-select option:checked {
   display: inline-flex;
   align-items: center;
   padding: 4px 12px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -3744,10 +3821,10 @@ select.an-filter-select option:checked {
 /* Call Journey button (reuses cl-qos-btn) */
 .cl-journey-btn {
   gap: 4px;
-  color: var(--accent-teal, #2dd4bf);
+  color: var(--accent-teal);
 }
 .cl-journey-btn:hover {
-  border-color: var(--accent-teal, #2dd4bf);
+  border-color: var(--accent-teal);
   box-shadow: 0 0 10px rgba(45, 212, 191, 0.3);
 }
 .cl-journey-btn .cl-journey-count {
@@ -3774,7 +3851,7 @@ select.an-filter-select option:checked {
   width: 30px;
   height: 30px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--transition-fast);
   flex-shrink: 0;
@@ -3782,20 +3859,20 @@ select.an-filter-select option:checked {
 }
 
 .cl-audio-play {
-  background: linear-gradient(135deg, #22c55e, #16a34a);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+  background: var(--gradient-success);
+  color: var(--text-on-accent);
+  box-shadow: 0 2px 8px var(--glow-success);
 }
 
 .cl-audio-play:hover {
   transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+  box-shadow: 0 4px 12px var(--glow-success);
 }
 
 .cl-audio-download {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  background: var(--gradient-info);
+  color: var(--text-on-accent);
+  box-shadow: 0 2px 8px var(--glow-info);
 }
 
 .cl-audio-download:hover {
@@ -3814,14 +3891,14 @@ select.an-filter-select option:checked {
   width: 100%;
   height: 4px;
   background: var(--border-primary);
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   overflow: hidden;
 }
 
 .cl-audio-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #22c55e, #16a34a);
-  border-radius: 2px;
+  background: var(--gradient-success-bar);
+  border-radius: var(--radius-2xs);
   transition: width 0.1s linear;
 }
 
@@ -3838,7 +3915,7 @@ select.an-filter-select option:checked {
   color: var(--text-muted);
   background: var(--bg-tertiary);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3927,20 +4004,20 @@ select.an-filter-select option:checked {
 
 .cl-qos-badge {
   padding: 6px 14px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   font-size: 12px;
   font-weight: 700;
 }
 
 .cl-qos-badge.agent {
   background: rgba(88, 166, 255, 0.12);
-  color: #58a6ff;
+  color: var(--accent-primary);
   border: 1px solid rgba(88, 166, 255, 0.3);
 }
 
 .cl-qos-badge.customer {
   background: rgba(63, 185, 80, 0.12);
-  color: #3fb950;
+  color: var(--accent-success);
   border: 1px solid rgba(63, 185, 80, 0.3);
 }
 
@@ -3969,7 +4046,7 @@ select.an-filter-select option:checked {
   color: var(--text-muted);
   font-size: 9px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3979,7 +4056,7 @@ select.an-filter-select option:checked {
 
 .cl-audio-filename-btn:hover {
   background: rgba(88, 166, 255, 0.15);
-  color: #58a6ff;
+  color: var(--accent-primary);
 }
 
 .cl-vad-filename {
@@ -4006,9 +4083,9 @@ select.an-filter-select option:checked {
   gap: 4px;
 }
 
-.cl-vad-stat-sp1 { border-left: 3px solid #58a6ff; }
-.cl-vad-stat-sp2 { border-left: 3px solid #3fb950; }
-.cl-vad-stat-overlap { border-left: 3px solid #f0883e; }
+.cl-vad-stat-sp1 { border-left: 3px solid var(--accent-primary); }
+.cl-vad-stat-sp2 { border-left: 3px solid var(--accent-success); }
+.cl-vad-stat-overlap { border-left: 3px solid var(--accent-orange); }
 .cl-vad-stat-silence { border-left: 3px solid var(--text-muted); }
 
 .cl-vad-stat-label {
@@ -4047,7 +4124,7 @@ select.an-filter-select option:checked {
   position: relative;
   height: 20px;
   background: var(--bg-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
   border: 1px solid var(--border-subtle);
 }
@@ -4056,12 +4133,12 @@ select.an-filter-select option:checked {
   position: absolute;
   top: 2px;
   height: calc(100% - 4px);
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
   min-width: 2px;
 }
 
-.cl-vad-segment-sp1 { background: #58a6ff; opacity: 0.85; }
-.cl-vad-segment-sp2 { background: #3fb950; opacity: 0.85; }
+.cl-vad-segment-sp1 { background: var(--accent-primary); opacity: 0.85; }
+.cl-vad-segment-sp2 { background: var(--accent-success); opacity: 0.85; }
 
 .cl-vad-time-axis {
   display: flex;
@@ -4100,7 +4177,7 @@ select.an-filter-select option:checked {
   color: var(--text-muted);
   background: var(--bg-tertiary);
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .cl-journey-body {
@@ -4163,19 +4240,19 @@ select.an-filter-select option:checked {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
 }
 .cl-journey-direction.cl-direction-in {
   background: rgba(34, 197, 94, 0.12);
-  color: #22c55e;
+  color: var(--journey-inbound);
 }
 .cl-journey-direction.cl-direction-out {
   background: rgba(59, 130, 246, 0.12);
-  color: #3b82f6;
+  color: var(--journey-outbound);
 }
 .cl-journey-direction.cl-direction-internal {
   background: rgba(139, 92, 246, 0.12);
-  color: #8b5cf6;
+  color: var(--journey-queue);
 }
 .cl-journey-agent-badge {
   font-size: 12px;
@@ -4183,7 +4260,7 @@ select.an-filter-select option:checked {
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
 }
 
 .cl-journey-timeline-wrap {
@@ -4225,7 +4302,7 @@ select.an-filter-select option:checked {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--bg-tertiary);
   border: 2px solid var(--border-subtle);
   flex-shrink: 0;
@@ -4236,7 +4313,7 @@ select.an-filter-select option:checked {
   min-height: 12px;
   margin-top: 4px;
   background: var(--border-subtle);
-  border-radius: 1px;
+  border-radius: var(--radius-2xs);
 }
 .cl-journey-timeline-content {
   flex: 1;
@@ -4273,7 +4350,7 @@ select.an-filter-select option:checked {
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -4321,27 +4398,8 @@ select.an-filter-select option:checked {
   color: var(--text-secondary);
 }
 
-/* ------- Call Log Responsive ------- */
-@media (max-width: 1200px) {
-  .cl-filters {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
-}
 
 @media (max-width: 768px) {
-  .cl-filters {
-    grid-template-columns: 1fr 1fr;
-    padding: 12px 16px;
-    gap: 8px;
-  }
-
-  .cl-filter-search {
-    grid-column: 1 / -1;
-  }
-
-  .cl-header {
-    padding: 14px 16px;
-  }
 
   .cl-pagination {
     flex-direction: column;
@@ -4366,21 +4424,6 @@ select.an-filter-select option:checked {
   }
 }
 
-@media (max-width: 480px) {
-  .cl-filters {
-    grid-template-columns: 1fr;
-  }
-
-  .cl-header-right {
-    flex-direction: column;
-    width: 100%;
-  }
-
-  .cl-stats-card {
-    width: 100%;
-    justify-content: center;
-  }
-}
 
 /* ================================================================
    SOFTPHONE – Responsive, modern dialpad + incoming call (scroll enabled)
@@ -4469,7 +4512,7 @@ select.an-filter-select option:checked {
 .softphone-status-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--text-muted);
   flex-shrink: 0;
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
@@ -4533,7 +4576,7 @@ select.an-filter-select option:checked {
   padding: 14px 72px 14px 42px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--bg-tertiary);
+  background: var(--control-surface);
   color: var(--text-primary);
   font-size: 16px;
   font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
@@ -4647,7 +4690,7 @@ select.an-filter-select option:checked {
   width: 48px;
   height: 48px;
   border: 1px solid var(--border-subtle);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
@@ -4676,7 +4719,7 @@ select.an-filter-select option:checked {
   height: 60px;
   background: linear-gradient(145deg, var(--accent-primary), var(--accent-teal));
   border: none;
-  color: #fff;
+  color: var(--text-on-accent);
   box-shadow: 0 4px 12px rgba(88, 166, 255, 0.25);
 }
 
@@ -4862,7 +4905,7 @@ select.an-filter-select option:checked {
   width: 56px;
   height: 56px;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   cursor: pointer;
   transition: all var(--transition-fast);
   -webkit-tap-highlight-color: transparent;
@@ -4871,7 +4914,7 @@ select.an-filter-select option:checked {
 
 .softphone-btn-decline {
   background: var(--accent-danger);
-  color: #fff;
+  color: var(--text-on-accent);
   box-shadow: 0 4px 14px rgba(248, 81, 73, 0.35);
 }
 
@@ -4886,7 +4929,7 @@ select.an-filter-select option:checked {
 
 .softphone-btn-answer {
   background: var(--status-idle);
-  color: #fff;
+  color: var(--text-on-accent);
   box-shadow: 0 4px 14px var(--status-idle-glow);
 }
 
@@ -4967,7 +5010,7 @@ select.an-filter-select option:checked {
 .softphone-level-bar-wrap {
   width: 8px;
   height: 32px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   overflow: hidden;
@@ -4978,16 +5021,16 @@ select.an-filter-select option:checked {
 .softphone-level-bar {
   width: 100%;
   min-height: 2px;
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
   transition: height 0.08s ease-out;
 }
 
 .softphone-level-speaker {
-  background: linear-gradient(to top, var(--accent-primary), #79c0ff);
+  background: linear-gradient(to top, var(--accent-primary), var(--accent-primary-hover));
 }
 
 .softphone-level-mic {
-  background: linear-gradient(to top, var(--accent-success), #6dd68a);
+  background: linear-gradient(to top, var(--accent-success), var(--accent-success-hover));
 }
 
 .softphone-incall-grid {
@@ -5048,9 +5091,9 @@ select.an-filter-select option:checked {
   width: 56px;
   height: 56px;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--accent-danger);
-  color: #fff;
+  color: var(--text-on-accent);
   cursor: pointer;
   transition: all var(--transition-fast);
   box-shadow: 0 4px 14px rgba(248, 81, 73, 0.35);
@@ -5120,10 +5163,10 @@ select.an-filter-select option:checked {
   align-items: center;
   gap: 7px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  background: var(--bg-secondary, #161b22);
-  color: var(--text-primary, #e6edf3);
+  background: var(--control-surface);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: 0.8rem;
   font-family: inherit;
@@ -5133,18 +5176,18 @@ select.an-filter-select option:checked {
 }
 
 .an-select-trigger:hover {
-  border-color: var(--accent-primary, #58a6ff);
-  background: var(--bg-hover, #21262e);
+  border-color: var(--accent-primary);
+  background: var(--bg-hover);
 }
 
 .an-select.open .an-select-trigger {
-  border-color: var(--accent-primary, #58a6ff);
+  border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px rgba(88,166,255,0.15);
-  background: var(--bg-hover, #21262e);
+  background: var(--bg-hover);
 }
 
 .an-select-icon {
-  color: var(--text-muted, #6e7681);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
@@ -5156,7 +5199,7 @@ select.an-filter-select option:checked {
 }
 
 .an-select-chevron {
-  color: var(--text-muted, #6e7681);
+  color: var(--text-muted);
   flex-shrink: 0;
   transition: transform 0.2s ease;
 }
@@ -5172,11 +5215,11 @@ select.an-filter-select option:checked {
   min-width: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--bg-card, #1a1f26);
-  border: 1px solid var(--border-accent, #484f58);
-  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
   overflow: hidden;
-  z-index: 200;
+  z-index: var(--z-dropdown);
   box-shadow: 0 8px 28px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.2);
   animation: an-dropdown-in 0.13s ease;
 }
@@ -5199,7 +5242,7 @@ select.an-filter-select option:checked {
 }
 
 .an-select-search-icon {
-  color: var(--text-muted, #6e7681);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
@@ -5209,18 +5252,18 @@ select.an-filter-select option:checked {
   border: none;
   background: transparent;
   outline: none;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
   font-family: inherit;
   font-size: 0.8rem;
 }
 
 .an-select-search input::placeholder {
-  color: var(--text-muted, #6e7681);
+  color: var(--text-muted);
 }
 
 .an-select-empty {
   padding: 12px 13px;
-  color: var(--text-muted, #6e7681);
+  color: var(--text-muted);
   font-size: 0.8rem;
 }
 
@@ -5235,7 +5278,7 @@ select.an-filter-select option:checked {
   gap: 8px;
   padding: 8px 13px;
   font-size: 0.8rem;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.1s, color 0.1s;
   white-space: nowrap;
@@ -5243,12 +5286,12 @@ select.an-filter-select option:checked {
 
 .an-select-option:hover,
 .an-select-option.active {
-  background: var(--bg-hover, #21262e);
-  color: var(--text-primary, #e6edf3);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .an-select-option.selected {
-  color: var(--accent-primary, #58a6ff);
+  color: var(--accent-primary);
   background: rgba(88,166,255,0.08);
   font-weight: 500;
 }
@@ -5258,11 +5301,14 @@ select.an-filter-select option:checked {
   width: 100%;
 }
 
+/* Geometry only. This used to also swap the surface to --bg-tertiary, so the
+   same control had two colours depending on its size -- and size="md" is what
+   every toolbar passes, which is why Call History's search and its filter
+   selects did not match. */
 .an-select--md .an-select-trigger {
   padding: 10px 14px;
   font-size: 13px;
   border-radius: var(--radius-md, 10px);
-  background: var(--bg-tertiary, #1c2128);
 }
 
 .an-select--md .an-select-option {
@@ -5274,15 +5320,15 @@ select.an-filter-select option:checked {
 .an-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   flex-shrink: 0;
 }
 
-.an-dot-green   { background: var(--accent-success, #3fb950); }
-.an-dot-red     { background: var(--accent-danger,  #f85149); }
-.an-dot-blue    { background: var(--accent-primary, #58a6ff); }
-.an-dot-orange  { background: var(--accent-warning, #d29922); }
-.an-dot-neutral { background: var(--text-muted,    #6e7681); }
+.an-dot-green   { background: var(--accent-success); }
+.an-dot-red     { background: var(--accent-danger); }
+.an-dot-blue    { background: var(--accent-primary); }
+.an-dot-orange  { background: var(--accent-warning); }
+.an-dot-neutral { background: var(--text-muted); }
 
 /* RTL overrides */
 [dir="rtl"] .an-select-dropdown { left: auto; right: 0; }
@@ -5354,15 +5400,15 @@ select.an-filter-select option:checked {
   position: fixed;
   inset-block-end: calc(20px + env(safe-area-inset-bottom, 0px));
   inset-inline-end: clamp(16px, 4vw, 28px);
-  z-index: 1150;
+  z-index: var(--z-modal);
   width: 58px;
   height: 58px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   border: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--text-on-accent);
   background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
   box-shadow: var(--shadow-lg), var(--shadow-glow);
   cursor: pointer;
@@ -5390,7 +5436,7 @@ select.an-filter-select option:checked {
   inset-inline-end: 4px;
   width: 11px;
   height: 11px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   border: 2px solid var(--bg-primary);
   background: var(--text-muted);
 }
@@ -5405,7 +5451,7 @@ select.an-filter-select option:checked {
 
 /* Incoming call: red pulse + badge */
 .softphone-fab--ringing {
-  background: linear-gradient(135deg, var(--accent-danger), #ff7b72);
+  background: linear-gradient(135deg, var(--accent-danger), var(--accent-danger-hover));
   animation: softphone-fab-pulse 1.4s ease-in-out infinite;
 }
 
@@ -5416,10 +5462,10 @@ select.an-filter-select option:checked {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: var(--accent-danger);
   border: 2px solid var(--bg-primary);
-  color: #fff;
+  color: var(--text-on-accent);
   font-size: 10px;
   font-weight: 700;
   display: flex;
@@ -5439,7 +5485,7 @@ select.an-filter-select option:checked {
   position: fixed;
   inset-block-end: calc(20px + 58px + 12px + env(safe-area-inset-bottom, 0px));
   inset-inline-end: clamp(16px, 4vw, 28px);
-  z-index: 1160;
+  z-index: calc(var(--z-modal) + 2);
   width: min(360px, calc(100vw - 32px));
   /* Do NOT use filter: drop-shadow() here. In Firefox, any CSS filter on a
      positioned ancestor creates a new compositing stacking context that breaks
@@ -5485,7 +5531,7 @@ select.an-filter-select option:checked {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--accent-light);
   color: var(--accent-primary);
   flex-shrink: 0;
@@ -5523,7 +5569,7 @@ select.an-filter-select option:checked {
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  z-index: 1000;
+  z-index: var(--z-dropdown);
   padding: 10px;
   animation: an-dropdown-in 0.13s ease;
 }
@@ -5625,7 +5671,7 @@ select.an-filter-select option:checked {
 
 .header-profile-seg.active {
   background: var(--accent-primary);
-  color: #fff;
+  color: var(--text-on-accent);
   font-weight: 600;
 }
 
@@ -5700,7 +5746,7 @@ select.an-filter-select option:checked {
     inset-block: 56px 0;
     inset-inline-start: 0;
     width: 270px;
-    z-index: 110;
+    z-index: var(--z-modal);
     transform: translateX(-100%);
     transition: transform var(--transition-normal);
     box-shadow: var(--shadow-xl);
@@ -5729,7 +5775,7 @@ select.an-filter-select option:checked {
     position: fixed;
     inset: 56px 0 0;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 100;
+    z-index: var(--z-overlay);
     animation: an-dropdown-in 0.15s ease;
   }
 }
@@ -5757,7 +5803,7 @@ select.an-filter-select option:checked {
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 1155;
+    z-index: calc(var(--z-modal) + 1);
     background: rgba(0, 0, 0, 0.45);
     animation: an-dropdown-in 0.15s ease;
   }
@@ -5868,7 +5914,7 @@ select.an-filter-select option:checked {
   width: 42px;
   height: 24px;
   flex-shrink: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-primary);
   border: 1px solid var(--border-primary);
   transition: background var(--transition-fast), border-color var(--transition-fast);
@@ -5879,7 +5925,7 @@ select.an-filter-select option:checked {
   inset-inline-start: 2px;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--text-muted);
   transition: inset-inline-start var(--transition-fast), background var(--transition-fast);
 }
@@ -5905,7 +5951,7 @@ select.an-filter-select option:checked {
   align-items: center;
   gap: 5px;
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -5921,7 +5967,7 @@ select.an-filter-select option:checked {
   color: var(--accent-primary-hover);
   background: var(--accent-light);
   padding: 2px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .crm-link-btn {
   background: none;
@@ -6064,7 +6110,7 @@ select.an-filter-select option:checked {
   width: 7px;
   height: 7px;
   flex-shrink: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--text-muted);
 }
 .crmx-dot.ok   { background: var(--accent-success); box-shadow: 0 0 0 3px var(--status-idle-bg); }
@@ -6129,7 +6175,7 @@ select.an-filter-select option:checked {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--accent-light);
   border: 1px solid rgba(88, 166, 255, 0.3);
   color: var(--accent-primary);
@@ -6185,7 +6231,7 @@ select.an-filter-select option:checked {
   align-items: center;
   gap: 3px;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--status-idle-bg);
   color: var(--accent-success);
   font-size: 9px;
@@ -6340,7 +6386,7 @@ select.an-filter-select option:checked {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border-accent);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--bg-primary);
   color: var(--bg-primary);
   transition: all var(--transition-fast);
@@ -6349,7 +6395,7 @@ select.an-filter-select option:checked {
 .crmx-map-row.on .crmx-check {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 .crmx-map-pick:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; border-radius: var(--radius-sm); }
 .crmx-map-name {
@@ -6389,7 +6435,7 @@ select.an-filter-select option:checked {
   min-width: 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: var(--bg-card);
+  background: var(--control-surface);
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -6504,7 +6550,7 @@ select.an-filter-select option:checked {
 .crmx-verb {
   flex-shrink: 0;
   padding: 2px 7px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 10px;
   font-weight: var(--weight-bold);
   letter-spacing: 0.05em;
@@ -6587,7 +6633,7 @@ select.an-filter-select option:checked {
 .crmx-bar {
   position: sticky;
   bottom: 0;
-  z-index: 5;
+  z-index: var(--z-raised);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -6664,7 +6710,7 @@ select.an-filter-select option:checked {
 }
 .agent-status-bar-main:disabled { cursor: default; }
 .agent-status-bar-main:not(:disabled):hover { background: var(--bg-hover); }
-.agent-status-bar-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.agent-status-bar-dot { width: 9px; height: 9px; border-radius: var(--radius-circle); flex: 0 0 auto; }
 .agent-status-bar-label {
   font-size: var(--text-base); font-weight: var(--weight-semibold);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -6675,14 +6721,14 @@ select.an-filter-select option:checked {
 .agent-toggle { display: inline-flex; align-items: center; padding: 0; border: none; background: none; cursor: pointer; flex: 0 0 auto; }
 .agent-toggle:disabled { opacity: 0.55; cursor: default; }
 .agent-toggle-track {
-  position: relative; width: 44px; height: 22px; border-radius: 999px;
+  position: relative; width: 44px; height: 22px; border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--tg, var(--status-unavailable)) 20%, transparent);
   border: 1px solid color-mix(in srgb, var(--tg, var(--status-unavailable)) 55%, transparent);
   transition: background 0.15s ease;
 }
 .agent-toggle-knob {
   position: absolute; top: 50%; transform: translateY(-50%); inset-inline-start: 2px;
-  width: 18px; height: 18px; border-radius: 50%;
+  width: 18px; height: 18px; border-radius: var(--radius-circle);
   background: var(--tg, var(--status-unavailable)); color: var(--bg-primary);
   display: flex; align-items: center; justify-content: center;
   transition: inset-inline-start 0.15s ease;
@@ -6690,7 +6736,7 @@ select.an-filter-select option:checked {
 .agent-toggle.on .agent-toggle-knob { inset-inline-start: 24px; }
 
 .agent-status-menu {
-  position: absolute; top: 100%; inset-inline-end: var(--space-3); z-index: 30; min-width: 200px;
+  position: absolute; top: 100%; inset-inline-end: var(--space-3); z-index: var(--z-dropdown); min-width: 200px;
   background: var(--bg-card, var(--bg-secondary)); border: 1px solid var(--border-primary);
   border-radius: var(--radius-md); padding: 6px; box-shadow: var(--shadow-md); margin-top: 4px;
 }
@@ -6703,7 +6749,7 @@ select.an-filter-select option:checked {
 .agent-status-menu-item.danger { color: var(--accent-danger, var(--status-ringing)); }
 .agent-status-menu-label { font-size: var(--text-xs); color: var(--text-muted); padding: 4px 8px; }
 .agent-status-menu-sep { height: 1px; background: var(--border-subtle); margin: 4px 0; }
-.agent-status-menu-swatch { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.agent-status-menu-swatch { width: 9px; height: 9px; border-radius: var(--radius-circle); flex: 0 0 auto; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Softphone: live WebRTC call quality (MOS / jitter / latency / loss)
@@ -6752,7 +6798,7 @@ select.an-filter-select option:checked {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6818,7 +6864,7 @@ select.an-filter-select option:checked {
   position: relative;
   width: 44px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: background 0.15s ease;
 }
 .agent-dnd-toggle-track {
@@ -6837,7 +6883,7 @@ select.an-filter-select option:checked {
   transform: translateY(-50%);
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   color: var(--bg-primary);
   display: inline-flex;
   align-items: center;
@@ -6876,7 +6922,7 @@ select.an-filter-select option:checked {
   border-radius: var(--radius-md);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   padding: 4px;
-  z-index: 30;
+  z-index: var(--z-dropdown);
   max-height: 300px;
   overflow-y: auto;
 }
@@ -6906,7 +6952,7 @@ select.an-filter-select option:checked {
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
-.agent-header-menu-swatch { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.agent-header-menu-swatch { width: 9px; height: 9px; border-radius: var(--radius-circle); flex: 0 0 auto; }
 .agent-header-menu-sep { height: 1px; background: var(--border-subtle); margin: 4px 6px; }
 
 /* ── Queue member status badge (echo-style status effect) ── */
@@ -6915,7 +6961,7 @@ select.an-filter-select option:checked {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   line-height: 1.6;
   background: var(--status-idle-bg);
   color: var(--status-idle);
@@ -6932,7 +6978,7 @@ select.an-filter-select option:checked {
   gap: 4px;
   flex-shrink: 0;
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -6963,7 +7009,7 @@ select.an-filter-select option:checked {
   position: relative;
   width: 44px;
   height: 26px;
-  border-radius: 13px;
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   border: 2px solid var(--border-accent);
   transition: all var(--transition-normal);
@@ -6979,7 +7025,7 @@ select.an-filter-select option:checked {
   left: 2px;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--text-muted);
   display: flex;
   align-items: center;
@@ -6990,7 +7036,7 @@ select.an-filter-select option:checked {
 }
 .ui-toggle-switch.active .ui-toggle-knob {
   left: 20px;
-  background: #fff;
+  background: var(--text-on-accent);
   color: var(--accent-primary);
   box-shadow: 0 2px 6px rgba(0,0,0,0.22);
 }
@@ -7007,77 +7053,12 @@ select.an-filter-select option:checked {
 /* ═══════════════════════════════════════════════════════════════════════════
    LOGS PANEL — live AMI stream + CRM delivery log
    ═══════════════════════════════════════════════════════════════════════════ */
-.lg-panel {
-  display: flex;
-  flex-direction: column;
-}
 
 /* Header bar sits flush inside the panel — a solid band above the tab rail, not a
    floating title. */
-.lg-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-  padding: var(--space-4) var(--space-5);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
-  flex-shrink: 0;
-}
-
-.lg-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
-  letter-spacing: var(--tracking-tight);
-}
-.lg-title-icon { color: var(--accent-primary); flex-shrink: 0; }
 
 /* Tabs become a flat rail under the header rather than a pill island, so the header →
    rail → body stack reads as one piece of chrome. */
-.lg-tabs.ui-tabs {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border-subtle);
-  border-radius: 0;
-  width: 100%;
-  padding: 0 var(--space-5);
-  gap: 0;
-  margin-bottom: 0;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  flex-shrink: 0;
-}
-.lg-tabs .ui-tab {
-  padding: 12px 16px;
-  border-radius: 0;
-  font-weight: var(--weight-medium);
-  color: var(--text-muted);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  flex-shrink: 0;
-}
-.lg-tabs .ui-tab:hover { background: transparent; color: var(--text-primary); }
-.lg-tabs .ui-tab.active {
-  background: transparent;
-  box-shadow: none;
-  color: var(--accent-primary);
-  border-bottom-color: var(--accent-primary);
-}
-
-.lg-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  flex: 1;
-  min-height: 0;
-  padding: var(--space-5);
-}
 
 .lg-alert { margin: 0; }
 
@@ -7098,44 +7079,6 @@ select.an-filter-select option:checked {
 /* ── Controls row (System tab) ──
    Each filter sits in its own bordered card, with the action cluster pushed to the
    trailing edge — the layout wraps rather than reflowing through grid breakpoints. */
-.lg-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: var(--space-3);
-  flex-shrink: 0;
-}
-
-.lg-control {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 180px;
-  padding: 12px 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
-
-.lg-control-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.lg-actions {
-  display: flex;
-  align-items: center;
-  align-self: center;
-  gap: var(--space-2);
-  margin-inline-start: auto;
-  flex-wrap: wrap;
-}
 
 .lg-btn {
   display: inline-flex;
@@ -7148,10 +7091,8 @@ select.an-filter-select option:checked {
 
 /* The search icon sits in the control's label instead of the field, so the leading
    inset that .cl-filter-search reserves for it isn't needed here. */
-.cl-filter-search .lg-input { padding-left: 12px; }
 /* Give the event-type select the same well as the search input beside it, so the two
    control cards read as one row of fields. */
-.lg-control .an-select--md .an-select-trigger { background: var(--bg-primary); }
 
 /* ── Status badges ──
    Square-cornered chips, not pills, matching the badge system used elsewhere; the live
@@ -7302,7 +7243,6 @@ select.an-filter-select option:checked {
   color: var(--text-muted);
   flex-shrink: 0;
 }
-.lg-conn { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .lg-jump { font-size: var(--text-xs); padding: 3px 8px; }
 
 /* ── Deliveries table ── */
@@ -7487,7 +7427,7 @@ select.an-filter-select option:checked {
 
 .opt-tag {
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   font-size: 10px;
@@ -7521,13 +7461,6 @@ select.an-filter-select option:checked {
 [dir='rtl'] .lg-row-actions,
 [dir='rtl'] .ak-row-actions { justify-content: flex-start; }
 
-/* ── Responsive ── */
-@media (max-width: 900px) {
-  .lg-controls { flex-direction: column; align-items: stretch; }
-  .lg-control { min-width: 0; width: 100%; }
-  .lg-actions { margin-inline-start: 0; width: 100%; justify-content: flex-start; }
-  .lg-actions .lg-btn { flex: 1 1 auto; justify-content: center; }
-}
 
 @media (max-width: 600px) {
   .lg-table, .ak-table { min-width: 0; }

@@ -62,6 +62,7 @@ import {
   BookUser,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
+import { raiseFor } from './lib/api';
 
 type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings';
 const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt'] as const;
@@ -777,7 +778,7 @@ function App({ onLogout }: AppProps) {
             <button className={`sidebar-item${activeTab === 'calls' ? ' active' : ''}`} onClick={() => selectTab('calls')} title={sidebarCollapsed ? t('nav.activeCalls') : undefined}>
               <PhoneCall size={16} />{!sidebarCollapsed && t('nav.activeCalls')}
               {stats.active_calls_count > 0 && (
-                <span className="sidebar-badge" style={{ background: 'var(--status-call)', color: '#fff' }}>{stats.active_calls_count}</span>
+                <span className="sidebar-badge" style={{ background: 'var(--status-call)', color: 'var(--text-on-accent)' }}>{stats.active_calls_count}</span>
               )}
             </button>
 
@@ -785,7 +786,7 @@ function App({ onLogout }: AppProps) {
               <button className={`sidebar-item${activeTab === 'queues' ? ' active' : ''}`} onClick={() => selectTab('queues')} title={sidebarCollapsed ? t('nav.queues') : undefined}>
                 <Users size={16} />{!sidebarCollapsed && t('nav.queues')}
                 {stats.total_waiting > 0 && (
-                  <span className="sidebar-badge" style={{ background: 'var(--status-ringing)', color: '#fff' }}>{stats.total_waiting}</span>
+                  <span className="sidebar-badge" style={{ background: 'var(--status-ringing)', color: 'var(--text-on-accent)' }}>{stats.total_waiting}</span>
                 )}
               </button>
             )}
@@ -966,7 +967,7 @@ function App({ onLogout }: AppProps) {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ enabled }),
                 });
-                if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+                if (!res.ok) await raiseFor(res);
                 // DND state flip arrives via the WebSocket state broadcast.
               }}
             />

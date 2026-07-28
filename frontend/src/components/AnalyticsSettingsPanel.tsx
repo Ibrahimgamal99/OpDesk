@@ -9,8 +9,8 @@ const inputStyle: React.CSSProperties = {
   padding: '6px 10px',
   borderRadius: 'var(--radius-sm, 8px)',
   border: '1px solid var(--border-subtle, rgba(48,54,61,0.5))',
-  background: 'var(--bg-primary, #0f1117)',
-  color: 'var(--text-primary, #f0f6fc)',
+  background: 'var(--bg-primary)',
+  color: 'var(--text-primary)',
   fontSize: '0.85rem',
   fontFamily: 'inherit',
   transition: 'border-color 150ms, box-shadow 150ms',
@@ -19,20 +19,20 @@ const inputStyle: React.CSSProperties = {
 
 const labelStyle: React.CSSProperties = {
   fontSize: '0.82rem',
-  color: 'var(--text-secondary, #8b949e)',
+  color: 'var(--text-secondary)',
   minWidth: 220,
 };
 
 const unitStyle: React.CSSProperties = {
   fontSize: '0.78rem',
-  color: 'var(--text-muted, #6e7681)',
+  color: 'var(--text-muted)',
 };
 
 const sectionHeadStyle: React.CSSProperties = {
   margin: '0 0 4px',
   fontSize: '0.75rem',
   fontWeight: 700,
-  color: 'var(--text-secondary, #8b949e)',
+  color: 'var(--text-secondary)',
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
 };
@@ -57,7 +57,7 @@ function SettingsInput({
       onChange={e => onChange(parseInt(e.target.value) || min)}
       style={inputStyle}
       onFocus={e => {
-        (e.target as HTMLInputElement).style.borderColor = 'var(--accent-primary, #58a6ff)';
+        (e.target as HTMLInputElement).style.borderColor = 'var(--accent-primary)';
         (e.target as HTMLInputElement).style.boxShadow = '0 0 0 3px var(--status-call-glow, rgba(88,166,255,0.2))';
       }}
       onBlur={e => {
@@ -182,7 +182,7 @@ export function AnalyticsSettingsPanel() {
           borderRadius: 'var(--radius-sm, 8px)',
           background: 'rgba(248,81,73,0.10)',
           border: '1px solid rgba(248,81,73,0.3)',
-          color: 'var(--accent-danger, #f85149)',
+          color: 'var(--accent-danger)',
           fontSize: '0.82rem',
         }}>
           {error}
@@ -201,8 +201,8 @@ export function AnalyticsSettingsPanel() {
             padding: '8px 18px',
             borderRadius: 'var(--radius-sm, 8px)',
             border: 'none',
-            background: 'var(--accent-primary, #58a6ff)',
-            color: 'var(--bg-primary, #0f1117)',
+            background: 'var(--accent-primary)',
+            color: 'var(--bg-primary)',
             cursor: saving ? 'default' : 'pointer',
             fontSize: '0.83rem',
             fontWeight: 600,

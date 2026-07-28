@@ -1,13 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, Group, Plus, Phone, Eye, EyeOff, Radio,
 } from 'lucide-react';
 import { FilterSelect } from './FilterSelect';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { Toggle } from './ui/Toggle';
+import { SearchInput } from './ui';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
+import { raiseFor } from '../lib/api';
 
 export interface OpDeskUser {
   id: number;
@@ -57,6 +59,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [editingUser, setEditingUser] = useState<OpDeskUser | null>(null);
   const [usersSubTab, setUsersSubTab] = useState<'create' | 'list'>('list');
   const [expandedAccessUserId, setExpandedAccessUserId] = useState<number | null>(null);
+  const [search, setSearch] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [newGroupNameForCreate, setNewGroupNameForCreate] = useState('');
   const [form, setForm] = useState({
@@ -207,10 +210,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Update failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('users.userUpdated') });
       } else {
         const res = await fetchWithAuth('/api/settings/users', {
@@ -226,10 +226,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || 'Create failed');
-        }
+        if (!res.ok) await raiseFor(res);
         setMessage({ type: 'success', text: t('users.userCreated') });
       }
       // Persist WebRTC toggle for the linked extension (best-effort; user save already succeeded).
@@ -266,10 +263,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       const res = await fetchWithAuth(`/api/settings/users/${user.id}`, {
         method: 'DELETE',
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Delete failed');
-      }
+      if (!res.ok) await raiseFor(res);
       setMessage({ type: 'success', text: t('users.userDeleted') });
       resetForm();
       loadData();
@@ -277,6 +271,25 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Delete failed' });
     }
   };
+
+  // Above the early returns: hooks cannot live after one.
+  //
+  // Searches everything the card actually shows — username, name, extension,
+  // role, and group names — because a field you can read but cannot search reads
+  // as broken. Group names are the reason this is not a one-line filter: the card
+  // shows "3 groups", so "who is in Sales" is the question people bring here.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return users;
+    const groupName = (id: number) => groups.find(g => g.id === id)?.name ?? '';
+    return users.filter(u => [
+      u.username,
+      u.name,
+      u.extension,
+      t(`users.roles.${u.role}`, { defaultValue: u.role }),
+      ...(u.group_ids || []).map(groupName),
+    ].some(v => (v || '').toLowerCase().includes(q)));
+  }, [users, groups, search, t]);
 
   if (!isAdmin) {
     return (
@@ -570,11 +583,30 @@ export function UsersPanel(props: UsersPanelProps = {}) {
 
         {usersSubTab === 'list' && (
         <>
+        {/* Only when there is a list to narrow. A search box above an empty list
+            is a control that cannot do anything. */}
+        {users.length > 0 && (
+          <div className="up-search">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              label={t('users.searchLabel', 'Search users')}
+              placeholder={t('users.searchPlaceholder', 'Username, name, extension, group…')}
+              // Filters a list already in memory: nothing to coalesce, and no
+              // deep link worth writing to the address bar from an admin screen.
+              debounceMs={0}
+              urlSync={false}
+            />
+          </div>
+        )}
+
         {users.length === 0 ? (
           <div className="up-empty">{t('users.noUsers')}</div>
+        ) : filtered.length === 0 ? (
+          <div className="up-empty">{t('users.noMatches', 'No users match "{{query}}"', { query: search })}</div>
         ) : (
           <div className="up-users-list">
-            {users.map(u => {
+            {filtered.map(u => {
               const access = accessSummary(u);
               return (
               <div key={u.id} className="up-user-card">

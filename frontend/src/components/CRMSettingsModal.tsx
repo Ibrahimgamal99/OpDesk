@@ -12,6 +12,7 @@ import { fetchWithAuth, getUser } from '../auth';
 import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
 import { PauseReasonsPanel } from './PauseReasonsPanel';
 import { ApiKeysPanel } from './ApiKeysPanel';
+import { api, messageFrom, toApiError } from '../lib/api';
 
 export type SettingsTab = 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
 
@@ -335,7 +336,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
         }
       } else {
         const error = await response.json();
-        setMessage({ type: 'error', text: error.detail || t('settings.crm.saveError') });
+        setMessage({ type: 'error', text: messageFrom(error, t('settings.crm.saveError')) });
       }
     } catch (error) {
       console.error('Failed to save CRM config:', error);
@@ -358,20 +359,15 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetchWithAuth('/api/crm/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        const code = data.status_code ? ` (HTTP ${data.status_code})` : '';
-        setTestResult({ type: 'success', text: (data.message || 'Connection successful') + code });
-      } else {
-        setTestResult({ type: 'error', text: data.detail || data.message || 'Connection test failed' });
-      }
-    } catch {
-      setTestResult({ type: 'error', text: 'Connection test failed' });
+      const data = await api<{
+        success: boolean; status_code: number | null; message: string; method: string | null;
+      }>('/api/crm/test', { method: 'POST', body: config });
+      const code = data.status_code ? ` (HTTP ${data.status_code})` : '';
+      setTestResult(data.success
+        ? { type: 'success', text: (data.message || 'Connection successful') + code }
+        : { type: 'error', text: (data.message || 'Connection test failed') + code });
+    } catch (e) {
+      setTestResult({ type: 'error', text: toApiError(e).message });
     } finally {
       setTesting(false);
     }
@@ -386,19 +382,17 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setLookupTesting(true);
     setLookupTestResult(null);
     try {
-      const res = await fetchWithAuth('/api/crm/lookup-test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...config, phone }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success && data.matched && data.name) {
+      const data = await api<{
+        success: boolean; matched: boolean; name: string | null;
+        verify_detail: string; raw_excerpt: string; error?: string;
+      }>('/api/crm/lookup-test', { method: 'POST', body: { ...config, phone } });
+      if (data.success && data.matched && data.name) {
         setLookupTestResult({
           type: 'success',
           text: t('settings.crm.lookupTestFound', 'Contact found: {{name}}', { name: data.name }),
           raw: data.raw_excerpt || '',
         });
-      } else if (res.ok && data.success) {
+      } else if (data.success) {
         setLookupTestResult({
           type: 'muted',
           text: data.verify_detail
@@ -409,12 +403,12 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
       } else {
         setLookupTestResult({
           type: 'error',
-          text: data.detail || data.error || t('settings.crm.lookupTestError', 'Lookup test failed'),
+          text: data.error || t('settings.crm.lookupTestError', 'Lookup test failed'),
           raw: data.raw_excerpt || '',
         });
       }
-    } catch {
-      setLookupTestResult({ type: 'error', text: t('settings.crm.lookupTestError', 'Lookup test failed') });
+    } catch (e) {
+      setLookupTestResult({ type: 'error', text: toApiError(e).message });
     } finally {
       setLookupTesting(false);
     }
@@ -468,7 +462,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   const previewJson = useMemo(
     () => JSON.stringify(Object.fromEntries(previewRows), null, 2), [previewRows]);
   const selectedCount = (config.field_catalog || []).filter(isFieldOn).length;
-  const activeDirections = CRM_DIRECTIONS.filter(d => (config as any)[d.key] !== false);
+  const activeDirections = CRM_DIRECTIONS.filter(d => config[d.key] !== false);
   const syncPath = config.sync_endpoint || config.endpoint_path || '/api/calls';
   // Concatenated the same way the connector does: server_url.rstrip('/') + path.
   // Showing the raw join (not a tidied-up version) is deliberate — it exposes a
@@ -502,7 +496,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
         setQosMessage({ type: 'success', text: data.message || t('settings.qos.enable') });
       } else {
         const error = await response.json();
-        setQosMessage({ type: 'error', text: error.detail || t('settings.qos.enableError') });
+        setQosMessage({ type: 'error', text: messageFrom(error, t('settings.qos.enableError')) });
       }
     } catch (error) {
       console.error('Failed to enable QoS:', error);
@@ -522,7 +516,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
         setQosMessage({ type: 'success', text: data.message || t('settings.qos.disable') });
       } else {
         const error = await response.json();
-        setQosMessage({ type: 'error', text: error.detail || t('settings.qos.disableError') });
+        setQosMessage({ type: 'error', text: messageFrom(error, t('settings.qos.disableError')) });
       }
     } catch (error) {
       console.error('Failed to disable QoS:', error);
@@ -547,17 +541,11 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setSipTlsLoading(true);
     setSipTlsMessage(null);
     try {
-      const res = await fetchWithAuth('/api/sip-tls/enable', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setSipTlsEnabled(true);
-        setSipTlsMessage({ type: 'success', text: data.message });
-      } else {
-        const err = await res.json();
-        setSipTlsMessage({ type: 'error', text: err.detail || t('settings.sipTls.enableError') });
-      }
-    } catch {
-      setSipTlsMessage({ type: 'error', text: t('settings.sipTls.enableError') });
+      const data = await api<{ message: string }>('/api/sip-tls/enable', { method: 'POST' });
+      setSipTlsEnabled(true);
+      setSipTlsMessage({ type: 'success', text: data.message });
+    } catch (e) {
+      setSipTlsMessage({ type: 'error', text: toApiError(e).message });
     } finally {
       setSipTlsLoading(false);
     }
@@ -567,17 +555,11 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setSipTlsLoading(true);
     setSipTlsMessage(null);
     try {
-      const res = await fetchWithAuth('/api/sip-tls/disable', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setSipTlsEnabled(false);
-        setSipTlsMessage({ type: 'success', text: data.message });
-      } else {
-        const err = await res.json();
-        setSipTlsMessage({ type: 'error', text: err.detail || t('settings.sipTls.disableError') });
-      }
-    } catch {
-      setSipTlsMessage({ type: 'error', text: t('settings.sipTls.disableError') });
+      const data = await api<{ message: string }>('/api/sip-tls/disable', { method: 'POST' });
+      setSipTlsEnabled(false);
+      setSipTlsMessage({ type: 'success', text: data.message });
+    } catch (e) {
+      setSipTlsMessage({ type: 'error', text: toApiError(e).message });
     } finally {
       setSipTlsLoading(false);
     }
@@ -598,21 +580,14 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setMobileWakeLoading(true);
     setMobileWakeMessage(null);
     try {
-      const res = await fetchWithAuth('/api/mobile-wake/enable', {
+      const data = await api<{ message: string }>('/api/mobile-wake/enable', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wait_seconds: mobileWakeWait }),
+        body: { wait_seconds: mobileWakeWait },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setMobileWakeEnabled(true);
-        setMobileWakeMessage({ type: 'success', text: data.message });
-      } else {
-        const err = await res.json();
-        setMobileWakeMessage({ type: 'error', text: err.detail || 'Failed to enable mobile wake' });
-      }
-    } catch {
-      setMobileWakeMessage({ type: 'error', text: 'Failed to enable mobile wake' });
+      setMobileWakeEnabled(true);
+      setMobileWakeMessage({ type: 'success', text: data.message });
+    } catch (e) {
+      setMobileWakeMessage({ type: 'error', text: toApiError(e).message });
     } finally {
       setMobileWakeLoading(false);
     }
@@ -622,17 +597,11 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setMobileWakeLoading(true);
     setMobileWakeMessage(null);
     try {
-      const res = await fetchWithAuth('/api/mobile-wake/disable', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setMobileWakeEnabled(false);
-        setMobileWakeMessage({ type: 'success', text: data.message });
-      } else {
-        const err = await res.json();
-        setMobileWakeMessage({ type: 'error', text: err.detail || 'Failed to disable mobile wake' });
-      }
-    } catch {
-      setMobileWakeMessage({ type: 'error', text: 'Failed to disable mobile wake' });
+      const data = await api<{ message: string }>('/api/mobile-wake/disable', { method: 'POST' });
+      setMobileWakeEnabled(false);
+      setMobileWakeMessage({ type: 'success', text: data.message });
+    } catch (e) {
+      setMobileWakeMessage({ type: 'error', text: toApiError(e).message });
     } finally {
       setMobileWakeLoading(false);
     }
@@ -653,21 +622,14 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setRecordingLoading(true);
     setRecordingMessage(null);
     try {
-      const res = await fetchWithAuth('/api/recording/enable', {
+      const data = await api<{ message: string }>('/api/recording/enable', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ format: recordingFormat }),
+        body: { format: recordingFormat },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setRecordingEnabled(true);
-        setRecordingMessage({ type: 'success', text: data.message });
-      } else {
-        const err = await res.json();
-        setRecordingMessage({ type: 'error', text: err.detail || 'Failed to enable call recording' });
-      }
-    } catch {
-      setRecordingMessage({ type: 'error', text: 'Failed to enable call recording' });
+      setRecordingEnabled(true);
+      setRecordingMessage({ type: 'success', text: data.message });
+    } catch (e) {
+      setRecordingMessage({ type: 'error', text: toApiError(e).message });
     } finally {
       setRecordingLoading(false);
     }
@@ -677,17 +639,11 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     setRecordingLoading(true);
     setRecordingMessage(null);
     try {
-      const res = await fetchWithAuth('/api/recording/disable', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setRecordingEnabled(false);
-        setRecordingMessage({ type: 'success', text: data.message });
-      } else {
-        const err = await res.json();
-        setRecordingMessage({ type: 'error', text: err.detail || 'Failed to disable call recording' });
-      }
-    } catch {
-      setRecordingMessage({ type: 'error', text: 'Failed to disable call recording' });
+      const data = await api<{ message: string }>('/api/recording/disable', { method: 'POST' });
+      setRecordingEnabled(false);
+      setRecordingMessage({ type: 'success', text: data.message });
+    } catch (e) {
+      setRecordingMessage({ type: 'error', text: toApiError(e).message });
     } finally {
       setRecordingLoading(false);
     }
@@ -1000,7 +956,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
                                 <label>{t('settings.crm.directions', 'Push these call directions')}</label>
                                 <div className="crmx-seg">
                                   {CRM_DIRECTIONS.map(({ key, i18n, label, Icon }) => {
-                                    const on = (config as any)[key] !== false;
+                                    const on = config[key] !== false;
                                     return (
                                       <button
                                         type="button"

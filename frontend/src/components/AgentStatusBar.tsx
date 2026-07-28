@@ -90,14 +90,14 @@ export function AgentStatusBar({ presence, connected }: AgentStatusBarProps) {
 
   // Derived display state (colour + label). Priority: on-call → DND → not-ready → ready → idle.
   const view = onCall
-    ? { color: 'var(--status-call, #58a6ff)', label: t('agent.onCall', 'On call') }
+    ? { color: 'var(--status-call)', label: t('agent.onCall', 'On call') }
     : dnd
-      ? { color: 'var(--status-ringing, #f85149)', label: t('agent.dnd', 'Do Not Disturb') }
+      ? { color: 'var(--status-ringing)', label: t('agent.dnd', 'Do Not Disturb') }
       : queueOn && paused
-        ? { color: '#d29922', label: `${t('agent.notReady', 'Not Ready')}${presence?.reason ? ` · ${presence.reason}` : ''}` }
+        ? { color: 'var(--accent-warning)', label: `${t('agent.notReady', 'Not Ready')}${presence?.reason ? ` · ${presence.reason}` : ''}` }
         : queueOn
-          ? { color: 'var(--status-idle, #3fb950)', label: t('agent.ready', 'Ready') }
-          : { color: 'var(--text-muted, #6e7681)', label: t('agent.idle', 'Idle') };
+          ? { color: 'var(--status-idle)', label: t('agent.ready', 'Ready') }
+          : { color: 'var(--text-muted)', label: t('agent.idle', 'Idle') };
 
   const menuable = !onCall;
 
@@ -120,7 +120,7 @@ export function AgentStatusBar({ presence, connected }: AgentStatusBarProps) {
         <button
           type="button" role="switch" aria-checked={dnd}
           className={`agent-toggle${dnd ? ' on' : ''}`}
-          style={{ ['--tg' as string]: dnd ? 'var(--status-ringing, #f85149)' : 'var(--status-unavailable, #6e7681)' }}
+          style={{ ['--tg' as string]: dnd ? 'var(--status-ringing)' : 'var(--status-unavailable)' }}
           onClick={() => { if (!busy && !onCall) setDnd(!dnd); }}
           disabled={busy || onCall}
           title={dnd ? t('agent.dndOff', 'Turn off DND') : t('agent.dnd', 'Do Not Disturb')}
@@ -135,8 +135,8 @@ export function AgentStatusBar({ presence, connected }: AgentStatusBarProps) {
         <button
           type="button" role="switch" aria-checked={queueOn}
           className={`agent-toggle${queueOn ? ' on' : ''}`}
-          style={{ ['--tg' as string]: queueOn ? 'var(--status-idle, #3fb950)' : 'var(--status-unavailable, #6e7681)' }}
-          onClick={() => { if (!busy && !onCall) (queueOn ? logout() : login()); }}
+          style={{ ['--tg' as string]: queueOn ? 'var(--status-idle)' : 'var(--status-unavailable)' }}
+          onClick={() => { if (!busy && !onCall) { if (queueOn) logout(); else login(); } }}
           disabled={busy || onCall}
           title={queueOn ? t('agent.logout', 'Log out of queues') : t('agent.login', 'Log in to queues')}
           aria-label={queueOn ? t('agent.logout', 'Log out') : t('agent.login', 'Log in')}
@@ -147,7 +147,7 @@ export function AgentStatusBar({ presence, connected }: AgentStatusBarProps) {
         </button>
 
         <span title={connected ? t('header.softphoneRegistered', 'Registered') : t('header.softphoneNotRegistered', 'Not registered')}
-          style={{ display: 'inline-flex', color: connected ? 'var(--status-idle, #3fb950)' : 'var(--status-ringing, #f85149)' }}>
+          style={{ display: 'inline-flex', color: connected ? 'var(--status-idle)' : 'var(--status-ringing)' }}>
           <PhoneCall size={13} />
         </span>
       </div>
@@ -157,12 +157,12 @@ export function AgentStatusBar({ presence, connected }: AgentStatusBarProps) {
           {/* Ready / come online */}
           {queueOn && paused && (
             <button type="button" className="agent-status-menu-item" onClick={goReady}>
-              <Play size={13} style={{ color: 'var(--status-idle, #3fb950)' }} /> {t('agent.goReady', 'Ready')}
+              <Play size={13} style={{ color: 'var(--status-idle)' }} /> {t('agent.goReady', 'Ready')}
             </button>
           )}
           {!queueOn && (
             <button type="button" className="agent-status-menu-item" onClick={login}>
-              <Headset size={13} style={{ color: 'var(--status-idle, #3fb950)' }} /> {t('agent.login', 'Log in to queues')}
+              <Headset size={13} style={{ color: 'var(--status-idle)' }} /> {t('agent.login', 'Log in to queues')}
             </button>
           )}
 
@@ -187,11 +187,11 @@ export function AgentStatusBar({ presence, connected }: AgentStatusBarProps) {
           <div className="agent-status-menu-sep" />
           {dnd ? (
             <button type="button" className="agent-status-menu-item" onClick={() => setDnd(false)}>
-              <CircleDot size={13} style={{ color: 'var(--status-idle, #3fb950)' }} /> {t('agent.idle', 'Idle')}
+              <CircleDot size={13} style={{ color: 'var(--status-idle)' }} /> {t('agent.idle', 'Idle')}
             </button>
           ) : (
             <button type="button" className="agent-status-menu-item" onClick={() => setDnd(true)}>
-              <MinusCircle size={13} style={{ color: 'var(--status-ringing, #f85149)' }} /> {t('agent.dnd', 'Do Not Disturb')}
+              <MinusCircle size={13} style={{ color: 'var(--status-ringing)' }} /> {t('agent.dnd', 'Do Not Disturb')}
             </button>
           )}
 

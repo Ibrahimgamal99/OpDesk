@@ -234,7 +234,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
           type="button" role="switch" aria-checked={queueOn}
           className={`agent-queue-toggle${queueOn ? ' on' : ''}`}
           style={{ ['--qt-color' as string]: queueOn ? 'var(--status-idle)' : 'var(--status-unavailable)' }}
-          onClick={() => { if (!busy && !liveCall) (queueOn ? logout() : login()); }}
+          onClick={() => { if (!busy && !liveCall) { if (queueOn) logout(); else login(); } }}
           disabled={busy || liveCall}
           title={queueOn ? t('agent.logout', 'Log out of queues') : t('agent.login', 'Log in to queues')}
           aria-label={queueOn ? t('agent.logout', 'Log out') : t('agent.login', 'Log in')}

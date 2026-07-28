@@ -27,10 +27,10 @@ import type { AgentPresence } from './AgentStatusBar';
 // Call History QoS labels so the live and recorded quality read the same.
 function mosSignal(v: number | null): { Icon: LucideIcon; color: string; labelKey: string } {
   if (v == null) return { Icon: SignalZero,   color: 'var(--text-muted)', labelKey: 'softphone.qos_na' };
-  if (v >= 4.3)  return { Icon: SignalHigh,    color: '#10b981', labelKey: 'softphone.qos_excellent' };
-  if (v >= 4.0)  return { Icon: Signal,        color: '#22c55e', labelKey: 'softphone.qos_good' };
-  if (v >= 3.5)  return { Icon: SignalMedium,  color: '#f59e0b', labelKey: 'softphone.qos_fair' };
-  return                { Icon: SignalLow,     color: '#ef4444', labelKey: 'softphone.qos_poor' };
+  if (v >= 4.3)  return { Icon: SignalHigh,    color: 'var(--accent-success)', labelKey: 'softphone.qos_excellent' };
+  if (v >= 4.0)  return { Icon: Signal,        color: 'var(--journey-inbound)', labelKey: 'softphone.qos_good' };
+  if (v >= 3.5)  return { Icon: SignalMedium,  color: 'var(--accent-warning)', labelKey: 'softphone.qos_fair' };
+  return                { Icon: SignalLow,     color: 'var(--accent-danger)', labelKey: 'softphone.qos_poor' };
 }
 
 const DIAL_PAD = [

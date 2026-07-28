@@ -368,7 +368,10 @@
       "listen": "Ouvir",
       "whisper": "Sussurrar",
       "barge": "Entrar na chamada"
-    }
+    },
+    "searchLabel": "Pesquisar utilizadores",
+    "searchPlaceholder": "Utilizador, nome, extensão, grupo…",
+    "noMatches": "Nenhum utilizador corresponde a \"{{query}}\""
   },
   "groups": {
     "title": "Todos os grupos",
@@ -409,7 +412,10 @@
     "groupUpdated": "Grupo atualizado",
     "groupCreated": "Grupo criado",
     "groupDeleted": "Grupo excluído",
-    "groupNameRequired": "O nome do grupo é obrigatório"
+    "groupNameRequired": "O nome do grupo é obrigatório",
+    "searchLabel": "Pesquisar grupos",
+    "searchPlaceholder": "Grupo, agente, fila, utilizador…",
+    "noMatches": "Nenhum grupo corresponde a \"{{query}}\""
   },
   "supervisor": {
     "listen": {
@@ -629,7 +635,8 @@
       "last7": "Últimos 7 dias",
       "last30": "Últimos 30 dias",
       "thisMonth": "Este mês",
-      "custom": "Personalizado"
+      "custom": "Personalizado",
+      "label": "Intervalo de datas"
     },
     "kpi": {
       "sla": "SLA",
@@ -799,7 +806,7 @@
       "truncatedHint": "O corpo da requisição foi truncado ao ser registrado — não pode ser reenviado.",
       "copy": "Copiar",
       "copied": "Copiado",
-      "showing": "Mostrando {{from}}–{{to}} de {{total}}",
+      "showingCount": "Mostrando {{count}}",
       "status": {
         "success": "Entregue",
         "failed": "Falhou"
@@ -864,6 +871,7 @@
     "deleted": "Contato excluído",
     "deleteConfirm": "Excluir o contato \"{{name}}\"?",
     "searchPlaceholder": "Pesquisar por nome, telefone ou empresa…",
+    "searchLabel": "Pesquisar contactos",
     "noContacts": "Ainda não há contatos. Os contatos adicionados aqui ou resolvidos do CRM aparecem em todas as telas de chamadas.",
     "noMatches": "Nenhum contato corresponde à sua pesquisa",
     "sourceManual": "Manual",

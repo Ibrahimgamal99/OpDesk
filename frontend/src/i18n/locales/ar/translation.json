@@ -368,7 +368,10 @@
       "listen": "استماع",
       "whisper": "همس",
       "barge": "تدخل"
-    }
+    },
+    "searchLabel": "البحث في المستخدمين",
+    "searchPlaceholder": "اسم المستخدم، الاسم، الرقم الداخلي، المجموعة…",
+    "noMatches": "لا يوجد مستخدم يطابق \"{{query}}\""
   },
   "groups": {
     "title": "جميع المجموعات",
@@ -409,7 +412,10 @@
     "groupUpdated": "تم تحديث المجموعة",
     "groupCreated": "تم إنشاء المجموعة",
     "groupDeleted": "تم حذف المجموعة",
-    "groupNameRequired": "اسم المجموعة مطلوب"
+    "groupNameRequired": "اسم المجموعة مطلوب",
+    "searchLabel": "البحث في المجموعات",
+    "searchPlaceholder": "المجموعة، الوكيل، قائمة الانتظار، المستخدم…",
+    "noMatches": "لا توجد مجموعة تطابق \"{{query}}\""
   },
   "supervisor": {
     "listen": {
@@ -629,7 +635,8 @@
       "last7": "آخر 7 أيام",
       "last30": "آخر 30 يومًا",
       "thisMonth": "هذا الشهر",
-      "custom": "مخصص"
+      "custom": "مخصص",
+      "label": "النطاق الزمني"
     },
     "kpi": {
       "sla": "مستوى الخدمة",
@@ -801,7 +808,7 @@
       "truncatedHint": "تم اقتطاع نص الطلب عند التسجيل — لا يمكن إعادة إرساله.",
       "copy": "نسخ",
       "copied": "تم النسخ",
-      "showing": "عرض {{from}}–{{to}} من {{total}}",
+      "showingCount": "عرض {{count}}",
       "status": {
         "success": "تم التسليم",
         "failed": "فشل"
@@ -866,6 +873,7 @@
     "deleted": "تم حذف جهة الاتصال",
     "deleteConfirm": "حذف جهة الاتصال \"{{name}}\"؟",
     "searchPlaceholder": "ابحث بالاسم أو الهاتف أو الشركة…",
+    "searchLabel": "البحث في جهات الاتصال",
     "noContacts": "لا توجد جهات اتصال بعد. تظهر الجهات المضافة هنا أو المستخرجة من CRM في كل شاشات المكالمات.",
     "noMatches": "لا توجد جهات اتصال مطابقة لبحثك",
     "sourceManual": "يدوي",
