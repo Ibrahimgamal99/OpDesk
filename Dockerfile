@@ -17,9 +17,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # Minimal OS tools (curl used for basic checks; openssl sometimes handy)
+# gcc + python3-dev: required to build webrtcvad (C extension)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     openssl \
+    gcc \
+    python3-dev \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/opdesk
