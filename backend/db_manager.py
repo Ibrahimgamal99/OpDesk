@@ -32,6 +32,35 @@ except ImportError:
     exit(1)
 
 
+def _resolve_admin_password_hash() -> Optional[str]:
+    """Resolve admin password hash from file or environment variable.
+
+    Priority:
+    1. .admin_init_hash file (legacy install.sh mechanism)
+    2. OPDESK_ADMIN_PASSWORD env var (declarative, for automated deploys)
+
+    Returns the bcrypt hash string, or None if no password override is configured.
+    """
+    # 1. File-based (install.sh writes bcrypt hash here)
+    admin_hash_path = os.path.join(os.path.dirname(__file__), '.admin_init_hash')
+    if os.path.exists(admin_hash_path):
+        with open(admin_hash_path, 'r') as f:
+            pw_hash = f.read().strip()
+        if pw_hash:
+            os.remove(admin_hash_path)
+            return pw_hash
+
+    # 2. Environment variable (plain text → bcrypt hash on the fly)
+    admin_password = os.getenv('OPDESK_ADMIN_PASSWORD')
+    if admin_password:
+        try:
+            import bcrypt
+            return bcrypt.hashpw(admin_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        except ImportError:
+            log.warning("⚠️  bcrypt not installed; cannot hash OPDESK_ADMIN_PASSWORD")
+    return None
+
+
 def get_db_config(password,database):
     """Get database configuration from environment variables."""
     return {
@@ -1084,18 +1113,14 @@ def init_settings_table():
                 conn.commit()
                 log.info("✅ OpDesk_settings table created")
 
-            admin_hash_path = os.path.join(os.path.dirname(__file__), '.admin_init_hash')
-            if os.path.exists(admin_hash_path):
-                with open(admin_hash_path, 'r') as f:
-                    pw_hash = f.read().strip()
-                if pw_hash:
-                    cursor.execute(
-                        "UPDATE users SET password_hash = %s WHERE username = 'admin'",
-                        (pw_hash,),
-                    )
-                    conn.commit()
-                    os.remove(admin_hash_path)
-                    log.info("✅ Admin password applied from installer")
+            pw_hash = _resolve_admin_password_hash()
+            if pw_hash:
+                cursor.execute(
+                    "UPDATE users SET password_hash = %s WHERE username = 'admin'",
+                    (pw_hash,),
+                )
+                conn.commit()
+                log.info("✅ Admin password applied")
 
             cursor.close()
             conn.close()
@@ -1127,18 +1152,14 @@ def init_settings_table():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
-            admin_hash_path = os.path.join(os.path.dirname(__file__), '.admin_init_hash')
-            if os.path.exists(admin_hash_path):
-                with open(admin_hash_path, 'r') as f:
-                    pw_hash = f.read().strip()
-                if pw_hash:
-                    cursor.execute(
-                        "UPDATE users SET password_hash = %s WHERE username = 'admin'",
-                        (pw_hash,),
-                    )
-                    conn.commit()
-                    os.remove(admin_hash_path)
-                    log.info("✅ Admin password applied from installer")
+            pw_hash = _resolve_admin_password_hash()
+            if pw_hash:
+                cursor.execute(
+                    "UPDATE users SET password_hash = %s WHERE username = 'admin'",
+                    (pw_hash,),
+                )
+                conn.commit()
+                log.info("✅ Admin password applied")
 
             cursor.close()
             conn.close()
