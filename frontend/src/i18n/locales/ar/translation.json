@@ -82,6 +82,10 @@
     "webrtcDisabled": "WebRTC معطّل (انقر للتفعيل)",
     "webrtcOn": "WebRTC مفعّل",
     "webrtcOff": "WebRTC معطّل",
+    "compact": "مضغوط",
+    "comfortable": "مريح",
+    "compactView": "عرض مضغوط",
+    "comfortableView": "عرض مريح",
     "webrtcBadge": "WebRTC",
     "status": {
       "idle": "خامل",

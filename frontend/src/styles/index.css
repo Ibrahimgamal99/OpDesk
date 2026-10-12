@@ -1854,6 +1854,81 @@ body::before {
   padding: 2px 0;
 }
 
+/* Supervisor actions (listen / whisper / barge) on an in-call card */
+.extension-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-block-start: var(--space-4);
+}
+
+/* Compact Extensions view — roughly half-size tiles so large PBXs fit on one
+   screen. Toggled from the panel header, persisted per browser. */
+.extensions-grid.compact {
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: var(--space-2);
+}
+.extensions-grid.compact .extension-card {
+  padding: 9px;
+  border-radius: var(--radius-sm);
+}
+.extensions-grid.compact .extension-card:hover { transform: translateY(-2px); }
+.extensions-grid.compact .extension-header { margin-block-end: 6px; }
+.extensions-grid.compact .extension-number {
+  font-size: 15px;
+  margin-block-end: 2px;
+}
+.extensions-grid.compact .extension-name { font-size: 10px; }
+.extensions-grid.compact .extension-status {
+  padding: 3px 7px;
+  font-size: 9px;
+  gap: var(--space-1);
+}
+.extensions-grid.compact .extension-status svg {
+  width: 11px;
+  height: 11px;
+}
+.extensions-grid.compact .extension-info {
+  margin-block-start: 7px;
+  padding-block-start: 6px;
+  font-size: 10px;
+}
+.extensions-grid.compact .extension-info-row { margin-block-start: 2px; }
+.extensions-grid.compact .extension-actions {
+  margin-block-start: var(--space-2);
+  gap: var(--space-1);
+}
+.extensions-grid.compact .extension-actions .btn-icon {
+  min-width: 26px;
+  min-height: 26px;
+  padding: var(--space-1);
+}
+.extensions-grid.compact .extension-actions .btn-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.extensions-grid.compact .ext-webrtc-tag {
+  padding: 1px 5px;
+  font-size: 8px;
+}
+.extensions-grid.compact .ext-webrtc-tag svg {
+  width: 9px;
+  height: 9px;
+}
+.extensions-grid.compact .agent-dnd-toggle-track {
+  width: 32px;
+  height: 16px;
+}
+.extensions-grid.compact .agent-dnd-toggle-knob {
+  width: 12px;
+  height: 12px;
+}
+.extensions-grid.compact .agent-dnd-toggle-knob svg {
+  width: 9px;
+  height: 9px;
+}
+.extensions-grid.compact .agent-dnd-toggle.on .agent-dnd-toggle-knob { inset-inline-start: 18px; }
+
 /* Active calls table - Modern table design */
 .calls-table {
   width: 100%;

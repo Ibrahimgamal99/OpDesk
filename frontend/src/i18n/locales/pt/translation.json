@@ -82,6 +82,10 @@
     "webrtcDisabled": "WebRTC desabilitado (clique para ativar)",
     "webrtcOn": "WebRTC ativado",
     "webrtcOff": "WebRTC desativado",
+    "compact": "Compacto",
+    "comfortable": "Confortável",
+    "compactView": "Vista compacta",
+    "comfortableView": "Vista confortável",
     "webrtcBadge": "WebRTC",
     "status": {
       "idle": "Ocioso",

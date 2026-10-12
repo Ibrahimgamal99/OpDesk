@@ -82,6 +82,10 @@
     "webrtcDisabled": "WebRTC вимкнено (натисніть, щоб увімкнути)",
     "webrtcOn": "WebRTC увімк.",
     "webrtcOff": "WebRTC вимк.",
+    "compact": "Компактно",
+    "comfortable": "Звичайно",
+    "compactView": "Компактний вигляд",
+    "comfortableView": "Звичайний вигляд",
     "webrtcBadge": "WebRTC",
     "status": {
       "idle": "Вільний",
