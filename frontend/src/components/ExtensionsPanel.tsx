@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2, Radio, BellOff, MinusCircle, PauseCircle, CircleDot } from 'lucide-react';
+import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2, Radio, BellOff, MinusCircle, PauseCircle, CircleDot, Rows3, LayoutGrid } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Extension, ExtensionStatus } from '../types';
 import { getUser, getAllowedMonitorModes } from '../auth';
@@ -21,6 +21,8 @@ interface ExtensionsPanelProps {
   onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
 }
 
+const COMPACT_STORAGE_KEY = 'opdesk:extensions-compact';
+
 const STATUS_ICONS: Record<ExtensionStatus, typeof Phone> = {
   idle: Phone,
   ringing: PhoneIncoming,
@@ -40,6 +42,14 @@ export function ExtensionsPanel({
   onDndToggle,
 }: ExtensionsPanelProps) {
   const { t } = useTranslation();
+  const [compact, setCompact] = useState<boolean>(() => {
+    try { return localStorage.getItem(COMPACT_STORAGE_KEY) === '1'; } catch { return false; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(COMPACT_STORAGE_KEY, compact ? '1' : '0'); } catch { /* best-effort */ }
+  }, [compact]);
+
   const extensionList = Object.values(extensions).sort((a, b) =>
     a.extension.localeCompare(b.extension, undefined, { numeric: true })
   );
@@ -51,12 +61,24 @@ export function ExtensionsPanel({
           <Phone size={18} className="panel-title-icon" />
           {t('extensions.title')} ({extensionList.length})
         </h2>
-        {onSync && (
-          <button type="button" className="btn btn-panel-sync" onClick={onSync} title={t('extensions.syncAll')}>
-            <RefreshCw size={14} />
-            {t('extensions.sync')}
+        <div className="panel-header-actions">
+          <button
+            type="button"
+            className="btn btn-panel-sync"
+            onClick={() => setCompact(c => !c)}
+            title={compact ? t('extensions.comfortableView') : t('extensions.compactView')}
+            aria-pressed={compact}
+          >
+            {compact ? <LayoutGrid size={14} /> : <Rows3 size={14} />}
+            {compact ? t('extensions.comfortable') : t('extensions.compact')}
           </button>
-        )}
+          {onSync && (
+            <button type="button" className="btn btn-panel-sync" onClick={onSync} title={t('extensions.syncAll')}>
+              <RefreshCw size={14} />
+              {t('extensions.sync')}
+            </button>
+          )}
+        </div>
       </div>
       <div className="panel-content">
         {extensionList.length === 0 ? (
@@ -65,7 +87,7 @@ export function ExtensionsPanel({
             <p className="empty-state-text">{t('extensions.noExtensions')}</p>
           </div>
         ) : (
-          <div className="extensions-grid">
+          <div className={`extensions-grid${compact ? ' compact' : ''}`}>
             <AnimatePresence>
               {extensionList.map((ext) => (
                 <ExtensionCard
@@ -209,12 +231,7 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
       {isInCall && getUser()?.role !== 'agent' && (() => {
         const allowed = getAllowedMonitorModes();
         return (
-          <div style={{
-            display: 'flex',
-            gap: 8,
-            marginTop: 16,
-            justifyContent: 'center',
-          }}>
+          <div className="extension-actions">
             {allowed.includes('listen') && (
               <button
                 className="btn btn-icon btn-listen"
