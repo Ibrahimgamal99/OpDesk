@@ -2,6 +2,10 @@
 """
 Generate a VAPID key pair for browser Web Push and print the .env lines to add.
 
+The easier way is Settings → Mobile Wake → Web push → Create keys, which stores the
+keys in the OpDesk DB (they take precedence over .env). This script is for setups
+that keep the keys in .env.
+
 Usage:
     python generate_vapid_keys.py
 

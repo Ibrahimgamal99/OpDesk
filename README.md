@@ -1,154 +1,144 @@
 # OpDesk — Operator Panel for Asterisk
 
-A real-time operator panel for **Asterisk PBX** (Issabel / FreePBX), similar to **FOP2** but built on a modern React + FastAPI stack. Monitor extensions and queues, manage active calls, browse CDR and recordings, use a built-in WebRTC softphone, and analyse call-center performance — all in one web app.
+A real-time operator panel for **Asterisk PBX** (Issabel / FreePBX), like **FOP2** but built on React and FastAPI. Monitor extensions and queues, manage live calls, browse CDR and recordings, take calls in the browser, and analyse call-center performance, all in one web app.
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-43853d.svg)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org/)
 [![OS](https://img.shields.io/badge/OS-Debian%2012%2B%20%7C%20Linux-orange.svg)](https://www.debian.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-[Features](#features) • [Screenshots](#screenshots) • [Install](#install) • [Running](#running--updating) • [Configuration](#configuration) • [Documentation](#documentation) • [Architecture](#architecture) • [Community](#community--support)
+[Features](#features) • [Screenshots](#screenshots) • [Prerequisites](#prerequisites) • [Install](#install) • [Architecture](#architecture) • [Tech stack](#tech-stack) • [Documentation](#documentation) • [Community](#community--support)
 
-Works with **Issabel** and **FreePBX** running Asterisk with AMI and WSS enabled.
+[![OpDesk dashboard](screenshots/extensions_dashboard.png)](screenshots/extensions_dashboard.png)
 
 ---
 
 ## Features
 
-- **Real-time panel** — extension status, active calls, queue state and call notifications over a WebSocket, with no polling. Live dashboard of active calls, waiting/ringing/longest-wait, workforce availability and today's KPIs.
-- **Three roles** — **Admin** (everything, plus configuration and logs), **Supervisor** (scoped to their assigned agents and queues), **Agent** (their own calls and history).
-- **Call management** — CDR browser with whole-history search, recording playback, QoS, and a **Call Journey** timeline for multi-leg calls.
-- **Web softphone** — make and receive calls in the browser over WebRTC: hold, mute, transfer, queue login/logout, and Ready / Not-Ready with a reason code.
-- **Supervision** — listen, whisper and barge, configurable per user.
-- **Contacts** — a shared phonebook that puts names on numbers everywhere (dashboards, panels, softphone). Admins manage it from the UI; the CRM lookup fills it automatically, and manual entries always win. → [contract](docs/api/contact-lookup.md)
-- **Analytics** — 12 KPI cards with period-over-period deltas, per-queue and per-agent breakdowns, a 7×24 heatmap and a call-level drilldown with CSV/XLSX export. → [guide](docs/guides/analytics.md)
-- **CRM integration** — push call data to any CRM (API key, Basic, Bearer or OAuth2) with a selectable field set, configurable wire key names, outcome remapping and per-direction filtering. Every attempt is logged and can be replayed. → [contract](docs/api/webhooks.md)
-- **Integration API** — scoped machine-to-machine API keys for reading live state, call history and analytics, plus click-to-call origination. → [reference](docs/api/endpoints.md)
-- **Logs page** — a live Asterisk AMI event console and a searchable log of every CRM delivery, with request/response bodies and a manual resend.
-- **Call recording + VAD** — full-call recording via MixMonitor plus separate per-leg WAVs, and automatic post-call talk/silence analysis (Silero VAD, with a WebRTC VAD fallback).
-- **Mobile & browser push** — wake a Flutter/native softphone via APNs VoIP or high-priority FCM, and a closed browser tab via VAPID Web Push. → [guide](docs/guides/mobile-push.md)
-- **Multi-language UI** — English, Arabic (RTL), Spanish and Portuguese, switchable without a restart.
+**Live operations**
+- **Real-time panel**: extension status, active calls, queues and call notifications pushed over a WebSocket, with no polling.
+- **Dashboard**: active, waiting and ringing calls, longest wait, agent availability and today's KPIs.
+- **Supervision**: listen, whisper and barge, allowed per user.
+- **Three roles**: **Admin** (everything), **Supervisor** (their assigned agents and queues), **Agent** (their own calls).
+
+**Calling**
+- **Web softphone**: make and take calls in the browser over WebRTC, with hold, mute, transfer, queue login/logout, and Ready / Not Ready with a reason code.
+- **Mobile softphone**: sign a phone in by scanning a QR code, and wake a closed app for incoming calls with **RFC 8599** push (FCM / APNs VoIP). Recommended app: [Medut Softphone](https://github.com/Ibrahimgamal99/medut-softphone). → [guide](docs/guides/mobile-push.md)
+- **Recording**: full-call and per-leg recordings, with automatic talk/silence analysis (Silero VAD).
+
+**History and analytics**
+- **Call log**: whole-history search, recording playback, QoS, and a **Call Journey** timeline for multi-leg calls.
+- **Analytics**: 12 KPIs with period-over-period change, per-queue and per-agent breakdowns, a 7×24 heatmap, and drill-down with CSV/XLSX export. → [guide](docs/guides/analytics.md)
+- **Contacts**: a shared phonebook that puts names on numbers everywhere, filled by hand or from your CRM. → [contract](docs/api/contact-lookup.md)
+
+**Integration**
+- **CRM push**: send call data to any CRM (API key, Basic, Bearer or OAuth2) with your own field names and outcome values. Every delivery is logged and can be resent. → [contract](docs/api/webhooks.md)
+- **REST API**: scoped API keys for live state, call history and analytics, plus click-to-call. → [reference](docs/api/endpoints.md)
+- **Logs**: a live AMI event console, SIP trace and CRM delivery log for debugging.
+
+**Interface**: English, Arabic (RTL), Spanish, Portuguese and Ukrainian; light and dark themes; works on phones.
 
 ---
 
 ## Screenshots
 
-| Active calls | Call Journey | Call log | Dashboard | Notifications | QoS |
-|--------------|--------------|----------|-----------|---------------|-----|
-| [![Active calls](screenshots/active_calls.png)](screenshots/active_calls.png) | [![Call Journey](screenshots/call_journey.png)](screenshots/call_journey.png) | [![Call log](screenshots/call_history.png)](screenshots/call_history.png) | [![Dashboard](screenshots/extensions_dashboard.png)](screenshots/extensions_dashboard.png) | [![Notifications](screenshots/notfication.png)](screenshots/notfication.png) | [![QoS](screenshots/qos.png)](screenshots/qos.png) |
+| Dashboard | Active calls | Queues |
+|---|---|---|
+| [![Dashboard](screenshots/extensions_dashboard.png)](screenshots/extensions_dashboard.png) | [![Active calls](screenshots/active_calls.png)](screenshots/active_calls.png) | [![Queues](screenshots/queue.png)](screenshots/queue.png) |
 
-| Queue | Softphone | Softphone (in-call) | Softphone (ringing) |
-|-------|-----------|---------------------|---------------------|
-| [![Queue](screenshots/queue.png)](screenshots/queue.png) | [![Softphone](screenshots/softphone.png)](screenshots/softphone.png) | [![Softphone in-call](screenshots/softphone_incall.png)](screenshots/softphone_incall.png) | [![Softphone ringing](screenshots/softphone_rining.png)](screenshots/softphone_rining.png) |
+| Call log | Call Journey | QoS |
+|---|---|---|
+| [![Call log](screenshots/call_history.png)](screenshots/call_history.png) | [![Call Journey](screenshots/call_journey.png)](screenshots/call_journey.png) | [![QoS](screenshots/qos.png)](screenshots/qos.png) |
 
-*QoS verified on FreePBX.*
+| Softphone | Softphone (in call) | Notifications |
+|---|---|---|
+| [![Softphone](screenshots/softphone.png)](screenshots/softphone.png) | [![Softphone in call](screenshots/softphone_incall.png)](screenshots/softphone_incall.png) | [![Notifications](screenshots/notfication.png)](screenshots/notfication.png) |
 
 ---
 
 ## Prerequisites
 
-- Issabel or FreePBX with Asterisk and **AMI** enabled
-- Asterisk plain WebSocket (port 8088) enabled — the installer checks this automatically
-- MySQL/MariaDB (for the FreePBX extension list)
-- `sudo` and `curl` (for the installer)
+- **Issabel or FreePBX** with Asterisk, **AMI** enabled, and the Asterisk HTTP server on port 8088 (the installer checks it).
+- **MySQL / MariaDB**: the PBX's own database server.
+- **Debian 12+, Ubuntu or a RHEL family OS**, with `sudo` and `curl`. The installer adds Python 3.11+, Node.js, Nginx and the other tools it needs.
+- **For a public install**: a DNS name pointing at the server, with port 80 open for Let's Encrypt.
 
-The installer can install Python 3.11+, Node.js (via nvm), git, lsof, curl and Nginx if they are missing. The Docker image builds the frontend on Node 22.
-
-> ⚠️ **FreePBX and Issabel occupy ports 80 and 443.**
-> Both run Apache there for their own admin UI. On a shared machine you must move Apache **before** installing, or Nginx will fail to start:
->
-> ```bash
-> sudo sed -i 's/\bListen 80\b/Listen 8080/' /etc/httpd/conf/httpd.conf
-> sudo sed -i 's/:80>/:8080>/g' /etc/httpd/conf.d/*.conf
-> sudo sed -i 's/:443>/:4443>/g; s/^Listen 443/Listen 4443/' /etc/httpd/conf.d/ssl.conf
-> sudo systemctl restart httpd
-> ```
->
-> This is the single most common installation problem.
+> **Port 443 is usually taken.** FreePBX and Issabel run Apache on 80 and 443. The installer
+> detects this and offers to serve OpDesk on another port (default `8443`) or to move Apache
+> to `4443`. See [Ports](docs/guides/installation.md#ports).
 
 ---
 
 ## Install
 
-Both options end up in the same place: Nginx terminates TLS on **443** and proxies to uvicorn on loopback.
-
-### Option A — Native (`install.sh`)
+**Native (recommended)**: run on the PBX server.
 
 ```bash
-# LAN / self-signed certificate
 curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh
-chmod +x install.sh && sudo ./install.sh
+chmod +x install.sh
 
-# Public internet — DNS must already point here (Let's Encrypt)
-sudo OPDESK_DOMAIN=opdesk.example.com OPDESK_LE_EMAIL=admin@example.com ./install.sh
+sudo ./install.sh                                                                  # LAN, self-signed certificate
+sudo OPDESK_DOMAIN=opdesk.example.com OPDESK_LE_EMAIL=admin@example.com ./install.sh   # public, Let's Encrypt
 ```
 
-The script clones to `/opt/OpDesk`, installs dependencies, detects Issabel/FreePBX, configures the database and an AMI user, installs Nginx as a TLS-terminating reverse proxy, obtains a certificate, writes `backend/.env`, and installs a systemd unit.
+The installer clones to `/opt/OpDesk`, sets up the database, AMI user, Nginx, certificate and the `opdesk` systemd service.
 
-OpDesk is then at **`https://<server-ip>`** or **`https://<your-domain>`**.
+Then:
 
-**Default login:** username `admin`, password as printed by the installer. Change it immediately.
+1. Open **`https://<server>`** (add `:8443` or whichever port you chose if it isn't 443).
+2. Sign in as **`admin`** with the password the installer printed, and change it from the profile menu.
+3. Under **Users**, link users to their extensions so they get a softphone.
 
-### Option B — Docker
+**To update**, re-run `sudo ./install.sh` from `/opt/OpDesk`. Your settings and port are kept.
+
+**Docker**:
 
 ```bash
 git clone https://github.com/Ibrahimgamal99/OpDesk.git && cd OpDesk
-cp .env.example .env && nano .env      # if the PBX is on this host, use host.docker.internal
-mkdir -p cert && openssl req -x509 -newkey rsa:4096 \
-  -keyout cert/opdesk_key.pem -out cert/opdesk_cert.pem -days 365 -nodes -subj "/CN=localhost"
+cp .env.example .env && nano .env
 docker compose up --build -d
 ```
 
-The container runs with `network_mode: host`; uvicorn serves plain HTTP on `127.0.0.1:8765` and Nginx on the host terminates TLS. Two-stage build: `node:22-bookworm-slim` builds the frontend, `python:3.11-slim` runs it. Health check: `curl -fsS http://localhost:8765/` every 30 s.
+The container uses host networking and serves HTTP on `127.0.0.1:8765`. Put Nginx with [`nginx/opdesk.conf`](nginx/opdesk.conf) in front of it for TLS.
 
-### Topology
-
-```
-Browser ──HTTPS/WSS──► Nginx :443 ──► uvicorn 127.0.0.1:8765      (app + API + /ws)
-                                  └─► Asterisk  127.0.0.1:8088    (SIP-over-WS at /sip-ws)
-```
+→ Full details, service commands and troubleshooting: **[Installation guide](docs/guides/installation.md)** · Settings and `.env`: **[Configuration guide](docs/guides/configuration.md)**
 
 ---
 
-## Running & updating
+## Architecture
 
-```bash
-./start.sh          # production
-./start.sh -d       # dev mode with hot reload, no Nginx
+```mermaid
+flowchart LR
+    Browser["Browser<br/>React app + WebRTC softphone"] -- "HTTPS / WSS" --> Nginx["Nginx :443<br/>TLS"]
+    Nginx -- "/ · /api · /ws" --> API["FastAPI (uvicorn)<br/>127.0.0.1:8765"]
+    Nginx -- "/sip-ws" --> AstWS["Asterisk HTTP / WS<br/>127.0.0.1:8088"]
+    API -- "AMI :5038" --> Asterisk["Asterisk<br/>(Issabel / FreePBX)"]
+    API -- "SQL" --> DB[("MySQL / MariaDB<br/>asterisk · asteriskcdrdb · OpDesk")]
+    AstWS --- Asterisk
+    Phone["Mobile softphone<br/>(Medut)"] -- "SIP TLS / TCP / UDP" --> Asterisk
+    API -. "FCM / APNs wake push" .-> Phone
+    API -. "call data" .-> CRM["Your CRM"]
 ```
 
-The installer enables `opdesk.service`, so OpDesk starts on boot and restarts on failure.
-
-| Action | Command |
-|--------|---------|
-| Start / stop / restart | `sudo systemctl {start,stop,restart} opdesk` |
-| Status | `sudo systemctl status opdesk` |
-| Live logs | `sudo journalctl -u opdesk -f` |
-| Enable / disable on boot | `sudo systemctl {enable,disable} opdesk` |
-
-**Updating:** re-run `install.sh`. It pulls the latest code, regenerates the Nginx config preserving LAN/public mode, and restarts the service. To switch to a public domain, add `OPDESK_DOMAIN=…` to that same command.
-
----
-
-## Configuration
-
-Runtime configuration lives in `backend/.env`; see [`.env.example`](.env.example) for the annotated list. Everything an operator changes day to day is in the web UI under **Settings**:
-
-| Sub-tab | What it configures |
+| Component | Role |
 |---|---|
-| **Integrations / CRM** | CRM URL and credentials, which call fields to push, wire key names, outcome remapping, duration format, direction filters, and a connection test. |
-| **API Keys** | Machine-to-machine credentials and their scopes (admin only). |
-| **QoS** | RTP quality reporting into the CDR `userfield`. |
-| **Analytics** | SLA thresholds, FCR window, short-abandon threshold. |
-| **SIP TLS** | TLS transport for SIP endpoints. |
-| **Mobile Wake** | The predial hook that wakes a mobile softphone, and its wait time. |
-| **Recording** | Enable recording and pick the format — `wav`, `wav49`, `gsm`, `g722`, `ulaw`, `alaw` or `sln`. |
-| **Not-Ready Codes** | The pause-reason catalog agents choose from. |
+| **React frontend** | The panel. Live state arrives over the `/ws` WebSocket; history and settings use the REST API. The softphone registers to Asterisk through `/sip-ws`. |
+| **FastAPI backend** | Keeps one AMI connection, turns Asterisk events into presence, queue and call events, and sends each user the part their role may see. Serves the REST API and pushes call data to your CRM. |
+| **Asterisk** | Still owns the dialplan. OpDesk uses AMI for monitoring and call control (originate, transfer, listen / whisper / barge). |
+| **Nginx** | Terminates TLS (the browser needs HTTPS for the microphone) and proxies to the backend and to Asterisk. |
+| **Database** | Reads FreePBX's `asterisk` config and `asteriskcdrdb` CDR. Its own database holds users, groups, contacts, settings, API keys, the CRM delivery log and analytics rollups. Call history is read from the CDR, not copied. |
 
-CRM changes apply **live, with no restart**.
+---
 
-**Debugging.** Admins get a **Logs** page: a live AMI event console (off by default — turn on capture when you need it) and a searchable CRM delivery log. For browser-side issues, open the app once with `?debug=1`; the frontend then ships lifecycle and SIP events to the backend log as `CLIENT[session]` lines.
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| **Backend** | Python 3.11+, FastAPI, uvicorn, asyncio, WebSockets, MySQL/MariaDB, PyJWT + bcrypt, httpx (CRM push), openpyxl (XLSX export), onnxruntime (Silero VAD) |
+| **Frontend** | React 18, TypeScript, Vite, SIP.js (WebRTC), Recharts, Framer Motion, Lucide icons, react-i18next |
+| **Telephony** | Asterisk AMI, Asterisk HTTP/WebSocket (SIP over WSS), RFC 8599 push via FCM and APNs, VAPID Web Push |
+| **Deployment** | Nginx, systemd, Let's Encrypt; or Docker Compose |
 
 ---
 
@@ -156,65 +146,22 @@ CRM changes apply **live, with no restart**.
 
 | Guide | What it covers |
 |---|---|
-| [docs/api/overview.md](docs/api/overview.md) | Base URL, JWT and API-key auth, scopes, roles, errors, status codes, WebSocket, pagination. |
-| [docs/api/endpoints.md](docs/api/endpoints.md) | Endpoint-by-endpoint reference for the incoming API. |
-| [docs/api/webhooks.md](docs/api/webhooks.md) | The **outgoing** CRM push: field catalog, key names, duration formats, outcome values, delivery log. |
-| [docs/api/openapi.yaml](docs/api/openapi.yaml) | OpenAPI 3.0 spec. Served live at `GET /api/openapi.yaml`. |
-| [docs/guides/analytics.md](docs/guides/analytics.md) | Every KPI, how it is computed, and how to tune it. |
-| [docs/guides/mobile-push.md](docs/guides/mobile-push.md) | Firebase and APNs setup for mobile softphone wake-up. |
+| [Installation](docs/guides/installation.md) | Prerequisites, ports, native and Docker installs, running, updating, troubleshooting. |
+| [Configuration](docs/guides/configuration.md) | `backend/.env`, the Settings page, roles and groups, debugging. |
+| [Mobile softphone](docs/guides/mobile-push.md) | QR sign-in, RFC 8599 wake-up, Firebase and APNs setup. |
+| [Analytics](docs/guides/analytics.md) | Every KPI, how it is computed, and how to tune it. |
+| [API overview](docs/api/overview.md) · [Endpoints](docs/api/endpoints.md) | Authentication, API keys and scopes, and every endpoint. |
+| [CRM push](docs/api/webhooks.md) · [Contact lookup](docs/api/contact-lookup.md) | The outgoing call-data push and the incoming contact lookup. |
 
-FastAPI also serves generated interactive docs at `/docs` and `/redoc`.
-
----
-
-## Architecture
-
-```
-                        ┌──────────────────────────────────────────────────────────┐
-         443/tcp        │   Nginx (TLS terminate)                                  │
-  Browser ────────────► │  /        → 127.0.0.1:8765 uvicorn                       │
-        (HTTPS/WSS)     │  /        (Sec-WebSocket-Protocol: sip) → 127.0.0.1:8088 │
-                        │  /ws      → 127.0.0.1:8765 uvicorn                       │
-                        │  /sip-ws  → 127.0.0.1:8088 Asterisk WS                   │
-                        └──────────┬───────────────────────────────────────────────┘
-                                   │ plain HTTP (loopback)
-                    ┌──────────────▼───────────────┐      ┌─────────────────┐
-                    │  FastAPI Server (uvicorn)     │◄───►│  Asterisk AMI   │
-                    │  127.0.0.1:8765               │     │  localhost:5038 │
-                    └──────────────┬────────────────┘     └─────────────────┘
-                                   │ SQL (read/write)
-                                   ▼
-                        ┌────────────────────────┐
-                        │   MySQL / MariaDB DB   │
-                        └────────────────────────┘
-```
-
-| Component | Responsibility |
-|---|---|
-| **React frontend** (Vite + TS) | Renders the panel. Takes live state over the WebSocket; uses REST for history and configuration. |
-| **FastAPI backend** | Holds a long-lived AMI connection, normalises Asterisk events into presence / queue / journey events, fans them out over the WebSocket with per-role scoping, and serves the REST API. |
-| **AMI integration** | Signalling, monitoring and call control (originate, spy/whisper/barge, transfer). OpDesk does **not** replace the dialplan — FreePBX/Issabel still owns it. |
-| **Nginx** | Terminates TLS (required for `getUserMedia`), proxies `/ws` to the backend and `/sip-ws` to Asterisk. Also auto-routes root-path connections advertising `Sec-WebSocket-Protocol: sip` straight to Asterisk. |
-| **Databases** | Three: `asterisk` (FreePBX config, read), `asteriskcdrdb` (CDR, read), and OpDesk's own (see below). |
-
-OpDesk's own database holds users, roles and group assignments; cached extension/queue metadata; the contacts phonebook (`contacts`, manual + CRM-resolved); notifications (`call_notifications`, auto-cleaned after 7 days); VAD results; agent presence segments; supervision events; API keys; the CRM delivery log; and the analytics rollup tables (`analytics_hourly`, `analytics_daily`, `analytics_agent_daily`), refreshed every 15 minutes by a background task.
-
-Call Journey timelines and the call log are **derived on demand** from the Asterisk CDR — OpDesk does not duplicate CDR storage.
-
----
-
-## Tech stack
-
-- **Backend** — Python 3.11+, FastAPI, WebSockets, asyncio, MySQL/MariaDB, `openpyxl` (optional, for XLSX export), `onnxruntime` (optional, for Silero VAD)
-- **Frontend** — React 18, TypeScript, Vite, Recharts, Framer Motion, Lucide React, react-i18next
+The full index is in [docs/](docs/README.md). A running server also serves interactive API docs at `/docs` and `/redoc`, and the OpenAPI spec at `/api/openapi.yaml`.
 
 ---
 
 ## Community & support
 
-- **Mailing list**: [opdesk-dev@googlegroups.com](mailto:opdesk-dev@googlegroups.com)
-- **Telegram**: [t.me/+i1OVDDPgGLo0MGZh](https://t.me/+i1OVDDPgGLo0MGZh)
-- **Issues & contributions**: [GitHub Issues](https://github.com/Ibrahimgamal99/OpDesk/issues)
-- **Author**: [Ibrahim Gamal](https://github.com/Ibrahimgamal99) — [LinkedIn](https://www.linkedin.com/in/ibrahim-gamal99) · ib.gamal.a@gmail.com
+- **Questions and discussion**: [Telegram group](https://t.me/+i1OVDDPgGLo0MGZh) · mailing list [opdesk-dev@googlegroups.com](mailto:opdesk-dev@googlegroups.com)
+- **Bugs and feature requests**: [GitHub Issues](https://github.com/Ibrahimgamal99/OpDesk/issues). Include your PBX (Issabel / FreePBX and version) and the output of `sudo journalctl -u opdesk -n 200`.
+- **Contributing**: pull requests are welcome. Open an issue first for larger changes.
+- **Author**: [Ibrahim Gamal](https://github.com/Ibrahimgamal99) · [LinkedIn](https://www.linkedin.com/in/ibrahim-gamal99) · ib.gamal.a@gmail.com
 
-If OpDesk is useful to you: star the repo, report bugs, or contribute. The project is **MIT** licensed; developed by Ibrahim Gamal with AI-assisted tooling for boilerplate and acceleration.
+If OpDesk is useful to you, star the repo. OpDesk is licensed under the **[GNU GPL v3](LICENSE)**: you may use, modify and redistribute it, and anything you distribute that is based on it must be released under GPL v3 with its source. It is developed by Ibrahim Gamal, with AI-assisted tooling for boilerplate and acceleration.

@@ -314,7 +314,8 @@
     "quality_mos": "MOS",
     "quality_jitter": "Jitter",
     "quality_loss": "Loss",
-    "quality_rtt": "Latency"
+    "quality_rtt": "Latency",
+    "reconnect": "Reconnect"
   },
   "users": {
     "title": "All users",
@@ -596,7 +597,8 @@
       "statusDisabled": "Disabled"
     },
     "tabs": {
-      "apiKeys": "API Keys"
+      "apiKeys": "API Keys",
+      "mobileWake": "Mobile Wake"
     },
     "adminOnly": "Administrator access required."
   },
@@ -619,7 +621,8 @@
     "noRecording": "No recording",
     "retry": "Retry",
     "prev": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "cancel": "Cancel"
   },
   "analytics": {
     "title": "Analytics",
@@ -757,6 +760,20 @@
       "exportXlsx": "Excel",
       "exporting": "Exporting…",
       "exportFailed": "Export failed. Please try again."
+    },
+    "goReady": "Ready",
+    "notReady": "Not Ready",
+    "noReasons": "No reason codes",
+    "unpaid": "break",
+    "dnd": "Do Not Disturb",
+    "login": "Log in",
+    "logout": "Log out",
+    "state": {
+      "ready": "Ready",
+      "onCall": "On Call",
+      "notReady": "Not Ready",
+      "dnd": "Do Not Disturb",
+      "available": "Available"
     }
   },
   "logs": {
@@ -884,5 +901,119 @@
     "sourceManual": "Manual",
     "sourceCrm": "CRM",
     "call": "Call {{name}}"
+  },
+  "mobileSetup": {
+    "titleFor": "Mobile app setup — {{name}}",
+    "title": "Set up the mobile app",
+    "getApp": "Get Medut Softphone",
+    "qrAlt": "Account QR code",
+    "includePassword": "Include the password",
+    "passwordOn": "One scan signs in. Treat the code like the password itself.",
+    "passwordOff": "Safe to print or share: the app asks for the password.",
+    "json": "Account JSON",
+    "copied": "Copied",
+    "copy": "Copy",
+    "download": "PNG",
+    "formatLink": "Account format reference",
+    "button": "Mobile app QR",
+    "introAuto": "Scan this code in Medut Softphone (sign-in screen → Scan QR) to add extension {{ext}}. The app finds the best connection by itself."
+  },
+  "mobileWake": {
+    "saved": "Saved. Asterisk dialplan reloaded.",
+    "web": {
+      "rotated": "New web push keys. {{count}} browser subscription(s) removed; browsers subscribe again on their next visit.",
+      "title": "Web push (VAPID)",
+      "publicKey": "Public key",
+      "noKeys": "No keys yet: browser push stays off until you create them.",
+      "noLibrary": "(pywebpush is not installed on the server.)",
+      "confirm": "Every browser has to subscribe again. Continue?",
+      "replace": "Replace keys",
+      "create": "Create keys"
+    },
+    "ready": "Ready",
+    "notConfigured": "Not configured",
+    "fileNew": "New: {{name}}",
+    "fileRemoved": "Will be removed",
+    "fromEnv": "from .env",
+    "fileNone": "No key uploaded",
+    "replace": "Replace",
+    "upload": "Upload",
+    "keepExisting": "Keep existing",
+    "remove": "Remove",
+    "title": "Mobile Wake",
+    "description": "Wake a closed mobile softphone for incoming calls (RFC 8599). The phone puts its push token in its SIP REGISTER; OpDesk pushes it, holds the call until it re-registers, then lets it ring.",
+    "recommended": "Recommended app: Medut Softphone",
+    "general": "Mobile Wake",
+    "enabled": "Enabled",
+    "enabledHint": "Before an extension with a push binding is dialed, push it and hold the call while the app wakes up.",
+    "hold": "Hold time (seconds)",
+    "holdHint": "Longest the caller waits for the phone to wake and re-register. 8 to 30.",
+    "settle": "Settle window (seconds)",
+    "settleHint": "Extra wait after the re-registration so the app is ready to ring. 0 to 10.",
+    "marker": "Mobile client marker",
+    "markerHint": "Text in the SIP User-Agent that marks a mobile client, so a desk phone on the same extension does not count as the phone waking up. Contacts with RFC 8599 pn-* parameters always count.",
+    "fcm": {
+      "title": "Android (FCM)",
+      "project": "FCM project ID",
+      "projectHint": "Must match pn-param in the phone's REGISTER.",
+      "serviceAccount": "Service account JSON",
+      "serviceAccountHint": "Firebase console → Project settings → Service accounts → Generate new private key."
+    },
+    "apns": {
+      "title": "iOS (APNs)",
+      "keyId": "Key ID",
+      "teamId": "Team ID",
+      "bundleId": "Bundle ID",
+      "bundleHint": "VoIP pushes go to <bundle ID>.voip unless the phone's pn-param names a topic.",
+      "authKey": "Auth key (.p8)",
+      "authKeyHint": "Apple Developer → Keys, with Apple Push Notifications service.",
+      "keyStored": "Key stored",
+      "sandbox": "Use APNs sandbox",
+      "sandboxHint": "For development builds whose binding says only \"apns\". A binding with pn-provider=apns-sandbox always uses the sandbox."
+    },
+    "devices": {
+      "title": "Registered devices (RFC 8599)",
+      "none": "None yet. A device appears here after it registers with pn-provider, pn-prid and pn-param in its Contact.",
+      "extension": "Extension",
+      "provider": "Provider",
+      "token": "Token",
+      "app": "App",
+      "lastSeen": "Last seen",
+      "forget": "Forget this device"
+    },
+    "saving": "Saving…",
+    "save": "Save"
+  },
+  "account": {
+    "sipPassword": "Change SIP password",
+    "loginPassword": "Change password",
+    "showNewQr": "Show the new mobile QR",
+    "sipNote": "Every phone and softphone on your extension signs out and has to sign in again with the new password (scan the new QR).",
+    "current": "Current OpDesk password",
+    "currentSipHint": "Your sign-in password, to confirm it is you.",
+    "newSip": "New SIP password",
+    "new": "New password",
+    "sipRule": "8 to 64 characters, letters and digits, no spaces or quotes.",
+    "loginRule": "At least 8 characters.",
+    "hide": "Hide",
+    "show": "Show",
+    "generate": "Generate",
+    "confirm": "Confirm new password",
+    "mismatch": "The passwords do not match.",
+    "saving": "Saving…",
+    "save": "Change password",
+    "section": "Account"
+  },
+  "profile": {
+    "title": "My Profile",
+    "account": "Account",
+    "accountDesc": "Your sign-in details.",
+    "name": "Name",
+    "username": "Username",
+    "role": "Role",
+    "languageDesc": "The language OpDesk is shown in on this browser.",
+    "passwordDesc": "The password you sign in to OpDesk with.",
+    "sipDesc": "The password your phones and softphones register with.",
+    "qrDesc": "Scan with Medut Softphone to add your extension."
   }
 }

@@ -247,9 +247,29 @@ def reload_asterisk_sip(PBX: str | None = None):
         return False
 
 
-def write_mobile_wake_conf(backend_port: int = None, wait_seconds: int = None) -> bool:
+def _mobile_wake_setting(key: str, env: str, default: int, lo: int, hi: int) -> int:
+    """A Mobile Wake number from the DB (source of truth, edited in Settings), else .env,
+    else `default`; clamped to [lo, hi]."""
+    value = None
+    try:
+        from db_manager import get_setting
+        value = get_setting(key, None)
+    except Exception:
+        value = None
+    if value in (None, ''):
+        value = os.getenv(env, str(default))
+    try:
+        value = int(float(value))
+    except (ValueError, TypeError):
+        value = default
+    return max(lo, min(value, hi))
+
+
+def write_mobile_wake_conf(backend_port: int = None, hold_seconds: int = None, settle_seconds: int = None) -> bool:
     """
-    Install an automatic "wake before dial" hook in [from-internal-custom].
+    Install an automatic "wake before dial" hook in [from-internal-custom]: the RFC 8599
+    "hold the INVITE until the device re-registers" step, done in the dialplan because
+    Asterisk's registrar does not do it.
 
     Why here and not a FreePBX predial hook: when a mobile app is killed/backgrounded
     its SIP registration expires, so PJSIP_DIAL_CONTACTS() returns empty. FreePBX's
@@ -268,67 +288,76 @@ def write_mobile_wake_conf(backend_port: int = None, wait_seconds: int = None) -
     For each call the hook:
       1. Falls straight through for anything that is not a real local extension
          (feature codes, outbound numbers) — Goto(from-internal-additional,...).
-      2. Falls straight through (no wake, zero added latency) if the extension already
-         has a registered contact — the normal ring handles it.
-      3. Otherwise CURLs the backend wake endpoint. The endpoint returns "1" only when
-         the extension has a registered mobile token; only then do we Wait() for the
-         app to come up. Then it hands the call back to the full FreePBX stack via
+      2. CURLs the backend wake endpoint (sip_push.wake). It returns "1" only when the
+         extension has a push binding and a push went out; otherwise the call goes on
+         with no added latency.
+      3. Holds the call, polling .../ready every 0.5 s for up to `hold_seconds`, until a
+         mobile contact has registered since the push; then waits `settle_seconds` so
+         the app is ready to ring, and hands the call back to the full FreePBX stack via
          Goto(from-internal-additional,${EXTEN},1) — preserving voicemail, recording,
          CID, follow-me, etc.
+      4. If the hold runs out, or the caller hangs up while it lasts (hangup handler),
+         CURLs .../cancel so the phone stops ringing.
     """
     if backend_port is None:
         backend_port = int(os.getenv("PORT", "8765"))
-    if wait_seconds is None:
-        # Prefer the DB setting (source of truth, editable live from Settings) and fall
-        # back to the .env value, then a sane default. Clamp to a reasonable range.
-        wait_seconds = None
-        try:
-            from db_manager import get_setting
-            wait_seconds = get_setting('MOBILE_WAKE_WAIT', None)
-        except Exception:
-            wait_seconds = None
-        if wait_seconds in (None, ''):
-            wait_seconds = os.getenv("MOBILE_WAKE_WAIT", "3")
-        try:
-            wait_seconds = int(wait_seconds)
-        except (ValueError, TypeError):
-            wait_seconds = 3
-    wait_seconds = max(1, min(int(wait_seconds), 30))
+    if hold_seconds is None:
+        hold_seconds = _mobile_wake_setting('MOBILE_WAKE_WAIT', 'MOBILE_WAKE_WAIT', 10, 8, 30)
+    if settle_seconds is None:
+        settle_seconds = _mobile_wake_setting('MOBILE_WAKE_SETTLE', 'MOBILE_WAKE_SETTLE', 3, 0, 10)
+    hold_seconds = max(8, min(int(hold_seconds), 30))
+    settle_seconds = max(0, min(int(settle_seconds), 10))
 
     log.info(f"Writing mobile wake dialplan to {EXTENSIONS_MOBILE_WAKE_CONF}")
+
+    base = f"http://127.0.0.1:{backend_port}/api/internal/mobile-wake"
+    uid = "${URIENCODE(${OPDESKWAKE_UID})}"
+    settle_line = f" same => n,Wait({settle_seconds})\n" if settle_seconds else ""
 
     # The wake/continue body is identical for 3- and 4-digit extensions; emit it once
     # per pattern. ${EXTEN:0:0} trick is avoided — we just duplicate the few lines.
     def _hook_lines(pattern: str) -> str:
-        return f"""exten => {pattern},1,NoOp(OpDesk mobile wake check for ${{EXTEN}})
+        return (f"""exten => {pattern},1,NoOp(OpDesk mobile wake check for ${{EXTEN}})
  same => n,ExecIf($[${{DIALPLAN_EXISTS(qos-handler,s,1)}}]?Set(CHANNEL(hangup_handler_push)=qos-handler,s,1))
  same => n,GotoIf($["${{DB(AMPUSER/${{EXTEN}}/device)}}"=""]?passthru)
- same => n,GotoIf($["${{PJSIP_DIAL_CONTACTS(${{EXTEN}})}}"!=""]?passthru)
  same => n,Set(CURLOPT(conntimeout)=2)
- same => n,Set(CURLOPT(httptimeout)=3)
- same => n,Set(OPDESKWAKE=${{CURL(http://127.0.0.1:{backend_port}/api/internal/mobile-wake/${{EXTEN}}?caller=${{URIENCODE(${{CALLERID(num)}})}})}})
+ same => n,Set(CURLOPT(httptimeout)=4)
+ same => n,Set(OPDESKWAKE_EXT=${{EXTEN}})
+ same => n,Set(OPDESKWAKE_UID=${{UNIQUEID}})
+ same => n,Set(OPDESKWAKE=${{CURL({base}/${{EXTEN}}?uid={uid}&caller=${{URIENCODE(${{CALLERID(num)}})}}&name=${{URIENCODE(${{CALLERID(name)}})}})}})
  same => n,GotoIf($["${{OPDESKWAKE}}"!="1"]?passthru)
- same => n,Set(WAITLEFT={wait_seconds})
- same => n(poll),GotoIf($[${{WAITLEFT}}<=0]?passthru)
- same => n,GotoIf($["${{PJSIP_DIAL_CONTACTS(${{EXTEN}})}}"!=""]?passthru)
- same => n,Wait(0.25)
- same => n,Set(WAITLEFT=$[${{WAITLEFT}}-0.25])
- same => n,Goto(poll)
+ same => n,Set(OPDESKWAKE_PENDING=1)
+ same => n,Set(CHANNEL(hangup_handler_push)=opdesk-mobile-wake-hangup,s,1)
+ same => n,Set(WAITLEFT={hold_seconds})
+ same => n(poll),GotoIf($[${{WAITLEFT}}<=0]?timeout)
+ same => n,Wait(0.5)
+ same => n,Set(WAITLEFT=$[${{WAITLEFT}}-0.5])
+ same => n,GotoIf($["${{CURL({base}/${{EXTEN}}/ready?uid={uid})}}"!="1"]?poll)
+{settle_line} same => n,Set(OPDESKWAKE_PENDING=0)
+ same => n,Set(OPDESKWAKE=${{CURL({base}/${{EXTEN}}/done?uid={uid})}})
+ same => n,Goto(passthru)
+ same => n(timeout),Set(OPDESKWAKE_PENDING=0)
+ same => n,Set(OPDESKWAKE=${{CURL({base}/${{EXTEN}}/cancel?uid={uid})}})
  same => n(passthru),Goto(from-internal-additional,${{EXTEN}},1)
-"""
+""")
 
     content = f"""; OpDesk mobile wake dialplan — auto-generated. Do not edit manually.
 ;
-; Wakes a killed/backgrounded mobile softphone BEFORE FreePBX tries to resolve its SIP
-; contact, so the app has time to re-register and actually ring. Runs automatically for
-; every internal call and for ring-group/queue/follow-me legs (which re-enter
-; from-internal via Local channels). No per-extension configuration required.
+; RFC 8599 for Asterisk: pushes a mobile softphone BEFORE FreePBX tries to resolve its
+; SIP contact, holds the call until the app has re-registered, then lets it ring. Runs
+; automatically for every internal call and for ring-group/queue/follow-me legs (which
+; re-enter from-internal via Local channels). No per-extension configuration required.
 ;
-; Tunable: MOBILE_WAKE_WAIT (seconds to wait after the push) in the backend .env.
+; Hold {hold_seconds}s, settle {settle_seconds}s: Settings -> Mobile Wake.
 ;
 [from-internal-custom]
 {_hook_lines("_XXX")}
-{_hook_lines("_XXXX")}"""
+{_hook_lines("_XXXX")}
+[opdesk-mobile-wake-hangup]
+exten => s,1,GotoIf($["${{OPDESKWAKE_PENDING}}"!="1"]?done)
+ same => n,Set(OPDESKWAKE=${{CURL({base}/${{OPDESKWAKE_EXT}}/cancel?uid={uid})}})
+ same => n(done),Return()
+"""
     try:
         import tempfile
 
@@ -397,9 +426,9 @@ def remove_mobile_wake_conf() -> bool:
         return False
 
 
-def enable_mobile_wake(wait_seconds: int = None) -> bool:
+def enable_mobile_wake(hold_seconds: int = None, settle_seconds: int = None) -> bool:
     """Enable the mobile pre-dial wake dialplan and reload Asterisk."""
-    if not write_mobile_wake_conf(wait_seconds=wait_seconds):
+    if not write_mobile_wake_conf(hold_seconds=hold_seconds, settle_seconds=settle_seconds):
         return False
     return reload_asterisk_dialplan()
 

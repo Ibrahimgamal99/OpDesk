@@ -305,11 +305,27 @@ the admin role. None are key-reachable.
 
 ### Loopback-only internal hooks
 
-`GET|POST /api/internal/mobile-wake/{extension}` is called by the Asterisk dialplan to
-wake a mobile softphone before contact resolution. It takes **no credential** and is
-instead restricted to callers on `127.0.0.1` / `::1` — anything else gets `403`. It
-accepts `GET` because Asterisk's `CURL()` dialplan function issues one. Do not expose
-this path through a reverse proxy.
+`GET|POST /api/internal/mobile-wake/{extension}?uid=&caller=&name=` is called by the
+Asterisk dialplan to send the RFC 8599 wake push before contact resolution; it answers
+`1` when the call should be held. While holding, the dialplan calls
+`/api/internal/mobile-wake/{extension}/ready?uid=` (`1` once the phone has re-registered),
+then `/done`, or `/cancel` when the hold runs out or the caller hangs up. These take **no
+credential** and are instead restricted to callers on `127.0.0.1` / `::1` — anything else
+gets `403`. They accept `GET` because Asterisk's `CURL()` dialplan function issues one. Do
+not expose these paths through a reverse proxy.
+
+### Mobile softphone (admin UI)
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /api/push/config` | admin | Mobile Wake settings, FCM / APNs / VAPID status (secrets as present/absent only), RFC 8599 bindings |
+| `PUT /api/push/config` | admin | Save them; key files are sent as their contents (`null` keeps, `""` removes) |
+| `POST /api/push/vapid/rotate` | admin | New VAPID key pair; deletes every browser subscription |
+| `DELETE /api/push/bindings/{id}` | admin | Forget one RFC 8599 binding |
+| `GET /api/mobile-setup` | JWT | The caller's own QR data: extension, SIP password, host |
+| `POST /api/me/password` | JWT | Change the caller's OpDesk sign-in password: `{current_password, new_password}` |
+| `POST /api/me/sip-password` | JWT | Change the SIP secret of the caller's extension (same body; reloads Asterisk) |
+| `GET /api/settings/users/{id}/mobile-setup` | admin | The same for any user |
 
 ---
 

@@ -1,8 +1,19 @@
 # OpDesk documentation
 
-Reference material for integrating with OpDesk and for operating it.
+Reference material for operating OpDesk and for integrating with it.
+
+## Guides
 
 | Guide | What it covers |
+|---|---|
+| [guides/installation.md](guides/installation.md) | Prerequisites, ports and the Apache conflict, native and Docker installs, running, updating, troubleshooting. |
+| [guides/configuration.md](guides/configuration.md) | `backend/.env`, every Settings sub-tab, roles and groups, debugging. |
+| [guides/analytics.md](guides/analytics.md) | Every KPI, how it is computed, and how to tune it. |
+| [guides/mobile-push.md](guides/mobile-push.md) | Mobile softphone: QR sign-in, RFC 8599 wake-up, Firebase and APNs setup, Web Push, troubleshooting. |
+
+## API
+
+| Reference | What it covers |
 |---|---|
 | [api/overview.md](api/overview.md) | Base URL, JWT and API-key authentication, scopes, roles, request/response conventions, status codes, WebSocket, pagination, date formats. |
 | [api/endpoints.md](api/endpoints.md) | Endpoint-by-endpoint reference for the incoming API, grouped by resource. |
@@ -15,4 +26,4 @@ Reference material for integrating with OpDesk and for operating it.
 > whole surface including admin-only routes; the files above describe the *supported
 > integration contract*, which is a deliberately smaller set.
 
-For installation, configuration and operations, see the [project README](../README.md).
+For an overview of OpDesk, see the [project README](../README.md).

@@ -220,6 +220,9 @@
      it is read against --accent-*, not against the page background. */
   --text-on-accent: #ffffff;
 
+  /* QR codes: dark modules on a white quiet zone in BOTH themes, or phones fail to scan. */
+  --qr-surface: #ffffff;
+
   /* Scrim behind modals / drawers / sheets */
   --scrim: rgba(0, 0, 0, 0.75);
   --scrim-soft: rgba(0, 0, 0, 0.45);
@@ -2342,11 +2345,16 @@ body::before {
 }
 
 .modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.01em;
 }
+
+.modal-icon { display: inline-flex; flex-shrink: 0; }
 
 .modal-close {
   background: none;
@@ -5771,6 +5779,29 @@ select.an-filter-select option:checked {
   background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
 }
 
+/* Account actions (mobile QR, passwords): neutral rows in the same shape as Sign out */
+.header-profile-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: start;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.header-profile-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* ===========================================================================
    Softphone transfer box (migrated from inline styles in Softphone.tsx)
    =========================================================================== */
@@ -6865,9 +6896,9 @@ select.an-filter-select option:checked {
     var(--bg-secondary);
   border-inline-start: 3px solid var(--ah-color, transparent);
 }
-/* Out-of-queue Idle band stays quiet (grey); the icon chip + label still carry
+/* Out-of-queue Available band stays quiet; the icon chip + label still carry
    the colour, so the toolbar reads calm at rest. */
-.agent-header-idle { background: var(--bg-secondary); }
+.agent-header-available { background: var(--bg-secondary); }
 /* Status-icon chip in the selector — a tinted square holding the state glyph. */
 .agent-header-ic {
   flex: 0 0 auto;
@@ -6921,7 +6952,14 @@ select.an-filter-select option:checked {
   gap: 8px;
   flex: 0 0 auto;
 }
-/* DND + queue toggle switches share geometry; each follows its own --dt/--qt colour. */
+/* DND + queue toggle switches share geometry; each follows its own --dt/--qt colour.
+   The DND switch follows the live status colour (--ah-color, set inline on
+   .agent-header). Out of the queue the headset switch reads grey; once in the
+   queue it follows the live ACD state colour (Ready green / Not Ready amber /
+   On Call blue). */
+.agent-dnd-toggle { --dt-color: var(--ah-color, var(--status-idle)); }
+.agent-queue-toggle { --qt-color: var(--status-unavailable); }
+.agent-queue-toggle.on { --qt-color: var(--ah-color, var(--status-idle)); }
 .agent-dnd-toggle,
 .agent-queue-toggle {
   display: inline-flex;
@@ -6937,8 +6975,8 @@ select.an-filter-select option:checked {
 .agent-dnd-toggle-track,
 .agent-queue-toggle-track {
   position: relative;
-  width: 44px;
-  height: 22px;
+  width: 46px;
+  height: 24px;
   border-radius: var(--radius-pill);
   transition: background 0.15s ease;
 }
@@ -6956,10 +6994,10 @@ select.an-filter-select option:checked {
   top: 50%;
   inset-inline-start: 2px;
   transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--radius-circle);
-  color: var(--bg-primary);
+  color: var(--text-on-accent);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7010,10 +7048,10 @@ select.an-filter-select option:checked {
   background: transparent;
   border: none;
   color: var(--text-primary);
-  padding: 7px 8px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   font-family: inherit;
 }
 .agent-header-menu-item:hover { background: var(--bg-hover); }
@@ -7026,6 +7064,19 @@ select.an-filter-select option:checked {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
+}
+.agent-header-menu-tag {
+  margin-inline-start: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.agent-header-menu-empty {
+  padding: 10px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
 }
 .agent-header-menu-swatch { width: 9px; height: 9px; border-radius: var(--radius-circle); flex: 0 0 auto; }
 .agent-header-menu-sep { height: 1px; background: var(--border-subtle); margin: 4px 6px; }
@@ -7595,3 +7646,105 @@ select.an-filter-select option:checked {
 .up-hint { font-size: 12px; color: var(--text-muted); }
 .up-form-divider.first { margin-top: 0; }
 .ui-required { color: var(--accent-danger); margin-inline-start: 2px; }
+
+/* ── Mobile app setup (Medut QR) + Mobile Wake settings ── */
+.mw-qr-loading { display: flex; justify-content: center; padding: 32px; color: var(--text-muted); }
+.mw-qr-intro { display: block; margin-bottom: 16px; }
+.mw-link { display: inline-flex; align-items: center; gap: 3px; color: var(--accent-primary); text-decoration: none; }
+.mw-link:hover { text-decoration: underline; }
+.mw-qr-code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  aspect-ratio: 1;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: var(--qr-surface);
+}
+.mw-qr-code img { width: 100%; height: auto; image-rendering: pixelated; }
+.mw-qr-code-center { margin: 0 auto 16px; }
+.mw-qr-options { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.mw-qr-json { margin-top: 18px; }
+.mw-qr-json-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.mw-qr-json-actions { display: inline-flex; gap: 6px; text-transform: none; letter-spacing: 0; }
+.mw-qr-json-actions .btn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 12px; text-decoration: none; }
+.mw-qr-json pre {
+  max-height: 200px;
+  overflow: auto;
+  margin: 0 0 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  direction: ltr;
+  text-align: left;
+}
+@media (max-width: 640px) {
+  .mw-qr-code { width: min(240px, 100%); }
+}
+
+.mw-status { margin-bottom: 12px; }
+.mw-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mw-file-state { flex: 1 1 160px; min-width: 0; font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.mw-file .btn, .mw-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.mw-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.mw-save { justify-content: flex-end; margin-top: 20px; }
+.mw-code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; direction: ltr; unicode-bidi: embed; }
+.mw-table-wrap { overflow-x: auto; }
+.mw-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mw-table th, .mw-table td { padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); text-align: start; white-space: nowrap; }
+.mw-table th { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.mw-table td .btn { padding: 4px 8px; }
+.mw-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Change password dialogs */
+.acct-form { display: flex; flex-direction: column; gap: 14px; }
+.acct-form .up-form-group .up-hint { display: block; margin-top: 6px; }
+.acct-note { margin: 0; }
+.acct-input-row { display: flex; gap: 6px; }
+.acct-input-row .form-input { flex: 1; min-width: 0; }
+.acct-input-row .btn, .acct-wide-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.acct-wide-btn { width: 100%; }
+
+/* ── My Profile page ── */
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.profile-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.profile-col .settings-section { margin-bottom: 0; }
+.profile-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.profile-facts dt { color: var(--text-muted); }
+.profile-facts dd { margin: 0; color: var(--text-primary); font-weight: 600; overflow-wrap: anywhere; }
+.profile-lang { flex-wrap: wrap; }
+.profile-lang .header-profile-seg { padding: 6px 14px; font-size: var(--text-sm); }

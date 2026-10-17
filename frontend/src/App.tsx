@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { setLanguage } from './i18n';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWebPhone } from './hooks/useWebPhone';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
@@ -21,6 +20,7 @@ import { SupervisorModal } from './components/SupervisorModal';
 import { SettingsPanel, type SettingsTab } from './components/CRMSettingsModal';
 import { ContactsPanel } from './components/ContactsPanel';
 import { FloatingSoftphone } from './components/FloatingSoftphone';
+import { ProfilePanel } from './components/ProfilePanel';
 import {
   Phone,
   PhoneCall,
@@ -42,7 +42,6 @@ import {
   Check,
   CheckCheck,
   Archive,
-  Globe,
   BarChart3,
   ChevronLeft,
   ChevronRight,
@@ -60,19 +59,19 @@ import {
   Terminal,
   KeyRound,
   BookUser,
+  UserCircle,
 } from 'lucide-react';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 import { raiseFor } from './lib/api';
 
-type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings';
-const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt', 'uk'] as const;
+type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings' | 'profile';
 /** Kept in sync with the pre-paint theme script in index.html. */
 const THEME_KEY = 'opdesk:theme';
 
 // URL routing: each tab maps 1:1 to a path segment (e.g. 'call-log' -> '/call-log').
 // Deriving the active tab from the URL is what makes a refresh stay on the same page
 // and lets users navigate straight to /dashboard, /extensions, etc.
-const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'contacts', 'groups', 'users', 'analytics', 'logs', 'settings'];
+const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'contacts', 'groups', 'users', 'analytics', 'logs', 'settings', 'profile'];
 const DEFAULT_TAB: TabType = 'dashboard';
 function pathToTab(pathname: string): TabType {
   const seg = pathname.replace(/^\/+/, '').split('/')[0];
@@ -112,7 +111,7 @@ export interface PendingUserFormSnapshot {
 type AppProps = { onLogout: () => void };
 
 function App({ onLogout }: AppProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const token = getToken();
   const webPhone = useWebPhone();
   const { connect, disconnect, canConnect, isConnected, configLoading, incomingCall, hasActiveCall } = webPhone;
@@ -469,10 +468,10 @@ function App({ onLogout }: AppProps) {
     }
   }, [location.pathname, navigate]);
 
-  // Agent only has Extensions, Active Calls, Call History; redirect away from other tabs
+  // Agent only has Extensions, Active Calls, Call History (+ their own profile); redirect away from other tabs
   const userRole = getUser()?.role;
   useEffect(() => {
-    if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'call-log', 'contacts'].includes(activeTab)) {
+    if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'call-log', 'contacts', 'profile'].includes(activeTab)) {
       navigate(`/${DEFAULT_TAB}`, { replace: true });
       return;
     }
@@ -555,10 +554,6 @@ function App({ onLogout }: AppProps) {
     };
   })() : null;
 
-
-  const handleLangSwitch = (lang: string) => {
-    setLanguage(lang);
-  };
 
   return (
     <WebPhoneProvider value={webPhone}>
@@ -693,6 +688,14 @@ function App({ onLogout }: AppProps) {
                 </div>
 
                 <div className="header-profile-divider" />
+                <div className="header-profile-section-label">{t('account.section', 'Account')}</div>
+                {/* Passwords, SIP, mobile QR and language all live on the My Profile page. */}
+                <button type="button" className="header-profile-item"
+                  onClick={() => { setProfileMenuOpen(false); selectTab('profile'); }}>
+                  <UserCircle size={15} />{t('profile.title', 'My Profile')}
+                </button>
+
+                <div className="header-profile-divider" />
                 <div className="header-profile-section-label">{t('header.preferences')}</div>
 
                 {/* Appearance (theme) */}
@@ -708,25 +711,6 @@ function App({ onLogout }: AppProps) {
                     <button type="button" className={`header-profile-seg${theme === 'dark' ? ' active' : ''}`} onClick={() => selectTheme('dark')}>
                       <Moon size={13} />{t('header.dark')}
                     </button>
-                  </div>
-                </div>
-
-                {/* Language */}
-                <div className="header-profile-row">
-                  <span className="header-profile-row-label">
-                    <Globe size={15} />{t('language.select')}
-                  </span>
-                  <div className="header-profile-segmented" role="group" aria-label={t('language.select')}>
-                    {LANGUAGE_OPTIONS.map(lang => (
-                      <button
-                        key={lang}
-                        type="button"
-                        onClick={() => handleLangSwitch(lang)}
-                        className={`header-profile-seg${i18n.language === lang ? ' active' : ''}`}
-                      >
-                        {t(`language.${lang}`)}
-                      </button>
-                    ))}
                   </div>
                 </div>
 
@@ -1020,6 +1004,7 @@ function App({ onLogout }: AppProps) {
             />
           )}
           {activeTab === 'logs' && getUser()?.role === 'admin' && <LogsPanel />}
+          {activeTab === 'profile' && <ProfilePanel />}
           {activeTab === 'settings' && (getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && <SettingsPanel tab={settingsSubTab as SettingsTab} onTabChange={selectSettingsTab} />}
         </main>
       </div>

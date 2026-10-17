@@ -988,7 +988,8 @@ def get_device_tokens_for_extension(
 
 
 def prune_stale_device_tokens(days: int = 90) -> int:
-    """Delete device tokens not refreshed in `days` days. Returns the number of rows deleted."""
+    """Delete device tokens and RFC 8599 push bindings not refreshed in `days` days.
+    Returns the number of rows deleted."""
     config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
     try:
         conn = mysql.connector.connect(**config)
@@ -996,8 +997,15 @@ def prune_stale_device_tokens(days: int = 90) -> int:
         cursor.execute(
             "DELETE FROM device_tokens WHERE last_seen_at < NOW() - INTERVAL %s DAY", (days,)
         )
-        conn.commit()
         count = cursor.rowcount
+        try:
+            cursor.execute(
+                "DELETE FROM sip_push_bindings WHERE last_seen_at < NOW() - INTERVAL %s DAY", (days,)
+            )
+            count += cursor.rowcount
+        except Error:
+            pass  # table not created yet (first start before init_sip_push_bindings_table)
+        conn.commit()
         cursor.close()
         conn.close()
         if count:
@@ -1006,6 +1014,170 @@ def prune_stale_device_tokens(days: int = 90) -> int:
     except Error as e:
         log.warning(f"⚠️  Database error pruning stale device tokens: {e}")
         return 0
+
+
+# =============================================================================
+# RFC 8599 push bindings — the pn-provider / pn-prid / pn-param a softphone puts in
+# its REGISTER Contact. Kept after the SIP registration itself expires: that is
+# what lets OpDesk wake a killed app for the next call.
+# =============================================================================
+
+def init_sip_push_bindings_table() -> None:
+    """Create the sip_push_bindings table (if missing). Idempotent; called at startup."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sip_push_bindings (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                extension    VARCHAR(40)  NOT NULL,
+                pn_provider  VARCHAR(32)  NOT NULL,
+                pn_prid      TEXT         NOT NULL,
+                pn_param     VARCHAR(255) NULL,
+                prid_hash    CHAR(64)     NOT NULL,
+                binding_hash CHAR(64)     NOT NULL,
+                contact_uri  TEXT         NULL,
+                user_agent   VARCHAR(255) NULL,
+                created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_binding (binding_hash),
+                INDEX idx_extension (extension),
+                INDEX idx_prid (prid_hash)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        conn.commit()
+    except Error as e:
+        log.warning(f"⚠️  Database error init_sip_push_bindings_table: {e}")
+    finally:
+        _safe_close(cursor, conn)
+
+
+def _binding_hash(extension: str, provider: str, prid: str, param: Optional[str]) -> str:
+    """RFC 8599 §5.2 matches a binding on (pn-provider, pn-prid, pn-param); the extension is
+    part of the key too, because one phone with two accounts sends the same token for both."""
+    return hashlib.sha256("\n".join((extension, provider, prid, param or "")).encode("utf-8")).hexdigest()
+
+
+def upsert_sip_push_binding(
+    extension: str,
+    provider: str,
+    prid: str,
+    param: Optional[str] = None,
+    contact_uri: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> bool:
+    """Store (or refresh) one RFC 8599 binding. Idempotent: the same binding only bumps
+    last_seen_at and the contact details."""
+    if not extension or not provider or not prid:
+        return False
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO sip_push_bindings
+                   (extension, pn_provider, pn_prid, pn_param, prid_hash, binding_hash, contact_uri, user_agent)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON DUPLICATE KEY UPDATE
+                   contact_uri = VALUES(contact_uri),
+                   user_agent = COALESCE(VALUES(user_agent), user_agent),
+                   last_seen_at = CURRENT_TIMESTAMP""",
+            (extension, provider, prid, param or None, _token_hash(prid),
+             _binding_hash(extension, provider, prid, param), contact_uri, (user_agent or None) and user_agent[:255]),
+        )
+        conn.commit()
+        return True
+    except Error as e:
+        log.warning(f"⚠️  Database error upserting push binding: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def list_sip_push_bindings(extension: Optional[str] = None) -> List[dict]:
+    """RFC 8599 bindings, newest first; all of them, or one extension's."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor(dictionary=True)
+        query = ("SELECT id, extension, pn_provider, pn_prid, pn_param, contact_uri, user_agent, "
+                 "created_at, last_seen_at FROM sip_push_bindings")
+        params: Tuple = ()
+        if extension is not None:
+            query += " WHERE extension = %s"
+            params = (extension,)
+        cursor.execute(query + " ORDER BY last_seen_at DESC", params)
+        return cursor.fetchall() or []
+    except Error as e:
+        log.warning(f"⚠️  Database error listing push bindings: {e}")
+        return []
+    finally:
+        _safe_close(cursor, conn)
+
+
+def delete_sip_push_binding(binding_id: int) -> bool:
+    """Delete one binding by id (admin 'forget this device')."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sip_push_bindings WHERE id = %s", (binding_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Error as e:
+        log.warning(f"⚠️  Database error deleting push binding: {e}")
+        return False
+    finally:
+        _safe_close(cursor, conn)
+
+
+def delete_sip_push_bindings_by_prid(provider: str, prid: str) -> int:
+    """Delete every binding carrying a token the push provider reported as dead."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM sip_push_bindings WHERE prid_hash = %s AND pn_provider = %s",
+            (_token_hash(prid), provider),
+        )
+        conn.commit()
+        return cursor.rowcount
+    except Error as e:
+        log.warning(f"⚠️  Database error deleting push bindings: {e}")
+        return 0
+    finally:
+        _safe_close(cursor, conn)
+
+
+def delete_web_push_subscriptions() -> int:
+    """Drop every browser subscription. They are bound to the VAPID public key, so
+    replacing the keys makes them all undeliverable; browsers re-subscribe on next load."""
+    config = get_db_config(os.getenv('DB_PASSWORD', ''), os.getenv('DB_OpDesk', 'OpDesk'))
+    conn = None
+    cursor = None
+    try:
+        conn = mysql.connector.connect(**config)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM device_tokens WHERE platform = 'web'")
+        conn.commit()
+        return cursor.rowcount
+    except Error as e:
+        log.warning(f"⚠️  Database error deleting web push subscriptions: {e}")
+        return 0
+    finally:
+        _safe_close(cursor, conn)
 
 
 def check_database_exists(db_name: str) -> bool:

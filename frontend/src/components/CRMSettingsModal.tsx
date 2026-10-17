@@ -12,6 +12,7 @@ import { fetchWithAuth, getUser } from '../auth';
 import { AnalyticsSettingsPanel } from './AnalyticsSettingsPanel';
 import { PauseReasonsPanel } from './PauseReasonsPanel';
 import { ApiKeysPanel } from './ApiKeysPanel';
+import { MobileWakePanel } from './MobileWakePanel';
 import { api, messageFrom, toApiError } from '../lib/api';
 
 export type SettingsTab = 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
@@ -253,10 +254,6 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   const [sipTlsDomain, setSipTlsDomain] = useState('');
   const [sipTlsLoading, setSipTlsLoading] = useState(false);
   const [sipTlsMessage, setSipTlsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [mobileWakeEnabled, setMobileWakeEnabled] = useState(false);
-  const [mobileWakeWait, setMobileWakeWait] = useState(3);
-  const [mobileWakeLoading, setMobileWakeLoading] = useState(false);
-  const [mobileWakeMessage, setMobileWakeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [recordingEnabled, setRecordingEnabled] = useState(false);
   const [recordingFormat, setRecordingFormat] = useState('wav');
   const [recordingLoading, setRecordingLoading] = useState(false);
@@ -265,7 +262,6 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
   useEffect(() => {
     loadConfig();
     loadSipTlsStatus();
-    loadMobileWakeStatus();
     loadRecordingStatus();
   }, []);
 
@@ -565,47 +561,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
     }
   };
 
-  const loadMobileWakeStatus = async () => {
-    try {
-      const res = await fetchWithAuth('/api/mobile-wake/status');
-      if (res.ok) {
-        const data = await res.json();
-        setMobileWakeEnabled(data.enabled);
-        setMobileWakeWait(data.wait_seconds ?? 4);
-      }
-    } catch {}
-  };
 
-  const handleMobileWakeEnable = async () => {
-    setMobileWakeLoading(true);
-    setMobileWakeMessage(null);
-    try {
-      const data = await api<{ message: string }>('/api/mobile-wake/enable', {
-        method: 'POST',
-        body: { wait_seconds: mobileWakeWait },
-      });
-      setMobileWakeEnabled(true);
-      setMobileWakeMessage({ type: 'success', text: data.message });
-    } catch (e) {
-      setMobileWakeMessage({ type: 'error', text: toApiError(e).message });
-    } finally {
-      setMobileWakeLoading(false);
-    }
-  };
-
-  const handleMobileWakeDisable = async () => {
-    setMobileWakeLoading(true);
-    setMobileWakeMessage(null);
-    try {
-      const data = await api<{ message: string }>('/api/mobile-wake/disable', { method: 'POST' });
-      setMobileWakeEnabled(false);
-      setMobileWakeMessage({ type: 'success', text: data.message });
-    } catch (e) {
-      setMobileWakeMessage({ type: 'error', text: toApiError(e).message });
-    } finally {
-      setMobileWakeLoading(false);
-    }
-  };
 
   const loadRecordingStatus = async () => {
     try {
@@ -678,7 +634,7 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
           </button>
           <button type="button" className={`up-tab ${activeTab === 'mobile-wake' ? 'active' : ''}`} onClick={() => setActiveTab('mobile-wake')}>
             <Smartphone size={18} />
-            Mobile Wake
+            {t('settings.tabs.mobileWake', 'Mobile Wake')}
           </button>
           <button type="button" className={`up-tab ${activeTab === 'recording' ? 'active' : ''}`} onClick={() => setActiveTab('recording')}>
             <Disc size={18} />
@@ -1502,54 +1458,14 @@ export function SettingsPanel({ tab, onTabChange }: SettingsPanelProps = {}) {
 
         {/* ── Mobile Wake Tab ── */}
         {activeTab === 'mobile-wake' && (
-          <div className="up-add-card">
-            <div className="up-add-header">
-              <div className="up-add-icon"><Smartphone size={24} /></div>
-              <div>
-                <h2 className="up-add-title">Mobile Wake</h2>
-                <p className="up-add-desc">Send a push notification before dialing so a killed app can re-register with Asterisk before the call rings.</p>
+          isAdmin ? <MobileWakePanel /> : (
+            <div className="up-add-card"><div className="up-add-body">
+              <div className="up-alert error">
+                <AlertCircle size={20} />
+                <span>{t('settings.adminOnly', 'Administrator access required.')}</span>
               </div>
-            </div>
-            <div className="up-add-body">
-              <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Status:</span>
-                <strong style={{ fontSize: 13, color: mobileWakeEnabled ? 'var(--success)' : 'var(--text-secondary)' }}>
-                  {mobileWakeEnabled ? 'Enabled' : 'Disabled'}
-                </strong>
-              </div>
-              <div className="up-form-group" style={{ marginBottom: 16 }}>
-                <label>Wake wait time (seconds)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  value={mobileWakeWait}
-                  onChange={e => setMobileWakeWait(Math.max(1, Math.min(30, parseInt(e.target.value) || 4)))}
-                  min={1}
-                  max={30}
-                  style={{ width: 120 }}
-                />
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                  How long Asterisk waits after sending the push before dialing. Recommended: 3–5s.
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button type="button" className="btn btn-primary" onClick={handleMobileWakeEnable} disabled={mobileWakeLoading} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: mobileWakeLoading ? 0.6 : 1 }}>
-                  {mobileWakeLoading ? <Loader2 size={14} className="spinner" /> : <Power size={14} />}
-                  {mobileWakeLoading ? 'Processing...' : mobileWakeEnabled ? 'Update wait time' : 'Enable'}
-                </button>
-                <button type="button" className="btn" onClick={handleMobileWakeDisable} disabled={mobileWakeLoading || !mobileWakeEnabled} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (mobileWakeLoading || !mobileWakeEnabled) ? 0.6 : 1 }}>
-                  {mobileWakeLoading ? <Loader2 size={14} className="spinner" /> : <PowerOff size={14} />}
-                  {mobileWakeLoading ? 'Processing...' : 'Disable'}
-                </button>
-              </div>
-              {mobileWakeMessage && (
-                <div className={`up-alert ${mobileWakeMessage.type === 'success' ? 'success' : 'error'}`} style={{ marginTop: 16 }}>
-                  {mobileWakeMessage.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-                  <span>{mobileWakeMessage.text}</span>
-                </div>
-              )}
-            </div>
-          </div>
+            </div></div>
+          )
         )}
 
         {/* ── Recording Tab ── */}

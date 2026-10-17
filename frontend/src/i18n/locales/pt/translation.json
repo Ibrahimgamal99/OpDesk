@@ -314,7 +314,8 @@
     "quality_mos": "MOS",
     "quality_jitter": "Jitter",
     "quality_loss": "Perda",
-    "quality_rtt": "Latência"
+    "quality_rtt": "Latência",
+    "reconnect": "Reconectar"
   },
   "users": {
     "title": "Todos os usuários",
@@ -596,7 +597,8 @@
       "statusDisabled": "Desabilitado"
     },
     "tabs": {
-      "apiKeys": "Chaves de API"
+      "apiKeys": "Chaves de API",
+      "mobileWake": "Despertar móvel"
     },
     "adminOnly": "Acesso de administrador necessário."
   },
@@ -619,7 +621,8 @@
     "noRecording": "Sem gravação",
     "retry": "Tentar novamente",
     "prev": "Anterior",
-    "next": "Próximo"
+    "next": "Próximo",
+    "cancel": "Cancelar"
   },
   "analytics": {
     "title": "Análises",
@@ -755,6 +758,20 @@
       "exportXlsx": "Excel",
       "exporting": "Exportando…",
       "exportFailed": "Falha na exportação. Tente novamente."
+    },
+    "goReady": "Disponível",
+    "notReady": "Indisponível",
+    "noReasons": "Sem códigos de motivo",
+    "unpaid": "pausa",
+    "dnd": "Não perturbe",
+    "login": "Entrar",
+    "logout": "Sair",
+    "state": {
+      "ready": "Disponível",
+      "onCall": "Em chamada",
+      "notReady": "Indisponível",
+      "dnd": "Não perturbe",
+      "available": "Livre"
     }
   },
   "logs": {
@@ -882,5 +899,119 @@
     "sourceManual": "Manual",
     "sourceCrm": "CRM",
     "call": "Ligar para {{name}}"
+  },
+  "mobileSetup": {
+    "titleFor": "Configurar app móvel — {{name}}",
+    "title": "Configurar o app móvel",
+    "getApp": "Obter o Medut Softphone",
+    "qrAlt": "Código QR da conta",
+    "includePassword": "Incluir a senha",
+    "passwordOn": "Uma leitura já faz login. Trate o código como a própria senha.",
+    "passwordOff": "Seguro para imprimir ou compartilhar: o app pede a senha.",
+    "json": "JSON da conta",
+    "copied": "Copiado",
+    "copy": "Copiar",
+    "download": "PNG",
+    "formatLink": "Referência do formato da conta",
+    "button": "QR do app móvel",
+    "introAuto": "Leia este código no Medut Softphone (tela de login → Ler QR) para adicionar o ramal {{ext}}. O app escolhe sozinho a melhor conexão."
+  },
+  "mobileWake": {
+    "saved": "Salvo. Plano de discagem do Asterisk recarregado.",
+    "web": {
+      "rotated": "Novas chaves de web push. {{count}} assinatura(s) de navegador removida(s); os navegadores assinam de novo na próxima visita.",
+      "title": "Web push (VAPID)",
+      "publicKey": "Chave pública",
+      "noKeys": "Ainda sem chaves: o push do navegador fica desligado até você criá-las.",
+      "noLibrary": "(pywebpush não está instalado no servidor.)",
+      "confirm": "Todos os navegadores terão de assinar de novo. Continuar?",
+      "replace": "Substituir chaves",
+      "create": "Criar chaves"
+    },
+    "ready": "Pronto",
+    "notConfigured": "Não configurado",
+    "fileNew": "Novo: {{name}}",
+    "fileRemoved": "Será removido",
+    "fromEnv": "do .env",
+    "fileNone": "Nenhuma chave enviada",
+    "replace": "Substituir",
+    "upload": "Enviar",
+    "keepExisting": "Manter a atual",
+    "remove": "Remover",
+    "title": "Despertar móvel",
+    "description": "Desperta um softphone móvel fechado para chamadas recebidas (RFC 8599). O telefone coloca seu token push no SIP REGISTER; o OpDesk envia o push, segura a chamada até ele se registrar de novo e então deixa tocar.",
+    "recommended": "App recomendado: Medut Softphone",
+    "general": "Despertar móvel",
+    "enabled": "Ativado",
+    "enabledHint": "Antes de discar para um ramal com vínculo push, envia o push e segura a chamada enquanto o app desperta.",
+    "hold": "Tempo de espera (segundos)",
+    "holdHint": "O máximo que quem liga espera o telefone despertar e se registrar. De 8 a 30.",
+    "settle": "Janela de estabilização (segundos)",
+    "settleHint": "Espera extra após o registro para o app estar pronto para tocar. De 0 a 10.",
+    "marker": "Marcador de cliente móvel",
+    "markerHint": "Texto no User-Agent SIP que identifica um cliente móvel, para que um telefone de mesa no mesmo ramal não conte como o celular despertando. Contatos com parâmetros pn-* da RFC 8599 sempre contam.",
+    "fcm": {
+      "title": "Android (FCM)",
+      "project": "ID do projeto FCM",
+      "projectHint": "Deve coincidir com o pn-param no REGISTER do telefone.",
+      "serviceAccount": "JSON da conta de serviço",
+      "serviceAccountHint": "Console do Firebase → Configurações do projeto → Contas de serviço → Gerar nova chave privada."
+    },
+    "apns": {
+      "title": "iOS (APNs)",
+      "keyId": "Key ID",
+      "teamId": "Team ID",
+      "bundleId": "Bundle ID",
+      "bundleHint": "Pushes VoIP vão para <bundle ID>.voip, a menos que o pn-param do telefone indique outro tópico.",
+      "authKey": "Chave de autenticação (.p8)",
+      "authKeyHint": "Apple Developer → Keys, com Apple Push Notifications service.",
+      "keyStored": "Chave armazenada",
+      "sandbox": "Usar APNs sandbox",
+      "sandboxHint": "Para builds de desenvolvimento cujo vínculo diz apenas \"apns\". Um vínculo com pn-provider=apns-sandbox sempre usa o sandbox."
+    },
+    "devices": {
+      "title": "Dispositivos registrados (RFC 8599)",
+      "none": "Nenhum ainda. Um dispositivo aparece aqui depois de se registrar com pn-provider, pn-prid e pn-param no Contact.",
+      "extension": "Ramal",
+      "provider": "Provedor",
+      "token": "Token",
+      "app": "App",
+      "lastSeen": "Visto por último",
+      "forget": "Esquecer este dispositivo"
+    },
+    "saving": "Salvando…",
+    "save": "Salvar"
+  },
+  "account": {
+    "section": "Conta",
+    "loginPassword": "Alterar senha",
+    "sipPassword": "Alterar senha SIP",
+    "showNewQr": "Mostrar o novo QR do celular",
+    "sipNote": "Todos os telefones e softphones do seu ramal saem e precisam entrar de novo com a nova senha (leia o novo QR).",
+    "current": "Senha atual do OpDesk",
+    "currentSipHint": "Sua senha de login, para confirmar que é você.",
+    "newSip": "Nova senha SIP",
+    "new": "Nova senha",
+    "sipRule": "De 8 a 64 caracteres, com letras e dígitos, sem espaços nem aspas.",
+    "loginRule": "Pelo menos 8 caracteres.",
+    "hide": "Ocultar",
+    "show": "Mostrar",
+    "generate": "Gerar",
+    "confirm": "Confirmar a nova senha",
+    "mismatch": "As senhas não coincidem.",
+    "saving": "Salvando…",
+    "save": "Alterar senha"
+  },
+  "profile": {
+    "title": "Meu perfil",
+    "account": "Conta",
+    "accountDesc": "Seus dados de acesso.",
+    "name": "Nome",
+    "username": "Usuário",
+    "role": "Função",
+    "languageDesc": "O idioma em que o OpDesk é exibido neste navegador.",
+    "passwordDesc": "A senha com que você entra no OpDesk.",
+    "sipDesc": "A senha com que seus telefones e softphones se registram.",
+    "qrDesc": "Escaneie com o Medut Softphone para adicionar seu ramal."
   }
 }

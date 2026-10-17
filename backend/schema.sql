@@ -110,6 +110,28 @@ CREATE TABLE IF NOT EXISTS device_tokens (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- RFC 8599 push bindings: the pn-provider / pn-prid / pn-param a softphone puts in its
+-- REGISTER Contact URI, learned from Asterisk's contacts over AMI. Kept after the SIP
+-- registration expires, so a killed app can still be woken for the next call.
+-- binding_hash = SHA-256(extension, provider, prid, param); prid_hash finds every row
+-- holding a token the push provider reported as dead.
+CREATE TABLE IF NOT EXISTS sip_push_bindings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    extension VARCHAR(40) NOT NULL,
+    pn_provider VARCHAR(32) NOT NULL,
+    pn_prid TEXT NOT NULL,
+    pn_param VARCHAR(255) NULL,
+    prid_hash CHAR(64) NOT NULL,
+    binding_hash CHAR(64) NOT NULL,
+    contact_uri TEXT NULL,
+    user_agent VARCHAR(255) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_binding (binding_hash),
+    INDEX idx_extension (extension),
+    INDEX idx_prid (prid_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Delete read call_notifications older than 7 days (runs daily via MySQL event scheduler).
 -- FIX: SET GLOBAL event_scheduler requires SUPER privilege which the OpDesk DB
 --      user does not have. Enable it system-wide instead by adding the following

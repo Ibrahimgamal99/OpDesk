@@ -15,7 +15,8 @@ info:
     This spec covers the supported integration contract. FastAPI additionally serves
     generated documentation for every route at `/docs` and `/redoc`.
   license:
-    name: MIT
+    name: GPL-3.0
+    url: https://www.gnu.org/licenses/gpl-3.0.html
 
 servers:
   - url: https://your-opdesk-host

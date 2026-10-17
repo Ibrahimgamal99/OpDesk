@@ -17,6 +17,10 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return out;
 }
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 export function webPushSupported(): boolean {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
@@ -42,11 +46,19 @@ export async function subscribeWebPush(): Promise<boolean> {
     }
 
     const reg = await navigator.serviceWorker.ready;
+    const serverKey = urlBase64ToUint8Array(public_key);
     let sub = await reg.pushManager.getSubscription();
+    // An admin can replace the VAPID keys (Settings → Mobile Wake). A subscription made for
+    // the old key can no longer be pushed to, so drop it and subscribe again.
+    const subKey = sub?.options.applicationServerKey;
+    if (sub && subKey && !sameBytes(new Uint8Array(subKey), serverKey)) {
+      await sub.unsubscribe().catch(() => { /* ignore */ });
+      sub = null;
+    }
     if (!sub) {
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(public_key) as BufferSource,
+        applicationServerKey: serverKey as BufferSource,
       });
     }
 

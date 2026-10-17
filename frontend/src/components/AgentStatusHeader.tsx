@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronDown, Play, CheckCircle2, RefreshCw, MinusCircle, CircleDot,
+  ChevronDown, Play, CheckCircle2, RefreshCw, RotateCw, MinusCircle, CircleDot,
   Pause, PhoneCall, Headset, HeadphoneOff, LogOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -19,22 +19,27 @@ interface PauseReason {
 }
 
 /**
- * The softphone header — an echo/Avaya-style agent status band.
+ * The softphone header — a contact-center-style status control (echo parity).
  *
- * Replaces the plain title header (and the old separate <AgentStatusBar>) with a
- * single state-tinted band: a state-icon chip + label (+ count-up timer while in
- * queue) that opens a menu of the transitions valid for the current state (Go
- * Ready / Not-Ready reasons / Do Not Disturb / Log out), plus two always-on
- * switches — a **DND toggle** and a **queue login/logout** headset toggle — and a
- * registration-signal glyph. State is live from the WebSocket (the `presence`
- * prop, derived in App.tsx); actions POST to the REST endpoints and the socket
- * broadcast flips the band back.
+ * The live status is a *selector*: a state icon + label (+ count-up timer while
+ * in queue) that opens a menu of the transitions valid for the current state
+ * (Not-Ready reasons / Go Ready / Do Not Disturb / Log out). The only always-on
+ * controls beside it are one switch and the **registration signal** glyph:
+ *   - a queue agent (extension with login queues) gets the **headset toggle**
+ *     (in/out of the queue); DND lives in the menu;
+ *   - a plain extension gets a **DND toggle** (Idle ⇄ DND) and no menu.
  *
- * When the user has no extension (not an agent) it falls back to the classic
- * title header so the dialer still reads sensibly.
+ * Out of the queue an agent is treated like a plain extension — Idle ⇄ DND, no
+ * "Offline": logged out reads as **Available** (direct calls ring) and DND blocks
+ * them. Echo's agent rules, composed from OpDesk's REST endpoints:
+ *   - log in   = clear DND, then join the queues Ready;
+ *   - DND      = leave the queues (logout), then set the DND flag;
+ *   - go Idle  = logout (which also clears DND).
+ * State is live from the WebSocket (the `presence` prop, derived in App.tsx);
+ * the socket broadcast after each call flips the header back.
  */
 
-/** Registration signal glyph — bars when registered, slashed when not. */
+/** Registration signal glyph — green bars when registered, red slashed when not. */
 function RegSignal({ on }: { on: boolean }) {
   return (
     <svg width="15" height="14" viewBox="0 0 20 18" fill="none" aria-hidden="true">
@@ -55,16 +60,15 @@ function fmtTimer(secs: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
 }
 
-// Display states derived from OpDesk's presence model (dnd / queueOn / paused /
-// onCall). Each carries its own colour + tinted background token so the band
-// reads by state. Priority when resolving: on-call → DND → not-ready → ready → idle.
-type DState = 'on_call' | 'dnd' | 'not_ready' | 'ready' | 'idle';
+// Display states (echo's agent states minus wrap-up, which OpDesk doesn't track).
+// Each carries its own colour + tinted background token so the band reads by state.
+type DState = 'ready' | 'not_ready' | 'on_call' | 'dnd' | 'available';
 const STATE_META: Record<DState, { Icon: LucideIcon; color: string; bg: string; key: string; fallback: string }> = {
-  on_call:   { Icon: PhoneCall,   color: 'var(--status-call)',        bg: 'var(--status-call-bg)',        key: 'agent.onCall',   fallback: 'On call' },
-  dnd:       { Icon: MinusCircle, color: 'var(--accent-danger)',      bg: 'var(--status-ringing-bg)',     key: 'agent.dnd',      fallback: 'Do Not Disturb' },
-  not_ready: { Icon: Pause,       color: 'var(--accent-warning)',     bg: 'var(--status-ringing-bg)',     key: 'agent.notReady', fallback: 'Not Ready' },
-  ready:     { Icon: CheckCircle2, color: 'var(--status-idle)',       bg: 'var(--status-idle-bg)',        key: 'agent.ready',    fallback: 'Ready' },
-  idle:      { Icon: CircleDot,   color: 'var(--status-unavailable)', bg: 'var(--status-unavailable-bg)', key: 'agent.idle',     fallback: 'Idle' },
+  ready:     { Icon: CheckCircle2, color: 'var(--status-idle)',    bg: 'var(--status-idle-bg)',    key: 'agent.state.ready',     fallback: 'Ready' },
+  on_call:   { Icon: PhoneCall,    color: 'var(--status-call)',    bg: 'var(--status-call-bg)',    key: 'agent.state.onCall',    fallback: 'On Call' },
+  not_ready: { Icon: Pause,        color: 'var(--accent-warning)', bg: 'var(--status-ringing-bg)', key: 'agent.state.notReady',  fallback: 'Not Ready' },
+  dnd:       { Icon: MinusCircle,  color: 'var(--accent-danger)',  bg: 'var(--status-ringing-bg)', key: 'agent.state.dnd',       fallback: 'Do Not Disturb' },
+  available: { Icon: CircleDot,    color: 'var(--status-idle)',    bg: 'var(--status-idle-bg)',    key: 'agent.state.available', fallback: 'Available' },
 };
 
 interface Props {
@@ -74,64 +78,64 @@ interface Props {
   isConnected: boolean;
   /** Live agent presence (from the WebSocket, derived in App). */
   presence: AgentPresence | null;
-  /** This device has a live call — controls lock and the band shows On Call. */
+  /** This device has a live call — the status shows On Call and controls lock. */
   onCall?: boolean;
   onRefresh?: () => void;
   refreshDisabled?: boolean;
+  /** Force a fresh softphone registration attempt. */
+  onReconnect?: () => void;
 }
 
-export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, onRefresh, refreshDisabled }: Props) {
+export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, onRefresh, refreshDisabled, onReconnect }: Props) {
   const { t } = useTranslation();
   const user = getUser();
   const [reasons, setReasons] = useState<PauseReason[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const ext = presence?.ext || String(user?.extension || '');
-  const hasExt = !!ext;
+  const myExt = presence?.ext || String(user?.extension || '');
+  // Servers that predate `is_agent` leave it undefined: fall back to the agent
+  // layout, whose menu still reaches DND, so no control goes missing.
+  const isAgent = !!myExt && (user?.is_agent ?? true);
 
-  const dnd = !!presence?.dnd;
-  const queueOn = !!presence?.queueOn;
-  const paused = !!presence?.paused;
+  const isDnd = !!presence?.dnd;
+  const member = !!presence?.queueOn;
   const liveCall = !!onCall || !!presence?.onCall;
 
-  // Resolve the display state.
+  // In the queue = the ACD states; everything else is the out-of-queue Idle/DND
+  // control. DND takes the agent out of the queue (echo), so it wins here too.
+  const queueOn = isAgent && member && !isDnd;
   const dState: DState = liveCall
     ? 'on_call'
-    : dnd
-      ? 'dnd'
-      : queueOn && paused
-        ? 'not_ready'
-        : queueOn
-          ? 'ready'
-          : 'idle';
+    : queueOn
+      ? (presence?.paused ? 'not_ready' : 'ready')
+      : isDnd ? 'dnd' : 'available';
 
-  // Count-up timer per state. Presence carries no server `since`, so we latch the
-  // moment the display state changes and count from there — resetting on each
-  // transition, like the echo band.
+  // Count-up timer for the in-queue states. Presence carries no server `since`,
+  // so latch the moment the display state changes and count from there.
   const sinceRef = useRef<number>(Date.now());
   const lastStateRef = useRef<DState>(dState);
   if (lastStateRef.current !== dState) {
     lastStateRef.current = dState;
     sinceRef.current = Date.now();
   }
-  const showTimer = queueOn || liveCall;
 
   useEffect(() => {
-    if (!hasExt) return;
+    if (!isAgent) return;
     fetchWithAuth('/api/pause-reasons?active_only=true')
       .then((r) => (r.ok ? r.json() : { reasons: [] }))
       .then((d) => setReasons((d.reasons || []).filter((x: PauseReason) => x.is_active)))
       .catch(() => { /* ignore */ });
-  }, [hasExt]);
+  }, [isAgent]);
 
   useEffect(() => {
-    if (!showTimer) return;
+    // Only the in-queue ACD states carry a count-up timer.
+    if (!queueOn) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [showTimer]);
+  }, [queueOn]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -145,13 +149,23 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
   const elapsed = useMemo(() => (now - sinceRef.current) / 1000, [now]);
 
   // Not an agent extension at all → classic title header.
-  if (!hasExt) {
+  if (!myExt) {
     return (
       <div className="softphone-header">
         {icon}
         <span className="softphone-header-title">{title}</span>
         <div className="softphone-header-right">
           <span className={`softphone-status-dot ${isConnected ? 'registered' : ''}`} />
+          {!isConnected && onReconnect && (
+            <button
+              type="button"
+              className="softphone-header-btn"
+              onClick={onReconnect}
+              title={t('softphone.reconnect', 'Reconnect')}
+            >
+              <RotateCw size={14} />
+            </button>
+          )}
           {onRefresh && (
             <button type="button" className="softphone-header-btn" onClick={onRefresh} disabled={refreshDisabled}>
               <RefreshCw size={14} />
@@ -164,28 +178,46 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
 
   const meta = STATE_META[dState];
   const StateIcon = meta.Icon;
-  const stateLabel = (dState === 'not_ready' && presence?.reason)
-    ? presence.reason
-    : t(meta.key, meta.fallback);
-  // On a call, the selector + toggles lock (can't leave the queue while connected).
-  const menuable = !liveCall;
+  const stateLabel = (dState === 'not_ready' && presence?.reason) || t(meta.key, meta.fallback);
+  // A plain extension only ever toggles Idle ⇄ DND, so it gets an inline switch
+  // instead of the dropdown menu. Agents keep the menu (queue states + reasons).
+  const plainToggle = !isAgent;
+  // The selector opens the status menu unless we're on a call or it's a plain ext.
+  const locked = liveCall || pending;
+  const menuable = !liveCall && !plainToggle;
 
-  const call = async (path: string, body?: unknown) => {
-    setBusy(true);
+  // Run a chain of REST transitions in order; state comes back over the socket.
+  const run = async (...steps: Array<[string, unknown?]>) => {
+    setMenuOpen(false);
+    setPending(true);
     try {
-      await fetchWithAuth(path, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body || {}),
-      });
+      for (const [path, body] of steps) {
+        await fetchWithAuth(path, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body ?? {}),
+        });
+      }
     } catch { /* ignore; state comes from the socket */ }
-    finally { setBusy(false); setMenuOpen(false); }
+    finally { setPending(false); }
   };
 
-  const setDnd = (on: boolean) => call(`/api/extensions/${ext}/dnd`, { enabled: on });
-  const login = () => call('/api/agent/login', { ready: true });
-  const logout = () => call('/api/agent/logout');
-  const goReady = () => call('/api/agent/status', { ready: true });
-  const goNotReady = (code: string) => call('/api/agent/status', { ready: false, reason_code: code });
+  const dndPath = `/api/extensions/${myExt}/dnd`;
+  // Log in clears DND first (echo: coming online makes direct calls ring again).
+  const login = () => run(...(isDnd ? [[dndPath, { enabled: false }] as [string, unknown]] : []), ['/api/agent/login', { ready: true }]);
+  // Log out also clears DND server-side.
+  const logout = () => run(['/api/agent/logout']);
+  const setReady = () => run(['/api/agent/status', { ready: true }]);
+  const setNotReady = (code: string) => run(['/api/agent/status', { ready: false, reason_code: code }]);
+  // DND takes an agent out of the queue as well as blocking direct calls.
+  const setDnd = () => run(...(isAgent && member ? [['/api/agent/logout'] as [string, unknown?]] : []), [dndPath, { enabled: true }]);
+  // Go Idle (clear DND, stay reachable). An agent logs out (which clears DND and
+  // drops any stale membership); a plain extension just clears DND.
+  const goIdle = () => run(isAgent ? ['/api/agent/logout'] : [dndPath, { enabled: false }]);
+
+  const showReasons = queueOn;
+  const showDnd = !isDnd;
+  // Whether any item precedes DND in the menu (so the divider isn't the first row).
+  const hasAbove = showReasons || !queueOn;
 
   const mItem = (Ic: LucideIcon, label: string, onClick: () => void, danger = false) => (
     <button type="button" className={`agent-header-menu-item${danger ? ' danger' : ''}`} onClick={onClick}>
@@ -199,58 +231,78 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
       className={`agent-header agent-header-${dState}`}
       style={{ ['--ah-color' as string]: meta.color, ['--ah-bg' as string]: meta.bg }}
     >
-      {/* Status selector — opens the transition menu (locked while on a call). */}
+      {/* Status selector — opens the transition menu (locked while on a call).
+         For a plain extension it's a static label; the DND toggle lives on the right. */}
       <button
         type="button"
         className="agent-header-main"
         onClick={() => { if (menuable) setMenuOpen((o) => !o); }}
         disabled={!menuable}
-        title={ext}
+        title={myExt}
       >
         <span className="agent-header-ic"><StateIcon size={15} /></span>
         <span className="agent-header-state">{stateLabel}</span>
-        {showTimer && <span className="agent-header-timer">{fmtTimer(elapsed)}</span>}
+        {queueOn && <span className="agent-header-timer">{fmtTimer(elapsed)}</span>}
         {menuable && <ChevronDown size={15} className="agent-header-caret" />}
       </button>
 
       <div className="agent-header-right">
-        {/* DND toggle */}
-        <button
-          type="button" role="switch" aria-checked={dnd}
-          className={`agent-dnd-toggle${dnd ? ' on' : ''}`}
-          style={{ ['--dt-color' as string]: dnd ? 'var(--accent-danger)' : 'var(--status-unavailable)' }}
-          onClick={() => { if (!busy && !liveCall) setDnd(!dnd); }}
-          disabled={busy || liveCall}
-          title={dnd ? t('agent.dndOff', 'Turn off DND') : t('agent.dnd', 'Do Not Disturb')}
-          aria-label={t('agent.dnd', 'Do Not Disturb')}
-        >
-          <span className="agent-dnd-toggle-track">
-            <span className="agent-dnd-toggle-knob">{dnd ? <MinusCircle size={12} /> : <CircleDot size={12} />}</span>
-          </span>
-        </button>
-
-        {/* Queue login/logout headset toggle */}
-        <button
-          type="button" role="switch" aria-checked={queueOn}
-          className={`agent-queue-toggle${queueOn ? ' on' : ''}`}
-          style={{ ['--qt-color' as string]: queueOn ? 'var(--status-idle)' : 'var(--status-unavailable)' }}
-          onClick={() => { if (!busy && !liveCall) { if (queueOn) logout(); else login(); } }}
-          disabled={busy || liveCall}
-          title={queueOn ? t('agent.logout', 'Log out of queues') : t('agent.login', 'Log in to queues')}
-          aria-label={queueOn ? t('agent.logout', 'Log out') : t('agent.login', 'Log in')}
-        >
-          <span className="agent-queue-toggle-track">
-            <span className="agent-queue-toggle-knob">{queueOn ? <Headset size={12} /> : <HeadphoneOff size={12} />}</span>
-          </span>
-        </button>
-
+        {plainToggle && (
+          /* Do-Not-Disturb toggle — the plain-extension status control.
+             On = DND (calls blocked); off = Idle (reachable). Locked mid-call. */
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isDnd}
+            className={`agent-dnd-toggle ${isDnd ? 'on' : ''}`}
+            onClick={() => { if (locked) return; if (isDnd) goIdle(); else setDnd(); }}
+            disabled={locked}
+            title={isDnd ? t('agent.state.available', 'Available') : t('agent.dnd', 'Do Not Disturb')}
+            aria-label={t('agent.dnd', 'Do Not Disturb')}
+          >
+            <span className="agent-dnd-toggle-track">
+              <span className="agent-dnd-toggle-knob">
+                {isDnd ? <MinusCircle size={12} /> : <CircleDot size={12} />}
+              </span>
+            </span>
+          </button>
+        )}
+        {isAgent && (
+          /* Queue login/logout — headset (in queue) / headset-off (out). Locked
+             mid-call (can't leave the queue while connected). */
+          <button
+            type="button"
+            role="switch"
+            aria-checked={queueOn}
+            className={`agent-queue-toggle ${queueOn ? 'on' : ''}`}
+            onClick={() => { if (locked) return; if (queueOn) logout(); else login(); }}
+            disabled={locked}
+            title={queueOn ? t('agent.logout', 'Log out') : t('agent.login', 'Log in')}
+            aria-label={queueOn ? t('agent.logout', 'Log out') : t('agent.login', 'Log in')}
+          >
+            <span className="agent-queue-toggle-track">
+              <span className="agent-queue-toggle-knob">
+                {queueOn ? <Headset size={12} /> : <HeadphoneOff size={12} />}
+              </span>
+            </span>
+          </button>
+        )}
         <span
           className={`agent-header-reg ${isConnected ? 'on' : 'off'}`}
           title={isConnected ? t('header.softphoneRegistered', 'Registered') : t('header.softphoneNotRegistered', 'Not registered')}
         >
           <RegSignal on={isConnected} />
         </span>
-
+        {!isConnected && onReconnect && (
+          <button
+            type="button"
+            className="agent-header-refresh"
+            onClick={onReconnect}
+            title={t('softphone.reconnect', 'Reconnect')}
+          >
+            <RotateCw size={13} />
+          </button>
+        )}
         {onRefresh && (
           <button type="button" className="agent-header-refresh" onClick={onRefresh} disabled={refreshDisabled} title={t('softphone.refresh', 'Refresh')}>
             <RefreshCw size={13} />
@@ -260,38 +312,43 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
 
       {menuOpen && menuable && (
         <div className="agent-header-menu">
-          {/* Return-to-ready / come-online */}
-          {queueOn && paused && mItem(Play, t('agent.goReady', 'Ready'), goReady)}
-          {!queueOn && mItem(Headset, t('agent.login', 'Log in to queues'), login)}
+          {/* Return-to-ready / come-online transitions */}
+          {dState === 'not_ready' && mItem(Play, t('agent.goReady', 'Ready'), setReady)}
+          {!queueOn && mItem(Play, t('agent.goReady', 'Ready'), login)}
 
-          {/* Not-Ready reasons (only meaningful when in a queue) */}
-          {queueOn && (
+          {/* Not-Ready reasons (only meaningful in queue) */}
+          {showReasons && (
             <>
               <div className="agent-header-menu-label">{t('agent.notReady', 'Not Ready')}</div>
-              {reasons.length === 0 && <div className="agent-header-menu-label">{t('agent.noReasons', 'No reason codes')}</div>}
+              {reasons.length === 0 && (
+                <div className="agent-header-menu-empty">{t('agent.noReasons', 'No reason codes')}</div>
+              )}
               {reasons.map((r) => (
-                <button key={r.code} type="button" className="agent-header-menu-item" onClick={() => goNotReady(r.code)}>
+                <button key={r.code} type="button" className="agent-header-menu-item" onClick={() => setNotReady(r.code)}>
                   <span className="agent-header-menu-swatch" style={{ background: r.color || 'var(--text-muted)' }} />
                   <span>{r.label}</span>
                   {!(r.productive === true || r.productive === 1) && (
-                    <span style={{ marginInlineStart: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>{t('agent.break', 'break')}</span>
+                    <span className="agent-header-menu-tag">{t('agent.unpaid', 'break')}</span>
                   )}
                 </button>
               ))}
             </>
           )}
 
-          {/* DND / clear DND */}
-          <div className="agent-header-menu-sep" />
-          {dnd
-            ? mItem(CircleDot, t('agent.idle', 'Idle'), () => setDnd(false))
-            : mItem(MinusCircle, t('agent.dnd', 'Do Not Disturb'), () => setDnd(true))}
+          {/* Do Not Disturb (from any online / idle state) or, when in DND, go Idle */}
+          {showDnd && (
+            <>
+              {hasAbove && <div className="agent-header-menu-sep" />}
+              {mItem(MinusCircle, t('agent.dnd', 'Do Not Disturb'), setDnd)}
+            </>
+          )}
+          {isDnd && mItem(CircleDot, t('agent.state.available', 'Available'), goIdle)}
 
-          {/* Log out of queues */}
+          {/* Log out (leaves the queue → Idle). Out of queue you use the headset toggle. */}
           {queueOn && (
             <>
               <div className="agent-header-menu-sep" />
-              {mItem(LogOut, t('agent.logout', 'Log out of queues'), logout, true)}
+              {mItem(LogOut, t('agent.logout', 'Log out'), logout, true)}
             </>
           )}
         </div>
