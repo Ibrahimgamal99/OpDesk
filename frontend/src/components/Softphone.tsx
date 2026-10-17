@@ -67,6 +67,8 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
     backspace,
     clearLogs,
     refetchConfig,
+    connect,
+    disconnect,
     remoteAudioRef,
     localStream,
     remoteStream,
@@ -82,6 +84,13 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferDest, setTransferDest] = useState('');
   const { micLevel, speakerLevel } = useAudioLevels(localStream, remoteStream);
+
+  // Force a fresh registration: drop the current (possibly stuck) WebPhone first so
+  // connect()'s "already connecting" guard doesn't swallow the attempt.
+  const reconnect = () => {
+    disconnect('reconnect');
+    connect();
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -313,6 +322,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
         onCall={hasActiveCall}
         onRefresh={refetchConfig}
         refreshDisabled={configLoading}
+        onReconnect={reconnect}
       />
 
       <div className="softphone-dial-area">

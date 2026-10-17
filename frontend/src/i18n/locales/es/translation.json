@@ -314,7 +314,8 @@
     "quality_mos": "MOS",
     "quality_jitter": "Jitter",
     "quality_loss": "Pérdida",
-    "quality_rtt": "Latencia"
+    "quality_rtt": "Latencia",
+    "reconnect": "Reconectar"
   },
   "users": {
     "title": "Todos los usuarios",
@@ -596,7 +597,8 @@
       "statusDisabled": "Deshabilitado"
     },
     "tabs": {
-      "apiKeys": "Claves API"
+      "apiKeys": "Claves API",
+      "mobileWake": "Activación móvil"
     },
     "adminOnly": "Se requiere acceso de administrador."
   },
@@ -619,7 +621,8 @@
     "noRecording": "Sin grabación",
     "retry": "Reintentar",
     "prev": "Anterior",
-    "next": "Siguiente"
+    "next": "Siguiente",
+    "cancel": "Cancelar"
   },
   "analytics": {
     "title": "Analíticas",
@@ -755,6 +758,20 @@
       "exportXlsx": "Excel",
       "exporting": "Exportando…",
       "exportFailed": "Error al exportar. Inténtalo de nuevo."
+    },
+    "goReady": "Disponible",
+    "notReady": "No disponible",
+    "noReasons": "Sin códigos de motivo",
+    "unpaid": "pausa",
+    "dnd": "No molestar",
+    "login": "Iniciar sesión",
+    "logout": "Cerrar sesión",
+    "state": {
+      "ready": "Disponible",
+      "onCall": "En llamada",
+      "notReady": "No disponible",
+      "dnd": "No molestar",
+      "available": "Libre"
     }
   },
   "logs": {
@@ -882,5 +899,119 @@
     "sourceManual": "Manual",
     "sourceCrm": "CRM",
     "call": "Llamar a {{name}}"
+  },
+  "mobileSetup": {
+    "titleFor": "Configurar app móvil — {{name}}",
+    "title": "Configurar la app móvil",
+    "getApp": "Obtener Medut Softphone",
+    "qrAlt": "Código QR de la cuenta",
+    "includePassword": "Incluir la contraseña",
+    "passwordOn": "Un escaneo inicia sesión. Trata el código como la propia contraseña.",
+    "passwordOff": "Seguro para imprimir o compartir: la app pide la contraseña.",
+    "json": "JSON de la cuenta",
+    "copied": "Copiado",
+    "copy": "Copiar",
+    "download": "PNG",
+    "formatLink": "Referencia del formato de cuenta",
+    "button": "QR de la app móvil",
+    "introAuto": "Escanea este código en Medut Softphone (pantalla de inicio de sesión → Escanear QR) para añadir la extensión {{ext}}. La app elige sola la mejor conexión."
+  },
+  "mobileWake": {
+    "saved": "Guardado. Plan de marcado de Asterisk recargado.",
+    "web": {
+      "rotated": "Nuevas claves de web push. Se eliminaron {{count}} suscripciones de navegador; los navegadores se suscriben de nuevo en su próxima visita.",
+      "title": "Web push (VAPID)",
+      "publicKey": "Clave pública",
+      "noKeys": "Aún no hay claves: el push del navegador sigue desactivado hasta que las crees.",
+      "noLibrary": "(pywebpush no está instalado en el servidor.)",
+      "confirm": "Todos los navegadores tendrán que suscribirse de nuevo. ¿Continuar?",
+      "replace": "Reemplazar claves",
+      "create": "Crear claves"
+    },
+    "ready": "Listo",
+    "notConfigured": "Sin configurar",
+    "fileNew": "Nuevo: {{name}}",
+    "fileRemoved": "Se eliminará",
+    "fromEnv": "desde .env",
+    "fileNone": "No se ha subido ninguna clave",
+    "replace": "Reemplazar",
+    "upload": "Subir",
+    "keepExisting": "Mantener la actual",
+    "remove": "Eliminar",
+    "title": "Activación móvil",
+    "description": "Despierta un softphone móvil cerrado para las llamadas entrantes (RFC 8599). El teléfono pone su token push en su SIP REGISTER; OpDesk le envía un push, retiene la llamada hasta que se vuelve a registrar y luego la deja sonar.",
+    "recommended": "App recomendada: Medut Softphone",
+    "general": "Activación móvil",
+    "enabled": "Activado",
+    "enabledHint": "Antes de marcar una extensión con vínculo push, envía el push y retiene la llamada mientras la app despierta.",
+    "hold": "Tiempo de retención (segundos)",
+    "holdHint": "Máximo que espera quien llama a que el teléfono despierte y se registre. De 8 a 30.",
+    "settle": "Margen de estabilización (segundos)",
+    "settleHint": "Espera extra tras el registro para que la app esté lista para sonar. De 0 a 10.",
+    "marker": "Marcador de cliente móvil",
+    "markerHint": "Texto del User-Agent SIP que identifica un cliente móvil, para que un teléfono de escritorio en la misma extensión no cuente como el móvil despertando. Los contactos con parámetros pn-* de RFC 8599 siempre cuentan.",
+    "fcm": {
+      "title": "Android (FCM)",
+      "project": "ID del proyecto FCM",
+      "projectHint": "Debe coincidir con pn-param en el REGISTER del teléfono.",
+      "serviceAccount": "JSON de la cuenta de servicio",
+      "serviceAccountHint": "Consola de Firebase → Configuración del proyecto → Cuentas de servicio → Generar nueva clave privada."
+    },
+    "apns": {
+      "title": "iOS (APNs)",
+      "keyId": "Key ID",
+      "teamId": "Team ID",
+      "bundleId": "Bundle ID",
+      "bundleHint": "Los push VoIP van a <bundle ID>.voip salvo que el pn-param del teléfono indique otro tema.",
+      "authKey": "Clave de autenticación (.p8)",
+      "authKeyHint": "Apple Developer → Keys, con Apple Push Notifications service.",
+      "keyStored": "Clave guardada",
+      "sandbox": "Usar APNs sandbox",
+      "sandboxHint": "Para compilaciones de desarrollo cuyo vínculo dice solo \"apns\". Un vínculo con pn-provider=apns-sandbox siempre usa el sandbox."
+    },
+    "devices": {
+      "title": "Dispositivos registrados (RFC 8599)",
+      "none": "Ninguno todavía. Un dispositivo aparece aquí cuando se registra con pn-provider, pn-prid y pn-param en su Contact.",
+      "extension": "Extensión",
+      "provider": "Proveedor",
+      "token": "Token",
+      "app": "App",
+      "lastSeen": "Última vez",
+      "forget": "Olvidar este dispositivo"
+    },
+    "saving": "Guardando…",
+    "save": "Guardar"
+  },
+  "account": {
+    "section": "Cuenta",
+    "loginPassword": "Cambiar contraseña",
+    "sipPassword": "Cambiar contraseña SIP",
+    "showNewQr": "Mostrar el nuevo QR móvil",
+    "sipNote": "Todos los teléfonos y softphones de tu extensión cierran sesión y deben volver a iniciarla con la nueva contraseña (escanea el nuevo QR).",
+    "current": "Contraseña actual de OpDesk",
+    "currentSipHint": "Tu contraseña de inicio de sesión, para confirmar que eres tú.",
+    "newSip": "Nueva contraseña SIP",
+    "new": "Nueva contraseña",
+    "sipRule": "De 8 a 64 caracteres, con letras y dígitos, sin espacios ni comillas.",
+    "loginRule": "Al menos 8 caracteres.",
+    "hide": "Ocultar",
+    "show": "Mostrar",
+    "generate": "Generar",
+    "confirm": "Confirmar la nueva contraseña",
+    "mismatch": "Las contraseñas no coinciden.",
+    "saving": "Guardando…",
+    "save": "Cambiar contraseña"
+  },
+  "profile": {
+    "title": "Mi perfil",
+    "account": "Cuenta",
+    "accountDesc": "Tus datos de inicio de sesión.",
+    "name": "Nombre",
+    "username": "Usuario",
+    "role": "Rol",
+    "languageDesc": "El idioma en que se muestra OpDesk en este navegador.",
+    "passwordDesc": "La contraseña con la que inicias sesión en OpDesk.",
+    "sipDesc": "La contraseña con la que se registran tus teléfonos y softphones.",
+    "qrDesc": "Escanéalo con Medut Softphone para añadir tu extensión."
   }
 }

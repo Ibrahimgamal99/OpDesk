@@ -26,6 +26,9 @@ export type User = {
   allowed_agent_extensions?: string[] | null;
   /** Admin: undefined (see all). Supervisor: list of queue names they can see. */
   allowed_queue_names?: string[] | null;
+  /** True when the user's extension has queues to log in to (queue agent); false for
+   *  a plain extension. Undefined on servers that predate the flag. */
+  is_agent?: boolean;
 };
 
 export function setUser(user: User): void {

@@ -911,7 +911,7 @@ server {
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   X-Forwarded-Host  \$host;
+        proxy_set_header   X-Forwarded-Host  \$http_host;
         proxy_read_timeout 3600s;
     }
 
@@ -923,7 +923,7 @@ server {
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   X-Forwarded-Host  \$host;
+        proxy_set_header   X-Forwarded-Host  \$http_host;
         proxy_read_timeout 3600s;
     }
 
@@ -935,7 +935,7 @@ server {
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_set_header   X-Forwarded-Host  \$host;
+        proxy_set_header   X-Forwarded-Host  \$http_host;
         proxy_read_timeout 3600s;
         client_max_body_size 25m;
     }
@@ -998,10 +998,13 @@ print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())
 fi
 
 LOCAL_IP_ADDR=$(hostname -I | awk '{print $1}')
+# Browsers send the port in Origin when it isn't 443, so the origins must carry it too.
+_origin_port=""
+[ "$NGINX_HTTPS_PORT" != "443" ] && _origin_port=":$NGINX_HTTPS_PORT"
 if [ -n "$OPDESK_DOMAIN" ]; then
-    CORS_ORIGINS="https://$OPDESK_DOMAIN,https://$LOCAL_IP_ADDR"
+    CORS_ORIGINS="https://$OPDESK_DOMAIN$_origin_port,https://$LOCAL_IP_ADDR$_origin_port"
 else
-    CORS_ORIGINS="https://$LOCAL_IP_ADDR"
+    CORS_ORIGINS="https://$LOCAL_IP_ADDR$_origin_port"
 fi
 
 # Always re-read AMI_SECRET from manager_custom.conf (authoritative source)
@@ -1053,7 +1056,8 @@ APNS_KEY_ID=$(_env_preserve APNS_KEY_ID "")
 APNS_TEAM_ID=$(_env_preserve APNS_TEAM_ID "")
 APNS_BUNDLE_ID=$(_env_preserve APNS_BUNDLE_ID "")
 APNS_USE_SANDBOX=$(_env_preserve APNS_USE_SANDBOX "false")
-MOBILE_WAKE_WAIT=$(_env_preserve MOBILE_WAKE_WAIT "3")
+MOBILE_WAKE_WAIT=$(_env_preserve MOBILE_WAKE_WAIT "10")
+MOBILE_WAKE_SETTLE=$(_env_preserve MOBILE_WAKE_SETTLE "3")
 
 cat > .env <<EOF
 OS=$OS
@@ -1075,6 +1079,9 @@ AMI_CONTEXT=$AMI_CONTEXT
 
 PORT=$PORT
 OPDESK_HTTPS_PORT=$OPDESK_HTTPS_PORT
+# Public HTTPS port Nginx serves OpDesk on; the backend puts it in the URLs it hands out
+# (e.g. the softphone's wss://<host>:<port>/sip-ws) when it isn't 443.
+NGINX_HTTPS_PORT=$NGINX_HTTPS_PORT
 JWT_SECRET=$JWT_SECRET
 
 OPDESK_BIND_HOST=127.0.0.1
@@ -1098,8 +1105,10 @@ APNS_KEY_ID=$APNS_KEY_ID
 APNS_TEAM_ID=$APNS_TEAM_ID
 APNS_BUNDLE_ID=$APNS_BUNDLE_ID
 APNS_USE_SANDBOX=$APNS_USE_SANDBOX
-# Seconds the dialplan waits after sending the wake push (gives the app time to re-register):
+# Settings -> Mobile Wake overrides all of the above. Hold time (8-30 s): longest a call
+# waits for the phone to wake and re-register; settle window (0-10 s): extra wait after it.
 MOBILE_WAKE_WAIT=$MOBILE_WAKE_WAIT
+MOBILE_WAKE_SETTLE=$MOBILE_WAKE_SETTLE
 EOF
 cd "$PROJECT_ROOT/frontend" && npm install || true
 

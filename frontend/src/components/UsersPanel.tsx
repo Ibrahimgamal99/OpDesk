@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, Group, Plus, Phone, Eye, EyeOff, Radio,
+  QrCode,
 } from 'lucide-react';
+import { MobileSetupQR } from './MobileSetupQR';
 import { FilterSelect } from './FilterSelect';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { Toggle } from './ui/Toggle';
@@ -58,6 +60,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingUser, setEditingUser] = useState<OpDeskUser | null>(null);
   const [usersSubTab, setUsersSubTab] = useState<'create' | 'list'>('list');
+  const [qrUser, setQrUser] = useState<OpDeskUser | null>(null);
   const [expandedAccessUserId, setExpandedAccessUserId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -638,6 +641,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   )}
                 </div>
                 <div className="up-user-actions">
+                  {isAdmin && u.extension && (
+                    <button type="button" className="btn btn-edit" onClick={() => setQrUser(u)} title={t('mobileSetup.button', 'Mobile app QR')}>
+                      <QrCode size={14} />
+                    </button>
+                  )}
                   <button type="button" className="btn btn-edit" onClick={() => startEdit(u)} title={t('users.editUser')}>
                     <Pencil size={14} />
                   </button>
@@ -655,6 +663,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         </>
         )}
       </div>
+      <MobileSetupQR open={qrUser !== null} onClose={() => setQrUser(null)} userId={qrUser?.id} label={qrUser?.username} />
     </div>
   );
 }
