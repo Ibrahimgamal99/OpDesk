@@ -10,7 +10,7 @@ A real-time operator panel for **Asterisk PBX** (Issabel / FreePBX), like **FOP2
 
 [Features](#features) • [Screenshots](#screenshots) • [Prerequisites](#prerequisites) • [Install](#install) • [Architecture](#architecture) • [Tech stack](#tech-stack) • [Documentation](#documentation) • [Community](#community--support)
 
-[![OpDesk dashboard](screenshots/extensions_dashboard.png)](screenshots/extensions_dashboard.png)
+[![OpDesk dashboard](screenshots/dashboard.png)](screenshots/dashboard.png)
 
 ---
 
@@ -43,17 +43,27 @@ A real-time operator panel for **Asterisk PBX** (Issabel / FreePBX), like **FOP2
 
 ## Screenshots
 
-| Dashboard | Active calls | Queues |
-|---|---|---|
-| [![Dashboard](screenshots/extensions_dashboard.png)](screenshots/extensions_dashboard.png) | [![Active calls](screenshots/active_calls.png)](screenshots/active_calls.png) | [![Queues](screenshots/queue.png)](screenshots/queue.png) |
+*Shown with demo data.*
 
-| Call log | Call Journey | QoS |
+| Extensions | Active calls | Queues |
 |---|---|---|
-| [![Call log](screenshots/call_history.png)](screenshots/call_history.png) | [![Call Journey](screenshots/call_journey.png)](screenshots/call_journey.png) | [![QoS](screenshots/qos.png)](screenshots/qos.png) |
+| [![Extensions](screenshots/extensions.png)](screenshots/extensions.png) | [![Active calls](screenshots/active_calls.png)](screenshots/active_calls.png) | [![Queues](screenshots/queues.png)](screenshots/queues.png) |
 
-| Softphone | Softphone (in call) | Notifications |
+| Call log | Call Journey | Contacts |
 |---|---|---|
-| [![Softphone](screenshots/softphone.png)](screenshots/softphone.png) | [![Softphone in call](screenshots/softphone_incall.png)](screenshots/softphone_incall.png) | [![Notifications](screenshots/notfication.png)](screenshots/notfication.png) |
+| [![Call log](screenshots/call_log.png)](screenshots/call_log.png) | [![Call Journey](screenshots/call_journey.png)](screenshots/call_journey.png) | [![Contacts](screenshots/contacts.png)](screenshots/contacts.png) |
+
+| Analytics | Queue performance | Agent performance |
+|---|---|---|
+| [![Analytics](screenshots/analytics.png)](screenshots/analytics.png) | [![Queue performance](screenshots/analytics_queues.png)](screenshots/analytics_queues.png) | [![Agent performance](screenshots/analytics_agents.png)](screenshots/analytics_agents.png) |
+
+| Softphone | Incoming call | Mobile app QR |
+|---|---|---|
+| [![Softphone](screenshots/softphone.png)](screenshots/softphone.png) | [![Incoming call](screenshots/softphone_ringing.png)](screenshots/softphone_ringing.png) | [![Mobile app QR](screenshots/mobile_qr.png)](screenshots/mobile_qr.png) |
+
+| Mobile Wake settings | Dark theme |   |
+|---|---|---|
+| [![Mobile Wake settings](screenshots/mobile_wake.png)](screenshots/mobile_wake.png) | [![Dark theme](screenshots/dashboard_dark.png)](screenshots/dashboard_dark.png) |   |
 
 ---
 
