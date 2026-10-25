@@ -21,6 +21,7 @@ import { closePools } from '../db/pool';
 import { closeCrmRuntime, initCrmRuntime } from '../integrations/crm-lookup';
 import { loadCrmSyncConfig } from '../integrations/crm';
 import * as pushService from '../integrations/push-service';
+import { setContactNameResolver } from '../services/call-log';
 import { enableMobileWake, enableQos, enableRecording } from '../services/dialplan';
 import { startRealtime, stopRealtime } from '../services/realtime';
 import * as sipPush from '../services/sip-push';
@@ -98,6 +99,9 @@ export async function startup(): Promise<void> {
 
   // 2. CRM connector (+ field migration) and the contact resolver's config and phonebook.
   await optional('CRM runtime', () => initCrmRuntime());
+  // Call History names a row's remote party from the phonebook: a memory lookup that never
+  // starts a CRM fetch, read through runtime so a rebuilt resolver is picked up.
+  setContactNameResolver((n) => runtime.contactResolver?.nameFor(n) ?? null);
 
   // 3. Dialplan features that must survive an Asterisk config regeneration.
   await optional('QoS', async () => {

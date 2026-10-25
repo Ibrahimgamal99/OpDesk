@@ -20,6 +20,7 @@
     "groups": "Grupos",
     "users": "Usuarios",
     "analytics": "Analíticas",
+    "recordings": "Grabaciones",
     "openMenu": "Abrir menú",
     "closeMenu": "Cerrar menú",
     "logs": "Registros",
@@ -179,7 +180,7 @@
   },
   "callLog": {
     "viewManage": "Ver y gestionar registros de llamadas",
-    "searchPlaceholder": "Buscar por origen o destino...",
+    "searchPlaceholder": "Número, nombre o ID de llamada...",
     "sortOldest": "Ordenar: más antiguas primero",
     "sortNewest": "Ordenar: más recientes primero",
     "sortOldestBtn": "Más antiguas primero",
@@ -192,7 +193,7 @@
     "loading": "Cargando historial de llamadas...",
     "noCallsFound": "No se encontraron llamadas",
     "allApps": "Todas las aplicaciones",
-    "supervisionHidden": "Supervisión oculta ({{count}})",
+    "supervisionOff": "Supervisión oculta",
     "supervisionShown": "Mostrando supervisión",
     "supervision": {
       "LISTEN": "ESCUCHA",
@@ -201,6 +202,7 @@
     },
     "totalCalls": "Total de llamadas",
     "showing": "Mostrando {{start}} a {{end}} de {{total}} llamadas",
+    "showingCapped": "Mostrando {{start}} a {{end}} de más de {{total}} llamadas",
     "previous": "Anterior",
     "next": "Siguiente",
     "play": "Reproducir",
@@ -294,6 +296,7 @@
     "noMatches": "Ninguna llamada coincide con \"{{query}}\"",
     "recordingVadTitle": "{{file}} — haz clic para ver la actividad de voz",
     "search": "Buscar llamadas",
+    "searchScopeNote": "Se busca en todo el historial: el rango de fechas no se aplica a los resultados de búsqueda.",
     "seek": "Posición",
     "type": {},
     "typeShort": {
@@ -314,6 +317,19 @@
     "exportCsv": "Descargar CSV",
     "exportCsvHint": "Descargar estas llamadas como archivo CSV (hasta 50.000 filas)",
     "exportFailed": "No se pudo descargar el archivo CSV."
+  },
+  "recordings": {
+    "loading": "Cargando grabaciones…",
+    "loadFailed": "No se pudieron cargar las grabaciones.",
+    "search": "Buscar grabaciones",
+    "searchPlaceholder": "Número o ID de llamada…",
+    "empty": "No hay grabaciones en este periodo.",
+    "size": "Tamaño",
+    "showing": "{{start}}–{{end}} de {{total}}",
+    "delete": "Eliminar grabación",
+    "deleteTitle": "¿Eliminar esta grabación?",
+    "deleteMessage": "La grabación de la llamada de {{from}} a {{to}} del {{when}} se elimina del servidor. La llamada permanece en el historial de llamadas. No se puede deshacer.",
+    "deleted": "Grabación eliminada."
   },
   "softphone": {
     "title": "Softphone",
@@ -868,7 +884,7 @@
       "totalRecordings": "Llamadas grabadas",
       "location": "Ubicación",
       "directory": "Carpeta de grabaciones",
-      "directoryHint": "Ruta absoluta en la centralita donde Asterisk escribe las grabaciones. La retención borra dentro de este árbol.",
+      "directoryFixedHint": "Carpeta donde la centralita graba las llamadas. La reproducción, las estadísticas de arriba y la retención la usan; la fija el grabador, así que no se puede cambiar aquí.",
       "retention": "Retención",
       "localDays": "Borrar grabaciones después de (días)",
       "keepForever": "Vacío = conservar siempre",

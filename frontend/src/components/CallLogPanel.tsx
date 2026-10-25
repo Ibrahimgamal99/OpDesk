@@ -13,17 +13,16 @@ import {
   Badge, Loading, type Column, type DropdownOption,
 } from './ui';
 import type { CallLogRecord, QoSData, CallJourneyEvent } from '../types';
-import { fetchWithAuth, RecordingFetchError } from '../auth';
+import { fetchWithAuth, getUser, RecordingFetchError } from '../auth';
 import { downloadObjectUrl, useRecordingBlob } from '../hooks/useRecordingBlob';
 import { downloadWithAuth } from '../lib/download';
 import { messageOf } from '../lib/api';
 import { PageRange } from './PageRange';
 import type { DateRange } from './analyticsUtils';
 import { fmtTimer } from '../lib/format';
-import { countBy, presentOptions, showFilter } from '../lib/filters';
 import { StatCard, StatRow } from './FigureCards';
 import { CallStatusBadge } from './CallStatusBadge';
-import { callStatusColor, callStatusLabel, callStatusRank } from './callStatus';
+import { CALL_STATUS_ORDER, callStatusColor, callStatusLabel } from './callStatus';
 import '../styles/work.css';
 
 // ---------------------------------------------------------------------------
@@ -190,18 +189,35 @@ function PartyCell({ number, name }: { number: string; name: string | null }) {
   );
 }
 
+/** The side a call counts on. */
+type CallSide = 'inbound' | 'outbound' | 'internal';
+
+/**
+ * A call's side from its `route` (inbound_queue -> inbound), the server's reading of the
+ * call's own legs; `call_type` only for a server that sends no route.
+ */
+function callSide(call: Pick<CallLogRecord, 'route' | 'call_type'>): CallSide | null {
+  const side = call.route?.split('_')[0];
+  if (side === 'inbound' || side === 'outbound' || side === 'internal') return side;
+  if (call.call_type === 'IN') return 'inbound';
+  if (call.call_type === 'OUT') return 'outbound';
+  if (call.call_type === 'INTERNAL') return 'internal';
+  return null;
+}
+
 /** A call's direction (or, for a ChanSpy row, its supervision mode) as a category label. */
-function CallDirectionBadge({ call }: { call: Pick<CallLogRecord, 'is_supervision' | 'supervision' | 'call_type'> }) {
+function CallDirectionBadge({ call }: { call: Pick<CallLogRecord, 'is_supervision' | 'supervision' | 'call_type' | 'route'> }) {
   const { t } = useTranslation();
-  if (call.is_supervision) {
+  if (call.is_supervision || call.route === 'internal_supervision') {
     const mode = call.supervision?.mode;
     return mode === 'whisper' ? <Badge tone="info" icon={<Mic size={14} />}>{t('callLog.supervision.WHISPER')}</Badge>
       : mode === 'barge' ? <Badge tone="info" icon={<Users size={14} />}>{t('callLog.supervision.BARGE')}</Badge>
       : <Badge tone="info" icon={<Ear size={14} />}>{t('callLog.supervision.LISTEN')}</Badge>;
   }
-  if (call.call_type === 'IN') return <Badge tone="info" icon={<PhoneIncoming size={14} />}>{t('callLog.typeShort.IN', 'IN')}</Badge>;
-  if (call.call_type === 'OUT') return <Badge tone="info" icon={<PhoneOutgoing size={14} />}>{t('callLog.typeShort.OUT', 'OUT')}</Badge>;
-  if (call.call_type === 'INTERNAL') return <Badge tone="info" icon={<ArrowLeftRight size={14} />}>{t('callLog.typeShort.INT', 'INT')}</Badge>;
+  const side = callSide(call);
+  if (side === 'inbound') return <Badge tone="info" icon={<PhoneIncoming size={14} />}>{t('callLog.typeShort.IN', 'IN')}</Badge>;
+  if (side === 'outbound') return <Badge tone="info" icon={<PhoneOutgoing size={14} />}>{t('callLog.typeShort.OUT', 'OUT')}</Badge>;
+  if (side === 'internal') return <Badge tone="info" icon={<ArrowLeftRight size={14} />}>{t('callLog.typeShort.INT', 'INT')}</Badge>;
   return call.call_type ? <Badge tone="info">{call.call_type}</Badge> : <>—</>;
 }
 
@@ -617,7 +633,9 @@ export function CallJourneyModal({ call, journey, error = null, onClose }: CallJ
         <div className="cl-journey-summary">
           <div className="cl-journey-summary-row">
             <span className="cl-journey-summary-label">{t('callLog.journey.contact')}</span>
-            <span className="cl-journey-summary-value cl-journey-phone">{call.phone_number || call.src || '—'}</span>
+            <span className="cl-journey-summary-value cl-journey-phone">
+              {call.customer_name ? `${call.customer_name} · ` : ''}{call.phone_number || call.src || '—'}
+            </span>
           </div>
           <div className="cl-journey-summary-meta">
             <span className="cl-journey-date">{summary.date}</span>
@@ -634,7 +652,9 @@ export function CallJourneyModal({ call, journey, error = null, onClose }: CallJ
             <CallDirectionBadge call={call} />
             {call.status && <CallStatusBadge status={call.status} />}
             {call.extension && (
-              <Badge tone="info">{t('callLog.journey.agent', { id: call.extension })}</Badge>
+              <Badge tone="info">
+                {t('callLog.journey.agent', { id: call.agent_name ? `${call.agent_name} (${call.extension})` : call.extension })}
+              </Badge>
             )}
           </div>
           {callId && (
@@ -844,33 +864,47 @@ interface CallLogPanelProps {
   onDateRangeChange: (r: DateRange) => void;
 }
 
-function callTypeDot(ct: string): DropdownOption['dot'] {
-  if (ct === 'IN') return 'green';
-  if (ct === 'OUT') return 'blue';
-  return 'neutral';
-}
+const DIRECTIONS: { value: CallSide; dot: DropdownOption['dot'] }[] = [
+  { value: 'inbound', dot: 'green' },
+  { value: 'outbound', dot: 'blue' },
+  { value: 'internal', dot: 'neutral' },
+];
+const APPS = ['queue', 'ivr', 'direct'];
 
 export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps) {
   const { t } = useTranslation();
+  // Supervisors' Listen/Whisper/Barge calls are never shown to an agent (the server
+  // drops them), so the toggle is offered only to those who can see them.
+  const canSeeSupervision = getUser()?.role !== 'agent';
 
-  // Data
+  // Data: one server page, the total behind it, and the cursor of the page after it.
   const [calls, setCalls] = useState<CallLogRecord[]>([]);
   const [totalCount, setTotalCount] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [capped, setCapped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
+  // Filters, all applied by the server
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [callTypeFilter, setCallTypeFilter] = useState('');
+  const [directionFilter, setDirectionFilter] = useState('');
   const [appFilter, setAppFilter] = useState('');
   // Supervision (listen/whisper/barge) rows are their own ChanSpy CDR calls. Hidden
   // by default; a filter surfaces them on demand.
   const [showSupervision, setShowSupervision] = useState(false);
 
-  // Sort & pagination
+  // Sort & pagination. The server pages with a cursor: `stack` holds the cursor of each
+  // visited page so Previous can go back (stack[0] is the first page). A cursor encodes a
+  // position in one result set, so the stack belongs to one set of filters: when they
+  // change the table is on the first page at once, with no request for a stale page.
   const [sortAsc, setSortAsc] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
+  const filterKey = JSON.stringify([searchQuery.trim(), statusFilter, directionFilter, appFilter, showSupervision, dateRange, sortAsc]);
+  const [pagesAt, setPagesAt] = useState<{ key: string; stack: (string | null)[] }>({ key: filterKey, stack: [null] });
+  const stack = pagesAt.key === filterKey ? pagesAt.stack : [null];
+  const pageIndex = stack.length - 1;
+  const cursor = stack[pageIndex];
+  const setStack = (next: (string | null)[]) => setPagesAt({ key: filterKey, stack: next });
 
   // QOS modal
   const [qosModal, setQosModal] = useState<{ qos: QoSData; call: CallLogRecord } | null>(null);
@@ -886,6 +920,26 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   // ui/SearchInput owns the debounce, so `searchQuery` is already the settled term.
   const search = searchQuery.trim();
 
+  /**
+   * The query every request shares: the list, the CSV. A search spans all history (the
+   * server ignores the date default for it), so it is not pinned to the visible range --
+   * a Call ID the CRM stored can be from any time.
+   */
+  const filterParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (search) {
+      params.set('search', search);
+    } else {
+      params.set('date_from', dateRange.from);
+      params.set('date_to', dateRange.to);
+    }
+    if (statusFilter) params.set('status', statusFilter);
+    if (directionFilter) params.set('route', directionFilter);
+    if (appFilter) params.set('app', appFilter);
+    params.set('include_supervision', showSupervision ? 'true' : 'false');
+    return params;
+  }, [search, dateRange, statusFilter, directionFilter, appFilter, showSupervision]);
+
   // Only the newest request may paint: a slower, older search must not replace the
   // results of the term now in the box.
   const inflightRef = useRef<AbortController | null>(null);
@@ -897,81 +951,44 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', '500');
-      params.set('date_from', dateRange.from);
-      params.set('date_to', dateRange.to);
-      if (search) params.set('search', search);
+      const params = filterParams();
+      params.set('limit', String(ITEMS_PER_PAGE));
+      if (cursor) params.set('cursor', cursor);
+      params.set('order', sortAsc ? 'asc' : 'desc');
       const res = await fetchWithAuth(`/api/call-log?${params.toString()}`, { signal: ac.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (ac.signal.aborted) return;
       setCalls(json.calls || []);
       setTotalCount(typeof json.total === 'number' ? json.total : (json.calls || []).length);
+      setNextCursor(json.next_cursor ?? null);
+      setCapped(Boolean(json.capped));
     } catch (err: unknown) {
       if (ac.signal.aborted) return;
       setError(err instanceof Error ? err.message : t('callLog.loadFailed', 'Failed to load call history'));
     } finally {
       if (inflightRef.current === ac) setLoading(false);
     }
-  }, [dateRange, search, t]);
+  }, [filterParams, cursor, sortAsc, t]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => () => inflightRef.current?.abort(), []);
 
-  // Filters offer what occurs in the loaded calls (supervision rows only while shown),
-  // each with its count; the selected value stays listed even at zero so it can be cleared.
-  const listed = calls.filter(c => showSupervision || !c.is_supervision);
-  const valuesOf = (counts: Record<string, number>, selected: string) =>
-    [...new Set([...Object.keys(counts), ...(selected ? [selected] : [])])];
+  // The filters offer the whole vocabulary: the page holds 25 calls, not the set the
+  // filter runs over.
+  const statusOptions: DropdownOption[] = CALL_STATUS_ORDER.map(s => ({
+    value: s, label: callStatusLabel(t, s), dotColor: callStatusColor(s),
+  }));
+  const directionOptions: DropdownOption[] = DIRECTIONS.map(d => ({
+    value: d.value, label: t(`direction.${d.value}`), dot: d.dot,
+  }));
+  const appOptions: DropdownOption[] = APPS.map(a => ({ value: a, label: a }));
 
-  const statusCounts = countBy(listed, c => c.status || undefined);
-  const statusOptions = presentOptions(
-    valuesOf(statusCounts, statusFilter)
-      .sort((a, b) => callStatusRank(a) - callStatusRank(b) || a.localeCompare(b))
-      .map(s => ({ value: s, label: callStatusLabel(t, s), dotColor: callStatusColor(s) })),
-    statusCounts, statusFilter);
-  const callTypeCounts = countBy(listed, c => c.call_type || undefined);
-  const callTypeOptions = presentOptions(
-    valuesOf(callTypeCounts, callTypeFilter).sort()
-      .map(ct => ({ value: ct, label: ct, dot: callTypeDot(ct) })),
-    callTypeCounts, callTypeFilter);
-  const appCounts = countBy(listed, c => c.app || undefined);
-  const appOptions = presentOptions(
-    valuesOf(appCounts, appFilter).sort().map(a => ({ value: a, label: a })),
-    appCounts, appFilter);
-  // Count of hidden supervision rows in the loaded set, so the toggle is only
-  // offered when there is something to reveal.
-  const supervisionCount = calls.filter(c => c.is_supervision).length;
-
-  // Filtered + sorted. Search is applied server-side; status/type/app stay
-  // client-side over the fetched set.
-  const filtered = calls.filter(c => {
-    if (!showSupervision && c.is_supervision) return false;
-    if (statusFilter && c.status !== statusFilter) return false;
-    if (callTypeFilter && c.call_type !== callTypeFilter) return false;
-    if (appFilter && c.app !== appFilter) return false;
-    return true;
-  });
-
-  const sorted = [...filtered].sort((a, b) => {
-    const da = new Date(a.calldate).getTime();
-    const db = new Date(b.calldate).getTime();
-    return sortAsc ? da - db : db - da;
-  });
-
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(sorted.length / ITEMS_PER_PAGE));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const startIdx = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
-  const pageItems = sorted.slice(startIdx, startIdx + ITEMS_PER_PAGE);
-
-  // Reset page on filter change
-  useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, callTypeFilter, appFilter, showSupervision, dateRange]);
+  const startIdx = pageIndex * ITEMS_PER_PAGE;
 
   const activeFilters = {
     status: Boolean(statusFilter),
-    callType: Boolean(callTypeFilter),
+    direction: Boolean(directionFilter),
     app: Boolean(appFilter),
     supervision: showSupervision,
   };
@@ -979,7 +996,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   const clearFilters = () => {
     setSearchQuery('');
     setStatusFilter('');
-    setCallTypeFilter('');
+    setDirectionFilter('');
     setAppFilter('');
     setShowSupervision(false);
   };
@@ -990,24 +1007,16 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   };
 
   /**
-   * Download the calls on screen as CSV. The server applies the same filters as the list
-   * (date range, search, and the caller's scope) plus the status/direction/app filters
-   * picked here, and caps the file at 50,000 rows.
+   * Download the calls the filters select as CSV: the same query as the list (date range
+   * or search, the status/direction/app filters, and the caller's scope), every page of
+   * it, capped by the server at 50,000 rows.
    */
   const handleExport = async () => {
     setExporting(true);
     setExportError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('date_from', dateRange.from);
-      params.set('date_to', dateRange.to);
-      if (search) params.set('search', search);
-      if (statusFilter) params.set('status', statusFilter);
-      if (callTypeFilter) params.set('call_type', callTypeFilter);
-      if (appFilter) params.set('app', appFilter);
-      if (showSupervision) params.set('include_supervision', 'true');
       await downloadWithAuth(
-        `/api/call-log/export?${params.toString()}`,
+        `/api/call-log/export?${filterParams().toString()}`,
         `call_history_${dateRange.from}_${dateRange.to}.csv`,
       );
     } catch (e) {
@@ -1073,8 +1082,14 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       },
     },
     {
+      // The agent's name, with the extension as its secondary line.
       key: 'agent', header: t('fields.agent'),
-      cell: call => call.extension || '—',
+      cell: call => call.agent_name ? (
+        <div className="cl-party">
+          <span className="cl-party-name" title={call.agent_name}>{call.agent_name}</span>
+          <span className="cl-secondary u-mono">{call.extension}</span>
+        </div>
+      ) : (call.extension || '—'),
     },
     {
       // Duration with talk time as its secondary line: one column, both figures.
@@ -1167,41 +1182,35 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
           }
           filters={
             <>
-              {showFilter(statusOptions, statusFilter) && (
-                <div data-active={activeFilters.status || undefined}>
-                  <Dropdown
-                    value={statusFilter}
-                    onChange={setStatusFilter}
-                    size="md"
-                    ariaLabel={t('common.status')}
-                    options={[{ value: '', label: t('common.allStatuses') }, ...statusOptions]}
-                  />
-                </div>
-              )}
-              {showFilter(callTypeOptions, callTypeFilter) && (
-                <div data-active={activeFilters.callType || undefined}>
-                  <Dropdown
-                    value={callTypeFilter}
-                    onChange={setCallTypeFilter}
-                    icon={ArrowUpDown}
-                    size="md"
-                    ariaLabel={t('fields.direction')}
-                    options={[{ value: '', label: t('direction.all') }, ...callTypeOptions]}
-                  />
-                </div>
-              )}
-              {showFilter(appOptions, appFilter) && (
-                <div data-active={activeFilters.app || undefined}>
-                  <Dropdown
-                    value={appFilter}
-                    onChange={setAppFilter}
-                    size="md"
-                    ariaLabel={t('callLog.table.app')}
-                    options={[{ value: '', label: t('callLog.allApps') }, ...appOptions]}
-                  />
-                </div>
-              )}
-              {supervisionCount > 0 && (
+              <div data-active={activeFilters.status || undefined}>
+                <Dropdown
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  size="md"
+                  ariaLabel={t('common.status')}
+                  options={[{ value: '', label: t('common.allStatuses') }, ...statusOptions]}
+                />
+              </div>
+              <div data-active={activeFilters.direction || undefined}>
+                <Dropdown
+                  value={directionFilter}
+                  onChange={setDirectionFilter}
+                  icon={ArrowUpDown}
+                  size="md"
+                  ariaLabel={t('fields.direction')}
+                  options={[{ value: '', label: t('direction.all') }, ...directionOptions]}
+                />
+              </div>
+              <div data-active={activeFilters.app || undefined}>
+                <Dropdown
+                  value={appFilter}
+                  onChange={setAppFilter}
+                  size="md"
+                  ariaLabel={t('callLog.table.app')}
+                  options={[{ value: '', label: t('callLog.allApps') }, ...appOptions]}
+                />
+              </div>
+              {canSeeSupervision && (
                 <div data-active={activeFilters.supervision || undefined}>
                   <Dropdown
                     value={showSupervision ? 'show' : ''}
@@ -1209,7 +1218,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                     size="md"
                     ariaLabel={t('callLog.supervisionShown')}
                     options={[
-                      { value: '', label: t('callLog.supervisionHidden', { count: supervisionCount }) },
+                      { value: '', label: t('callLog.supervisionOff') },
                       { value: 'show', label: t('callLog.supervisionShown') },
                     ]}
                   />
@@ -1244,6 +1253,10 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
         />
       }
     >
+      {/* A search deliberately ignores the date range server-side, so say so. Otherwise
+          the header control appears to have stopped working: the range changes and the
+          results do not. */}
+      {search && <p className="cl-scope-note">{t('callLog.searchScopeNote')}</p>}
       {exportError && (
         <div className="u-p-3">
           <Alert onDismiss={() => setExportError(null)}>{exportError}</Alert>
@@ -1260,8 +1273,8 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       ) : (
         <Table
           columns={columns}
-          rows={pageItems}
-          rowKey={(call, idx) => `${call.calldate}-${idx}`}
+          rows={calls}
+          rowKey={(call, idx) => call.linkedid ? `${call.linkedid}-${idx}` : `${call.calldate}-${idx}`}
           caption={t('nav.callHistory')}
           className="cl-log-table"
           empty={
@@ -1283,15 +1296,17 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
         />
       )}
 
-      {!loading && sorted.length > 0 && (
+      {!loading && !error && calls.length > 0 && (
         <Pagination
-          page={safeCurrentPage}
-          totalPages={totalPages}
-          onPage={setCurrentPage}
-          info={t('callLog.showing', {
+          mode="cursor"
+          hasPrev={pageIndex > 0}
+          hasNext={Boolean(nextCursor)}
+          onPrev={() => setStack(stack.slice(0, -1))}
+          onNext={() => setStack([...stack, nextCursor])}
+          info={t(capped ? 'callLog.showingCapped' : 'callLog.showing', {
             start: startIdx + 1,
-            end: Math.min(startIdx + ITEMS_PER_PAGE, sorted.length),
-            total: sorted.length,
+            end: startIdx + calls.length,
+            total: totalCount,
           })}
         />
       )}

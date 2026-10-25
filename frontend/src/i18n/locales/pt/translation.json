@@ -20,6 +20,7 @@
     "groups": "Grupos",
     "users": "Usuários",
     "analytics": "Análises",
+    "recordings": "Gravações",
     "openMenu": "Abrir menu",
     "closeMenu": "Fechar menu",
     "logs": "Logs",
@@ -179,7 +180,7 @@
   },
   "callLog": {
     "viewManage": "Visualize e gerencie registros de chamadas",
-    "searchPlaceholder": "Pesquisar por origem ou destino...",
+    "searchPlaceholder": "Número, nome ou ID da chamada...",
     "sortOldest": "Ordenar: mais antigas primeiro",
     "sortNewest": "Ordenar: mais recentes primeiro",
     "sortOldestBtn": "Mais antigas primeiro",
@@ -192,7 +193,7 @@
     "loading": "Carregando histórico de chamadas...",
     "noCallsFound": "Nenhuma chamada encontrada",
     "allApps": "Todos os aplicativos",
-    "supervisionHidden": "Supervisão oculta ({{count}})",
+    "supervisionOff": "Supervisão oculta",
     "supervisionShown": "Mostrando supervisão",
     "supervision": {
       "LISTEN": "ESCUTA",
@@ -201,6 +202,7 @@
     },
     "totalCalls": "Total de chamadas",
     "showing": "Mostrando {{start}} a {{end}} de {{total}} chamadas",
+    "showingCapped": "Mostrando {{start}} a {{end}} de mais de {{total}} chamadas",
     "previous": "Anterior",
     "next": "Próxima",
     "play": "Reproduzir",
@@ -294,6 +296,7 @@
     "noMatches": "Nenhuma chamada corresponde a \"{{query}}\"",
     "recordingVadTitle": "{{file}} — clique para ver a atividade de voz",
     "search": "Pesquisar chamadas",
+    "searchScopeNote": "A pesquisa abrange todo o histórico — o intervalo de datas não se aplica aos resultados.",
     "seek": "Avançar/retroceder",
     "type": {},
     "typeShort": {
@@ -314,6 +317,19 @@
     "exportCsv": "Baixar CSV",
     "exportCsvHint": "Baixar estas chamadas como arquivo CSV (até 50.000 linhas)",
     "exportFailed": "Não foi possível baixar o arquivo CSV."
+  },
+  "recordings": {
+    "loading": "Carregando gravações…",
+    "loadFailed": "Não foi possível carregar as gravações.",
+    "search": "Pesquisar gravações",
+    "searchPlaceholder": "Número ou ID da chamada…",
+    "empty": "Nenhuma gravação neste período.",
+    "size": "Tamanho",
+    "showing": "{{start}}–{{end}} de {{total}}",
+    "delete": "Excluir gravação",
+    "deleteTitle": "Excluir esta gravação?",
+    "deleteMessage": "A gravação da chamada de {{from}} para {{to}} em {{when}} é excluída do servidor. A chamada continua no histórico de chamadas. Não é possível desfazer.",
+    "deleted": "Gravação excluída."
   },
   "softphone": {
     "title": "Softphone",
@@ -868,7 +884,7 @@
       "totalRecordings": "Chamadas gravadas",
       "location": "Local",
       "directory": "Pasta das gravações",
-      "directoryHint": "Caminho absoluto no PABX onde o Asterisk grava as gravações. A retenção exclui dentro desta árvore.",
+      "directoryFixedHint": "Pasta onde o PABX grava as chamadas. A reprodução, as estatísticas acima e a retenção a usam; o gravador a define, por isso não pode ser alterada aqui.",
       "retention": "Retenção",
       "localDays": "Excluir gravações após (dias)",
       "keepForever": "Vazio = manter para sempre",

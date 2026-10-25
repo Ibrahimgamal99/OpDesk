@@ -26,15 +26,18 @@ const SEP = '/';
 // The recordings root
 // ---------------------------------------------------------------------------
 
-// Where recordings are looked up and served from. A DB setting (Settings -> Recordings ->
-// Local storage), because it is operational configuration an admin changes and the
-// recorder's on/off switch and format already live in OpDesk_settings. Installs that set
-// only the old env var keep working through the env fallback; DEFAULT_RECORDING_ROOT is
-// the FreePBX/Issabel default ($ASTSPOOLDIR/monitor) and the last resort -- so an unset
-// variable can no longer turn the audio route into a 500.
+// Where recordings are looked up, served from and deleted by retention: the directory the
+// dialplan's MixMonitor writes the mixed file to (dialplan.RECORD_MIX_DIR, the FreePBX/Issabel
+// $ASTSPOOLDIR/monitor). It is NOT an admin setting any more: the recorder always writes
+// there, so a directory moved in Settings only made every recording unfindable -- and pointed
+// retention, which deletes audio under the root, at a tree OpDesk does not write. A
+// RECORDING_ROOT_DIR row an earlier version saved is ignored. The env var stays for a
+// deployment that mounts the spool at another path (it is install-time configuration, not a
+// screen setting).
+/** Retired: the Settings key the recordings directory used to be stored under (now ignored). */
 export const RECORDING_ROOT_SETTING = 'RECORDING_ROOT_DIR';
 export const RECORDING_ROOT_ENV = 'ASTERISK_RECORDING_ROOT_DIR';
-export const DEFAULT_RECORDING_ROOT = '/var/spool/asterisk/monitor/';
+export const DEFAULT_RECORDING_ROOT = `${RECORD_MIX_DIR}/`;
 
 // Retention and leg-cleanup settings (OpDesk_settings).
 export const LOCAL_RETENTION_DAYS_SETTING = 'RECORDING_LOCAL_RETENTION_DAYS';
@@ -56,19 +59,19 @@ export function pathlibStr(p: string): string {
 }
 
 /**
- * Absolute root of the recordings tree: DB setting RECORDING_ROOT_DIR, else env
- * ASTERISK_RECORDING_ROOT_DIR, else /var/spool/asterisk/monitor. Normalised the way
- * pathlib.Path normalises it (no trailing slash).
+ * Absolute root of the recordings tree: env ASTERISK_RECORDING_ROOT_DIR when the deployment
+ * sets one, else the directory the dialplan records to. Normalised the way pathlib.Path
+ * normalises it (no trailing slash). A root less than two levels deep ('/', '/var') is
+ * refused for the default -- retention deletes from this tree.
  */
 export async function recordingRoot(): Promise<string> {
-  let raw = '';
-  try {
-    raw = ((await dbm.getSetting(RECORDING_ROOT_SETTING, '')) || '').trim();
-  } catch (e) {
-    log.warning('Could not read %s: %s', RECORDING_ROOT_SETTING, e);
+  const raw = env(RECORDING_ROOT_ENV, '').trim();
+  const root = pathlibStr(raw || DEFAULT_RECORDING_ROOT);
+  if (raw && (!isAbs(root) || root.replace(/^\/+/, '').split(SEP).length < 2)) {
+    log.warning('Ignoring %s=%s: not an absolute directory below the filesystem root', RECORDING_ROOT_ENV, raw);
+    return pathlibStr(DEFAULT_RECORDING_ROOT);
   }
-  if (!raw) raw = env(RECORDING_ROOT_ENV, '').trim();
-  return pathlibStr(raw || DEFAULT_RECORDING_ROOT);
+  return root;
 }
 
 // ---------------------------------------------------------------------------
@@ -283,14 +286,6 @@ export async function isFile(p: string): Promise<boolean> {
   }
 }
 
-async function isDir(p: string): Promise<boolean> {
-  try {
-    return (await fs.promises.stat(p)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /** True when `p` (already realpath'd) is strictly inside `rootReal`. */
 export function isUnder(p: string, rootReal: string): boolean {
   const root = rootReal === SEP ? '' : rootReal;
@@ -346,35 +341,6 @@ export function fileExt(p: string): string {
 /** Content-Type for a recording file. */
 export function recordingContentType(p: string): string {
   return AUDIO_TYPES[fileExt(p)] || 'audio/wav';
-}
-
-/**
- * Vet a recordings root before storing it; returns the realpath with a trailing '/', or
- * throws a RecordingRootError carrying the 400 message.
- *
- * This path is the sandbox boundary for serving recordings and the tree the retention
- * sweep deletes from. A relative path would resolve against the backend's cwd, and a path
- * like '/' would put the deleter on the whole filesystem -- so require an absolute,
- * existing, readable directory at least two levels deep.
- */
-export class RecordingRootError extends Error {}
-
-export async function validateRecordingRoot(raw: string | null | undefined): Promise<string> {
-  const p = (raw || '').trim();
-  if (!p) throw new RecordingRootError('Recordings directory cannot be empty');
-  if (!isAbs(p)) throw new RecordingRootError('Recordings directory must be an absolute path');
-  const real = await pyRealpath(p);
-  const stripped = real.replace(/^\/+|\/+$/g, '');
-  if (real === SEP || stripped.split(SEP).length < 2) {
-    throw new RecordingRootError('Refusing a filesystem root as the recordings directory — retention deletes from this tree');
-  }
-  if (!(await isDir(real))) throw new RecordingRootError(`Not a directory on the server: ${p}`);
-  try {
-    await fs.promises.access(real, fs.constants.R_OK);
-  } catch {
-    throw new RecordingRootError(`Directory is not readable by OpDesk: ${p}`);
-  }
-  return real + SEP;
 }
 
 // ---------------------------------------------------------------------------

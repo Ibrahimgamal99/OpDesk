@@ -16,6 +16,7 @@ import { ActiveCallsPanel } from './components/ActiveCallsPanel';
 import { QueuesPanel } from './components/QueuesPanel';
 import { CallLogPanel } from './components/CallLogPanel';
 import { LogsPanel } from './components/LogsPanel';
+import { RecordingsPanel } from './components/RecordingsPanel';
 import { AnalyticsPanel } from './components/AnalyticsPanel';
 import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
@@ -55,6 +56,7 @@ import {
   ScrollText,
   BookUser,
   UserCircle,
+  FileAudio,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge, EmptyState, Tabs } from './components/ui';
@@ -65,14 +67,14 @@ import { quickRanges, type DateRange } from './components/analyticsUtils';
 import { raiseFor } from './lib/api';
 import type { CallNotification } from './types';
 
-type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings' | 'profile';
+type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'recordings' | 'logs' | 'settings' | 'profile';
 /** Kept in sync with the pre-paint theme script in index.html. */
 const THEME_KEY = 'opdesk:theme';
 
 // URL routing: each tab maps 1:1 to a path segment (e.g. 'call-log' -> '/call-log').
 // Deriving the active tab from the URL is what makes a refresh stay on the same page
 // and lets users navigate straight to /dashboard, /extensions, etc.
-const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'contacts', 'groups', 'users', 'analytics', 'logs', 'settings', 'profile'];
+const TAB_PATHS: TabType[] = ['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'contacts', 'groups', 'users', 'analytics', 'recordings', 'logs', 'settings', 'profile'];
 const DEFAULT_TAB: TabType = 'dashboard';
 function pathToTab(pathname: string): TabType {
   const seg = pathname.replace(/^\/+/, '').split('/')[0];
@@ -180,7 +182,8 @@ function App({ onLogout }: AppProps) {
   const fetchNewNotifCount = useCallback(() => {
     fetchWithAuth('/api/call-notifications?status=new&limit=100')
       .then((r) => r.ok ? r.json() : { notifications: [] })
-      .then((data) => setNewNotifCount((data.notifications || []).length))
+      // `total` counts every new notification, not just the page of 100 fetched here.
+      .then((data) => setNewNotifCount(typeof data.total === 'number' ? data.total : (data.notifications || []).length))
       .catch(() => setNewNotifCount(0));
   }, []);
 
@@ -651,6 +654,7 @@ function App({ onLogout }: AppProps) {
     ] },
     { key: 'admin', label: t('nav.admin', 'Admin'), items: [
       isAdminRole && { tab: 'users', also: ['groups'], label: t('nav.teams', 'Teams'), Icon: Users },
+      isAdminRole && { tab: 'recordings', label: t('nav.recordings', 'Recordings'), Icon: FileAudio },
       (isAdminRole || role === 'supervisor') && { tab: 'settings', label: t('header.settings', 'Settings'), Icon: Settings },
       isAdminRole && { tab: 'logs', label: t('nav.logs', 'Logs'), Icon: ScrollText },
     ] },
@@ -998,6 +1002,9 @@ function App({ onLogout }: AppProps) {
                 navigate('/groups');
               }}
             />
+          )}
+          {activeTab === 'recordings' && getUser()?.role === 'admin' && (
+            <RecordingsPanel dateRange={dateRange} onDateRangeChange={setDateRange} />
           )}
           {activeTab === 'logs' && getUser()?.role === 'admin' && <LogsPanel />}
           {activeTab === 'profile' && <ProfilePanel />}
