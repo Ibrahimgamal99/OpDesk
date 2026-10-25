@@ -1,8 +1,9 @@
 /**
  * /api/analytics/*: the auth policy of every route, the role scope (agents refused,
- * supervisors limited to their groups, API keys unscoped), the timeline's scope check, the
- * drilldown parameters, the file exports (legacy byte layout, the new Sessions / Break /
- * DND adherence columns, and GET /api/analytics/export/{report}) and the settings guard.
+ * supervisors limited to their groups, API keys unscoped), the timeline's and agent calls'
+ * scope checks, the heatmap's queue filter, the drilldown parameters, the file exports
+ * (byte layout, status and direction, the row cap, formula-safe cells, the adherence
+ * columns, and GET /api/analytics/export/{report}) and the settings guard and validation.
  * The controller is called directly; the analytics service and db-manager are mocked.
  */
 
@@ -16,7 +17,7 @@ jest.mock('../src/services/analytics', () => {
     ...actual,
     getSlaThresholds: jest.fn(async () => ({ '800': 20 })),
     getSlaDefaultSecs: jest.fn(async () => 20),
-    getFcrSettings: jest.fn(async () => ({ window_days: 7, short_abandon_secs: 5 })),
+    getFcrSettings: jest.fn(async () => ({ window_days: 7, short_abandon_secs: 5, callback_window_hours: 24 })),
     saveSlaThresholds: jest.fn(async () => true),
     saveFcrSettings: jest.fn(async () => true),
     computeExecutiveKpis: jest.fn(),
@@ -25,8 +26,9 @@ jest.mock('../src/services/analytics', () => {
     computeAgentAdherence: jest.fn(),
     computeAgentTimeline: jest.fn(),
     computeHourlyHeatmap: jest.fn(),
-    computeVolumeTrend: jest.fn(),
+    computeVolumeSeries: jest.fn(),
     computeDrilldown: jest.fn(),
+    computeAgentCalls: jest.fn(),
   };
 });
 
@@ -65,7 +67,7 @@ describe('auth policies', () => {
   const policy = (name: keyof AnalyticsController) => Reflect.getMetadata(AUTH_POLICY, AnalyticsController.prototype[name]);
 
   test.each([
-    'analyticsOverview', 'analyticsQueuePerformance', 'analyticsAgentPerformance', 'analyticsAgentAdherence',
+    'analyticsOverview', 'analyticsQueuePerformance', 'analyticsAgentPerformance', 'analyticsAgentCalls', 'analyticsAgentAdherence',
     'analyticsAgentTimeline', 'analyticsAgentAdherenceExport', 'analyticsHeatmap', 'analyticsTrend',
     'analyticsDrilldown', 'analyticsExport', 'analyticsReportExport',
   ] as const)('%s needs analytics:read', (name) => expect(policy(name)).toEqual({ scope: 'analytics:read' }));
@@ -95,11 +97,42 @@ describe('scope', () => {
     expect(await ctl.analyticsOverview(req(SUP, { date_from: '2026-10-01' }))).toEqual({ current: {} });
     expect(a('computeExecutiveKpis')).toHaveBeenCalledWith('2026-10-01', null, {
       allowedQueues: ['800'], allowedAgents: ['201', '202'],
-      slaThresholds: { '800': 20 }, fcrCfg: { window_days: 7, short_abandon_secs: 5 },
+      slaThresholds: { '800': 20 }, fcrCfg: { window_days: 7, short_abandon_secs: 5, callback_window_hours: 24 },
     });
-    a('computeVolumeTrend').mockResolvedValue([]);
-    expect(await ctl.analyticsTrend(req(SUP))).toEqual({ trend: [] });
-    expect(a('computeVolumeTrend')).toHaveBeenCalledWith(null, null, ['800'], ['201', '202']);
+    a('computeVolumeSeries').mockResolvedValue({ trend: [], hourly: [] });
+    expect(await ctl.analyticsTrend(req(SUP))).toEqual({ trend: [], hourly: [] });
+    expect(a('computeVolumeSeries')).toHaveBeenCalledWith(null, null, ['800'], ['201', '202']);
+  });
+
+  test("the heatmap's queue filter narrows within scope and never past it", async () => {
+    a('computeHourlyHeatmap').mockResolvedValue({ matrix: [] });
+    await ctl.analyticsHeatmap(req(SUP, { queue: '800' }));
+    expect(a('computeHourlyHeatmap')).toHaveBeenLastCalledWith(null, null, ['800']);
+    await ctl.analyticsHeatmap(req(SUP, { queue: '900' }));
+    expect(a('computeHourlyHeatmap')).toHaveBeenLastCalledWith(null, null, []);
+    await ctl.analyticsHeatmap(req(ADMIN, { queue: ' 900 ' }));
+    expect(a('computeHourlyHeatmap')).toHaveBeenLastCalledWith(null, null, ['900']);
+    await ctl.analyticsHeatmap(req(ADMIN, { queue: '' }));
+    expect(a('computeHourlyHeatmap')).toHaveBeenLastCalledWith(null, null, null);
+  });
+
+  test("agent calls: a supervisor cannot open another group's agent", async () => {
+    await expect(ctl.analyticsAgentCalls(req(SUP, { agent: '301' }))).rejects.toMatchObject({
+      status: 403, message: 'Agent is outside your scope',
+    });
+    await expect(ctl.analyticsAgentCalls(req(ADMIN, { agent: 'Local/201' }))).rejects.toMatchObject({ status: 400 });
+    await expect(ctl.analyticsAgentCalls(req(ADMIN, { agent: '201', direction: 'sideways' }))).rejects.toMatchObject({ status: 400 });
+    expect(a('computeAgentCalls')).not.toHaveBeenCalled();
+  });
+
+  test('agent calls pass the filters and clamp the page', async () => {
+    a('computeAgentCalls').mockResolvedValue({ calls: [], total: 0 });
+    await ctl.analyticsAgentCalls(req(SUP, {
+      agent: ' 202 ', direction: 'in', status: 'missed', page: '-3', page_size: '1000', date_from: '2026-10-01',
+    }));
+    expect(a('computeAgentCalls')).toHaveBeenCalledWith('202', '2026-10-01', null, {
+      direction: 'in', status: 'missed', page: 1, pageSize: 200,
+    });
   });
 
   test('a supervisor without groups sees nothing, never everything', async () => {
@@ -110,7 +143,7 @@ describe('scope', () => {
 
   test('an API key reads unscoped', async () => {
     a('computeQueuePerformance').mockResolvedValue([{ queue_extension: '800' }]);
-    expect(await ctl.analyticsQueuePerformance(req(API_KEY))).toEqual({ queues: [{ queue_extension: '800' }] });
+    expect(await ctl.analyticsQueuePerformance(req(API_KEY))).toEqual({ queues: [{ queue_extension: '800' }], short_abandon_secs: 5 });
     expect(a('computeQueuePerformance')).toHaveBeenCalledWith(null, null, expect.objectContaining({ allowedQueues: null }));
   });
 
@@ -151,18 +184,51 @@ describe('drilldown', () => {
 });
 
 describe('exports', () => {
-  test('drilldown CSV keeps the legacy layout', async () => {
-    a('computeDrilldown').mockResolvedValue({
-      calls: [{ calldate: '2026-10-05T08:00:00', src: '0101', queue_extension: '800', agent_extension: '201',
-        duration: 60, talk: 40, wait_secs: 20, disposition: 'ANSWERED', sla_met: true }],
-    });
+  const DRILL_CALLS = [
+    { calldate: '2026-10-05T08:00:00', src: '+201011111111', queue_extension: '800', agent_extension: '201',
+      duration: 60, talk: 40, wait_secs: 20, disposition: 'ANSWERED', status: 'ANSWERED', sla_met: true, direction: 'IN' },
+    // A direct dial that rang out: the status the table shows, and no SLA verdict.
+    { calldate: '2026-10-05T09:00:00', src: '=HYPERLINK("x")', queue_extension: '', agent_extension: '202',
+      duration: 20, talk: 0, wait_secs: 0, disposition: 'NO ANSWER', status: 'MISSED', sla_met: false, direction: 'IN' },
+  ];
+
+  test('drilldown CSV: the status and direction the table shows, formula-safe cells', async () => {
+    a('computeDrilldown').mockResolvedValue({ calls: DRILL_CALLS, total: 2 });
     const r = await ctl.analyticsExport(req(ADMIN, { date_from: '2026-10-05' }));
     expect(headersOf(r)['Content-Disposition']).toBe('attachment; filename="analytics_2026-10-05_all.csv"');
+    expect(headersOf(r)['X-Export-Truncated']).toBeUndefined();
     expect((await bodyOf(r)).toString('utf8')).toBe(
-      '﻿Date,Src,Queue,Agent,Duration(s),Talk(s),Wait(s),Disposition,SLA Met\r\n'
-      + '"2026-10-05T08:00:00","0101","800","201","60","40","20","ANSWERED","Yes"\r\n',
+      '﻿Date,Direction,Src,Queue,Agent,Duration(s),Talk(s),Wait(s),Status,SLA Met\r\n'
+      + '"2026-10-05T08:00:00","Inbound","+201011111111","800","201","60","40","20","ANSWERED","Yes"\r\n'
+      + '"2026-10-05T09:00:00","Inbound","\'=HYPERLINK(""x"")","","202","20","0","0","MISSED",""\r\n',
     );
     expect(a('computeDrilldown').mock.calls[0][2]).toMatchObject({ page: 1, pageSize: 100000 });
+  });
+
+  test('drilldown export past the row cap says so, in the file and a header', async () => {
+    a('computeDrilldown').mockResolvedValue({ calls: [DRILL_CALLS[0]], total: 250000 });
+    const r = await ctl.analyticsExport(req(ADMIN));
+    expect(headersOf(r)['X-Export-Truncated']).toBe('250000');
+    const lines = (await bodyOf(r)).toString('utf8').split('\r\n');
+    expect(lines.slice(-3)).toEqual(['', '"Truncated: the first 1 of 250000 calls (narrow the range or filters for the rest)"', '']);
+
+    const x = await ctl.analyticsExport(req(ADMIN, { format: 'xlsx' }));
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await bodyOf(x) as never);
+    const ws = wb.getWorksheet('Analytics Export')!;
+    expect(String(ws.getRow(4).getCell(1).value)).toMatch(/^Truncated: the first 1 of 250000/);
+  });
+
+  test('drilldown XLSX: a formula-looking value is text, numbers stay numbers', async () => {
+    a('computeDrilldown').mockResolvedValue({ calls: DRILL_CALLS, total: 2 });
+    const r = await ctl.analyticsExport(req(ADMIN, { format: 'xlsx' }));
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await bodyOf(r) as never);
+    const ws = wb.getWorksheet('Analytics Export')!;
+    expect(ws.getRow(1).getCell(9).value).toBe('Status');
+    expect(ws.getRow(2).getCell(3).value).toBe('+201011111111');
+    expect(ws.getRow(3).getCell(3).value).toBe('\'=HYPERLINK("x")');
+    expect(ws.getRow(3).getCell(6).value).toBe(20);
   });
 
   const ADHERENCE = {
@@ -186,7 +252,7 @@ describe('exports', () => {
       '"Period: 2026-10-05 to 2026-10-05"',
       '',
       '"Agent","Name","Login","Logout","Still Logged In","Sessions","Logged In","Ready","On Call","Wrap-up","Break","Not Ready","DND","Occupancy %","Not Ready Breakdown"',
-      '"201","Mona","2026-10-05T08:00:00","2026-10-05T17:00:00","No","2","9:00:00","1:00:00","2:00:00","0:10:00","0:30:00","0:45:00","0:05:00","85.0","Lunch: 0:30:00; Meet ""A"": 0:15:00"',
+      '"201","Mona","2026-10-05T08:00:00","2026-10-05T17:00:00","No","2","09:00:00","01:00:00","02:00:00","00:10:00","00:30:00","00:45:00","00:05:00","85.0","Lunch: 00:30:00; Meet ""A"": 00:15:00"',
       '',
     ]);
   });
@@ -203,12 +269,13 @@ describe('exports', () => {
     expect(ws.getRow(5).getCell(14).value).toBe(85);
   });
 
-  test('H:MM:SS, blank on garbage', () => {
-    expect(fmtHms(3725)).toBe('1:02:05');
-    expect(fmtHms(null)).toBe('0:00:00');
-    expect(fmtHms(-5)).toBe('0:00:00');
+  test('HH:MM:SS zero-padded like the report, blank on garbage', () => {
+    expect(fmtHms(3725)).toBe('01:02:05');
+    expect(fmtHms(null)).toBe('00:00:00');
+    expect(fmtHms(-5)).toBe('00:00:00');
     expect(fmtHms('abc')).toBe('');
     expect(fmtHms(90061)).toBe('25:01:01');
+    expect(fmtHms(360000)).toBe('100:00:00');
   });
 });
 
@@ -226,8 +293,8 @@ describe('GET /api/analytics/export/{report}', () => {
     expect(a('computeQueuePerformance')).toHaveBeenCalledWith('2026-10-01', '2026-10-07', expect.objectContaining({ allowedQueues: ['800'] }));
     expect(headersOf(r)['Content-Disposition']).toBe('attachment; filename="queues_2026-10-01_2026-10-07.csv"');
     expect((await bodyOf(r)).toString('utf8')).toBe(
-      '﻿"queue_extension","queue_name","total_calls","answered_calls","abandoned_calls","sla_pct","aht_secs","avg_wait_secs","peak_hour","answer_rate","talk_secs","missed_calls"\r\n'
-      + '"800","Sales","3","2","1","50","75","11.5","","66.7","150","1"\r\n',
+      '﻿"queue_extension","queue_name","total_calls","answered_calls","abandoned_calls","sla_pct","aht_secs","avg_wait_secs","peak_hour","answer_rate","talk_secs","missed_calls","abandonment_rate","short_abandon_rate"\r\n'
+      + '"800","Sales","3","2","1","50","75","11.5","","66.7","150","1","",""\r\n',
     );
   });
 
@@ -249,13 +316,21 @@ describe('GET /api/analytics/export/{report}', () => {
     ]);
   });
 
+  test('overview past the comparable range: no previous period, blank bounds', () => {
+    const t = reportTable('overview', {
+      period: { from: '2026-08-01', to: '2026-10-01' }, current: { total_calls: 5 }, prev_period: null,
+    });
+    expect(t.slice(1)).toEqual([['period.from', '2026-08-01', null], ['period.to', '2026-10-01', null], ['total_calls', 5, null]]);
+  });
+
   test('agents: daily_trend spreads over the last 7 days of the period', () => {
     const t = reportTable('agents', {
       agents: [{ rank: 1, agent_extension: '201', agent_name: 'Mona', total_calls: 3, answered_calls: 2, inbound_calls: 2,
-        outbound_calls: 1, aht_secs: 60, sla_contribution_pct: null, answer_rate: 50.0, talk_secs: 120, missed_calls: 1, daily_trend: [0, 1, 0, 0, 0, 0, 1] }],
+        outbound_calls: 1, internal_calls: 4, aht_secs: 60, sla_contribution_pct: null, answer_rate: 50.0, talk_secs: 120,
+        missed_calls: 1, daily_trend: [0, 1, 0, 0, 0, 0, 1] }],
     }, '2026-10-07');
     expect(t[0].slice(-7)).toEqual(['01', '02', '03', '04', '05', '06', '07'].map((d) => `daily_trend 2026-10-${d}`));
-    expect(t[1]).toEqual([1, '201', 'Mona', 3, 2, 2, 1, 60, null, 50.0, 120, 1, 0, 1, 0, 0, 0, 0, 1]);
+    expect(t[1]).toEqual([1, '201', 'Mona', 3, 2, 2, 1, 4, 60, null, 50.0, 120, 1, 0, 1, 0, 0, 0, 0, 1]);
   });
 
   test('heatmap: both matrices, one row per weekday', async () => {
@@ -274,11 +349,19 @@ describe('GET /api/analytics/export/{report}', () => {
   });
 
   test('trend: one row per day', async () => {
-    a('computeVolumeTrend').mockResolvedValue([
-      { date: '2026-10-05', total_calls: 2, answered_calls: 1, abandoned_calls: 1, outbound_total: 0, outbound_answered: 0 },
-    ]);
+    a('computeVolumeSeries').mockResolvedValue({
+      trend: [{ date: '2026-10-05', total_calls: 2, answered_calls: 1, abandoned_calls: 1, outbound_total: 0, outbound_answered: 0,
+        internal_total: 3, customers: 2, customers_answered: 1 }],
+      hourly: [],
+    });
     const text = (await bodyOf(await ctl.analyticsReportExport(req(ADMIN, {}, { params: { report: 'trend' } })))).toString('utf8');
-    expect(text.split('\r\n')[1]).toBe('"2026-10-05","2","1","1","0","0"');
+    expect(text.split('\r\n')[1]).toBe('"2026-10-05","2","1","1","0","0","3","2","1"');
+  });
+
+  test('heatmap export follows the queue filter', async () => {
+    a('computeHourlyHeatmap').mockResolvedValue({ matrix: [], abandoned_matrix: [] });
+    await ctl.analyticsReportExport(req(SUP, { queue: '900' }, { params: { report: 'heatmap' } }));
+    expect(a('computeHourlyHeatmap')).toHaveBeenCalledWith(null, null, []);
   });
 });
 
@@ -290,21 +373,54 @@ describe('settings', () => {
 
   test('read', async () => {
     expect(await ctl.getAnalyticsSettings(req(ADMIN))).toEqual({
-      sla_thresholds: { '800': 20 }, sla_default_secs: 20, fcr_window_days: 7, short_abandon_secs: 5,
+      sla_thresholds: { '800': 20 }, sla_default_secs: 20, fcr_window_days: 7, short_abandon_secs: 5, callback_window_hours: 24,
     });
   });
 
   test('save: thresholds, default and the FCR row (missing fields keep their value)', async () => {
+    (dbm.setSetting as jest.Mock).mockResolvedValue(true);
     expect(await ctl.saveAnalyticsSettings(req(ADMIN, {}, {
-      body: { sla_thresholds: { '800': 30 }, sla_default_secs: '25', short_abandon_secs: 8 },
+      body: { sla_thresholds: { '800': 30, '801': null }, sla_default_secs: '25', short_abandon_secs: 8 },
     }))).toEqual({ ok: true });
-    expect(a('saveSlaThresholds')).toHaveBeenCalledWith({ '800': 30 });
+    expect(a('saveSlaThresholds')).toHaveBeenCalledWith({ '800': 30, '801': null });
     expect(dbm.setSetting).toHaveBeenCalledWith('SLA_DEFAULT_SECS', '25');
-    expect(a('saveFcrSettings')).toHaveBeenCalledWith(7, 8);
+    expect(a('saveFcrSettings')).toHaveBeenCalledWith(7, 8, 24);
   });
 
-  test('a non-integer is a 500, as the Python answered', async () => {
-    await expect(ctl.saveAnalyticsSettings(req(ADMIN, {}, { body: { sla_default_secs: 'abc' } }))).rejects.toMatchObject({ status: 500 });
+  test('an FCR window of 0 (off) and the callback window are saved', async () => {
+    expect(await ctl.saveAnalyticsSettings(req(ADMIN, {}, { body: { fcr_window_days: 0, callback_window_hours: 48 } }))).toEqual({ ok: true });
+    expect(a('saveFcrSettings')).toHaveBeenCalledWith(0, 5, 48);
+  });
+
+  test.each([
+    [{ sla_default_secs: 'abc' }, /sla_default_secs/],
+    [{ sla_default_secs: 0 }, /sla_default_secs must be a whole number from 1 to 600/],
+    [{ sla_default_secs: 2.5 }, /sla_default_secs/],
+    [{ fcr_window_days: -1 }, /fcr_window_days must be a whole number from 0 to 90/],
+    [{ short_abandon_secs: 121 }, /short_abandon_secs/],
+    [{ callback_window_hours: 169 }, /callback_window_hours must be a whole number from 0 to 168/],
+    [{ callback_window_hours: true }, /callback_window_hours/],
+    [{ sla_thresholds: { '800': -5 } }, /sla_thresholds.800/],
+    [{ sla_thresholds: { 's': 20 } }, /not a queue extension/],
+    [{ sla_thresholds: [20] }, /sla_thresholds must be an object/],
+  ])('%j is a 400 and nothing is saved', async (body, message) => {
+    await expect(ctl.saveAnalyticsSettings(req(ADMIN, {}, { body: { short_abandon_secs: 8, ...body } })))
+      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(message) });
+    expect(a('saveSlaThresholds')).not.toHaveBeenCalled();
+    expect(a('saveFcrSettings')).not.toHaveBeenCalled();
+    expect(dbm.setSetting).not.toHaveBeenCalled();
+  });
+
+  test('a write the database refuses is a 500, never { ok: true }', async () => {
+    a('saveSlaThresholds').mockResolvedValueOnce(false);
+    await expect(ctl.saveAnalyticsSettings(req(ADMIN, {}, { body: { sla_thresholds: { '800': 30 } } })))
+      .rejects.toMatchObject({ status: 500 });
+    a('saveFcrSettings').mockResolvedValueOnce(false);
+    await expect(ctl.saveAnalyticsSettings(req(ADMIN, {}, { body: { fcr_window_days: 3 } })))
+      .rejects.toMatchObject({ status: 500 });
+    (dbm.setSetting as jest.Mock).mockResolvedValueOnce(false);
+    await expect(ctl.saveAnalyticsSettings(req(ADMIN, {}, { body: { sla_default_secs: 30 } })))
+      .rejects.toMatchObject({ status: 500 });
   });
 
   test('a non-object body is a 400', async () => {

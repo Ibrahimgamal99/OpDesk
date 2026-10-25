@@ -302,11 +302,19 @@ CREATE TABLE IF NOT EXISTS analytics_sla_settings (
 -- Global FCR and short-abandon configuration (singleton row, id=1).
 -- The migration seeds the id=1 row (INSERT IGNORE).
 -- FIX: DATETIME → TIMESTAMP for MariaDB 5.5 compatibility.
+--
+-- callback_window_hours: how long after a call one of OUR outbound calls to the same
+-- customer still counts as us calling them back. FCR reads such a callback as proof the
+-- first contact did not resolve anything, and the abandoned-caller recovery figure reads it
+-- as reaching someone who gave up waiting. One setting for both, so the same call cannot be
+-- a recovery but not an FCR repeat. 0 turns callbacks off. Older databases gain the column
+-- through the migration's column guards (src/db/migrate.ts).
 CREATE TABLE IF NOT EXISTS analytics_fcr_settings (
-    id                  TINYINT PRIMARY KEY DEFAULT 1,
-    window_days         TINYINT UNSIGNED NOT NULL DEFAULT 7,
-    short_abandon_secs  SMALLINT UNSIGNED NOT NULL DEFAULT 5,
-    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    id                    TINYINT PRIMARY KEY DEFAULT 1,
+    window_days           TINYINT UNSIGNED NOT NULL DEFAULT 7,
+    short_abandon_secs    SMALLINT UNSIGNED NOT NULL DEFAULT 5,
+    callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24,
+    updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Pre-aggregated hourly metrics per queue (populated by the analytics background task every 15 min).

@@ -104,6 +104,19 @@ describe('applyColumnGuards', () => {
     expect(ex).not.toHaveBeenCalled();
   });
 
+  it('adds analytics_fcr_settings.callback_window_hours only while it is missing', async () => {
+    q1.mockImplementation(async (sql: string, params: unknown[]) =>
+      /information_schema.TABLES/.test(sql) ? { found: 1 }
+        : params[1] === 'callback_window_hours' ? null
+          : { COLUMN_TYPE: "enum('ios','android','web')", IS_NULLABLE: 'NO', COLUMN_DEFAULT: null },
+    );
+    ex.mockResolvedValue({ affectedRows: 0 });
+    expect(await mig.applyColumnGuards()).toEqual([
+      'ALTER TABLE analytics_fcr_settings ADD COLUMN callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24 AFTER short_abandon_secs',
+    ]);
+    expect(fs.readFileSync(mig.SCHEMA_FILE, 'utf8')).toMatch(/callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24/);
+  });
+
   it('skips a table that does not exist', async () => {
     q1.mockResolvedValue(null);
     expect(await mig.applyColumnGuards()).toEqual([]);

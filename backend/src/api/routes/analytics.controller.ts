@@ -1,6 +1,6 @@
 /**
- * Analytics: KPIs, performance reports, adherence (+ per-agent timeline), heatmap, trend,
- * drilldown, exports, and the SLA / FCR settings.
+ * Analytics: KPIs, performance reports (+ one agent's calls), adherence (+ per-agent
+ * timeline), heatmap, trend, drilldown, exports, and the SLA / FCR settings.
  *
  * Every report is behind {scope: 'analytics:read'} (an API key holding the scope, or any
  * signed-in user) and then narrowed by role in core/scope.analyticsScope(): agents are
@@ -23,7 +23,7 @@ import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
 import * as analyticsModule from '../../services/analytics';
 import { HttpError } from '../http-error';
-import { csvResponse, StreamResponse } from '../respond';
+import { csvResponse, spreadsheetSafe, StreamResponse } from '../respond';
 import { Auth, Get, Post, principal } from '../routing';
 import { JsonObject, parseBody, qBool, qInt, qStr, QueryParams, REQUIRED, v } from '../validation';
 
@@ -75,7 +75,10 @@ function stampFile(d: Date): string {
   return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
 }
 
-/** Seconds -> H:MM:SS for spreadsheet readability. Blank on bad input; negative -> 0. */
+/**
+ * Seconds -> HH:MM:SS, zero-padded like the on-screen report, so a column of them sorts and
+ * lines up. Hours are not wrapped at 24. Blank on bad input; negative -> 0.
+ */
 export function fmtHms(secs: unknown): string {
   const raw = truthy(secs) ? secs : 0;
   let s: number;
@@ -86,7 +89,7 @@ export function fmtHms(secs: unknown): string {
   if (s < 0) s = 0;
   const h = Math.floor(s / 3600);
   const rem = s % 3600;
-  return `${h}:${p2(Math.floor(rem / 60))}:${p2(rem % 60)}`;
+  return `${p2(h)}:${p2(Math.floor(rem / 60))}:${p2(rem % 60)}`;
 }
 
 /** str() of a value Python held as a float: a whole number still prints as '85.0'. */
@@ -94,9 +97,10 @@ function floatStr(val: unknown): unknown {
   return typeof val === 'number' && Number.isInteger(val) ? `${val}.0` : val;
 }
 
-/** str(v) of a CSV cell, as the Python wrote it (None -> 'None'). */
+/** str(v) of a CSV cell, as the Python wrote it (None -> 'None'), never a live formula. */
 function cellStr(val: unknown): string {
-  return val instanceof Date ? stampSeconds(val) : pyStr(val);
+  if (val instanceof Date) return stampSeconds(val);
+  return typeof val === 'string' ? spreadsheetSafe(val) : pyStr(val);
 }
 
 const quoted = (vals: string[]): string => vals.map((s) => `"${s.replace(/"/g, '""')}"`).join(',') + '\r\n';
@@ -105,11 +109,12 @@ const BOM = '\ufeff';
 const CSV_MEDIA_TYPE = 'text/csv; charset=utf-8';
 const XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-/** A worksheet value as openpyxl wrote it: None -> an empty cell. */
+/** A worksheet value as openpyxl wrote it: None -> an empty cell. Text never reads as a formula. */
 function xlsxCell(val: unknown): ExcelJS.CellValue {
   if (val === null || val === undefined) return null;
-  if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean' || val instanceof Date) return val;
-  return pyStr(val);
+  if (typeof val === 'string') return spreadsheetSafe(val);
+  if (typeof val === 'number' || typeof val === 'boolean' || val instanceof Date) return val;
+  return spreadsheetSafe(pyStr(val));
 }
 
 async function xlsxBuffer(sheetTitle: string, rows: unknown[][]): Promise<Buffer> {
@@ -120,12 +125,33 @@ async function xlsxBuffer(sheetTitle: string, rows: unknown[][]): Promise<Buffer
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-function download(body: Buffer | string, contentType: string, filename: string): StreamResponse {
+function download(body: Buffer | string, contentType: string, filename: string, headers: Record<string, string> = {}): StreamResponse {
   const buf = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
   return new StreamResponse(Readable.from([buf]), {
     contentType,
-    headers: { 'Content-Disposition': `attachment; filename="${filename}"` },
+    headers: { 'Content-Disposition': `attachment; filename="${filename}"`, ...headers },
   });
+}
+
+/** The most rows one drilldown export writes; past it the file says it was cut. */
+export const DRILLDOWN_EXPORT_CAP = 100000;
+
+/** A drilldown call's direction as the Call History export words it. */
+const DIRECTION_LABEL: Record<string, string> = { IN: 'Inbound', OUT: 'Outbound', INTERNAL: 'Internal' };
+
+/**
+ * A whole number inside the setting's range (analyticsModule.SETTING_RANGES), or a 400 that
+ * names the field. Accepts a JSON number or a string of digits; anything else is refused.
+ */
+export function settingInt(field: string, value: unknown, range: readonly [number, number]): number {
+  const n = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^\s*-?\d+\s*$/.test(value) ? parseInt(value, 10) : NaN;
+  const [lo, hi] = range;
+  if (!Number.isInteger(n) || n < lo || n > hi) {
+    throw new HttpError(400, `${field} must be a whole number from ${lo} to ${hi}`);
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +169,16 @@ const SHEET_TITLES: Record<ExportReport, string> = {
 const QUEUE_COLUMNS = [
   'queue_extension', 'queue_name', 'total_calls', 'answered_calls', 'abandoned_calls',
   'sla_pct', 'aht_secs', 'avg_wait_secs', 'peak_hour', 'answer_rate', 'talk_secs', 'missed_calls',
+  'abandonment_rate', 'short_abandon_rate',
 ];
 const AGENT_COLUMNS = [
   'rank', 'agent_extension', 'agent_name', 'total_calls', 'answered_calls', 'inbound_calls',
-  'outbound_calls', 'aht_secs', 'sla_contribution_pct', 'answer_rate', 'talk_secs', 'missed_calls',
+  'outbound_calls', 'internal_calls', 'aht_secs', 'sla_contribution_pct', 'answer_rate', 'talk_secs', 'missed_calls',
 ];
-const TREND_COLUMNS = ['date', 'total_calls', 'answered_calls', 'abandoned_calls', 'outbound_total', 'outbound_answered'];
+const TREND_COLUMNS = [
+  'date', 'total_calls', 'answered_calls', 'abandoned_calls', 'outbound_total', 'outbound_answered',
+  'internal_total', 'customers', 'customers_answered',
+];
 
 /** Flatten a KPI block into [dotted key, value] pairs: outbound.answer_rate etc. */
 function flatten(obj: Row, prefix = ''): [string, unknown][] {
@@ -167,7 +197,7 @@ function flatten(obj: Row, prefix = ''): [string, unknown][] {
  *
  *   overview  metric | current | prev_period, one row per KPI (nested blocks dotted:
  *             outbound.total_calls), led by the two periods' bounds.
- *   queues    one row per queue.
+ *   queues    one row per queue (the per-day and wait-bucket series stay JSON-only).
  *   agents    one row per agent; daily_trend spreads over one column per day.
  *   heatmap   series | day | 00:00 .. 23:00 (series = matrix or abandoned_matrix).
  *   trend     one row per day.
@@ -176,7 +206,9 @@ export function reportTable(report: ExportReport, data: Row, dateTo: string | nu
   switch (report) {
     case 'overview': {
       const period = (data.period ?? {}) as Row;
-      const prev = period.from && period.to ? analyticsModule.previousPeriod(period.from, period.to) : [null, null];
+      // No previous period past the comparable range: its bounds are blank, like its figures.
+      const prev = period.from && period.to && data.prev_period
+        ? analyticsModule.previousPeriod(period.from, period.to) : [null, null];
       const current = flatten((data.current ?? {}) as Row);
       const previous = new Map(flatten((data.prev_period ?? {}) as Row));
       return [
@@ -240,6 +272,8 @@ export class AnalyticsController {
       queues: await analyticsModule.computeQueuePerformance(dateFrom, dateTo, {
         allowedQueues, slaThresholds: thresholds, fcrCfg,
       }),
+      // The threshold the short-abandon rate was counted against, for its explanation.
+      short_abandon_secs: get(fcrCfg, 'short_abandon_secs', analyticsModule.FCR_DEFAULTS.short_abandon_secs),
     };
   }
 
@@ -255,13 +289,19 @@ export class AnalyticsController {
   private async heatmap(req: Request): Promise<Row> {
     const [dateFrom, dateTo] = dateRange(req);
     const [allowedQueues] = analyticsScope(principal(req));
-    return analyticsModule.computeHourlyHeatmap(dateFrom, dateTo, allowedQueues);
+    // ?queue= narrows to one queue, never past the caller's scope: a queue outside it reads
+    // as an empty heatmap, not as someone else's traffic.
+    const queue = (qStr(req.query as QueryParams, 'queue', null) ?? '').trim();
+    const scope = !queue
+      ? allowedQueues
+      : allowedQueues === null || allowedQueues.map(String).includes(queue) ? [queue] : [];
+    return analyticsModule.computeHourlyHeatmap(dateFrom, dateTo, scope);
   }
 
   private async trend(req: Request): Promise<Row> {
     const [dateFrom, dateTo] = dateRange(req);
     const [allowedQueues, allowedAgents] = analyticsScope(principal(req));
-    return { trend: await analyticsModule.computeVolumeTrend(dateFrom, dateTo, allowedQueues, allowedAgents) };
+    return analyticsModule.computeVolumeSeries(dateFrom, dateTo, allowedQueues, allowedAgents);
   }
 
   // -------------------------------------------------------------------------
@@ -290,6 +330,41 @@ export class AnalyticsController {
   @Auth({ scope: 'analytics:read' })
   async analyticsAgentPerformance(@Req() req: Request) {
     return guarded('analytics agent performance', () => this.agents(req));
+  }
+
+  /**
+   * One agent's calls for the period, split by direction, with the paginated call list
+   * behind it (`direction`, `status` filters). Backs the Agent Performance row click.
+   * Scope-checked on the same allowed_agents list as the table, so a supervisor cannot open
+   * an agent whose row they are not allowed to see. Roles: admin, supervisor.
+   */
+  @Get('/api/analytics/agent-calls')
+  @Auth({ scope: 'analytics:read' })
+  async analyticsAgentCalls(@Req() req: Request) {
+    const q = req.query as QueryParams;
+    const agent = qStr(q, 'agent', REQUIRED) as string;
+    const direction = qStr(q, 'direction', null);
+    const status = qStr(q, 'status', null);
+    const page = qInt(q, 'page', 1);
+    const pageSize = qInt(q, 'page_size', 50);
+    const [dateFrom, dateTo] = dateRange(req);
+    return guarded('analytics agent calls', async () => {
+      const [, allowedAgents] = analyticsScope(principal(req));
+      const ext = String(agent || '').trim();
+      if (!/^\d+$/.test(ext)) throw new HttpError(400, 'agent must be an extension');
+      if (allowedAgents !== null && !new Set(allowedAgents.map(String)).has(ext)) {
+        throw new HttpError(403, 'Agent is outside your scope');
+      }
+      if (direction && !(analyticsModule.AGENT_CALL_DIRECTIONS as readonly string[]).includes(direction.toUpperCase())) {
+        throw new HttpError(400, 'Unknown direction');
+      }
+      return analyticsModule.computeAgentCalls(ext, dateFrom, dateTo, {
+        direction,
+        status,
+        page: Math.max(1, page),
+        pageSize: Math.min(200, Math.max(1, pageSize)),
+      });
+    });
   }
 
   /**
@@ -401,14 +476,14 @@ export class AnalyticsController {
     });
   }
 
-  /** 7x24 call volume heatmap matrix. Roles: admin, supervisor. */
+  /** 7x24 call volume heatmap matrix; `queue` narrows it to one queue in scope. Roles: admin, supervisor. */
   @Get('/api/analytics/heatmap')
   @Auth({ scope: 'analytics:read' })
   async analyticsHeatmap(@Req() req: Request) {
     return guarded('analytics heatmap', () => this.heatmap(req));
   }
 
-  /** Daily volume trend (total / answered / abandoned, outbound). Roles: admin, supervisor. */
+  /** Daily volume trend (inbound, outbound, internal) and calls by hour of day. Roles: admin, supervisor. */
   @Get('/api/analytics/trend')
   @Auth({ scope: 'analytics:read' })
   async analyticsTrend(@Req() req: Request) {
@@ -450,7 +525,11 @@ export class AnalyticsController {
     });
   }
 
-  /** Export drilldown data as CSV or XLSX. Roles: admin, supervisor. */
+  /**
+   * Export drilldown data as CSV or XLSX: the status the table shows and the direction
+   * beside it. Capped at DRILLDOWN_EXPORT_CAP rows; a cut file ends with a line saying so
+   * and carries `X-Export-Truncated: <total>`. Roles: admin, supervisor.
+   */
   @Get('/api/analytics/export')
   @Auth({ scope: 'analytics:read' })
   async analyticsExport(@Req() req: Request) {
@@ -470,35 +549,43 @@ export class AnalyticsController {
         direction,
         dispositionFilter: disposition,
         page: 1,
-        pageSize: 100000,
+        pageSize: DRILLDOWN_EXPORT_CAP,
         allowedQueues,
         allowedAgents,
         slaThresholds: thresholds,
       });
       const calls = get(result, 'calls', []) as Row[];
+      const total = Number(get(result, 'total', calls.length)) || calls.length;
+      const truncated = total > calls.length;
+      const extraHeaders: Record<string, string> = truncated ? { 'X-Export-Truncated': String(total) } : {};
+      const note = truncated ? [`Truncated: the first ${calls.length} of ${total} calls (narrow the range or filters for the rest)`] : null;
       const dateLabel = `${dateFrom || 'all'}_${dateTo || 'all'}`;
 
-      const headersRow = ['Date', 'Src', 'Queue', 'Agent', 'Duration(s)', 'Talk(s)', 'Wait(s)', 'Disposition', 'SLA Met'];
+      const headersRow = ['Date', 'Direction', 'Src', 'Queue', 'Agent', 'Duration(s)', 'Talk(s)', 'Wait(s)', 'Status', 'SLA Met'];
+      // SLA Met only where the SLA applies -- an answered queue call -- as the table shows it.
       const rowValues = (r: Row): unknown[] => [
         get(r, 'calldate', ''),
+        DIRECTION_LABEL[pyStr(r.direction)] ?? get(r, 'direction', ''),
         get(r, 'src', ''),
         get(r, 'queue_extension', ''),
         get(r, 'agent_extension', ''),
         get(r, 'duration', ''),
         get(r, 'talk', ''),
         get(r, 'wait_secs', ''),
-        get(r, 'disposition', ''),
-        truthy(r.sla_met) ? 'Yes' : 'No',
+        r.status || get(r, 'disposition', ''),
+        truthy(r.queue_extension) && r.status === 'ANSWERED' ? (truthy(r.sla_met) ? 'Yes' : 'No') : '',
       ];
 
       if (format.toLowerCase() === 'xlsx') {
-        return download(await xlsxBuffer('Analytics Export', [headersRow, ...calls.map(rowValues)]),
-          XLSX_MEDIA_TYPE, `analytics_${dateLabel}.xlsx`);
+        const rows: unknown[][] = [headersRow, ...calls.map(rowValues)];
+        if (note) rows.push([], note);
+        return download(await xlsxBuffer('Analytics Export', rows), XLSX_MEDIA_TYPE, `analytics_${dateLabel}.xlsx`, extraHeaders);
       }
       // CSV with UTF-8 BOM for Excel compatibility; the header row is unquoted (legacy).
       let buf = BOM + headersRow.join(',') + '\r\n';
       for (const r of calls) buf += quoted(rowValues(r).map(cellStr));
-      return download(buf, CSV_MEDIA_TYPE, `analytics_${dateLabel}.csv`);
+      if (note) buf += '\r\n' + quoted(note);
+      return download(buf, CSV_MEDIA_TYPE, `analytics_${dateLabel}.csv`, extraHeaders);
     });
   }
 
@@ -535,38 +622,69 @@ export class AnalyticsController {
   async getAnalyticsSettings(@Req() req: Request) {
     if (principal(req).role !== 'admin') throw new HttpError(403, 'Admin only');
     const fcr: Row = await analyticsModule.getFcrSettings();
-    return {
+    const defaults = analyticsModule.FCR_DEFAULTS;
+    return guarded('analytics settings', async () => ({
       sla_thresholds: await analyticsModule.getSlaThresholds(),
       sla_default_secs: await analyticsModule.getSlaDefaultSecs(),
-      fcr_window_days: get(fcr, 'window_days', 7),
-      short_abandon_secs: get(fcr, 'short_abandon_secs', 5),
-    };
+      fcr_window_days: get(fcr, 'window_days', defaults.window_days),
+      short_abandon_secs: get(fcr, 'short_abandon_secs', defaults.short_abandon_secs),
+      callback_window_hours: get(fcr, 'callback_window_hours', defaults.callback_window_hours),
+    }));
   }
 
-  /** Save SLA thresholds and/or FCR config. Roles: admin only. */
+  /**
+   * Save SLA thresholds (per queue; null removes a queue's override), the SLA default and/or
+   * the FCR config. Roles: admin only.
+   *
+   * Every value is checked against SETTING_RANGES before anything is written: one bad field
+   * is a 400 naming it and nothing is saved. A write the database refuses is a 500, never a
+   * silent { ok: true }. Fields left out keep their stored value.
+   */
   @Post('/api/analytics/settings')
   @Auth('user')
   async saveAnalyticsSettings(@Req() req: Request) {
     const body: JsonObject = parseBody(v.dict(), req.body);
     if (principal(req).role !== 'admin') throw new HttpError(403, 'Admin only');
-    try {
-      if ('sla_thresholds' in body) {
-        await analyticsModule.saveSlaThresholds(body.sla_thresholds as Record<string, unknown>);
+    const R = analyticsModule.SETTING_RANGES;
+
+    let thresholds: Record<string, number | null> | null = null;
+    if ('sla_thresholds' in body) {
+      const raw = body.sla_thresholds;
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new HttpError(400, 'sla_thresholds must be an object of queue extension to seconds');
       }
-      if ('sla_default_secs' in body) {
-        await dbm.setSetting('SLA_DEFAULT_SECS', String(analyticsModule.toInt(body.sla_default_secs)));
+      thresholds = {};
+      for (const [queue, secs] of Object.entries(raw as Record<string, unknown>)) {
+        if (!/^\d{1,20}$/.test(queue)) throw new HttpError(400, `sla_thresholds: '${queue}' is not a queue extension`);
+        thresholds[queue] = secs === null ? null : settingInt(`sla_thresholds.${queue}`, secs, R.sla_threshold_secs);
       }
-      if ('fcr_window_days' in body || 'short_abandon_secs' in body) {
+    }
+    const slaDefault = 'sla_default_secs' in body ? settingInt('sla_default_secs', body.sla_default_secs, R.sla_default_secs) : null;
+    const fcrFields = ['fcr_window_days', 'short_abandon_secs', 'callback_window_hours'] as const;
+    const fcrIn = fcrFields.some((f) => f in body);
+    const fcrVals = Object.fromEntries(fcrFields.filter((f) => f in body).map((f) => [f, settingInt(f, body[f], R[f])]));
+
+    return guarded('analytics settings save', async () => {
+      const failed = (what: string) => {
+        log.error('analytics settings save: %s was not saved', what);
+        return new HttpError(500, 'The analytics settings could not be saved');
+      };
+      if (thresholds && Object.keys(thresholds).length && !(await analyticsModule.saveSlaThresholds(thresholds))) {
+        throw failed('sla_thresholds');
+      }
+      if (slaDefault !== null && !(await dbm.setSetting('SLA_DEFAULT_SECS', String(slaDefault)))) {
+        throw failed('sla_default_secs');
+      }
+      if (fcrIn) {
         const cur = await analyticsModule.getFcrSettings();
-        await analyticsModule.saveFcrSettings(
-          analyticsModule.toInt(get(body, 'fcr_window_days', cur.window_days)),
-          analyticsModule.toInt(get(body, 'short_abandon_secs', cur.short_abandon_secs)),
+        const ok = await analyticsModule.saveFcrSettings(
+          fcrVals.fcr_window_days ?? cur.window_days,
+          fcrVals.short_abandon_secs ?? cur.short_abandon_secs,
+          fcrVals.callback_window_hours ?? cur.callback_window_hours,
         );
+        if (!ok) throw failed('fcr settings');
       }
       return { ok: true };
-    } catch (e) {
-      log.error('analytics settings save error: %s', e);
-      throw new HttpError(500, 'Internal server error');
-    }
+    });
   }
 }
