@@ -8,7 +8,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useAgentPresence } from '../contexts/AgentPresenceContext';
 import { usePauseReasons } from '../hooks/usePauseReasons';
-import { AGENT_STATE_META } from './statusBadge';
+import { AGENT_STATE_META, DEVICE_STATUS_META } from './statusBadge';
 import type { AgentState, AgentStateInfo } from '../types';
 import { fmtTimer } from '../lib/format';
 import { Badge } from './ui';
@@ -62,13 +62,15 @@ interface Props {
   isConnected: boolean;
   /** This device has a live call: the status shows On Call and controls lock. */
   onCall?: boolean;
+  /** A call is ringing in on this device (not answered yet): shows Ringing, not On Call. */
+  ringing?: boolean;
   onRefresh?: () => void;
   refreshDisabled?: boolean;
   /** Force a fresh softphone registration attempt. */
   onReconnect?: () => void;
 }
 
-export function AgentStatusHeader({ title, icon, isConnected, onCall, onRefresh, refreshDisabled, onReconnect }: Props) {
+export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, onRefresh, refreshDisabled, onReconnect }: Props) {
   const { t } = useTranslation();
   const { myExt, isAgent, presence, dnd, onCall: extOnCall, sendAction } = useAgentPresence();
   const { selectable, labelFor } = usePauseReasons();
@@ -146,9 +148,10 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, onRefresh,
   const dState: AgentState = queueOn
     ? (busy && state !== 'wrap_up' ? 'on_call' : state)
     : (busy ? 'on_call' : isDnd ? 'dnd' : 'available');
-  const meta = AGENT_STATE_META[dState];
+  // An unanswered incoming call is busy (controls lock) but shows as Ringing.
+  const meta = ringing ? DEVICE_STATUS_META.ringing : AGENT_STATE_META[dState];
   const StateIcon = meta.Icon;
-  const stateLabel = (dState === 'not_ready' && labelFor(presence?.reason_code)) || t(meta.key, meta.fallback);
+  const stateLabel = (!ringing && dState === 'not_ready' && labelFor(presence?.reason_code)) || t(meta.key, meta.fallback);
   // A plain extension only toggles Available / DND, so it gets an inline switch instead of
   // the menu. Agents keep the menu (queue states + reasons).
   const plainToggle = !isAgent;
@@ -191,7 +194,7 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, onRefresh,
   return (
     <div
       ref={rootRef}
-      className={`agent-header agent-header-${dState}`}
+      className={`agent-header agent-header-${ringing ? 'ringing' : dState}`}
       style={{ ['--ah-color' as string]: `var(${meta.varName})`, ['--ah-bg' as string]: `var(${meta.bgVar})` }}
     >
       {/* Status selector: opens the transition menu (locked while on a call). For a plain

@@ -145,15 +145,6 @@ export function Softphone() {
     setTransferDest('');
   };
 
-  const statusLabel =
-    status === 'connecting'
-      ? t('softphone.status.connecting')
-      : status === 'connected'
-        ? t('softphone.status.registered')
-        : status === 'error'
-          ? t('softphone.status.error')
-          : t('softphone.status.notRegistered');
-
   /** The web phone reports its call status in English (lib/webPhone.ts); show it translated. */
   const callStatusLabel = (s: string): string => {
     if (s === 'Incoming call...') return t('softphone.callStatus.incoming', 'Incoming call...');
@@ -173,6 +164,7 @@ export function Softphone() {
       icon={<Phone size={16} className="softphone-header-icon" />}
       isConnected={isConnected}
       onCall={hasActiveCall}
+      ringing={!!incomingCall}
       {...(withConfigActions
         ? { onRefresh: refetchConfig, refreshDisabled: configLoading, onReconnect: reconnect }
         : {})}
@@ -188,7 +180,7 @@ export function Softphone() {
           <div className="softphone-caller-number">{incomingCall.callerNumber}</div>
           <div className="softphone-caller-name">{incomingCall.callerName || t('common.incomingCall')}</div>
           <div className="softphone-status-row">
-            <span className="softphone-status-badge">{statusLabel}</span>
+            <span className="softphone-status-badge">{callStatusLabel('Incoming call...')}</span>
           </div>
           <div className="softphone-answer-actions">
             <button
