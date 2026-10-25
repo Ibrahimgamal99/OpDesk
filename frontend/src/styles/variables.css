@@ -58,6 +58,14 @@
   --radius-lg: 12px;
   --radius-xl: 14px;
   --radius-pill: 999px;
+  /* The odd sizes echo's sheets used raw, named so the radius gate holds:
+     hairline bars, scrollbar thumbs, tiny chips, inset tags, wide pills, dots. */
+  --radius-3xs: 2px;
+  --radius-2xs: 3px;
+  --radius-xs:  4px;
+  --radius-smd: 8px;
+  --radius-2xl: 20px;
+  --radius-round: 50%;
 
   /* ─── Icon scale ──────────────────────────────────
      lucide renders `size` as width/height ATTRIBUTES, which CSS overrides. So
@@ -146,7 +154,7 @@
   /* ─── Text ────────────────────────────────────── */
   --text-primary:   #e8edf3;
   --text-secondary: #9aa4b2;
-  --text-muted:     #6b7480;
+  --text-muted:     #7a8390;
 
   /* ─── Status colors ───────────────────────────── */
   --status-idle:          #3fb950;
@@ -158,7 +166,7 @@
   --status-call:          #58a6ff;
   --status-call-bg:       rgba(88, 166, 255, 0.12);
   --status-call-glow:     transparent;
-  --status-unavailable:   #6e7681;
+  --status-unavailable:   #7b838e;
   --status-unavailable-bg: rgba(110, 118, 129, 0.12);
   --status-hold:          #a5a5ff;
   --status-hold-bg:       rgba(165, 165, 255, 0.12);
@@ -330,13 +338,13 @@
      the timeline, the legend and the log rows read the same source. */
   --journey-inbound:     #3fb950;
   --journey-outbound:    #4493f8;
-  --journey-queue:       #8b5cf6;
+  --journey-queue:       #9266f7;
   --journey-ring:        #d29922;
   --journey-answer:      #39c5cf;
   --journey-no-answer:   #f85149;
   --journey-transfer:    #f0883e;
   --journey-supervision: #a855f7;
-  --journey-hangup:      #6b7480;
+  --journey-hangup:      #7a8390;
   /* ATTEMPT: one pass the auto-dialer made at a lead (its journey opens each attempt
      with one). Deliberately close to --journey-queue, since an attempt is the dialer
      doing the same thing again rather than a new kind of event. */
@@ -399,7 +407,7 @@
   /* ─── Text ────────────────────────────────────── */
   --text-primary:   #1c2128;
   --text-secondary: #5a6573;
-  --text-muted:     #8b95a3;
+  --text-muted:     #667181;
 
   /* ─── Status colors (darker for contrast on light) */
   --status-idle:          #1a7f37;
@@ -408,22 +416,22 @@
   --status-ringing:       #cf222e;
   --status-ringing-bg:    rgba(207, 34, 46, 0.10);
   --status-ringing-glow:  transparent;
-  --status-call:          #1f6feb;
+  --status-call:          #1669ea;
   --status-call-bg:       rgba(31, 111, 235, 0.10);
   --status-call-glow:     transparent;
-  --status-unavailable:   #8b95a3;
+  --status-unavailable:   #667181;
   --status-unavailable-bg: rgba(139, 149, 163, 0.12);
-  --status-hold:          #7c5cff;
+  --status-hold:          #714eff;
   --status-hold-bg:       rgba(124, 92, 255, 0.10);
 
   /* ─── Accent palette ──────────────────────────── */
   --accent:               #1f6feb;
-  --accent-primary:       #1f6feb;
+  --accent-primary:       #1669ea;
   --accent-primary-hover: #1a5fd0;
   --accent-hover:         #1a5fd0;
   --accent-secondary:     #1a5fd0;
-  --accent-teal:          #0d9aa3;
-  --accent-purple:        #7c5cff;
+  --accent-teal:          #0b7d85;
+  --accent-purple:        #714eff;
   --accent-light:         rgba(31, 111, 235, 0.10);
   --chart-inbound:        #1f6feb;
   --chart-outbound:       #e0631f;
@@ -472,10 +480,10 @@
 
   /* ─── Call-journey event palette (light) ──────── */
   --journey-inbound:     #1a7f37;
-  --journey-outbound:    #1f6feb;
+  --journey-outbound:    #1669ea;
   --journey-queue:       #6d28d9;
   --journey-ring:        #9a6700;
-  --journey-answer:      #0d9aa3;
+  --journey-answer:      #0b7d85;
   --journey-no-answer:   #cf222e;
   --journey-transfer:    #c2410c;
   --journey-supervision: #7c3aed;

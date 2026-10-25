@@ -99,7 +99,7 @@ def L(h):
 def ratio(f,b):
     a,c = L(f),L(b); hi,lo = max(a,c),min(a,c)
     return (hi+0.05)/(lo+0.05)
-text = open('frontend/src/styles/index.css').read()
+text = open('frontend/src/styles/variables.css').read()
 def block(p):
     m = re.search(p+r'\s*\{(.*?)\n\}', text, re.S)
     return dict(re.findall(r'(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;', m.group(1))) if m else {}
