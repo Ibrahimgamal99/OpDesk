@@ -9,10 +9,13 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
-import { Terminal, History, BarChart3, Tag, Download, Trash2, Pause } from 'lucide-react';
-import { Page, Toolbar, SearchInput, Stat, Tabs, RangePicker } from '../src/components/ui';
-import { FilterSelect } from '../src/components/FilterSelect';
+import { Terminal, History, BarChart3, Tag, Download, Trash2, Pause, ArrowUpDown } from 'lucide-react';
+import { Page, Toolbar, SearchInput, Tabs, RangePicker, Dropdown, Badge } from '../src/components/ui';
+// Same set and order as src/main.tsx, plus the sheet AnalyticsPanel imports.
+import '../src/styles/variables.css';
 import '../src/styles/index.css';
+import '../src/styles/classic-pages.css';
+import '../src/styles/utilities.css';
 import '../src/styles/analytics.css';
 
 const noop = () => {};
@@ -39,6 +42,16 @@ function Range() {
   );
 }
 
+/** A filter as the panels write it: the Dropdown in a `data-active` wrapper. */
+function Filter({ label, all, active, icon }: { label: string; all: string; active?: boolean; icon?: React.ElementType }) {
+  const [v, setV] = React.useState('');
+  return (
+    <div data-active={active || undefined}>
+      <Dropdown size="md" value={v} onChange={setV} icon={icon} ariaLabel={label} options={[{ value: '', label: all }]} />
+    </div>
+  );
+}
+
 /** Commit counter, so a driver can assert the debounce coalesces keystrokes. */
 declare global {
   interface Window { __commits?: number; __lastCommit?: string }
@@ -55,24 +68,27 @@ function Screen({ which }: { which: 'ami' | 'calls' | 'analytics' }) {
   if (which === 'ami') {
     return (
       <Page
-        icon={<Terminal size={18} />}
+        icon={Terminal}
         title="AMI Event Stream"
-        status={<span className="lg-badge lg-badge-live">Live</span>}
+        actions={<Badge tone="success" dot>Live</Badge>}
         tabs={<Tabs tabs={[{ key: 'a', label: 'System', icon: <Terminal size={14} /> }, { key: 'b', label: 'CRM Deliveries' }]} active="a" onChange={noop} />}
+        flush
         toolbar={
           <Toolbar
             search={<SearchInput urlSync={false} value={q} onChange={setQ} label="Search" placeholder="Channel, caller ID, queue…" />}
-            filters={[{ key: 'event', label: 'Event type', control: <FilterSelect size="md" value="" onChange={noop} icon={Tag} options={[{ value: '', label: 'All events' }]} /> }]}
-            actions={[
-              <button className="btn btn-primary"><Terminal size={13} />AMI On</button>,
-              <button className="btn btn-ghost"><Pause size={13} />Pause</button>,
-              <button className="btn btn-ghost"><Download size={13} />Export</button>,
-              <button className="btn btn-ghost"><Trash2 size={13} />Clear</button>,
-            ]}
+            filters={<Filter label="Event type" all="All events" icon={Tag} />}
+            actions={
+              <>
+                <button type="button" className="btn btn-primary"><Terminal size={13} />AMI On</button>
+                <button type="button" className="btn btn-ghost"><Pause size={13} />Pause</button>
+                <button type="button" className="btn btn-ghost"><Download size={13} />Export</button>
+                <button type="button" className="btn btn-ghost"><Trash2 size={13} />Clear</button>
+              </>
+            }
           />
         }
       >
-        <div style={{ padding: 24, color: 'var(--text-muted)' }}>…stream body…</div>
+        <div className="u-fg-muted" style={{ padding: 24 }}>…stream body…</div>
       </Page>
     );
   }
@@ -80,35 +96,38 @@ function Screen({ which }: { which: 'ami' | 'calls' | 'analytics' }) {
   if (which === 'calls') {
     return (
       <Page
-        icon={<History size={18} />}
+        icon={History}
         title="Call History"
+        count={13}
         scope={<Range />}
-        actions={<Stat value={13} label="Total calls" />}
+        flush
         toolbar={
           <Toolbar
             search={<SearchInput urlSync={false} value={q} onChange={setQ} label="Search calls" placeholder="Search calls…" />}
-            filters={[
-              { key: 'status', label: 'Status', active: true, control: <FilterSelect size="md" value="" onChange={noop} options={[{ value: '', label: 'All statuses' }]} /> },
-              { key: 'direction', label: 'Direction', active: true, control: <FilterSelect size="md" value="" onChange={noop} options={[{ value: '', label: 'All directions' }]} /> },
-              { key: 'app', label: 'Application', control: <FilterSelect size="md" value="" onChange={noop} options={[{ value: '', label: 'All apps' }]} /> },
-            ]}
-            actions={[<button className="btn btn-ghost">Newest</button>]}
+            filters={
+              <>
+                <Filter label="Status" all="All statuses" active />
+                <Filter label="Direction" all="All directions" icon={ArrowUpDown} active />
+                <Filter label="Application" all="All apps" />
+              </>
+            }
+            actions={<button type="button" className="btn btn-ghost">Newest</button>}
           />
         }
       >
-        <div style={{ padding: 24, color: 'var(--text-muted)' }}>…table…</div>
+        <div className="u-fg-muted" style={{ padding: 24 }}>…table…</div>
       </Page>
     );
   }
 
   return (
     <Page
-      icon={<BarChart3 size={18} />}
+      icon={BarChart3}
       title="Analytics"
       tabs={<Tabs tabs={[{ key: 'o', label: 'Overview' }, { key: 'q', label: 'Queues' }, { key: 'a', label: 'Agents' }]} active="o" onChange={noop} />}
       scope={<Range />}
     >
-      <div style={{ padding: 24, color: 'var(--text-muted)' }}>…charts…</div>
+      <div className="u-fg-muted">…charts…</div>
     </Page>
   );
 }
