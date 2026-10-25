@@ -66,13 +66,20 @@ const EMPTY_FORM = {
   role: 'supervisor' as Role,
   monitor_modes: ['listen'] as string[],
   group_ids: [] as string[],
-  webrtc: false,
+  /**
+   * WebRTC on the extension. null until the extension's credentials say (or when they could
+   * not be read): the toggle is hidden and nothing is saved, so saving before the answer
+   * arrives can never switch a working softphone off.
+   */
+  webrtc: null as boolean | null,
   /**
    * PJSIP max_contacts > 1: the browser and the phone may hold a registration at the same
    * time. null until the extension's credentials say (or when the PBX could not be read):
    * the toggle is then hidden and nothing is saved, so an outage never writes a wrong value.
    */
   multiDevice: null as boolean | null,
+  /** The PBX values the toggles were loaded with: a save writes only what changed. */
+  loaded: { webrtc: null as boolean | null, multiDevice: null as boolean | null },
 };
 
 /** The form's multi-device state from a credentials answer's max_contacts. */
@@ -100,23 +107,31 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [newGroupNameForCreate, setNewGroupNameForCreate] = useState('');
   const [form, setForm] = useState(EMPTY_FORM);
 
-  const handleExtensionSelect = useCallback(async (ext: string) => {
-    setForm(f => ({ ...f, extension: ext, webrtc: ext ? f.webrtc : false, multiDevice: null }));
-    if (!ext) return;
+  /**
+   * Load the extension's PBX state into the form. An answer for an extension the form has
+   * since moved off is dropped. `prefill` also fills username/password/name (a new user).
+   */
+  const loadExtensionState = useCallback(async (ext: string, prefill: boolean) => {
     try {
       const res = await fetchWithAuth(`/api/settings/extensions/${ext}/credentials`);
-      if (res.ok) {
-        const data = await res.json();
-        setForm(f => ({
-          ...f,
-          ...(editingUser ? {} : { username: data.username || ext, password: data.password || '' }),
-          name: data.name || f.name,
-          webrtc: data.webrtc === 'yes',
-          multiDevice: multiDeviceOf(data.max_contacts),
-        }));
-      }
-    } catch { /* ignore */ }
-  }, [editingUser]);
+      if (!res.ok) return;
+      const data = await res.json();
+      const webrtc = data.webrtc === 'yes';
+      const multiDevice = multiDeviceOf(data.max_contacts);
+      setForm(f => (f.extension !== ext ? f : {
+        ...f,
+        ...(prefill ? { username: data.username || ext, password: data.password || '', name: data.name || f.name } : {}),
+        webrtc,
+        multiDevice,
+        loaded: { webrtc, multiDevice },
+      }));
+    } catch { /* ignore: the toggles stay hidden */ }
+  }, []);
+
+  const handleExtensionSelect = useCallback(async (ext: string) => {
+    setForm(f => ({ ...f, extension: ext, webrtc: null, multiDevice: null, loaded: { webrtc: null, multiDevice: null } }));
+    if (ext) await loadExtensionState(ext, !editingUser);
+  }, [editingUser, loadExtensionState]);
 
   // Restore user form when returning from Groups tab (create new group flow)
   useEffect(() => {
@@ -129,12 +144,14 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       role: pendingUserForm.role,
       monitor_modes: pendingUserForm.monitor_modes,
       group_ids: pendingUserForm.group_ids,
-      webrtc: false,
+      webrtc: null,
       multiDevice: null,
+      loaded: { webrtc: null, multiDevice: null },
     });
+    if (pendingUserForm.extension) void loadExtensionState(pendingUserForm.extension, false);
     setFormOpen(true);
     onClearPendingUserForm();
-  }, [pendingUserForm, onClearPendingUserForm]);
+  }, [pendingUserForm, onClearPendingUserForm, loadExtensionState]);
 
   // `keepMessage` for the refresh after a save/delete: clearing here wiped the
   // "User created/deleted" notice the instant it was set.
@@ -203,17 +220,12 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       role: (u.role as Role) || 'supervisor',
       monitor_modes: [...modes],
       group_ids: (u.group_ids || []).map(String),
-      webrtc: false,
+      webrtc: null,
       multiDevice: null,
+      loaded: { webrtc: null, multiDevice: null },
     });
     setFormOpen(true);
-    // Load the current WebRTC state for this user's extension (async).
-    if (u.extension) {
-      fetchWithAuth(`/api/settings/extensions/${u.extension}/credentials`)
-        .then(res => (res.ok ? res.json() : null))
-        .then(data => { if (data) setForm(f => ({ ...f, webrtc: data.webrtc === 'yes', multiDevice: multiDeviceOf(data.max_contacts) })); })
-        .catch(() => { /* ignore */ });
-    }
+    if (u.extension) void loadExtensionState(u.extension, false);
   };
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
@@ -234,7 +246,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            name: form.name || null,
+            // Sent only when changed; the server refuses a name another user holds (409).
+            username: form.username.trim() !== editingUser.username ? form.username.trim() : undefined,
+            // '' clears the display name (null would mean "leave it").
+            name: form.name.trim(),
             extension: form.extension,
             role: form.role,
             monitor_modes: form.role === 'agent' ? [] : form.role === 'admin' ? ['listen', 'whisper', 'barge'] : form.monitor_modes,
@@ -261,9 +276,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         if (!res.ok) await raiseFor(res);
         saved = t('users.userCreated');
       }
-      // Persist WebRTC toggle for the linked extension (best-effort; user save already succeeded).
+      // Persist the WebRTC toggle for the linked extension (best-effort; the user save already
+      // succeeded), only when it is known and changed: each write reloads the PBX.
       let webrtcFailed = false;
-      if (form.extension) {
+      if (form.extension && form.webrtc !== null && form.webrtc !== form.loaded.webrtc) {
         try {
           const wr = await fetchWithAuth(`/api/settings/extensions/${form.extension}/webrtc`, {
             method: 'PUT',
@@ -276,9 +292,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         }
       }
       // The device limit, sent after WebRTC rather than with it: both end in a PBX reload,
-      // and only when the form knows the current value (see EMPTY_FORM.multiDevice).
+      // and only when the form knows the current value and it changed (see EMPTY_FORM).
       let multiDeviceFailed = false;
-      if (form.extension && form.multiDevice !== null) {
+      if (form.extension && form.multiDevice !== null && form.multiDevice !== form.loaded.multiDevice) {
         try {
           const md = await fetchWithAuth(`/api/settings/extensions/${form.extension}/max-contacts`, {
             method: 'PUT',
@@ -602,7 +618,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 )}
               </FormField>
             </FormRow>
-            {form.extension && (
+            {form.extension && form.webrtc !== null && (
               <FormRow single>
                 <Toggle
                   checked={form.webrtc}
