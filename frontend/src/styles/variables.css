@@ -58,7 +58,7 @@
   --radius-lg: 12px;
   --radius-xl: 14px;
   --radius-pill: 999px;
-  /* The odd sizes echo's sheets used raw, named so the radius gate holds:
+  /* The odd sizes the shared sheets used raw, named so the radius gate holds:
      hairline bars, scrollbar thumbs, tiny chips, inset tags, wide pills, dots. */
   --radius-3xs: 2px;
   --radius-2xs: 3px;

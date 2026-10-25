@@ -64,21 +64,97 @@ export interface Stats {
   total_waiting: number;
 }
 
+// ── Agent presence (Not-Ready codes) ─────────────────────────────────────────
+
+/** Live agent presence state, as the backend's agent-state manager reports it. */
+export type AgentState =
+  | 'logged_out'
+  | 'ready'
+  | 'not_ready'
+  | 'on_call'
+  | 'wrap_up'
+  | 'dnd'
+  | 'available';  // non-agent presence (plain extension: reachable, no queue)
+
+/** One agent's live presence, pushed in the WebSocket state payload (`agent_states`).
+ *  It carries the reason CODE only; the label is resolved client-side (usePauseReasons). */
+export interface AgentStateInfo {
+  extension: string;
+  state: AgentState;
+  reason_code: string | null;
+  /** ISO timestamp (with UTC offset) the state was entered, so a timer survives a reload. */
+  since: string;
+  /** Seconds in the current state at snapshot time. */
+  duration_secs: number;
+  linkedid: string | null;
+  queue: string | null;
+  /** False for a plain extension (Available/DND/Offline presence, no queue). */
+  is_agent?: boolean;
+}
+
+/** An admin-managed Not-Ready / pause reason code. MySQL TINYINTs arrive as 0/1. */
+export interface PauseReason {
+  id: number;
+  code: string;
+  label: string;
+  productive: number | boolean;
+  color?: string | null;
+  sort_order: number;
+  is_active: number | boolean;
+  is_system: number | boolean;
+}
+
 /** One row of the Agent Adherence report. */
 export interface AgentAdherenceRow {
   agent: string;
   name: string;
-  login: string | null;      // ISO, or null if no activity
+  login: string | null;      // ISO, first login of the period
   logout: string | null;     // ISO, or null if still logged in
   logged_in: boolean;        // true = currently logged in
-  logged_in_secs: number;
+  /** Login sessions in the period (a logout, or the shift boundary, ends one). */
+  sessions?: number;
+  logged_in_secs: number;    // ready + on call + wrap + not ready + dnd
   ready_secs: number;
   on_call_secs: number;
   wrap_secs: number;
-  not_ready_secs: number;
+  not_ready_secs: number;    // every paused state with a reason
+  /** The unproductive part of not_ready (break, lunch, ...). */
+  break_secs?: number;
+  dnd_secs?: number;
   productive_not_ready_secs: number;
   occupancy_pct: number;
   not_ready_breakdown: { code: string; label: string; productive: boolean; secs: number }[];
+}
+
+/** One presence state an agent held, from GET /api/analytics/agent-adherence/timeline. */
+export interface AgentTimelineEntry {
+  id: number;
+  state: AgentState;
+  reason_code: string | null;
+  reason_label: string | null;
+  queue: string | null;
+  source: string | null;     // ui / ami / supervisor / system
+  started_at: string;        // ISO, real clock time (may precede the window)
+  ended_at: string | null;   // null = still in this state
+  open: boolean;
+  duration_secs: number;     // time inside the selected window
+}
+
+/** One login session: the moves between a login and the logout that ended it. */
+export interface AgentTimelineSession {
+  login: string;             // ISO
+  logout: string | null;     // null = still logged in
+  open: boolean;
+  /** 'dnd' = the agent ended this shift by going Do Not Disturb rather than logging out. */
+  closed_by: 'dnd' | null;
+  duration_secs: number;
+  entries: AgentTimelineEntry[];
+}
+
+export interface AgentTimeline {
+  agent: string;
+  name: string;
+  sessions: AgentTimelineSession[];  // newest first
 }
 
 export interface AppState {
@@ -87,16 +163,23 @@ export interface AppState {
   queues: Record<string, Queue>;
   queue_members: Record<string, QueueMember>;
   queue_entries: Record<string, QueueEntry>;
+  /** Live presence per extension (agent-state manager snapshot, scope-filtered). */
+  agent_states?: Record<string, AgentStateInfo>;
   stats: Stats;
 }
 
 export interface WebSocketMessage {
-  type: 'state_update' | 'initial_state' | 'action_result' | 'error' | 'call_notification_new';
+  type: 'state_update' | 'initial_state' | 'action_result' | 'error' | 'call_notification_new' | 'call_outcome';
   data?: AppState;
   timestamp?: string;
   action?: string;
   success?: boolean;
   message?: string;
+  // call_notification_new / call_outcome: the extension the frame is about.
+  extension?: string;
+  // call_outcome: the call's status (components/callStatus.ts), pushed at hangup.
+  status?: string;
+  linkedid?: string;
 }
 
 export interface ActionMessage {
@@ -121,13 +204,19 @@ export interface CallLogRecord {
   recording_path: string | null;
   recording_file: string | null;
   app: string;
+  // Who ended the call, read off the same CEL facts as the journey's HANGUP event.
+  // Null when CEL has no say.
+  ended_by?: 'agent' | 'customer' | 'system' | null;
+  ended_by_agent?: string | null;
   call_journey_count?: number | null;
   linkedid?: string | null;
   uniqueid?: string | null;
   // Supervision (listen/whisper/barge). `is_supervision` marks the standalone ChanSpy
-  // row (hidden by default in the UI); `supervision` carries the spy metadata.
+  // row (hidden by default in the UI); `supervision_count` marks a normal call that
+  // was monitored (its journey carries the LISTEN/WHISPER/BARGE events).
   is_supervision?: boolean;
   supervision?: CallSupervisionInfo | null;
+  supervision_count?: number | null;
 }
 
 export interface CallSupervisionInfo {
@@ -140,13 +229,24 @@ export interface CallSupervisionInfo {
 // Call journey event (from API)
 export interface CallJourneyEvent {
   event: string;
+  /** Naive server-local ISO `YYYY-MM-DDTHH:MM:SS`; rendered in the viewer's locale. */
   time: string;
   agent?: string;
   duration?: number;
+  /** HANGUP: the raw CDR disposition. Not shown: the call status says it better. */
   reason?: string;
   from_number?: string;
   to_number?: string;
   queue?: string;
+  supervisor?: string;   // LISTEN/WHISPER/BARGE: the supervising extension
+  target?: string;       // LISTEN/WHISPER/BARGE: the monitored extension
+  // HANGUP: who ended the call, kept apart from the call status, so an Unanswered call can
+  // still say whose hangup it was.
+  ended_by?: 'agent' | 'customer' | 'system';
+  ended_by_agent?: string;       // the agent's extension, when ended_by is 'agent'
+  // IVR: the menu the caller went through, and the key they pressed when known.
+  ivr?: string;
+  selection?: string;
   [key: string]: unknown;
 }
 
@@ -192,7 +292,7 @@ export interface OutboundKpis {
 
 export interface CombinedKpis {
   total_calls: number;
-  /** Neither inbound nor outbound: extension to extension, feature codes, echo tests. */
+  /** Neither inbound nor outbound: extension to extension, feature codes, audio loopback tests. */
   internal_calls?: number;
   answered_calls: number;
   aht_secs: number | null;
@@ -268,6 +368,12 @@ export interface VolumeTrendPoint {
   abandoned_calls: number;    // inbound abandoned
   outbound_total: number;     // outbound total
   outbound_answered: number;  // outbound answered
+}
+
+/** GET /api/analytics/drilldown?facets=1 adds per-value counts over the whole filtered set. */
+export interface AnalyticsDrilldownFacets {
+  direction?: Record<string, number>;
+  status?: Record<string, number>;
 }
 
 export interface AnalyticsDrilldownRecord {
@@ -366,4 +472,36 @@ export interface ApiKey {
   created_at?: string | null;
   /** Present ONLY in the POST /api/api-keys response — the one-time plaintext (opd_…). */
   key?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+/** One row of the append-only audit log (every admin-side change). */
+export interface AuditLogEntry {
+  id: number;
+  actor_user_id?: number | null;
+  /** The signed-in user's name (or the API key's name) at the time of the change. */
+  actor?: string | null;
+  actor_ext?: string | null;
+  action: string;
+  entity_type: string;
+  entity_id?: string | null;
+  summary?: string | null;
+  ip?: string | null;
+  created_at?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Call notifications (the bell)
+// ---------------------------------------------------------------------------
+export interface CallNotification {
+  id: number;
+  extension: string;
+  caller_from: string | null;
+  queue: string | null;
+  status_flag: string;
+  event_time: string;
+  /** A call status (components/callStatus.ts); anything else passes through raw. */
+  reason: string | null;
 }

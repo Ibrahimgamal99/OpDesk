@@ -140,7 +140,7 @@ export function foldPlain(input: string): string {
 }
 
 export interface Query {
-  /** What the user typed, unfolded. For echoing back in empty states. */
+  /** What the user typed, unfolded. For repeating back in empty states. */
   raw: string;
   /** Folded, whitespace-split. Every one must match for the item to match. */
   tokens: string[];

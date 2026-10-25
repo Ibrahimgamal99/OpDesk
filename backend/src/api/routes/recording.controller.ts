@@ -1,0 +1,244 @@
+/**
+ * Call recording settings: the master switch and format, the per-direction and
+ * per-extension policy, local retention, and storage statistics.
+ *
+ * Recording runs through OpDesk's own [opdesk-record] MixMonitor (mixed file + per-speaker
+ * legs for voice activity), started from the PBX's predial hooks. Policy is opt-OUT and
+ * lives in the AstDB (opdesk/rec/...): every call records unless its direction or one of
+ * its extensions is switched off. Storage is local only.
+ *
+ * The playback, list and delete routes for individual recordings live in
+ * call-history.controller.ts (/api/recordings...).
+ */
+
+import { Controller, Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { env } from '../../core/config';
+import { getLogger } from '../../core/logger';
+import * as dbm from '../../db/db-manager';
+import {
+  disableRecording,
+  enableRecording,
+  RECORD_SINGLE_DIR,
+  RECORDING_FORMATS,
+  setRecordingDirection,
+  setRecordingExtension,
+} from '../../services/dialplan';
+import {
+  boolSetting,
+  intSettingOrNone,
+  invalidateRecordingIndex,
+  LOCAL_MAX_BYTES_SETTING,
+  LOCAL_RETENTION_DAYS_SETTING,
+  RECORDING_ROOT_SETTING,
+  RecordingRootError,
+  recordingPolicySnapshot,
+  recordingRoot,
+  recordingStorageStats,
+  runRecordingRetention,
+  VAD_DELETE_LEGS_SETTING,
+  validateRecordingRoot,
+} from '../../services/recording';
+import { HttpError } from '../http-error';
+import { respond } from '../respond';
+import { Auth, Get, Post } from '../routing';
+import { parseBody, pStr, v } from '../validation';
+
+const log = getLogger('api.routes.recording');
+
+export const RecordingMasterBody = v.model({
+  format: v.str().default('wav'),
+});
+
+export const DirectionRecordingBody = v.model({
+  enabled: v.bool(),
+});
+
+export const ExtensionRecordingBody = v.model({
+  recording: v.bool(),
+});
+
+export const BulkExtensionRecordingBody = v.model({
+  recording: v.bool(),
+  extensions: v.list(v.str()).nullish(), // omitted -> all extensions
+});
+
+export const RecordingRetentionBody = v.model({
+  local_days: v.int().nullish(),
+  local_max_bytes: v.int().nullish(),
+  vad_delete_legs: v.bool().nullish(),
+  root_dir: v.str().nullish(),
+});
+
+/** The PBX flavour from the PBX setting, else env (decides the predial hook form). */
+async function pbxSetting(): Promise<string> {
+  return (await dbm.getSetting('PBX', env('PBX', 'FreePBX'))) || env('PBX', 'FreePBX') || 'FreePBX';
+}
+
+@Controller()
+export class RecordingController {
+  /** Master on/off + format (+ where the files are). Any signed-in user. */
+  @Get('/api/recording/status')
+  @Auth('user')
+  async getRecordingStatus() {
+    const enabled = await boolSetting('RECORDING_ENABLED', env('RECORDING_ENABLED', 'false') || 'false');
+    const format = (await dbm.getSetting('RECORDING_FORMAT', env('RECORDING_FORMAT', 'wav') || 'wav')) || 'wav';
+    return { enabled, format, engine: 'opdesk', mixed_dir: await recordingRoot(), single_dir: RECORD_SINGLE_DIR };
+  }
+
+  /** Full policy: {enabled, format, directions{inbound,outbound,internal}, extensions[{extension,name,recording}]}. */
+  @Get('/api/recording/policy')
+  @Auth('admin')
+  async getRecordingPolicyEndpoint() {
+    return recordingPolicySnapshot();
+  }
+
+  /** Turn the recorder on (installs [opdesk-record] with VAD in the predial hooks). Body {format}. */
+  @Post('/api/recording/enable')
+  @Auth('admin')
+  async enableRecordingEndpoint(@Req() req: Request) {
+    // No body at all is the default {format: 'wav'}.
+    const body = parseBody(RecordingMasterBody, req.body === undefined || req.body === null ? {} : req.body);
+    const fmt = (body.format || 'wav').trim().toLowerCase();
+    if (!RECORDING_FORMATS.includes(fmt)) throw new HttpError(400, `Unsupported recording format: ${fmt}`);
+    let ok: boolean;
+    try {
+      ok = await enableRecording({ mixFormat: fmt, vad: true, pbx: await pbxSetting() });
+    } catch (e) {
+      log.error('Failed to enable call recording: %s', e);
+      throw new HttpError(500, 'Internal server error');
+    }
+    if (!ok) throw new HttpError(500, 'Failed to enable call recording. Check server logs.');
+    await dbm.setSetting('RECORDING_ENABLED', 'true');
+    await dbm.setSetting('RECORDING_FORMAT', fmt);
+    return respond({ message: `Call recording enabled (format=${fmt}). Asterisk dialplan reloaded.` });
+  }
+
+  /** Turn the recorder off (the predial hooks become no-ops). */
+  @Post('/api/recording/disable')
+  @Auth('admin')
+  async disableRecordingEndpoint() {
+    let ok: boolean;
+    try {
+      ok = await disableRecording(await pbxSetting());
+    } catch (e) {
+      log.error('Failed to disable call recording: %s', e);
+      throw new HttpError(500, 'Internal server error');
+    }
+    if (!ok) throw new HttpError(500, 'Failed to disable call recording. Check server logs.');
+    await dbm.setSetting('RECORDING_ENABLED', 'false');
+    return respond({ message: 'Call recording disabled. Asterisk dialplan reloaded.' });
+  }
+
+  /** Record (or not) one call direction: inbound / outbound / internal. Body {enabled}. */
+  @Post('/api/recording/direction/:direction')
+  @Auth('admin')
+  async setDirectionRecordingEndpoint(@Req() req: Request) {
+    const direction = pStr(req.params.direction);
+    const body = parseBody(DirectionRecordingBody, req.body);
+    if (!['inbound', 'outbound', 'internal'].includes(direction)) {
+      throw new HttpError(400, 'direction must be inbound, outbound or internal');
+    }
+    if (await setRecordingDirection(direction, body.enabled)) return { direction, enabled: body.enabled };
+    throw new HttpError(500, 'Failed to update direction recording');
+  }
+
+  /** Record (true) or don't record (false) calls involving one extension. Body {recording}. */
+  @Post('/api/recording/extension/:ext')
+  @Auth('admin')
+  async setExtensionRecordingEndpoint(@Req() req: Request) {
+    const ext = pStr(req.params.ext);
+    const body = parseBody(ExtensionRecordingBody, req.body);
+    if (!/^[0-9A-Za-z_*#+.-]{1,40}$/.test(ext)) throw new HttpError(400, 'Invalid extension');
+    if (await setRecordingExtension(ext, body.recording)) return { extension: ext, recording: body.recording };
+    throw new HttpError(500, 'Failed to update extension recording');
+  }
+
+  /** Record on/off for many extensions at once (all extensions when the list is omitted). */
+  @Post('/api/recording/extensions/bulk')
+  @Auth('admin')
+  async bulkSetRecordingEndpoint(@Req() req: Request) {
+    const body = parseBody(BulkExtensionRecordingBody, req.body);
+    let targets: string[] = body.extensions ?? [];
+    if (!targets.length) targets = (await dbm.getExtensionsFromDb()) ?? [];
+    if (!targets.length) throw new HttpError(400, 'No extensions to update');
+    const failed: string[] = [];
+    for (const e of targets) {
+      if (!(await setRecordingExtension(e, body.recording))) failed.push(String(e));
+    }
+    if (failed.length) throw new HttpError(500, `Failed to update: ${failed.join(', ')}`);
+    return { updated: targets.map(String) };
+  }
+
+  /** Local retention: {local_days, local_max_bytes, vad_delete_legs, root_dir} (null / 0 = off). */
+  @Get('/api/recording/retention')
+  @Auth('admin')
+  async getRecordingRetention() {
+    return {
+      local_days: await intSettingOrNone(LOCAL_RETENTION_DAYS_SETTING),
+      local_max_bytes: await intSettingOrNone(LOCAL_MAX_BYTES_SETTING),
+      vad_delete_legs: await boolSetting(VAD_DELETE_LEGS_SETTING, 'true'),
+      root_dir: await recordingRoot(),
+    };
+  }
+
+  /**
+   * Save retention settings; each field only when sent. A new root_dir must be an
+   * absolute, readable directory that is not a filesystem root (it is both the audio
+   * route's sandbox and the tree retention deletes from).
+   */
+  @Post('/api/recording/retention')
+  @Auth('admin')
+  async setRecordingRetention(@Req() req: Request) {
+    const body = parseBody(RecordingRetentionBody, req.body);
+    for (const [field, value] of [
+      ['local_days', body.local_days],
+      ['local_max_bytes', body.local_max_bytes],
+    ] as const) {
+      if (value !== null && value !== undefined && value < 0) throw new HttpError(400, `${field} must not be negative`);
+    }
+    let newRoot: string | null = null;
+    if (body.root_dir !== null && body.root_dir !== undefined) {
+      try {
+        newRoot = await validateRecordingRoot(body.root_dir);
+      } catch (e) {
+        if (e instanceof RecordingRootError) throw new HttpError(400, e.message);
+        throw e;
+      }
+    }
+    if (body.local_days !== null && body.local_days !== undefined) {
+      await dbm.setSetting(LOCAL_RETENTION_DAYS_SETTING, String(body.local_days));
+    }
+    if (body.local_max_bytes !== null && body.local_max_bytes !== undefined) {
+      await dbm.setSetting(LOCAL_MAX_BYTES_SETTING, String(body.local_max_bytes));
+    }
+    if (body.vad_delete_legs !== null && body.vad_delete_legs !== undefined) {
+      await dbm.setSetting(VAD_DELETE_LEGS_SETTING, body.vad_delete_legs ? 'true' : 'false');
+    }
+    if (newRoot !== null) {
+      // Compare without trailing slashes: an unchanged directory must not rewrite the
+      // setting or drop the index.
+      const norm = (p: string): string => p.replace(/\/+$/, '') || '/';
+      if (norm(newRoot) !== norm(await recordingRoot())) {
+        await dbm.setSetting(RECORDING_ROOT_SETTING, newRoot);
+        await invalidateRecordingIndex();
+        log.info('Recordings directory changed to %s', newRoot);
+      }
+    }
+    return {};
+  }
+
+  /** "Clean up now": the sweep the daily background job runs. {local_deleted, remote_deleted}. */
+  @Post('/api/recording/retention/run')
+  @Auth('admin')
+  async runRecordingRetentionEndpoint() {
+    return runRecordingRetention();
+  }
+
+  /** {total_recordings, local{used_bytes, disk_free_bytes, disk_total_bytes, ...}}. */
+  @Get('/api/recording/storage-stats')
+  @Auth('admin')
+  async getRecordingStorageStats() {
+    return recordingStorageStats();
+  }
+}

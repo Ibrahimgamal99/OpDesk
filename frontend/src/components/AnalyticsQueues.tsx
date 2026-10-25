@@ -13,6 +13,7 @@ import {
 } from './analyticsUtils';
 import { Alert, Badge, Card, Dropdown, EmptyState, Tooltip } from './ui';
 import { FigureCard, VERDICT_TONE, type Metric } from './FigureCards';
+import { AnalyticsExportButton } from './AnalyticsExport';
 
 interface HeatmapProps { data: HeatmapData }
 
@@ -70,7 +71,10 @@ function Heatmap({ data }: HeatmapProps) {
 }
 
 /** What the comparison chart ranks the queues by. */
-type CompareKey = 'sla' | 'contactRate' | 'abandonRate' | 'avgWait' | 'offered';
+type CompareKey = 'sla' | 'answerRate' | 'contactRate' | 'abandonRate' | 'avgWait' | 'offered';
+
+/** A queue row, plus the per-person answer rate a backend may add (absent: not offered). */
+type QueueRow = QueueKPIRow & { answer_rate?: number | null };
 
 interface Props { dateRange: DateRange }
 
@@ -143,8 +147,14 @@ export function AnalyticsQueues({ dateRange }: Props) {
   ];
 
   // ── Comparison: one figure across every queue ──────────────────────────────
-  const compareOptions: { value: CompareKey; label: string; pct: boolean; pick: (q: QueueKPIRow) => number | null }[] = [
+  // Answer rate counts people (metrics.tip.answerRate), so it is offered only when the
+  // server sends it per queue; answered ÷ offered is the contact rate, always computable.
+  const hasAnswerRate = queues.some((q: QueueRow) => q.answer_rate !== undefined && q.answer_rate !== null);
+  const compareOptions: { value: CompareKey; label: string; pct: boolean; pick: (q: QueueRow) => number | null }[] = [
     { value: 'sla', label: t('metrics.sla'), pct: true, pick: (q) => q.sla_pct },
+    ...(hasAnswerRate
+      ? [{ value: 'answerRate' as const, label: t('metrics.answerRate'), pct: true, pick: (q: QueueRow) => q.answer_rate ?? null }]
+      : []),
     { value: 'contactRate', label: t('metrics.contactRate'), pct: true, pick: contactRate },
     { value: 'abandonRate', label: t('metrics.abandonRate'), pct: true, pick: abandonRate },
     { value: 'avgWait', label: t('metrics.avgWait'), pct: false, pick: (q) => q.avg_wait_secs },
@@ -176,6 +186,10 @@ export function AnalyticsQueues({ dateRange }: Props) {
 
   return (
     <div className="u-col u-gap-4">
+      <div className="an-export-row">
+        <AnalyticsExportButton report="queues" dateRange={dateRange}
+          title={t('analytics.export.queuesTitle', 'Every queue’s figures as a CSV file')} />
+      </div>
       {/* ── 1. One card per queue ── */}
       <div className="dcards">
         {queues.map((q) => (
@@ -244,6 +258,8 @@ export function AnalyticsQueues({ dateRange }: Props) {
             kpiTip(t, 'analytics.tip.queues.heatmap', t('analytics.queues.heatmapTitle'), undefined,
               { text: 'When your calls come in, by day and hour. Darker means busier.' }))}
           description={period}
+          actions={<AnalyticsExportButton report="heatmap" dateRange={dateRange}
+            title={t('analytics.export.heatmapTitle', 'Calls by weekday and hour as a CSV file')} />}
         >
           <Heatmap data={heatmap} />
         </Card>

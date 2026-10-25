@@ -287,8 +287,10 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
               </div>
             )}
 
-            {/* ── Queues, now ── */}
-            {!isAgent && (
+            {/* ── Queues, now ── An agent sees the queues of the groups they belong to (the
+                server scopes the live state), so the board shows for them whenever any
+                are in that scope, and stays out of the way when none are. */}
+            {(!isAgent || queueRows.length > 0) && (
               <>
                 <div className="dash-section-label"><Users size={14} />{t('dashboard.queues.title', 'Live queues')}</div>
                 {queueRows.length === 0 ? (

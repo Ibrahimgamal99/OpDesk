@@ -167,7 +167,7 @@ export function useWebPhone() {
     onIncomingCallEnded: () => setIncomingCall(null),
   };
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (opts?: { force?: boolean }) => {
     if (!config?.server?.trim() || !config?.extension?.trim() || !config?.extension_secret?.trim()) {
       addLog('Set PBX server (admin), extension and extension secret first', 'error');
       return;
@@ -175,7 +175,13 @@ export function useWebPhone() {
     // Guard: if the existing WebPhone is already mid-reconnect (status = 'connecting'),
     // don't interrupt it. onDisconnect sets 'connecting' so this hook's callers
     // (App.tsx's auto-reconnect effect) don't race with SIP.js's transport reconnect.
-    if (statusRef.current === 'connecting' && phoneRef.current) return;
+    //
+    // A forced connect bypasses the guard and always ends with a brand-new REGISTER. It is
+    // used when the user taps an incoming-call notification: after the page was
+    // backgrounded or frozen the SIP WebSocket may be dead while the status still reads
+    // 'connecting' or 'connected' (JS was frozen, so SIP.js never saw the close), and only
+    // a fresh transport lets the INVITE reach us.
+    if (!opts?.force && statusRef.current === 'connecting' && phoneRef.current) return;
     if (phoneRef.current) {
       phoneRef.current.disconnect('connect-replace');
       phoneRef.current = null;

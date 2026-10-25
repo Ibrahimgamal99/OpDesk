@@ -3,21 +3,25 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, RefreshCw, Radio, Clock, Loader2, MinusCircle, CircleDot, Rows3, LayoutGrid } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import type { Extension } from '../types';
+import type { Extension, AgentStateInfo } from '../types';
 import { getUser } from '../auth';
-import { StatusBadge, AGENT_STATE_META, DEVICE_STATUS_META, type StatusMeta } from './statusBadge';
+import { StatusBadge, AGENT_STATE_META, DEVICE_STATUS_META, resolveAgentMeta, type StatusMeta } from './statusBadge';
+import { usePauseReasons } from '../hooks/usePauseReasons';
 import { SuperviseActions } from './SuperviseActions';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
 import { Badge, Dropdown, EmptyState, Page, SearchInput, Toolbar } from './ui';
 import type { DropdownOption } from './ui';
 import '../styles/live.css';
 
-/** Live queue presence for an extension (Ready / Not-Ready · reason). */
+/** Live queue presence for an extension (Ready / Not-Ready · reason code), derived from
+ *  `queue_members`. Only a fallback for a backend that sends no `agent_states`. */
 export interface MemberPresence { queueOn: boolean; paused: boolean; reason: string }
 
 interface ExtensionsPanelProps {
   extensions: Record<string, Extension>;
-  /** Extension -> queue presence, so the card reflects agent status. */
+  /** Extension -> live agent presence (the WebSocket `agent_states`). Authoritative when present. */
+  agentStates?: Record<string, AgentStateInfo>;
+  /** Extension -> queue presence, used only when the backend sends no `agent_states`. */
   memberPresence?: Record<string, MemberPresence>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   onSync?: () => void;
@@ -31,12 +35,13 @@ interface ExtensionsPanelProps {
 const COMPACT_STORAGE_KEY = 'opdesk:extensions-compact';
 
 /** What the Status filter narrows by: the status the card's badge is showing. */
-type StatusBucket = 'available' | 'in_call' | 'ringing' | 'on_hold' | 'offline' | 'dnd' | 'not_ready';
+type StatusBucket = 'available' | 'in_call' | 'ringing' | 'on_hold' | 'offline' | 'dnd' | 'not_ready' | 'wrap_up';
 
 /** One extension's resolved status: the badge it wears and the filter bucket it falls in. */
 interface ResolvedStatus {
   meta: StatusMeta;
   label: string;
+  title?: string;
   bucket: StatusBucket;
 }
 
@@ -45,37 +50,74 @@ const DEVICE_BUCKET: Record<Extension['status'], StatusBucket> = {
   on_hold: 'on_hold', unavailable: 'offline',
 };
 
+const AGENT_BUCKET: Record<AgentStateInfo['state'], StatusBucket> = {
+  ready: 'available', available: 'available', on_call: 'in_call', wrap_up: 'wrap_up',
+  not_ready: 'not_ready', dnd: 'dnd', logged_out: 'offline',
+};
+
 /**
- * One status per card. Live telephony wins (a real call/ring must show), then DND, then
- * queue presence (Not-Ready · reason / Ready), then the raw device status. Resolved here
- * rather than inside the card so the Status filter and the badge cannot disagree.
+ * One status per card, one badge. Resolved here rather than inside the card so the Status
+ * filter and the badge cannot disagree.
+ *  - A queue agent: their live presence IS the status (login -> Ready, logout -> Offline,
+ *    DND, pause -> Not-Ready with the reason's label, On Call, Wrap-up). Presence only
+ *    tracks queue calls, so a direct call while Ready lets the live device status drive the
+ *    card instead of a misleading green Ready. A Ready agent whose phone is unregistered
+ *    keeps the label but dims to grey (a mobile softphone asleep until the next call).
+ *  - A plain extension: DND when its DND flag is set, otherwise its raw device status.
+ *  - A backend without `agent_states`: the queue-member fallback (Not-Ready / Ready).
  */
-function resolveStatus(extension: Extension, presence: MemberPresence | undefined, t: TFunction): ResolvedStatus {
-  const deviceBusy = ['in_call', 'dialing', 'ringing', 'on_hold'].includes(extension.status);
-  if (!deviceBusy && extension.dnd) {
-    const meta = AGENT_STATE_META.dnd;
-    return { meta, label: t('extensions.status.dnd', 'Do Not Disturb'), bucket: 'dnd' };
-  }
-  if (!deviceBusy && presence?.queueOn && presence.paused) {
-    const base = t('extensions.status.notReady', 'Not Ready');
-    return {
-      meta: AGENT_STATE_META.not_ready,
-      label: presence.reason ? `${base} · ${presence.reason}` : base,
-      bucket: 'not_ready',
-    };
-  }
-  if (!deviceBusy && presence?.queueOn && extension.status !== 'unavailable') {
-    return { meta: AGENT_STATE_META.ready, label: t('extensions.status.ready', 'Ready'), bucket: 'available' };
-  }
-  return {
+function resolveStatus(
+  extension: Extension,
+  agentState: AgentStateInfo | undefined,
+  presence: MemberPresence | undefined,
+  t: TFunction,
+  labelFor: (code?: string | null) => string | null,
+): ResolvedStatus {
+  const device = (): ResolvedStatus => ({
     meta: DEVICE_STATUS_META[extension.status] ?? DEVICE_STATUS_META.unavailable,
     label: t(`extensions.status.${extension.status}`, { defaultValue: extension.status }),
     bucket: DEVICE_BUCKET[extension.status] ?? 'offline',
+  });
+  const deviceBusy = ['in_call', 'dialing', 'ringing', 'on_hold'].includes(extension.status);
+  const notReadyLabel = (code?: string | null) => {
+    const base = t('extensions.status.notReady', 'Not Ready');
+    const reason = labelFor(code);
+    return reason ? `${base} · ${reason}` : base;
   };
+
+  if (agentState && agentState.is_agent !== false) {
+    const queueTitle = agentState.queue
+      ? t('agent.state.queueLabel', { queue: agentState.queue, defaultValue: 'Queue: {{queue}}' })
+      : undefined;
+    const presenceIsIdle = agentState.state === 'ready' || agentState.state === 'available';
+    if (deviceBusy && presenceIsIdle) return { ...device(), title: queueTitle };
+    const resolved = resolveAgentMeta(agentState.state, extension.status === 'unavailable');
+    return {
+      meta: resolved.meta,
+      label: agentState.state === 'not_ready'
+        ? notReadyLabel(agentState.reason_code)
+        : t(resolved.meta.key, resolved.meta.fallback),
+      title: resolved.asleep
+        ? t('agent.state.deviceAsleep', 'Ready, but the phone is asleep; it wakes on the next call')
+        : queueTitle,
+      bucket: AGENT_BUCKET[agentState.state] ?? 'offline',
+    };
+  }
+  if (!deviceBusy && (extension.dnd || agentState?.state === 'dnd')) {
+    return { meta: AGENT_STATE_META.dnd, label: t('extensions.status.dnd', 'Do Not Disturb'), bucket: 'dnd' };
+  }
+  if (!agentState && !deviceBusy && presence?.queueOn && presence.paused) {
+    return { meta: AGENT_STATE_META.not_ready, label: notReadyLabel(presence.reason), bucket: 'not_ready' };
+  }
+  if (!agentState && !deviceBusy && presence?.queueOn && extension.status !== 'unavailable') {
+    return { meta: AGENT_STATE_META.ready, label: t('extensions.status.ready', 'Ready'), bucket: 'available' };
+  }
+  return device();
 }
 
 export function ExtensionsPanel({
   extensions,
+  agentStates = {},
   memberPresence = {},
   onSupervisorAction,
   onSync,
@@ -84,6 +126,9 @@ export function ExtensionsPanel({
   onDndToggle,
 }: ExtensionsPanelProps) {
   const { t } = useTranslation();
+  // Resolved once here and passed down: a hook per card would mean one
+  // /api/pause-reasons request per extension.
+  const { labelFor } = usePauseReasons();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -97,8 +142,11 @@ export function ExtensionsPanel({
 
   const rows = useMemo(() => Object.values(extensions)
     .sort((a, b) => a.extension.localeCompare(b.extension, undefined, { numeric: true }))
-    .map((ext) => ({ ext, status: resolveStatus(ext, memberPresence[ext.extension], t) })),
-  [extensions, memberPresence, t]);
+    .map((ext) => ({
+      ext,
+      status: resolveStatus(ext, agentStates[ext.extension], memberPresence[ext.extension], t, labelFor),
+    })),
+  [extensions, agentStates, memberPresence, t, labelFor]);
 
   // Filters offer only what is on the page: each status or type that occurs, with its count.
   const typeOf = (ext: string) => (webrtcMap[ext] === 'yes' ? 'webrtc' : 'desk');
@@ -124,6 +172,7 @@ export function ExtensionsPanel({
     statusOption('ringing', DEVICE_STATUS_META.ringing, t('extensions.status.ringing')),
     statusOption('on_hold', DEVICE_STATUS_META.on_hold, t('extensions.status.on_hold')),
     statusOption('not_ready', AGENT_STATE_META.not_ready, t('extensions.status.notReady', 'Not Ready')),
+    statusOption('wrap_up', AGENT_STATE_META.wrap_up, t('agent.state.wrapUp', 'Wrap-up')),
     statusOption('dnd', AGENT_STATE_META.dnd, t('extensions.status.dnd', 'Do Not Disturb')),
     statusOption('offline', DEVICE_STATUS_META.unavailable, t('extensions.status.unavailable')),
   ], statusCounts, statusFilter);
@@ -307,7 +356,7 @@ function ExtensionCard({
       </div>
 
       <div className="ext-badges">
-        <StatusBadge meta={meta} label={status.label} />
+        <StatusBadge meta={meta} label={status.label} title={status.title} />
         {canToggleDnd && (
           <button
             type="button"

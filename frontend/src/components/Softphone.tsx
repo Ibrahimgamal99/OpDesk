@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   Phone,
@@ -25,8 +25,12 @@ import { useTranslation } from 'react-i18next';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { useAudioLevels } from '../hooks/useAudioLevels';
 import { AgentStatusHeader } from './AgentStatusHeader';
-import type { AgentPresence } from './AgentStatusHeader';
 import { Alert } from './ui';
+import { useCallOutcome } from '../contexts/CallOutcomeContext';
+import { CallStatusBadge } from './CallStatusBadge';
+
+/** How long the last call's status stays on the softphone after hangup. */
+const OUTCOME_NOTICE_MS = 15_000;
 
 // Map a live MOS (1–5) to a single signal-strength icon + tone class, matching the
 // Call History QoS labels so the live and recorded quality read the same.
@@ -52,7 +56,7 @@ const DIAL_PAD = [
   [['*', ''], ['0', '+'], ['#', '']],
 ];
 
-export function Softphone({ presence = null }: { presence?: AgentPresence | null }) {
+export function Softphone() {
   const { t } = useTranslation();
   const {
     config,
@@ -96,6 +100,17 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferDest, setTransferDest] = useState('');
   const { micLevel, speakerLevel } = useAudioLevels(localStream, remoteStream);
+
+  // The last call's status, shown for a moment after hangup. Keyed on the outcome's seq,
+  // so a second identical outcome (two Busy calls in a row) shows again.
+  const outcome = useCallOutcome();
+  const [expiredOutcomeSeq, setExpiredOutcomeSeq] = useState(0);
+  useEffect(() => {
+    if (!outcome) return;
+    const timer = window.setTimeout(() => setExpiredOutcomeSeq(outcome.seq), OUTCOME_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [outcome]);
+  const outcomeNotice = outcome && outcome.seq !== expiredOutcomeSeq ? outcome.status : null;
 
   // Force a fresh registration: drop the current (possibly stuck) WebPhone first so
   // connect()'s "already connecting" guard doesn't swallow the attempt.
@@ -157,7 +172,6 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
       title={t('softphone.title')}
       icon={<Phone size={16} className="softphone-header-icon" />}
       isConnected={isConnected}
-      presence={presence}
       onCall={hasActiveCall}
       {...(withConfigActions
         ? { onRefresh: refetchConfig, refreshDisabled: configLoading, onReconnect: reconnect }
@@ -444,6 +458,13 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
         <div className="softphone-call-status">
           <span>{callStatusLabel(callStatus)}</span>
           {callDuration && <span className="softphone-duration">{callDuration}</span>}
+        </div>
+      )}
+      {/* How the last call ended, as the backend decided it at hangup. */}
+      {outcomeNotice && !callStatus && !incomingCall && (
+        <div className="softphone-call-status" role="status">
+          <span>{t('softphone.lastCall', 'Last call')}</span>
+          <CallStatusBadge status={outcomeNotice} />
         </div>
       )}
 

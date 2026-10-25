@@ -12,6 +12,7 @@ import {
 import { Alert, Card, Tooltip } from './ui';
 import { StatCard, StatRow, VERDICT_TONE, type StatCardProps } from './FigureCards';
 import { DirectionCards, SummaryStats, figuresFromKpis } from './DirectionCards';
+import { AnalyticsExportButton } from './AnalyticsExport';
 
 function delta(a: number | null | undefined, b: number | null | undefined): number | null {
   if (a === null || a === undefined || b === null || b === undefined) return null;
@@ -162,6 +163,13 @@ export function AnalyticsOverview({ dateRange }: Props) {
 
   return (
     <div className="u-col u-gap-4">
+      <div className="an-export-row">
+        <AnalyticsExportButton report="overview" dateRange={dateRange}
+          title={t('analytics.export.overviewTitle', 'The period’s figures as a CSV file')} />
+        <AnalyticsExportButton report="trend" dateRange={dateRange}
+          label={t('analytics.export.trendCsv', 'Daily CSV')}
+          title={t('analytics.export.trendTitle', 'Calls per day as a CSV file')} />
+      </div>
       <SummaryStats figures={figures} previous={previous} />
       <DirectionCards figures={figures} previous={previous} periodLabel={period} />
 

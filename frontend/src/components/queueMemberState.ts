@@ -37,7 +37,7 @@ export function memberStateClass(member: QueueMember): string {
 }
 
 /**
- * Bare extension number for a member interface. Covers both forms Echo may show:
+ * Bare extension number for a member interface. Covers both forms a queue member may take:
  * "Local/100@from-queue/n" -> "100" and "PJSIP/100" -> "100". Shared by the Queues page
  * (Add Member picker) and the Agents board (queue filter), which both key members by it.
  */

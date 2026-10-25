@@ -1,10 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWebPhone } from './hooks/useWebPhone';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
-import { getToken, setUser, getUser, fetchWithAuth } from './auth';
+import { AgentPresenceProvider } from './contexts/AgentPresenceContext';
+import { CallOutcomeProvider, type CallOutcome } from './contexts/CallOutcomeContext';
+import { getToken, setUser, getUser, fetchWithAuth, type User as AuthUser } from './auth';
 import { rlog } from './lib/remoteLog';
 import { subscribeWebPush } from './lib/webPush';
 import { DashboardPanel } from './components/DashboardPanel';
@@ -56,9 +59,11 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { Badge, EmptyState, Tabs } from './components/ui';
 import { CallStatusBadge } from './components/CallStatusBadge';
-import { callStatusMeta } from './components/callStatus';
+import { callStatusLabel, isCallStatus } from './components/callStatus';
+import { memberExtension } from './components/queueMemberState';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 import { raiseFor } from './lib/api';
+import type { CallNotification } from './types';
 
 type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'logs' | 'settings' | 'profile';
 /** Kept in sync with the pre-paint theme script in index.html. */
@@ -85,13 +90,16 @@ function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unk
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function reasonLabel(reason: string | null, t: (key: string) => string): string {
+/** A notification's reason in words. A missed-call notification's reason is a call status
+ *  and reads exactly as call history shows it (callStatus.ts); anything else the backend
+ *  sends passes through as its own text. */
+function reasonLabel(reason: string | null, t: TFunction): string {
   if (!reason) return '';
-  const key = `reason.${reason}`;
-  const translated = t(key);
-  // If no translation found, return the raw reason
-  return translated !== key ? translated : reason;
+  return isCallStatus(reason) ? callStatusLabel(t, reason) : reason;
 }
+
+/** Outside numbers worth asking the phonebook/CRM about: more than an extension's digits. */
+const isOutsideNumber = (n: string) => n.replace(/\D/g, '').length > 5;
 
 /** Snapshot of user form when opening "Create new group" from Users tab (preserved in memory, no API). */
 export interface PendingUserFormSnapshot {
@@ -145,7 +153,9 @@ function App({ onLogout }: AppProps) {
       // user-generated event handler, so requesting it later (e.g. on an incoming
       // call) is rejected. This unlock runs on the first click/keydown.
       if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
+        Notification.requestPermission()
+          .then((perm) => { if (perm === 'granted') subscribeWebPush().catch(() => {}); })
+          .catch(() => {});
       }
       document.removeEventListener('click', unlock);
       document.removeEventListener('keydown', unlock);
@@ -158,8 +168,12 @@ function App({ onLogout }: AppProps) {
     };
   }, []);
 
+  // Assigned right after useWebSocket below; the logout handler is defined before that
+  // hook, so the closing call goes through a ref.
+  const wsDisconnectRef = useRef<() => void>(() => {});
   const handleLogout = useCallback(() => {
     disconnectRef.current('logout');
+    wsDisconnectRef.current();
     onLogout();
   }, [onLogout]);
 
@@ -170,10 +184,24 @@ function App({ onLogout }: AppProps) {
       .catch(() => setNewNotifCount(0));
   }, []);
 
-  const { state, connected, lastUpdate, notifications, sendAction } = useWebSocket(token, {
+  // The status of this user's last finished call, pushed by the backend at hangup. Bumped
+  // with a monotonic seq so two identical outcomes in a row still reach the softphone's
+  // notice (CallOutcomeContext).
+  const [callOutcome, setCallOutcome] = useState<CallOutcome | null>(null);
+  const outcomeSeq = useRef(0);
+  const handleCallOutcome = useCallback((msg: { extension: string; status: string; linkedid: string }) => {
+    const myExt = String(getUser()?.extension ?? '');
+    if (!myExt || msg.extension !== myExt || !msg.status) return;
+    outcomeSeq.current += 1;
+    setCallOutcome({ status: msg.status, linkedid: msg.linkedid, seq: outcomeSeq.current });
+  }, []);
+
+  const { state, connected, lastUpdate, notifications, sendAction, disconnect: wsDisconnect } = useWebSocket(token, {
     onAuthFailure: handleLogout,
     onCallNotificationNew: fetchNewNotifCount,
+    onCallOutcome: handleCallOutcome,
   });
+  wsDisconnectRef.current = wsDisconnect;
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = pathToTab(location.pathname);
@@ -234,40 +262,77 @@ function App({ onLogout }: AppProps) {
   const [webrtcExtensions, setWebrtcExtensions] = useState<{ extension: string; name?: string; webrtc?: string }[]>([]);
   const [newNotifCount, setNewNotifCount] = useState(0);
   const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
-  const [notifList, setNotifList] = useState<{ id: number; extension: string; caller_from: string | null; queue: string | null; status_flag: string; event_time: string; reason: string | null }[]>([]);
+  const [notifList, setNotifList] = useState<CallNotification[]>([]);
+  // Contact names for the outside numbers in the open notification list, keyed by number.
+  const [notifNames, setNotifNames] = useState<Record<string, string>>({});
   const [notifUpdatingId, setNotifUpdatingId] = useState<number | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const notifDropdownRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
-  // Refresh user (role, extension, scope) from server so scope is up to date
+  // Refresh user (role, extension, scope, display name) from the server so scope is up to
+  // date. Stored over what login returned, so a field the server leaves out keeps its value;
+  // the version bump re-renders the header with the fresh name.
+  const [, setMeVersion] = useState(0);
   useEffect(() => {
     if (!token) return;
     const ac = new AbortController();
     fetchWithAuth('/api/auth/me', { signal: ac.signal })
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data) setUser(data); })
+      .then((data: AuthUser | null) => {
+        if (!data || typeof data !== 'object') return;
+        setUser({ ...(getUser() ?? {}), ...data });
+        setMeVersion((v) => v + 1);
+      })
       .catch(() => {});
     return () => ac.abort();
   }, [token]);
 
-  // Web Push: subscribe once authenticated (no-op unless the server has VAPID keys) and
-  // relay service-worker messages back into the app (a push can wake a closed tab).
+  // Web Push: subscribe once authenticated (no-op unless the server has VAPID keys and the
+  // user granted notifications), and again when the softphone registers.
   useEffect(() => {
     if (!token) return;
     subscribeWebPush().catch(() => { /* optional feature */ });
+  }, [token]);
+  useEffect(() => {
+    if (!isConnected) return;
+    subscribeWebPush().catch(() => { /* optional feature */ });
+  }, [isConnected]);
+
+  // Service-worker messages: re-register SIP when the user taps a push / OS incoming-call
+  // notification, and refresh the bell.
+  //
+  // 'opdesk:notification-action' arrives when the user taps an OS notification (the app had
+  // been backgrounded or closed) and 'opdesk:incoming-call' when a push arrives while a tab
+  // is still alive. A backgrounded or frozen tab's SIP-over-WSS registration silently lapses
+  // (the socket dies while JS is frozen, yet the status can still read 'connected'), so the
+  // INVITE would never reach the softphone and the call would never ring. On a tap we force a
+  // fresh registration; on the plain push relay we only (re)connect when not registered, since
+  // tearing down right as the INVITE lands would be counterproductive. A call that is already
+  // ringing or up is never touched.
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
+  const isConnectedRef = useRef(isConnected);
+  isConnectedRef.current = isConnected;
+  useEffect(() => {
+    if (!token || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
     const onSwMessage = (e: MessageEvent) => {
-      const msg = e.data;
+      const msg = e.data as { type?: string; action?: string } | null;
       if (!msg || typeof msg !== 'object') return;
       if (msg.type === 'opdesk:resubscribe') {
         subscribeWebPush().catch(() => { /* ignore */ });
-      } else if (msg.type === 'opdesk:incoming-call' || msg.type === 'opdesk:notification-action') {
-        // Refresh notifications; the SIP/WebSocket layer handles the actual ring once the tab is live.
+      } else if (msg.type === 'opdesk:notification-action') {
+        rlog('push', `notification tap (${msg.action ?? 'open'}) -> re-register SIP`);
+        if (!hasCallRef.current) connectRef.current({ force: true });
+        fetchNewNotifCount();
+      } else if (msg.type === 'opdesk:incoming-call') {
+        rlog('push', `push relayed (connected=${isConnectedRef.current})`);
+        if (!isConnectedRef.current && !hasCallRef.current) connectRef.current();
         fetchNewNotifCount();
       }
     };
-    navigator.serviceWorker?.addEventListener?.('message', onSwMessage);
-    return () => navigator.serviceWorker?.removeEventListener?.('message', onSwMessage);
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
   }, [token, fetchNewNotifCount]);
 
   // Load WebRTC extension list for Extensions tab (who can toggle and current state)
@@ -283,10 +348,25 @@ function App({ onLogout }: AppProps) {
 
   useEffect(() => {
     if (!notifDropdownOpen) return;
+    let alive = true;
     fetchWithAuth('/api/call-notifications?status=new&limit=20')
       .then((r) => r.ok ? r.json() : { notifications: [] })
-      .then((data) => setNotifList(data.notifications || []))
-      .catch(() => setNotifList([]));
+      .then((data) => {
+        if (!alive) return;
+        const list: CallNotification[] = data.notifications || [];
+        setNotifList(list);
+        // Name the outside callers from the phonebook/CRM, once per number. Internal
+        // extensions are named from the live extension list at render instead.
+        const numbers = [...new Set(list.map((n) => n.caller_from || '').filter(isOutsideNumber))];
+        numbers.forEach((num) => {
+          fetchWithAuth(`/api/crm/contact?phone=${encodeURIComponent(num)}`)
+            .then((r) => r.ok ? r.json() : null)
+            .then((c) => { if (alive && c?.name) setNotifNames((prev) => ({ ...prev, [num]: c.name })); })
+            .catch(() => {});
+        });
+      })
+      .catch(() => { if (alive) setNotifList([]); });
+    return () => { alive = false; };
   }, [notifDropdownOpen]);
 
   useEffect(() => {
@@ -319,14 +399,16 @@ function App({ onLogout }: AppProps) {
   const markAllRead = useCallback(async () => {
     const ids = notifList.map((n) => n.id);
     if (ids.length === 0) return;
-    await Promise.all(ids.map((id) =>
+    const results = await Promise.all(ids.map((id) =>
       fetchWithAuth(`/api/call-notifications/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status_flag: 'read' }),
-      })
+      }).then((r) => r.ok).catch(() => false)
     ));
-    setNotifList([]);
+    // Keep any row whose update failed, so it is not silently lost from view.
+    const failed = new Set(ids.filter((_, i) => !results[i]));
+    setNotifList((prev) => prev.filter((n) => failed.has(n.id)));
     fetchNewNotifCount();
   }, [notifList, fetchNewNotifCount]);
 
@@ -471,10 +553,12 @@ function App({ onLogout }: AppProps) {
     }
   }, [location.pathname, navigate]);
 
-  // Agent only has Extensions, Active Calls, Call History (+ their own profile); redirect away from other tabs
+  // An agent has the live pages (scoped by the server to their own extension plus the
+  // members and queues of their groups), their own Call History, Contacts and profile;
+  // redirect away from other tabs.
   const userRole = getUser()?.role;
   useEffect(() => {
-    if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'call-log', 'contacts', 'profile'].includes(activeTab)) {
+    if (userRole === 'agent' && !['dashboard', 'extensions', 'calls', 'queues', 'call-log', 'contacts', 'profile'].includes(activeTab)) {
       navigate(`/${DEFAULT_TAB}`, { replace: true });
       return;
     }
@@ -515,13 +599,12 @@ function App({ onLogout }: AppProps) {
   };
 
   // Per-extension queue presence (Ready / Not-Ready · reason) derived from the live
-  // queue_members, so the Extensions grid reflects agent status like echo.
+  // queue_members: the fallback for a backend that sends no `agent_states`.
   const memberPresence: Record<string, { queueOn: boolean; paused: boolean; reason: string }> = {};
   for (const m of Object.values(state?.queue_members || {})) {
-    const iface = m.interface || '';
-    // interface looks like "PJSIP/120-xxxx" or "SIP/120" → pull the extension.
-    const ext = iface.split('/').pop()?.split('-')[0] || '';
-    if (!ext) continue;
+    // "PJSIP/120", "SIP/120-0000001a" or "Local/120@from-queue/n" -> "120".
+    const ext = memberExtension(m.interface || '').split('-')[0];
+    if (!ext || !/^\d+$/.test(ext)) continue;
     const prev = memberPresence[ext];
     // A member can be in several queues; treat "logged in anywhere" as queueOn and
     // "paused everywhere it appears" as Not-Ready (any active queue → Ready wins).
@@ -532,23 +615,22 @@ function App({ onLogout }: AppProps) {
     };
   }
 
-  // Live agent presence for the softphone status bar (DND + queue login), derived
-  // from the WebSocket state for the logged-in user's own extension.
+  // The signed-in user's own live presence, for the softphone status bar
+  // (AgentPresenceContext). The agent-state manager's snapshot is the truth; `is_agent`
+  // says whether the extension has queues (full Ready / Not-Ready band) or is a plain
+  // extension (Available / DND / Offline).
   const myExt = String(getUser()?.extension || '');
-  const agentPresence = myExt ? (() => {
-    const e = state?.extensions?.[myExt];
-    const member = Object.values(state?.queue_members || {}).find(
-      (m) => (m.interface || '').split('/').pop()?.split('-')[0] === myExt || (m.interface || '').includes(`/${myExt}`)
-    );
-    return {
-      ext: myExt,
-      dnd: !!e?.dnd,
-      queueOn: !!member,
-      paused: !!member?.paused,
-      reason: member?.pause_reason || '',
-      onCall: e?.status === 'in_call' || e?.status === 'dialing' || e?.status === 'on_hold',
-    };
-  })() : null;
+  const myExtState = myExt ? state?.extensions?.[myExt] : undefined;
+  const myPresence = myExt ? (state?.agent_states?.[myExt] ?? null) : null;
+  const presenceValue = {
+    myExt: myExt || null,
+    isAgent: myPresence?.is_agent ?? getUser()?.is_agent ?? !!memberPresence[myExt],
+    presence: myPresence,
+    dnd: !!myExtState?.dnd,
+    onCall: myExtState?.status === 'in_call' || myExtState?.status === 'dialing'
+      || myExtState?.status === 'on_hold' || myExtState?.status === 'ringing',
+    sendAction,
+  };
   const role = getUser()?.role;
   const isAgentRole = role === 'agent';
   const isAdminRole = role === 'admin';
@@ -557,7 +639,8 @@ function App({ onLogout }: AppProps) {
       { tab: 'dashboard', label: t('nav.dashboard', 'Dashboard'), Icon: LayoutDashboard },
       { tab: 'extensions', label: t('nav.extensions'), Icon: Phone },
       { tab: 'calls', label: t('nav.activeCalls'), Icon: PhoneCall, badge: stats.active_calls_count, badgeTone: 'call' },
-      !isAgentRole && { tab: 'queues', label: t('nav.queues'), Icon: Users, badge: stats.total_waiting, badgeTone: 'ringing' },
+      // Agents see their groups' queues (read-only); hidden when they have none.
+      (!isAgentRole || Object.keys(state?.queues || {}).length > 0) && { tab: 'queues', label: t('nav.queues'), Icon: Users, badge: stats.total_waiting, badgeTone: 'ringing' },
     ] },
     { key: 'work', label: t('nav.group.work', 'Work'), items: [
       { tab: 'call-log', label: t('nav.callHistory'), Icon: History },
@@ -629,7 +712,7 @@ function App({ onLogout }: AppProps) {
               <div className="header-bell-dropdown">
                 <div className="header-bell-dropdown-header">
                   <Bell size={16} />
-                  <span>{t('header.missedBusyCalls')}</span>
+                  <span>{t('header.notifications')}</span>
                   {newNotifCount > 0 && <Badge tone="warning">{newNotifCount}</Badge>}
                   {notifList.length > 0 && (
                     <button type="button" className="btn btn-ghost btn-sm u-push-end" onClick={markAllRead} title={t('header.markAllRead')}>
@@ -642,8 +725,11 @@ function App({ onLogout }: AppProps) {
                 ) : (
                   <ul className="header-bell-list">
                     {notifList.map((n) => {
-                      // "Omar · 1001" / "+2011…": the caller's name when it is a known extension, then the number.
-                      const callerName = n.caller_from ? (state?.extensions?.[n.caller_from]?.name || '') : '';
+                      // "Omar · 1001" / "Ahmed · +2011…": the caller's name when known (a live
+                      // extension, else the phonebook/CRM), then the number.
+                      const callerName = n.caller_from
+                        ? (state?.extensions?.[n.caller_from]?.name || notifNames[n.caller_from] || '')
+                        : '';
                       const callerText = callerName && callerName !== n.caller_from
                         ? `${callerName} · ${n.caller_from}`
                         : n.caller_from || '';
@@ -679,7 +765,7 @@ function App({ onLogout }: AppProps) {
                                 reasons that are not call statuses get a plain one. */}
                             {n.reason && (
                               <span className="u-push-end">
-                                {callStatusMeta(n.reason)
+                                {isCallStatus(n.reason)
                                   ? <CallStatusBadge status={n.reason} />
                                   : <Badge tone="neutral">{reasonLabel(n.reason, t)}</Badge>}
                               </span>
@@ -847,6 +933,7 @@ function App({ onLogout }: AppProps) {
           {activeTab === 'extensions' && (
             <ExtensionsPanel
               extensions={state?.extensions || {}}
+              agentStates={state?.agent_states || {}}
               memberPresence={memberPresence}
               onSupervisorAction={handleSupervisorAction}
               onSync={() => sendAction({ action: 'sync' })}
@@ -926,7 +1013,11 @@ function App({ onLogout }: AppProps) {
           onSubmit={executeSupervisorAction}
         />
       )}
-      <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} presence={agentPresence} />
+      <AgentPresenceProvider value={presenceValue}>
+        <CallOutcomeProvider value={callOutcome}>
+          <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} />
+        </CallOutcomeProvider>
+      </AgentPresenceProvider>
       <div className="notifications">
         {notifications.map((notification, index) => (
           <div key={index} className="notification">{notification}</div>

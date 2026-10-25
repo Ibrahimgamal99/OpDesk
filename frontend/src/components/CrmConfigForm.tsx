@@ -872,7 +872,7 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                                 label={t('settings.crm.outcomeMap', 'Outcome values')}
                                 labelExtra={<span className="opt-tag">{t('settings.crm.optional', 'optional')}</span>}
                                 hint={t('settings.crm.outcomeMapHint',
-                                  'Remap an outcome to what your CRM expects (e.g. BUSY → NO_ANSWER). Applies to both status and disposition. Leave blank to send unchanged.')}
+                                  'Remap an outcome to what your CRM expects (e.g. BUSY → UNANSWERED). Applies to both status and disposition. Leave blank to send unchanged.')}
                               >
                                 <div className="crm-keymap-rows">
                                   {(config.call_outcomes || []).map((o) => (

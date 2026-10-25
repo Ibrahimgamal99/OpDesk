@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2, Signal, Power, PowerOff, BarChart3, ShieldCheck, Smartphone, Disc, Settings, Pause,
-  Search, ChevronRight, Plug, KeyRound, ArrowLeft,
+  Search, ChevronRight, Plug, KeyRound, ArrowLeft, ScrollText,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
@@ -13,8 +13,11 @@ import { ApiKeysPanel } from './ApiKeysPanel';
 import { PauseReasonsPanel } from './PauseReasonsPanel';
 import { MobileWakePanel, type PushConfig } from './MobileWakePanel';
 import { CrmSettings, type CRMConfig } from './CrmConfigForm';
+import { RecordingSettings } from './RecordingSettings';
+import { ContactCenterSettings } from './ContactCenterSettings';
+import { AuditPanel } from './AuditPanel';
 import {
-  Alert, Badge, Card, Dropdown, EmptyState, FormRow, FormSection, Page, SearchInput, Toggle, Toolbar,
+  Alert, Badge, Card, EmptyState, FormSection, Page, SearchInput, Toggle, Toolbar,
   matches, prepareQuery,
 } from './ui';
 import type { CardProps } from './ui';
@@ -25,7 +28,8 @@ import type { CardProps } from './ui';
 export type SectionCard = Pick<CardProps, 'icon' | 'title' | 'description' | 'actions'>;
 
 export type SettingsTab =
-  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
+  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes'
+  | 'audit';
 
 /* ── Settings Home ─────────────────────────────────────────────────────
    The panel opens on a searchable grid of every section rather than on one
@@ -33,7 +37,7 @@ export type SettingsTab =
    unknown one) is the home grid. The ids are the ones the old tab bar used,
    so existing `/settings?tab=` links keep working.                        */
 const SETTINGS_TABS: SettingsTab[] = [
-  'integrations', 'api-keys', 'qos', 'analytics', 'sip-tls', 'mobile-wake', 'recording', 'not-ready-codes',
+  'integrations', 'api-keys', 'qos', 'analytics', 'sip-tls', 'mobile-wake', 'recording', 'not-ready-codes', 'audit',
 ];
 
 type SettingsCategory = 'telephony' | 'recording' | 'access' | 'contact-center' | 'analytics';
@@ -67,16 +71,19 @@ const SECTION_META: {
     descKey: 'settings.home.desc.mobileWake', descFallback: 'Push a wake-up before dialing so mobile apps can re-register.' },
   { tab: 'recording', cat: 'recording', Icon: Disc,
     titleKey: 'settings.home.title.recording', titleFallback: 'Call Recording',
-    descKey: 'settings.home.desc.recordingMixMonitor', descFallback: 'Record every call with MixMonitor, in the format you choose.' },
+    descKey: 'settings.home.desc.recordingPolicy', descFallback: 'Record calls by direction and extension; where the files live and how long they are kept.' },
   { tab: 'integrations', cat: 'access', Icon: Plug,
     titleKey: 'settings.crm.title', titleFallback: 'CRM Integration',
     descKey: 'settings.home.desc.crm', descFallback: 'Push call data to your CRM after each call, and look callers up by number.' },
   { tab: 'api-keys', cat: 'access', Icon: KeyRound, adminOnly: true,
     titleKey: 'settings.home.title.apiKeys', titleFallback: 'API Keys',
     descKey: 'settings.home.desc.integrationApiKeys', descFallback: 'Machine-to-machine credentials for the integration API.' },
+  { tab: 'audit', cat: 'access', Icon: ScrollText, adminOnly: true,
+    titleKey: 'settings.home.title.audit', titleFallback: 'Audit log',
+    descKey: 'settings.home.desc.audit', descFallback: 'Who changed what, and when: every change made through the API.' },
   { tab: 'not-ready-codes', cat: 'contact-center', Icon: Pause,
     titleKey: 'notReady.title', titleFallback: 'Not-Ready Codes',
-    descKey: 'notReady.description', descFallback: 'Pause reasons agents select when going Not-Ready.' },
+    descKey: 'settings.home.desc.notReadyCodes', descFallback: 'Not-Ready reasons, the wrap-up ceiling and the daily shift reset.' },
   { tab: 'analytics', cat: 'analytics', Icon: BarChart3,
     titleKey: 'nav.analytics', titleFallback: 'Analytics',
     descKey: 'settings.home.desc.analytics', descFallback: 'SLA target, FCR window and short-abandon threshold.' },
@@ -84,8 +91,6 @@ const SECTION_META: {
 
 /** A card's live status: the dot tone plus the one-line summary beside it. */
 type CardStatus = { tone: 'on' | 'off' | 'unknown'; text: string };
-
-const RECORDING_FORMATS = ['wav', 'wav49', 'gsm', 'g722', 'ulaw', 'alaw', 'sln'];
 
 type Message = { type: 'success' | 'error'; text: string } | null;
 
@@ -119,12 +124,9 @@ export function SettingsPanel() {
   const [sipTlsDomain, setSipTlsDomain] = useState('');
   const [sipTlsLoading, setSipTlsLoading] = useState(false);
   const [sipTlsMessage, setSipTlsMessage] = useState<Message>(null);
-  // ── Recording ──
+  // ── Recording (home card summary; the section itself is RecordingSettings) ──
   const [recordingEnabled, setRecordingEnabled] = useState<boolean | null>(null);
-  const [recordingFormat, setRecordingFormat] = useState('wav');
   const [recordingSavedFormat, setRecordingSavedFormat] = useState('wav');
-  const [recordingLoading, setRecordingLoading] = useState(false);
-  const [recordingMessage, setRecordingMessage] = useState<Message>(null);
 
   const loadHomeSummaries = useCallback(() => {
     api<CRMConfig>('/api/crm/config')
@@ -160,11 +162,10 @@ export function SettingsPanel() {
     api<{ enabled: boolean; format?: string }>('/api/recording/status')
       .then(d => {
         setRecordingEnabled(d.enabled);
-        setRecordingFormat(d.format || 'wav');
         setRecordingSavedFormat(d.format || 'wav');
       })
-      .catch(e => setRecordingMessage({ type: 'error', text: messageOf(e, t('settings.recording.loadError', 'Could not load the recording policy.')) }));
-  }, [t]);
+      .catch(() => { /* the card shows no status line; the section reports the error */ });
+  }, []);
 
   useEffect(() => {
     loadQosStatus();
@@ -225,24 +226,6 @@ export function SettingsPanel() {
     }
   };
 
-  // ── Recording ── enabling (again) is also how the format is changed.
-  const setRecording = async (enable: boolean) => {
-    setRecordingLoading(true);
-    setRecordingMessage(null);
-    try {
-      const data = enable
-        ? await api<{ message: string }>('/api/recording/enable', { method: 'POST', body: { format: recordingFormat } })
-        : await api<{ message: string }>('/api/recording/disable', { method: 'POST' });
-      setRecordingEnabled(enable);
-      if (enable) setRecordingSavedFormat(recordingFormat);
-      setRecordingMessage({ type: 'success', text: data.message });
-    } catch (e) {
-      setRecordingMessage({ type: 'error', text: toApiError(e).message });
-    } finally {
-      setRecordingLoading(false);
-    }
-  };
-
   /* ── Home-grid status lines ────────────────────────────────────────── */
   const on = (text: string): CardStatus => ({ tone: 'on', text });
   const off = (text: string): CardStatus => ({ tone: 'off', text });
@@ -291,6 +274,8 @@ export function SettingsPanel() {
         return slaDefaultSecs === null
           ? unknown
           : on(t('settings.home.status.sla', { defaultValue: 'SLA target {{n}}s', n: slaDefaultSecs }));
+      case 'audit':
+        return unknown;
     }
   };
 
@@ -460,59 +445,18 @@ export function SettingsPanel() {
         isAdmin ? <MobileWakePanel card={sectionCard} onLoaded={c => setWakeSummary(c.mobile_wake)} /> : adminOnlyCard
       )}
 
-      {/* ── Recording ── the switch installs/removes the recorder; with it on,
-           "Apply format" re-applies it with the chosen format. */}
+      {/* ── Recording ── master switch + format; for admins the opt-out policy and storage */}
       {sectionCard && activeTab === 'recording' && (
-        <Card {...sectionCard} bodyClassName="u-col u-gap-4">
-          <Toggle
-            checked={recordingEnabled === true}
-            onChange={setRecording}
-            disabled={recordingLoading || recordingEnabled === null}
-            label={t('settings.recording.master', 'Record calls')}
-            description={t('settings.recording.masterDescMixMonitor', 'Record every real call (internal, inbound and outbound trunk) with MixMonitor. The mixed file is saved to the default monitor folder and linked to the CDR.')}
-            icon={<Power size={14} />}
-            iconOff={<PowerOff size={14} />}
-          />
-          <div>
-            <FormSection title={t('settings.recording.format', 'Format')} first>
-              <FormRow single>
-                <div className="up-form-group">
-                  <div className="u-row u-gap-2 u-wrap">
-                    <Dropdown
-                      size="md"
-                      value={recordingFormat}
-                      onChange={setRecordingFormat}
-                      minWidth={200}
-                      ariaLabel={t('settings.recording.formatLabel', 'Recording format')}
-                      options={RECORDING_FORMATS.map(f => ({
-                        value: f,
-                        label: f === 'wav' ? t('settings.recording.formatWav', 'wav (uncompressed)')
-                          : f === 'wav49' ? t('settings.recording.formatWav49', 'wav49 (GSM in WAV)')
-                          : f === 'g722' ? 'g722 (HD)' : f,
-                      }))}
-                    />
-                    {recordingEnabled && (
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={recordingLoading || recordingFormat === recordingSavedFormat}
-                        onClick={() => setRecording(true)}
-                      >
-                        {recordingLoading ? <Loader2 size={14} className="spinner" /> : <Power size={14} />}
-                        {t('settings.recording.applyFormat', 'Apply format')}
-                      </button>
-                    )}
-                  </div>
-                  <span className="up-hint">
-                    {t('settings.recording.formatHint', 'Applies to the mixed file and both single legs. wav is highest quality; wav49/gsm save disk space.')}
-                  </span>
-                </div>
-              </FormRow>
-            </FormSection>
-          </div>
-          {recordingLoading && busyLine}
-          <Alert tone={recordingMessage?.type === 'success' ? 'success' : 'error'}>{recordingMessage?.text}</Alert>
-        </Card>
+        <RecordingSettings
+          card={sectionCard}
+          isAdmin={isAdmin}
+          onStatus={(enabled, format) => { setRecordingEnabled(enabled); setRecordingSavedFormat(format); }}
+        />
+      )}
+
+      {/* ── Audit log (admin only) ── */}
+      {sectionCard && activeTab === 'audit' && (
+        isAdmin ? <AuditPanel card={sectionCard} /> : adminOnlyCard
       )}
 
       {/* ── Analytics ── */}
@@ -522,7 +466,10 @@ export function SettingsPanel() {
 
       {/* ── Not-Ready Codes ── */}
       {sectionCard && activeTab === 'not-ready-codes' && (
-        <PauseReasonsPanel card={sectionCard} onCountChange={setPauseCodeCount} />
+        <>
+          <PauseReasonsPanel card={sectionCard} onCountChange={setPauseCodeCount} />
+          <ContactCenterSettings isAdmin={isAdmin} />
+        </>
       )}
     </Page>
   );

@@ -54,7 +54,7 @@ export function SearchInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState(value);
 
-  // What we last handed the parent. Distinguishes "the parent is echoing us"
+  // What we last handed the parent. Distinguishes "the parent is handing our value back"
   // from "the parent changed the term itself", which is what makes adopting
   // external changes safe without clobbering in-flight typing.
   const committed = useRef(value);

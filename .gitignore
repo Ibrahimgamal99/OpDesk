@@ -2,17 +2,29 @@
 .github
 .vscode
 
-frontend/node_modules
+# Node: dependencies and build output
+node_modules
 frontend/dist
+frontend/dist.prev
+backend/dist
+backend/dist.prev
+backend/coverage
+*.tsbuildinfo
 
-backend/__pycache__
-backend/**/*.pyc
+# Voice-activity analysis venv (install.sh) and Python bytecode
+backend/vad/.venv/
+__pycache__/
+*.pyc
 
+# Generated per host by install.sh: nginx site, certificates, secrets, runtime config
+nginx/*
+!nginx/opdesk.conf.example
 cert/
-nginx/
-.env
-.claude/
 secrets/
+.env
+.env.bak
+backend/.env
+backend/.env.bak
+backend/.admin_init_hash
 
-crm_test.py
-scripts/
+.claude/

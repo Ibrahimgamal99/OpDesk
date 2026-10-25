@@ -47,7 +47,6 @@
     "callNotifications": "Notificaciones de llamadas",
     "newNotifications": "{{count}} notificaciones nuevas",
     "notifications": "Notificaciones",
-    "missedBusyCalls": "Llamadas perdidas y ocupadas",
     "noNewNotifications": "No hay notificaciones nuevas",
     "ext": "Ext",
     "from": "De",
@@ -172,7 +171,11 @@
     "removeMember": "Eliminar miembro",
     "removeTitle": "¿Eliminar miembro?",
     "search": "Buscar colas",
-    "searchPlaceholder": "Buscar por nombre o número de cola"
+    "searchPlaceholder": "Buscar por nombre o número de cola",
+    "pauseReason": "Motivo",
+    "pickReason": "Elija un motivo",
+    "pauseTitle": "Poner a {{member}} en No disponible",
+    "pauseHint": "No disponible siempre se registra con un motivo, para que la adherencia distinga el trabajo de los descansos."
   },
   "callLog": {
     "viewManage": "Ver y gestionar registros de llamadas",
@@ -265,15 +268,25 @@
         "QUEUE_ENTER": "Cola",
         "RING": "Sonando",
         "ANSWER": "Respondida",
-        "NO_ANSWER": "Sin respuesta",
         "TRANSFER": "Transferencia",
         "HANGUP": "Finalizada",
-        "ATTEMPT": "Intento",
         "BARGE": "Intervención",
         "LISTEN": "Escucha",
         "UNANSWERED": "No contestada",
-        "WHISPER": "Susurro"
-      }
+        "WHISPER": "Susurro",
+        "IVR": "Menú IVR"
+      },
+      "callId": "ID de llamada",
+      "copyId": "Copiar ID de llamada",
+      "supervisor": "Supervisor {{id}}",
+      "target": "Supervisando {{id}}",
+      "endedByAgent": "Finalizada por el agente {{id}}",
+      "endedByCustomer": "Finalizada por el cliente",
+      "endedBySystem": "Finalizada por el sistema",
+      "forbidden": "No tienes permiso para ver esta llamada.",
+      "loadFailed": "No se pudo cargar el recorrido de esta llamada.",
+      "ivr": "Menú {{name}}",
+      "selection": "Pulsó {{key}}"
     },
     "emptyFiltered": "Limpia los filtros o prueba con otra búsqueda.",
     "emptyRange": "Prueba con un rango de fechas más amplio.",
@@ -296,7 +309,11 @@
       "speaker2": "Hablante 2 ({{count}} segmentos)",
       "speaker2Short": "Hablante 2",
       "title": "Actividad de voz"
-    }
+    },
+    "recordingForbidden": "No tienes permiso para reproducir esta grabación",
+    "exportCsv": "Descargar CSV",
+    "exportCsvHint": "Descargar estas llamadas como archivo CSV (hasta 50.000 filas)",
+    "exportFailed": "No se pudo descargar el archivo CSV."
   },
   "softphone": {
     "title": "Softphone",
@@ -356,7 +373,8 @@
       "rest": "en una pestaña nueva, acepta el certificado y vuelve a intentarlo."
     },
     "levelMic": "Micrófono (tu voz)",
-    "levelSpeaker": "Altavoz (volumen entrante)"
+    "levelSpeaker": "Altavoz (volumen entrante)",
+    "lastCall": "Última llamada"
   },
   "users": {
     "title": "Todos los usuarios",
@@ -520,7 +538,7 @@
       "keyNamesHint": "Renombra cualquier campo a la clave que espera tu CRM. Déjalo en blanco para usar la predeterminada.",
       "collisionWarn": "Dos campos se enviarían con la misma clave ({{keys}}). Se descarta el renombrado duplicado y el campo conserva su clave predeterminada.",
       "outcomeMap": "Valores de resultado",
-      "outcomeMapHint": "Reasigna un resultado a lo que espera tu CRM (p. ej. BUSY → NO_ANSWER). Se aplica a status y disposition. Déjalo en blanco para enviarlo sin cambios.",
+      "outcomeMapHint": "Reasigna un resultado a lo que espera tu CRM (p. ej. BUSY → UNANSWERED). Se aplica a status y disposition. Déjalo en blanco para enviarlo sin cambios.",
       "stateLive": "Activo",
       "stateOff": "Inactivo",
       "offTitle": "La integración con el CRM está desactivada",
@@ -756,8 +774,10 @@
         "integrationApiKeys": "Credenciales de máquina a máquina para la API de integración.",
         "mobileWake": "Envía un push de activación antes de marcar para que las apps móviles se vuelvan a registrar.",
         "qos": "Captura métricas de calidad de llamada en los registros CDR.",
-        "recordingMixMonitor": "Graba todas las llamadas con MixMonitor, en el formato que elijas.",
-        "sipTls": "SIP cifrado en el puerto 5061 para softphones tradicionales."
+        "sipTls": "SIP cifrado en el puerto 5061 para softphones tradicionales.",
+        "audit": "Quién cambió qué y cuándo: cada cambio realizado a través de la API.",
+        "recordingPolicy": "Graba llamadas por dirección y extensión; dónde se guardan los archivos y cuánto tiempo se conservan.",
+        "notReadyCodes": "Motivos de No disponible, el tope de post-llamada y el reinicio diario del turno."
       },
       "noMatches": "Ningún ajuste coincide con tu búsqueda.",
       "searchPlaceholder": "Buscar en la configuración…",
@@ -773,7 +793,8 @@
       "title": {
         "apiKeys": "Claves API",
         "mobileWake": "Activación móvil",
-        "recording": "Grabación de llamadas"
+        "recording": "Grabación de llamadas",
+        "audit": "Registro de auditoría"
       }
     },
     "mobileWake": {
@@ -800,24 +821,92 @@
       "formatWav49": "wav49 (GSM en WAV)",
       "loadError": "No se pudo cargar la política de grabación.",
       "master": "Grabar llamadas",
-      "masterDescMixMonitor": "Graba todas las llamadas reales (internas, entrantes y salientes por troncal) con MixMonitor. El archivo mezclado se guarda en la carpeta de monitor predeterminada y se vincula al CDR."
+      "masterDescMixMonitor": "Graba todas las llamadas reales (internas, entrantes y salientes por troncal) con MixMonitor. El archivo mezclado se guarda en la carpeta de monitor predeterminada y se vincula al CDR.",
+      "inbound": "Entrantes",
+      "outbound": "Salientes",
+      "internal": "Internas",
+      "retentionLoadFailed": "No se pudo leer la configuración de retención.",
+      "enabledMsg": "Grabación de llamadas activada.",
+      "disabledMsg": "Grabación de llamadas desactivada.",
+      "directionUpdateFailed": "No se pudo actualizar la grabación de llamadas {{direction}}.",
+      "extUpdateFailed": "No se pudo actualizar la grabación de {{ext}}.",
+      "bulkEnabledCount": "Grabación activada para {{count}} extensiones.",
+      "bulkDisabledCount": "Grabación desactivada para {{count}} extensiones.",
+      "bulkEnabledAll": "Grabación activada para todas las extensiones.",
+      "bulkDisabledAll": "Grabación desactivada para todas las extensiones.",
+      "bulkFailed": "Falló la actualización masiva.",
+      "retentionSaved": "Configuración de retención guardada.",
+      "retentionSaveFailed": "No se pudo guardar la configuración de retención.",
+      "cleanupDone": "Limpieza terminada: {{n}} archivo(s) eliminado(s).",
+      "cleanupFailed": "Falló la limpieza.",
+      "cleanup": "Limpiar ahora",
+      "saving": "Guardando…",
+      "saveChanges": "Guardar cambios",
+      "loading": "Cargando la política de grabación…",
+      "sections": "Secciones de grabación de llamadas",
+      "tabPolicy": "Política",
+      "tabLocal": "Almacenamiento local",
+      "byDirection": "Grabar por dirección",
+      "perExtension": "Por extensión: {{on}} de {{total}} grabando",
+      "searchExtensions": "Buscar extensiones",
+      "searchExtensionsPlaceholder": "Extensión o nombre…",
+      "applyToMatches": "Aplicar a coincidencias ({{n}}):",
+      "applyToAll": "Aplicar a todas:",
+      "recordAll": "Grabar todas",
+      "recordNone": "No grabar ninguna",
+      "perExtensionCaption": "Grabación por extensión",
+      "noExtensions": "No hay extensiones",
+      "noExtensionMatches": "Ninguna extensión coincide",
+      "colExtension": "Extensión",
+      "colRecording": "Grabación",
+      "on": "Activada",
+      "off": "Desactivada",
+      "pageInfo": "{{from}}–{{to}} de {{total}}",
+      "perExtensionNote": "La opción por extensión se aplica a las llamadas que hace esa extensión (salientes e internas). Las llamadas externas entrantes siguen el interruptor «Entrantes» de arriba.",
+      "storageUsed": "Almacenamiento usado",
+      "ofGb": "de {{n}} GB",
+      "diskFree": "Disco libre",
+      "ofSize": "de {{size}}",
+      "totalRecordings": "Llamadas grabadas",
+      "location": "Ubicación",
+      "directory": "Carpeta de grabaciones",
+      "directoryHint": "Ruta absoluta en la centralita donde Asterisk escribe las grabaciones. La retención borra dentro de este árbol.",
+      "retention": "Retención",
+      "localDays": "Borrar grabaciones después de (días)",
+      "keepForever": "Vacío = conservar siempre",
+      "example": "p. ej. {{value}}",
+      "localMax": "Almacenamiento máximo (GB)",
+      "localMaxHint": "Se borran primero las grabaciones más antiguas cuando el uso supera este valor. Vacío = sin límite.",
+      "vadFiles": "Archivos de actividad de voz",
+      "vadDelete": "Borrar los archivos por interlocutor tras el análisis",
+      "vadDeleteDesc": "Los tramos -sp1/-sp2 solo se necesitan un momento para calcular la actividad de voz; activado por defecto."
     },
     "webhooks": {
       "metaDirections": "{{method}} · {{active}}/{{total}} direcciones"
+    },
+    "contactCenter": {
+      "title": "Post-llamada y reinicio de turno",
+      "description": "El trabajo posterior a la llamada y el cierre de sesión diario que termina cada turno.",
+      "wrapUpLabel": "Tope de post-llamada (segundos)",
+      "wrapUpHelp": "Cuánto tiempo queda pausado un agente tras una llamada de cola antes de volver a Disponible. Puede terminar antes desde su menú de estado, así que es un tope, no una espera fija. 0 desactiva la liberación automática. Se aplica desde la próxima llamada completada.",
+      "shiftResetLabel": "Reinicio diario del turno",
+      "shiftResetHelp": "A esta hora cada día se cierra la sesión de todos los agentes conectados en sus colas, para que un turno abierto no se junte con el siguiente y la Adherencia del agente muestre un turno por día. Un agente en llamada sale cuando termina la llamada; uno en No molestar no se toca. Vacíe el campo para desactivar el reinicio.",
+      "wrapUpLoadFailed": "No se pudo leer la configuración de post-llamada.",
+      "shiftResetLoadFailed": "No se pudo leer la hora de reinicio del turno.",
+      "wrapUpOffSaved": "Liberación automática desactivada: los agentes siguen en post-llamada hasta terminarla.",
+      "wrapUpSaved": "Tope fijado en {{n}} s. Se aplica desde la próxima llamada completada.",
+      "wrapUpSaveFailed": "No se pudo guardar la configuración de post-llamada.",
+      "shiftResetSaved": "Los agentes salen de sus colas cada día a las {{time}}.",
+      "shiftResetOffSaved": "Reinicio diario desactivado: los agentes siguen conectados hasta que cierren sesión.",
+      "shiftResetSaveFailed": "No se pudo guardar la hora de reinicio del turno.",
+      "saving": "Guardando…",
+      "save": "Guardar cambios"
     }
   },
   "time": {
     "justNow": "Justo ahora",
     "minutesAgo": "Hace {{count}} min",
     "hoursAgo": "Hace {{count}} h"
-  },
-  "reason": {
-    "busy": "Ocupado",
-    "noanswer": "Sin respuesta",
-    "failed": "Fallida",
-    "switched_off": "No disponible",
-    "invalid_number": "Número no válido",
-    "completed": "Completada"
   },
   "common": {
     "incomingCall": "Llamada entrante",
@@ -931,7 +1020,9 @@
       "rank": "#",
       "slaContrib": "SLA %",
       "trend7d": "Tendencia 7d",
-      "agents": "agentes"
+      "agents": "agentes",
+      "compareTitle": "Comparar agentes",
+      "compareBy": "Comparar por"
     },
     "drilldown": {
       "title": "Explorador detallado",
@@ -973,6 +1064,9 @@
       "agents": {
         "trend": {
           "text": "Llamadas respondidas por día, últimos 7 días."
+        },
+        "compare": {
+          "text": "Todos los agentes en una cifra a la vez, el mayor primero. Elige la cifra en el menú."
         }
       },
       "kpi": {
@@ -1013,7 +1107,22 @@
           "formula": "respondidas a tiempo ÷ respondidas",
           "text": "Con qué frecuencia las llamadas respondidas de esta cola se contestaron dentro de su umbral de SLA. El objetivo es 80%."
         }
+      },
+      "drilldown": {
+        "status": {
+          "text": "Cómo terminó la llamada, con las mismas palabras que usa el historial de llamadas."
+        }
       }
+    },
+    "export": {
+      "csv": "Descargar CSV",
+      "failed": "La descarga falló. Inténtalo de nuevo.",
+      "overviewTitle": "Las cifras del período como archivo CSV",
+      "trendCsv": "CSV diario",
+      "trendTitle": "Llamadas por día como archivo CSV",
+      "queuesTitle": "Las cifras de cada cola como archivo CSV",
+      "heatmapTitle": "Llamadas por día de la semana y hora como archivo CSV",
+      "agentsTitle": "Las cifras de cada agente como archivo CSV"
     }
   },
   "agent": {
@@ -1027,7 +1136,50 @@
       "stillIn": "Activo",
       "empty": "Sin actividad de agentes en este periodo",
       "exportCsv": "CSV",
-      "exportXlsx": "Excel"
+      "exportXlsx": "Excel",
+      "sessions": "Sesiones",
+      "break": "Descanso",
+      "dnd": "No molestar",
+      "tip": {
+        "source": {
+          "text": "Basado en el estado que los agentes fijan ellos mismos, no en sus teléfonos."
+        },
+        "login": {
+          "text": "Cuándo inició sesión el agente por primera vez en el periodo."
+        },
+        "logout": {
+          "text": "Cuándo cerró sesión el agente por última vez. \"Dentro\" mientras sigue conectado."
+        },
+        "sessions": {
+          "text": "Cuántas veces inició sesión el agente. Un cierre de sesión, o el reinicio diario del turno, termina una sesión."
+        },
+        "loggedInTotal": {
+          "text": "Tiempo total que el agente estuvo conectado.",
+          "formula": "listo + en llamada + cierre + no disponible + no molestar"
+        },
+        "ready": {
+          "text": "Disponible: conectado y esperando una llamada."
+        },
+        "onCall": {
+          "text": "En una llamada."
+        },
+        "wrapUp": {
+          "text": "Terminando el trabajo tras una llamada."
+        },
+        "break": {
+          "text": "La parte no remunerada de No disponible: motivos no marcados como productivos, como el almuerzo. Pase el cursor por el número para ver los motivos."
+        },
+        "notReady": {
+          "text": "En pausa por cualquier motivo, productivo o no. Pase el cursor por el número para ver los motivos."
+        },
+        "dnd": {
+          "text": "Conectado pero en No molestar: no le llegan llamadas de cola ni directas."
+        },
+        "occupancy": {
+          "text": "Del tiempo que estuvo disponible, cuánto dedicó a trabajar. Más del 85% durante mucho tiempo es señal de agotamiento.",
+          "formula": "(en llamada + cierre) ÷ (en llamada + cierre + listo)"
+        }
+      }
     },
     "noReasons": "Sin códigos de motivo",
     "unpaid": "pausa",
@@ -1039,13 +1191,33 @@
       "dnd": "No molestar",
       "available": "Libre",
       "loggedOut": "Desconectado",
-      "wrapUp": "Post-llamada"
+      "wrapUp": "Post-llamada",
+      "queueLabel": "Cola: {{queue}}",
+      "deviceAsleep": "Listo, pero el teléfono está en reposo; se activa con la próxima llamada"
     },
     "codes": {
       "deleteFailed": "No se pudo eliminar ese código de motivo.",
       "deleteTitle": "¿Eliminar código de motivo?",
       "labelPlaceholder": "Descanso",
       "listTitle": "Códigos de motivo"
+    },
+    "finishWrap": "Terminar el cierre",
+    "pickReason": "No disponible, con un motivo",
+    "timeline": {
+      "open": "Mostrar cada cambio de estado",
+      "period": "{{from}} a {{to}}",
+      "stateWithReason": "{{state}} · {{reason}}",
+      "forbidden": "No tiene permiso para ver la actividad de este agente.",
+      "empty": "Sin actividad en este periodo",
+      "emptyHint": "Este agente no inició sesión en las fechas seleccionadas.",
+      "leftOnDnd": "salió en No molestar",
+      "sessionLength": "Sesión",
+      "queue": "Cola {{queue}}",
+      "ongoing": "en curso · {{duration}}",
+      "source": {
+        "ami": "teléfono",
+        "supervisor": "supervisor"
+      }
     }
   },
   "logs": {
@@ -1133,7 +1305,9 @@
     "color": "Color",
     "order": "Orden",
     "productiveHint": "Cuenta como trabajo pagado (p. ej. Reunión, Formación) en lugar de descanso en la adherencia.",
-    "activeHint": "Los códigos inactivos se ocultan del selector del agente."
+    "activeHint": "Los códigos inactivos se ocultan del selector del agente.",
+    "systemHint": "Lo usa el propio OpDesk; no se puede editar ni eliminar.",
+    "reservedCode": "Los códigos que empiezan por __ están reservados para el sistema."
   },
   "contacts": {
     "loading": "Cargando contactos…",
@@ -1269,14 +1443,15 @@
   },
   "callStatus": {
     "ANSWERED": "Contestada",
-    "NO_ANSWER": "Sin respuesta",
     "BUSY": "Ocupado",
     "FAILURE": "Fallida",
     "ABANDONED": "Abandonada",
-    "CANCELED": "Cancelada",
     "DROPPED": "Cortada",
-    "OUT_OF_REACH": "Fuera de alcance",
-    "IN_PROGRESS": "En curso"
+    "UNANSWERED": "No contestada",
+    "MISSED": "Perdida",
+    "VOICEMAIL": "Buzón de voz",
+    "UNREACHABLE": "Inalcanzable",
+    "NETWORK_ERROR": "Error de red"
   },
   "contactLookup": {
     "secMatching": "Coincidencia de números",
@@ -1420,5 +1595,46 @@
     "outbound": "Saliente",
     "internal": "Interna",
     "all": "Todas las direcciones"
+  },
+  "callStatusTip": {
+    "ANSWERED": "Alguien contestó y las dos partes hablaron.",
+    "UNANSWERED": "Sonó hasta agotar el tiempo, o nuestro lado colgó mientras sonaba.",
+    "BUSY": "El destinatario estaba ocupado o rechazó la llamada.",
+    "MISSED": "El llamante colgó mientras todavía sonaba.",
+    "VOICEMAIL": "El buzón de voz atendió la llamada.",
+    "UNREACHABLE": "El teléfono estaba apagado, sin registrar o fuera de servicio.",
+    "FAILURE": "No se pudo realizar la llamada, por ejemplo un número equivocado.",
+    "NETWORK_ERROR": "Falló la ruta o el operador: congestión o sin circuito.",
+    "ABANDONED": "El llamante colgó mientras esperaba en una cola.",
+    "DROPPED": "La llamada se contestó y luego se cortó de forma anómala."
+  },
+  "audit": {
+    "loadError": "No se pudo cargar el registro de auditoría.",
+    "time": "Hora",
+    "actor": "Quién",
+    "action": "Acción",
+    "entity": "Qué",
+    "summary": "Detalles",
+    "ip": "IP",
+    "refresh": "Actualizar",
+    "actorSearch": "Buscar por usuario",
+    "actorPlaceholder": "Usuario o extensión…",
+    "allActions": "Todas las acciones",
+    "entityType": "Tipo de entidad",
+    "allEntities": "Todo",
+    "loading": "Cargando el registro de auditoría…",
+    "caption": "Registro de auditoría",
+    "emptyTitle": "Sin entradas de auditoría",
+    "emptyDesc": "Nada coincide con los filtros actuales.",
+    "emptyRange": "No se cambió nada en este periodo.",
+    "loadMore": "Cargar más",
+    "actions": {
+      "create": "Crear",
+      "update": "Actualizar",
+      "delete": "Eliminar",
+      "apply": "Aplicar",
+      "login": "Inicio de sesión",
+      "logout": "Cierre de sesión"
+    }
   }
 }
