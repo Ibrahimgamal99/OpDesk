@@ -1,8 +1,9 @@
 import { useState, FormEvent } from 'react';
-import { Radio, LogIn } from 'lucide-react';
+import { Radio, LogIn, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { setToken, setUser } from '../auth';
 import { messageFrom } from '../lib/api';
+import { Alert, Card, FormField, FormRow } from './ui';
 
 type Props = {
   onSuccess: () => void;
@@ -41,7 +42,7 @@ export function Login({ onSuccess }: Props) {
       } else {
         setError(t('login.errorInvalidResponse'));
       }
-    } catch (err) {
+    } catch {
       setError(t('login.errorNetwork'));
     } finally {
       setLoading(false);
@@ -50,53 +51,60 @@ export function Login({ onSuccess }: Props) {
 
   return (
     <div className="login-page">
-      <div className="login-card">
-        <div className="login-brand">
-          <div className="login-logo">
-            <Radio size={32} />
-          </div>
-          <h1 className="login-title">{t('login.title')}</h1>
-          <p className="login-subtitle">{t('login.subtitle')}</p>
-        </div>
+      <Card
+        className="login-panel"
+        icon={Radio}
+        title={t('login.title')}
+        description={t('login.subtitle')}
+      >
+        <form onSubmit={handleSubmit} noValidate>
+          <FormRow single>
+            <FormField label={t('login.extensionLabel')} htmlFor="login-user">
+              <input
+                id="login-user"
+                type="text"
+                className="form-input"
+                placeholder={t('login.extensionPlaceholder')}
+                value={login}
+                onChange={(e) => setLogin(e.target.value)}
+                autoComplete="username"
+                autoFocus
+                disabled={loading}
+              />
+            </FormField>
+          </FormRow>
+          <FormRow single>
+            <FormField label={t('login.passwordLabel')} htmlFor="login-password">
+              <input
+                id="login-password"
+                type="password"
+                className="form-input"
+                placeholder={t('login.passwordPlaceholder')}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                disabled={loading}
+              />
+            </FormField>
+          </FormRow>
 
-        <form onSubmit={handleSubmit} className="login-form">
-          <label className="login-label">{t('login.extensionLabel')}</label>
-          <input
-            type="text"
-            className="login-input"
-            placeholder={t('login.extensionPlaceholder')}
-            value={login}
-            onChange={(e) => setLogin(e.target.value)}
-            autoComplete="username"
-            autoFocus
-            disabled={loading}
-          />
+          <Alert className="u-mb-4">{error}</Alert>
 
-          <label className="login-label">{t('login.passwordLabel')}</label>
-          <input
-            type="password"
-            className="login-input"
-            placeholder={t('login.passwordPlaceholder')}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            disabled={loading}
-          />
-
-          {error && <div className="login-error">{error}</div>}
-
-          <button type="submit" className="login-submit" disabled={loading}>
+          <button type="submit" className="btn btn-primary u-w-full" disabled={loading}>
             {loading ? (
-              <span className="login-spinner">{t('login.signingIn')}</span>
+              <>
+                <Loader2 size={14} className="spinner" />
+                {t('login.signingIn')}
+              </>
             ) : (
               <>
-                <LogIn size={18} />
+                <LogIn size={14} />
                 {t('login.signIn')}
               </>
             )}
           </button>
         </form>
-      </div>
+      </Card>
     </div>
   );
 }
