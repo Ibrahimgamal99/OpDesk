@@ -2,6 +2,7 @@
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import { runtime } from '../../core/runtime';
 import * as dbm from '../../db/db-manager';
@@ -155,6 +156,17 @@ export class UsersController {
     await dbm.setUserGroups(userId, body.group_ids || []);
     await syncPbxExtension(body.extension, body.password, body.name);
     await refreshLiveScopes();
+    // `password` is masked by the redaction: the row says one was set, never what.
+    setRedactedAuditDetail(req, {
+      id: userId,
+      username,
+      name: body.name ?? null,
+      extension: body.extension ?? null,
+      role,
+      monitor_modes: monitorModes,
+      group_ids: body.group_ids || [],
+      password: body.password,
+    });
     const user = await dbm.getUserById(userId);
     if (!user) throw new HttpError(404, 'User not found');
     return userOut(user);
@@ -208,6 +220,12 @@ export class UsersController {
     if (body.group_ids !== null && body.group_ids !== undefined) await dbm.setUserGroups(userId, body.group_ids);
     await syncPbxExtension(effectiveExt, body.password, body.name);
     await refreshLiveScopes();
+    // Only the fields the request carried; a password is reported as set, never shown.
+    const sent: Record<string, unknown> = {};
+    for (const k of ['username', 'name', 'extension', 'role', 'is_active', 'monitor_mode', 'monitor_modes', 'group_ids', 'password'] as const) {
+      if (body[k] !== null && body[k] !== undefined) sent[k] = body[k];
+    }
+    setRedactedAuditDetail(req, { before: { username: user.username, extension: user.extension ?? null, role: user.role }, changed: sent });
     const updated = await dbm.getUserById(userId);
     if (!updated) throw new HttpError(404, 'User not found');
     return userOut(updated);
@@ -223,6 +241,7 @@ export class UsersController {
     if (!user) throw new HttpError(404, 'User not found');
     if (!(await dbm.deleteUser(userId))) throw new HttpError(500, 'Failed to delete user');
     await refreshLiveScopes();
+    setRedactedAuditDetail(req, { deleted: { id: userId, username: user.username, extension: user.extension ?? null, role: user.role } });
     return { ok: true };
   }
 

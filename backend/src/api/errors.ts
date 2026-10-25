@@ -96,6 +96,7 @@ export const codes = {
   PUSH_TOKEN_STORE_FAILED: reg('push.device_token.store_failed', 'error', true),
   PUSH_SUBSCRIPTION_REQUIRED: reg('push.subscription.required'),
   PUSH_SUBSCRIPTION_STORE_FAILED: reg('push.subscription.store_failed', 'error', true),
+  PUSH_CONFIG_INVALID: reg('push.config.invalid', 'warning'),
 
   // -- pause reasons -----------------------------------------------------
   PAUSE_REASON_INVALID: reg('pause_reason.record.invalid'),
@@ -115,6 +116,7 @@ export const codes = {
   CONFIG_QOS_FAILED: reg('config.qos.update_failed'),
   CONFIG_TLS_FAILED: reg('config.tls.update_failed'),
   CONFIG_MOBILE_WAKE_FAILED: reg('config.mobile_wake.update_failed'),
+  CONFIG_CODECS_FAILED: reg('config.codecs.update_failed', 'error', true),
 
   // -- analytics / reporting --------------------------------------------
   ANALYTICS_QUERY_FAILED: reg('analytics.query.failed', 'error', true),

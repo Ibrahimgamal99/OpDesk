@@ -1,6 +1,6 @@
 /**
  * Logs: the browser log beacon, the audit log, the System Logs panel (live AMI events and the
- * SIP trace), and the CRM delivery log (list, detail, resend).
+ * SIP trace), and the CRM delivery log (list with status counts, detail, retry, resend).
  *
  * Envelopes follow OpDesk's contract per route: GET /api/logs/deliveries is the one
  * respond_list collection; everything else is bare; the beacon answers 204 with no body.
@@ -10,12 +10,14 @@
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { setAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import { createTask, pyInt, pyJsonDumps } from '../../core/py';
 import { runtime } from '../../core/runtime';
 import { amiEventBuffer, sipTracer } from '../../core/system-logs';
 import * as dbm from '../../db/db-manager';
-import { loadCrmSyncConfig, sendCrmDataAsync } from '../../integrations/crm';
+import { loadCrmSyncConfig } from '../../integrations/crm';
+import { sendCrmDataAsync, sweepCrmDeliveries } from '../../integrations/crm-delivery';
 import { setPjsipLogger } from '../../services/dialplan';
 import { HttpError } from '../http-error';
 import { decodePageCursor, encodePageCursor, parsePage, RawResponse, respondList } from '../respond';
@@ -180,33 +182,50 @@ export class LogsController {
   // -------------------------------------------------------------------------
 
   /**
-   * Page through CRM call-data push attempts, newest first. Bodies omitted — see the detail
-   * route. Cursor-paginated: `?cursor=` is opaque (it carries the last seen id, used as a
-   * keyset seek).
+   * Page through CRM call-data pushes, newest first. Bodies omitted — see the detail route.
+   * Cursor-paginated: `?cursor=` is opaque (it carries the last seen id, used as a keyset
+   * seek). `status` is one of pending / delivered / failed / abandoned, or 'unresolved'
+   * for everything that has not landed. Next to the page: `counts`, the totals per status,
+   * and with `?facets=1` the per-value counts of the status and direction filters under
+   * the current query (each ignoring its own selection).
    */
   @Get('/api/logs/deliveries')
   @Auth('admin')
   async listDeliveries(@Req() req: Request) {
     const query = req.query as QueryParams;
     const success = qBool(query, 'success', null as boolean | null);
+    const status = q(req, 'status');
+    const allowed = [...dbm.WEBHOOK_DELIVERY_STATUSES, 'unresolved'];
+    if (status && !allowed.includes(status)) {
+      throw new HttpError(400, `Unknown status '${status}'; allowed: ${[...allowed].sort().join(', ')}`);
+    }
     const limit = qInt(query, 'limit', 50);
     const page = parsePage(q(req, 'cursor'), limit);
     const afterId = pyInt(page.keyset.id);
-    const [rows, hasMore] = await dbm.listWebhookDeliveries({
+    const filter: dbm.WebhookDeliveryFilter = {
       success,
+      status,
       callId: q(req, 'call_id'),
       callType: q(req, 'call_type'),
       search: q(req, 'search'),
       dateFrom: q(req, 'date_from'),
       dateTo: q(req, 'date_to'),
-      limit: page.limit,
-      afterId,
-    });
-    return respondList(rows, {
-      limit: page.limit,
-      cursor: page.cursor,
-      nextCursor: hasMore && rows.length ? encodePageCursor({ id: rows[rows.length - 1].id }) : null,
-    });
+    };
+    const wantFacets = qBool(query, 'facets', false as boolean);
+    const [[rows, hasMore], counts, facets] = await Promise.all([
+      dbm.listWebhookDeliveries({ ...filter, limit: page.limit, afterId }),
+      dbm.webhookDeliveryCounts(),
+      wantFacets ? dbm.webhookDeliveryFacets(filter) : Promise.resolve(null),
+    ]);
+    return {
+      ...respondList(rows, {
+        limit: page.limit,
+        cursor: page.cursor,
+        nextCursor: hasMore && rows.length ? encodePageCursor({ id: rows[rows.length - 1].id }) : null,
+      }),
+      counts,
+      ...(wantFacets ? { facets } : {}),
+    };
   }
 
   /** One delivery attempt in full, including the request and response bodies. */
@@ -217,6 +236,30 @@ export class LogsController {
     const row = await dbm.getWebhookDelivery(deliveryId);
     if (!row) throw new HttpError(404, 'Delivery not found');
     return row;
+  }
+
+  /**
+   * Make a pending / failed / abandoned delivery due now (with a few more attempts if its
+   * budget is spent) and sweep at once, so the operator sees the outcome instead of waiting
+   * for the worker's next tick. The SAME delivery is retried, with the same idempotency key;
+   * a delivered row is never re-sent (use resend for a deliberate second copy).
+   */
+  @Post('/api/logs/deliveries/:delivery_id/retry')
+  @Auth('admin')
+  async retryDelivery(@Req() req: Request) {
+    const deliveryId = pInt(req.params.delivery_id, 'delivery_id');
+    if (!(await dbm.requeueWebhookDelivery(deliveryId))) {
+      throw new HttpError(404, 'Delivery not found, already delivered, or not replayable');
+    }
+    setAuditDetail(req, { delivery_id: deliveryId });
+    try {
+      await sweepCrmDeliveries();
+    } catch (e) {
+      // Queued is the durable part; the immediate sweep is a convenience.
+      log.warning('Immediate delivery sweep failed (the worker retries on its next tick): %s', e);
+    }
+    log.info('Delivery #%s retried by %s', deliveryId, principal(req).username);
+    return { ok: true, delivery: await dbm.getWebhookDelivery(deliveryId) };
   }
 
   /**
@@ -262,8 +305,11 @@ export class LogsController {
         method: cfg.method,
         endpointPath: cfg.endpoint,
         meta,
+        syncCfg: cfg,
+        trigger: 'resend',
       }),
     );
+    setAuditDetail(req, { delivery_id: deliveryId, call_id: row.call_id ?? null });
     log.info('Delivery #%s resent by %s', deliveryId, user.username);
     return { accepted: true, delivery_id: deliveryId, original_created_at: row.created_at ?? null };
   }

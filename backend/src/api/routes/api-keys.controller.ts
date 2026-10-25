@@ -8,6 +8,7 @@
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import { ALL_PERMISSIONS } from '../../core/security';
 import * as dbm from '../../db/db-manager';
@@ -74,6 +75,8 @@ export class ApiKeysController {
       expiresAt: body.expires_at || null,
     });
     if (!result) throw new HttpError(500, 'Failed to create API key');
+    // Never the plaintext key: what was granted, and to whom.
+    setRedactedAuditDetail(req, { name, scopes, expires_at: body.expires_at || null });
     log.info('API key created: %s (scopes=%s) by %s', name, scopes.join(','), currentUser.username);
     return result;
   }
@@ -94,6 +97,14 @@ export class ApiKeysController {
       expiresAt: body.expires_at ?? null,
     });
     if (!result) throw new HttpError(500, 'Failed to update API key');
+    setRedactedAuditDetail(req, {
+      name: existing.name,
+      changes: Object.fromEntries(
+        Object.entries({ name: body.name, scopes, enabled: body.enabled, expires_at: body.expires_at }).filter(
+          ([, v]) => v !== null && v !== undefined,
+        ),
+      ),
+    });
     return result;
   }
 
@@ -102,7 +113,9 @@ export class ApiKeysController {
   @Auth('admin')
   async apiDeleteApiKey(@Req() req: Request) {
     const keyId = pInt(req.params.key_id, 'key_id');
+    const existing = await dbm.getApiKey(keyId);
     if (!(await dbm.deleteApiKey(keyId))) throw new HttpError(404, 'API key not found');
+    if (existing) setRedactedAuditDetail(req, { name: existing.name, scopes: existing.scopes ?? null });
     log.info('API key #%s revoked by %s', keyId, principal(req).username);
     return new RawResponse('', { status: 204 });
   }

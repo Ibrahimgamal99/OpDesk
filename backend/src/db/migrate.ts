@@ -216,7 +216,14 @@ export interface ColumnGuard {
   /** Whether the change is needed, given the column as it is now (null = column missing). */
   needed: (col: ColumnInfo | null) => boolean;
   ddl: string;
+  /** Statements run right after `ddl` succeeded (a backfill of the column it added). */
+  then?: string[];
   why: string;
+}
+
+/** A guard that adds `column` to `table` when it is missing. */
+function addColumn(table: string, column: string, ddl: string, why: string, then?: string[]): ColumnGuard {
+  return { table, column, needed: (col) => col === null, ddl, why, ...(then ? { then } : {}) };
 }
 
 /**
@@ -239,6 +246,72 @@ export const COLUMN_GUARDS: ColumnGuard[] = [
     ddl: 'ALTER TABLE analytics_fcr_settings ADD COLUMN callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24 AFTER short_abandon_secs',
     why: 'FCR and abandoned-caller recovery count our own callbacks within this window',
   },
+  // CRM delivery retry queue: webhook_deliveries rows became queue rows. Existing rows
+  // are finished attempts, so they are backfilled as delivered/failed with one attempt.
+  addColumn(
+    'webhook_deliveries',
+    'delivery_uuid',
+    'ALTER TABLE webhook_deliveries ADD COLUMN delivery_uuid CHAR(36) NULL, ADD UNIQUE KEY uq_delivery_uuid (delivery_uuid)',
+    'the idempotency key every attempt of a delivery carries',
+  ),
+  addColumn(
+    'webhook_deliveries',
+    'status',
+    "ALTER TABLE webhook_deliveries ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT 'pending'",
+    'delivery state for the retry queue',
+    ["UPDATE webhook_deliveries SET status = IF(success = 1, 'delivered', 'failed')"],
+  ),
+  addColumn(
+    'webhook_deliveries',
+    'attempts',
+    'ALTER TABLE webhook_deliveries ADD COLUMN attempts SMALLINT UNSIGNED NOT NULL DEFAULT 1',
+    'sends of a delivery so far',
+  ),
+  addColumn(
+    'webhook_deliveries',
+    'max_attempts',
+    'ALTER TABLE webhook_deliveries ADD COLUMN max_attempts SMALLINT UNSIGNED NOT NULL DEFAULT 1',
+    'the retry budget of a delivery',
+  ),
+  addColumn(
+    'webhook_deliveries',
+    'next_attempt_at',
+    'ALTER TABLE webhook_deliveries ADD COLUMN next_attempt_at DATETIME NULL, ADD INDEX idx_due (status, next_attempt_at)',
+    'when the retry worker may send a delivery again',
+  ),
+  addColumn(
+    'webhook_deliveries',
+    'endpoint_path',
+    'ALTER TABLE webhook_deliveries ADD COLUMN endpoint_path VARCHAR(255) NULL',
+    'the push path a retry reuses',
+  ),
+  addColumn(
+    'webhook_deliveries',
+    'trigger_kind',
+    "ALTER TABLE webhook_deliveries ADD COLUMN trigger_kind VARCHAR(16) NOT NULL DEFAULT 'hangup'",
+    'which push trigger queued a delivery',
+  ),
+  addColumn(
+    'webhook_deliveries',
+    'delivered_at',
+    'ALTER TABLE webhook_deliveries ADD COLUMN delivered_at DATETIME NULL',
+    'when a delivery landed',
+  ),
+  // Contacts pushed over the API: a third source and the pushing system's identity.
+  {
+    table: 'contacts',
+    column: 'source',
+    needed: (col) => col !== null && !/'api'/i.test(col.COLUMN_TYPE),
+    ddl: "ALTER TABLE contacts MODIFY source ENUM('manual','api','crm') NOT NULL DEFAULT 'manual'",
+    why: "contacts pushed by an external system are stored with source='api'",
+  },
+  addColumn(
+    'contacts',
+    'external_id',
+    'ALTER TABLE contacts ADD COLUMN external_id VARCHAR(128) NULL, ADD COLUMN source_system VARCHAR(48) NULL, ' +
+      'ADD UNIQUE KEY uniq_contact_external (source_system, external_id), ADD INDEX idx_contact_name (name(150), id)',
+    "the pushing system's own contact id, and keyset paging by name",
+  ),
 ];
 
 /** Apply every COLUMN_GUARDS change the live table still needs. Returns the ALTERs run. */
@@ -259,6 +332,10 @@ export async function applyColumnGuards(guards: ColumnGuard[] = COLUMN_GUARDS): 
       if (!g.needed(col)) continue;
       await execute(g.ddl);
       ran.push(g.ddl);
+      for (const sql of g.then ?? []) {
+        await execute(sql);
+        ran.push(sql);
+      }
       log.info('✅ Migrated %s.%s (%s)', g.table, g.column, g.why);
     } catch (e) {
       log.warning('⚠️  Column migration %s.%s failed: %s', g.table, g.column, e);
@@ -414,6 +491,12 @@ export function defaultSettings(webrtcDefault: string): Record<string, string> {
     CRM_SYNC_DURATION_FORMAT: 'hms', // hms | seconds
     CRM_SYNC_STATUS_MAP: '{}', // {FROM: TO} outcome remap
     CRM_SYNC_KEY_MAP: '{}', // {defaultKey: customKey} rename
+    // When the push fires, and the automatic retry of a failed push.
+    CRM_SYNC_TRIGGER: 'hangup', // hangup | wrapup
+    CRM_SYNC_WRAPUP_TIMEOUT: '600', // seconds a wrap-up push waits at most
+    CRM_SYNC_RETRY_ENABLED: 'true',
+    CRM_SYNC_RETRY_MAX_ATTEMPTS: '5',
+    CRM_SYNC_RETRY_DELAYS: '30,120,600,1800', // backoff ladder in seconds; the last repeats
     // Contact lookup: GET template with [Number], name template of JSON paths, prefix
     // strategy, last-N-digit matching, optional verification.
     CRM_LOOKUP_ENABLED: 'false',

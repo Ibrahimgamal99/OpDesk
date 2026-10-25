@@ -9,6 +9,7 @@
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { broadcastStateNow } from '../../core/event-bridge';
 import { getLogger } from '../../core/logger';
 import { truthy } from '../../core/py';
@@ -116,6 +117,13 @@ export class AgentsController {
     });
     if (!rid) throw new HttpError(400, 'Invalid or duplicate pause reason (code + label required)');
     await runtime.agentState?.reloadReasons();
+    setRedactedAuditDetail(req, {
+      id: rid,
+      code,
+      label: body.label ?? '',
+      productive: truthy(body.productive ?? false),
+      is_active: body.is_active === undefined ? true : truthy(body.is_active),
+    });
     return { ok: true, id: rid };
   }
 
@@ -129,6 +137,11 @@ export class AgentsController {
     delete fields.is_system;
     if (!(await dbm.pauseReasonUpdate(reasonId, fields))) throw new HttpError(400, 'Nothing to update or update failed');
     await runtime.agentState?.reloadReasons();
+    // Only the columns the update writes (see pauseReasonUpdate), never the raw body.
+    const changed = Object.fromEntries(
+      ['label', 'productive', 'color', 'sort_order', 'is_active'].filter((k) => k in fields).map((k) => [k, fields[k]]),
+    );
+    setRedactedAuditDetail(req, { changed });
     return { ok: true };
   }
 
@@ -139,6 +152,7 @@ export class AgentsController {
     const reasonId = pInt(req.params.reason_id, 'reason_id');
     if (!(await dbm.pauseReasonDelete(reasonId))) throw new HttpError(400, 'Cannot delete (not found or system reason)');
     await runtime.agentState?.reloadReasons();
+    setRedactedAuditDetail(req, { deleted: reasonId });
     return { ok: true };
   }
 
@@ -166,6 +180,7 @@ export class AgentsController {
     let [ok] = await agentState.login(ext, 'ui', { queues });
     if (ok && !ready) [ok] = await agentState.setNotReady(ext, reasonCode, 'ui');
     await broadcastStateNow();
+    setRedactedAuditDetail(req, { extension: ext, queues, ready, reason_code: ready ? null : reasonCode, ok });
     return { ok, extension: ext, queues: agentState.states.get(ext)?.queues ?? queues, ready };
   }
 
@@ -183,6 +198,7 @@ export class AgentsController {
     await agentState.logout(ext, 'ui');
     const ok = before > 0 && runtime.monitor!.memberInterfacesFor(ext).length < before;
     await broadcastStateNow();
+    setRedactedAuditDetail(req, { extension: ext, queues, ok });
     return { ok, extension: ext, queues };
   }
 
@@ -208,6 +224,7 @@ export class AgentsController {
       [ok] = await agentState.setNotReady(ext, reason, 'ui');
     }
     await broadcastStateNow();
+    setRedactedAuditDetail(req, { extension: ext, ready, reason_code: ready ? null : reason, ok });
     return { ok, extension: ext, ready, reason_code: reason };
   }
 
@@ -242,6 +259,7 @@ export class AgentsController {
     }
     await broadcastStateNow();
     log.info(`DND ${enabled ? 'enabled' : 'disabled'} for extension: ${ext}`);
+    setRedactedAuditDetail(req, { extension: ext, dnd: enabled });
     return { ok: true, extension: ext, dnd: enabled };
   }
 
@@ -261,6 +279,7 @@ export class AgentsController {
     const body = parseBody(WrapUpConfigBody, req.body);
     const secs = clampWrapupMaxSecs(body.max_secs);
     if (!(await dbm.setSetting(WRAPUP_MAX_SETTING, String(secs)))) throw new HttpError(500, 'Failed to save the wrap-up setting');
+    setRedactedAuditDetail(req, { [WRAPUP_MAX_SETTING]: secs });
     return {
       max_secs: secs,
       min_secs: WRAPUP_MAX_SECS_MIN,
@@ -287,6 +306,7 @@ export class AgentsController {
     if (raw && minutes === null) throw new HttpError(400, 'Time must be HH:MM (24-hour), or empty to turn the reset off');
     const value = formatShiftResetTime(minutes);
     if (!(await dbm.setSetting(SHIFT_RESET_SETTING, value || SHIFT_RESET_OFF))) throw new HttpError(500, 'Failed to save the shift reset setting');
+    setRedactedAuditDetail(req, { [SHIFT_RESET_SETTING]: value || SHIFT_RESET_OFF });
     return {
       time: value,
       message: minutes === null

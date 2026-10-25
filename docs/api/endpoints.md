@@ -518,7 +518,7 @@ Admin JWT only. A key can never mint, inspect or escalate another key.
 The scope tokens available to grant.
 
 ```json
-{ "permissions": ["calls:read", "calls:write", "cdr:read", "analytics:read", "extension-config:read"] }
+{ "permissions": ["calls:read", "calls:write", "cdr:read", "analytics:read", "extension-config:read", "contacts:read", "contacts:write"] }
 ```
 
 ### `GET /api/api-keys`
@@ -579,13 +579,18 @@ request bodies, so a `cdr:read` integration must not be able to read them.
 | `GET /api/logs/events` | Distinct event names currently buffered |
 | `GET /api/logs/ami` | Whether event capture is on |
 | `POST /api/logs/ami` | `{"enabled": true\|false}` — toggle capture (off by default) |
-| `GET /api/logs/deliveries` | Page through CRM push attempts |
-| `GET /api/logs/deliveries/{id}` | One attempt in full, with request and response bodies |
-| `POST /api/logs/deliveries/{id}/resend` | Replay a delivery — `202` |
+| `GET /api/logs/deliveries` | Page through CRM pushes, with totals per status |
+| `GET /api/logs/deliveries/{id}` | One delivery in full, with request and response bodies |
+| `POST /api/logs/deliveries/{id}/retry` | Send a pending / failed / abandoned delivery again now |
+| `POST /api/logs/deliveries/{id}/resend` | Replay a delivery as a new one — `202` |
 
-`GET /api/logs/deliveries` accepts `success` (`true`/`false`), `call_id`, `call_type`,
-`search` (matches caller, destination, call ID, uniqueid), `date_from`, `date_to`,
-`limit` (default 50, max 200) and `cursor`, newest first:
+`GET /api/logs/deliveries` accepts `status` (`pending`, `delivered`, `failed`,
+`abandoned`, or `unresolved` for the first, third and fourth together; anything else is a
+`400`), `success` (`true`/`false`), `call_id`, `call_type`, `search` (matches caller,
+destination, call ID, uniqueid), `date_from`, `date_to`, `limit` (default 50, max 200),
+`cursor`, and `facets=1`, newest first. Next to the page come `counts` (every status's
+total) and, with `facets=1`, `facets`: how many rows each status and each `call_type` has
+under the other filters (each facet ignores its own filter):
 
 ```json
 {
@@ -598,20 +603,36 @@ request bodies, so a `cdr:read` integration must not be able to read them.
       "method": "POST", "url": "https://crm.example.com/api/calls",
       "status_code": 200, "success": true, "error": null,
       "duration_ms": 148, "attempt": 1, "parent_id": null,
-      "resent_by": null, "truncated": false
+      "resent_by": null, "truncated": false,
+      "status": "delivered", "attempts": 1, "max_attempts": 5,
+      "next_attempt_at": null, "delivered_at": "2026-07-27T09:31:02",
+      "trigger_kind": "hangup", "endpoint_path": null,
+      "delivery_uuid": "6f1c2a4e-0b7d-4c55-9a51-2f7e1b1f3d10"
     }
   ],
-  "page": { "cursor": null, "next_cursor": "eyJpZCI6MTA0MX0", "limit": 50 }
+  "page": { "cursor": null, "next_cursor": "eyJpZCI6MTA0MX0", "limit": 50 },
+  "counts": { "pending": 2, "delivered": 1032, "failed": 5, "abandoned": 1 },
+  "facets": { "status": { "delivered": 40, "failed": 2 }, "call_type": { "inbound": 30, "outbound": 12 } }
 }
 ```
 
+`status` is the delivery's state in the retry queue (see
+[webhooks.md → Retries](webhooks.md#retries)): `attempts` of `max_attempts` were made, and
+a `pending` row is sent again at `next_attempt_at`. `delivery_uuid` is the
+`Idempotency-Key` every attempt of it carried.
+
 Bodies are omitted from the list and served only by the detail route.
+
+Retry makes the **same** delivery due now (giving it up to 3 more attempts when its
+budget is spent), sends it at once with its existing idempotency key, and answers
+`{"ok": true, "delivery": {...}}` with the row as it stands after the attempt. `404` when
+the delivery does not exist, was already delivered, or its body was truncated.
 
 Resend replays the **stored request body** through the **current** CRM configuration —
 the body is the historical fact worth replaying, while the credentials and endpoint are
-re-read because a wrong endpoint is usually why the original failed. The new attempt is
-inserted as its own row with `parent_id` pointing at the original. `400` if the stored
-body was truncated when logged, `503` if no CRM connector is configured.
+re-read because a wrong endpoint is usually why the original failed. It is a new
+delivery, with a new idempotency key and `parent_id` pointing at the original. `400` if
+the stored body was truncated when logged, `503` if no CRM connector is configured.
 
 ### `GET /api/audit-log`
 **Auth:** JWT (admin)
@@ -619,7 +640,10 @@ body was truncated when logged, `503` if no CRM connector is configured.
 Who changed what. Every successful `POST`, `PUT`, `PATCH` and `DELETE` under `/api` is
 recorded — except sign-in, browser log relay, the log-capture toggles, the loopback
 hooks and device-token and push-subscription refreshes, which are noise. Request bodies
-are never stored.
+are never stored as they are: a route records what the change carried in `detail`, built
+from an explicit field list, with every secret-named field (`password`, `api_key`,
+`*_SECRET`, `*_PASS`, …) replaced by `"********"` — the row says a secret changed, never
+what to.
 
 | Query | Notes |
 |---|---|
@@ -637,7 +661,11 @@ are never stored.
       "id": 77, "created_at": "2026-07-27T10:02:11", "actor": "Sara Ali",
       "actor_ext": "1000", "actor_user_id": 1, "action": "update",
       "entity_type": "user", "entity_id": "12", "summary": "PUT /api/settings/users/12",
-      "ip": "10.0.0.15"
+      "ip": "10.0.0.15",
+      "detail": {
+        "before": { "username": "sara", "extension": "1000", "role": "supervisor" },
+        "changed": { "role": "admin", "password": "********" }
+      }
     }
   ],
   "next_cursor": "eyJiZWZvcmVfaWQiOjc3fQ",
@@ -648,7 +676,8 @@ are never stored.
 }
 ```
 
-`next_cursor` is `null` on the last page.
+`next_cursor` is `null` on the last page. `detail` is `null` for a route that records
+none.
 
 ---
 
@@ -660,11 +689,14 @@ the admin role. None are key-reachable.
 | Area | Paths |
 |---|---|
 | Users, groups, agents, queues | `/api/settings/users*`, `/api/settings/groups*`, `/api/settings/agents`, `/api/settings/queues`. A username, extension or group name already in use is `409`. |
-| Contacts phonebook | `GET /api/contacts` (any role), `POST /api/contacts`, `PUT|DELETE /api/contacts/{id}` (admin) — see [contact-lookup.md](contact-lookup.md) |
+| Contacts phonebook | `GET /api/contacts?search=&limit=&cursor=`, `GET /api/contacts/{id}` (any role; key: `contacts:read`), `POST /api/contacts`, `POST /api/contacts/bulk` (admin; key: `contacts:write`, upsert with precedence manual > api > crm, max 500 per request), `PUT|DELETE /api/contacts/{id}` (admin) — see [contact-lookup.md](contact-lookup.md) |
 | Raw settings key/value store | `GET|POST /api/settings`, `GET /api/settings/{key}` — secrets read back as `"********"`, and posting the mask keeps the stored value |
-| WebRTC provisioning | `GET /api/webrtc/config`, `GET /api/settings/extensions/webrtc`, `GET /api/settings/extensions/{extension}/credentials`, `PUT /api/settings/extensions/{extension}/webrtc` |
-| CRM configuration | `GET|POST /api/crm/config`, `POST /api/crm/test` — `call_outcomes` lists the 10 outcome values |
-| Telephony features | `/api/qos/*`, `/api/sip-tls/*`, `/api/mobile-wake/*` |
+| WebRTC provisioning | `GET /api/webrtc/config`, `GET /api/settings/extensions/webrtc`, `GET /api/settings/extensions/{extension}/credentials` (admin; includes `max_contacts`, `null` when the PBX database cannot be read), `PUT /api/settings/extensions/{extension}/webrtc` |
+| Extension SIP secret | `PUT /api/settings/extensions/{extension}/credentials` (admin): `{"regenerate": true}` for a random 16-character secret, or `{"password": "<8+ characters>"}` for an exact one. Separate from the user's OpDesk sign-in password; applies the PBX config and answers the same shape as the `GET`. `404` unknown extension, `503` PBX database unreachable, `502` write failed |
+| Multi-device registration | `PUT /api/settings/extensions/{extension}/max-contacts` `{"enabled": bool}` (admin, or the extension's own user / a supervisor allowed on it): PJSIP `max_contacts` 2 (browser and phone at once) or 1. A value above 2 set by hand in the PBX is left alone when enabling. Answers `{ok, extension, max_contacts}` |
+| Audio codecs | `GET|PUT /api/codecs` (admin, FreePBX only — `404` on Issabel, which keeps codecs per peer): `{codecs: [...], available: [...]}`, first = preferred. `PUT {"codecs": [...]}` accepts only codecs from `available`, rejects an empty or repeated list (`400`), and reloads the PBX unless the list is unchanged (`502` when the reload fails) |
+| CRM configuration | `GET|POST /api/crm/config`, `POST /api/crm/test` — `call_outcomes` lists the 10 outcome values. The save validates the whole body first and writes it in one transaction (a `400` changes nothing); it refuses an enabled CRM it cannot build, any `endpoint_path` / `sync_endpoint` / `lookup_url` that is not a plain path (no `@`, `://`, backslash or spaces), an SSRF-unsafe server or OAuth2 token URL, and an enabled lookup without a name template. Answers `{success, reload_ok, active, warnings, message}`; `active: false` means it saved but is not live. Push timing and retries: `sync_trigger` (`hangup` / `wrapup`), `sync_wrapup_timeout`, `sync_retry_enabled`, `sync_retry_max_attempts`, `sync_retry_delays` — see [webhooks.md](webhooks.md) |
+| Telephony features | `/api/qos/*`, `/api/sip-tls/*`, `/api/mobile-wake/*`. `GET /api/sip-tls/status` also carries `udp_tcp_public`, the `SIP_UDP_TCP_PUBLIC` setting (default off, written through `POST /api/settings`): whether plain 5060 UDP/TCP is reachable from outside and may be offered to apps by `/api/extension-config` |
 | Extension control | `POST /api/extensions/{extension}/dnd` |
 | Notifications and push | `/api/call-notifications*`, `/api/device-tokens`, `/api/push/*` |
 | Browser log relay | `POST /api/client-log` (unauthenticated by design — `sendBeacon` cannot set headers) |
@@ -686,8 +718,8 @@ proxy cannot be used to reach them from outside. They accept `GET` because Aster
 | Endpoint | Auth | Purpose |
 |---|---|---|
 | `GET /api/push/config` | admin | Mobile Wake settings, FCM / APNs / VAPID status (secrets as present/absent only), RFC 8599 bindings |
-| `PUT /api/push/config` | admin | Save them; key files are sent as their contents (`null` keeps, `""` removes) |
-| `POST /api/push/vapid/rotate` | admin | New VAPID key pair; deletes every browser subscription |
+| `PUT /api/push/config` | admin | Save them, all or nothing. Every field is optional and one left out keeps its stored value; key files are sent as their contents (`null` keeps, `""` removes). An empty `client_marker` is stored as empty (only RFC 8599 contacts then count as mobile). Invalid input is one `422` `push.config.invalid` whose `fields` lists every wrong field (`hold_seconds`, `settle_seconds`, `fcm_project_id`, `fcm_service_account`, `apns_key_id`, `apns_team_id`, `apns_bundle_id`, `apns_auth_key`); nothing is written then. A failed write is a `500` with nothing changed |
+| `POST /api/push/vapid/rotate` | admin | New VAPID key pair; deletes every browser subscription in the same transaction (a `500` changes nothing, subscriptions included) |
 | `DELETE /api/push/bindings/{id}` | admin | Forget one RFC 8599 binding |
 | `GET /api/mobile-setup` | JWT | The caller's own QR data: extension, SIP password, host |
 | `POST /api/me/password` | JWT | Change the caller's OpDesk sign-in password: `{current_password, new_password}` |

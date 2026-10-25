@@ -17,7 +17,9 @@ export const SECRET_MASK = '********';
 /** Setting keys whose values are secrets (masked on read, kept when the mask is posted back). */
 // PRIVATE only as a key-material word (VAPID_PRIVATE_KEY), not as an adjective in a flag
 // name (CRM_BLOCK_PRIVATE: block private-network CRM URLs).
-const SECRET_KEY_RE = /(SECRET|PASSWORD|TOKEN|PRIVATE_KEY|API_KEY|AUTH_KEY|CREDENTIAL|SERVICE_ACCOUNT)/i;
+// PASS only as a whole word (WEBRTC_TURN_PASS, SMTP_PASS), never as a prefix of a longer word
+// (a *_PASSTHROUGH flag is not a secret).
+const SECRET_KEY_RE = /(SECRET|PASSWORD|PASSWD|TOKEN|PRIVATE_KEY|API_KEY|AUTH_KEY|CREDENTIAL|SERVICE_ACCOUNT|(?:^|_)PASS(?:_|$))/i;
 
 /** True for a settings key that holds a secret (JWT_SECRET, CRM_PASSWORD, VAPID_PRIVATE_KEY, ...). */
 export function isSecretKey(key: string): boolean {

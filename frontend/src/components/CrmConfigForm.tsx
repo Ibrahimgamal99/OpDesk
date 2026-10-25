@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Save, Loader2, Plug, KeyRound, Send, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Check,
-  Clock, Braces, Copy, ClipboardCheck, Search, Hash, Link2, FlaskConical,
+  Clock, Braces, Copy, ClipboardCheck, Search, Hash, Link2, FlaskConical, RefreshCw, Repeat, Timer,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -42,6 +42,18 @@ export interface CRMConfig {
   sync_key_map?: Record<string, string>;
   /** {FROM: TO} — remaps outcome values (call_status / disposition). */
   sync_status_map?: Record<string, string>;
+  /** When the push fires: at hangup, or once the agent's wrap-up is over. */
+  sync_trigger?: 'hangup' | 'wrapup';
+  /** Seconds an "after wrap-up" push waits at most. */
+  sync_wrapup_timeout?: number;
+  sync_retry_enabled?: boolean;
+  /** Attempts per call, the first included. */
+  sync_retry_max_attempts?: number;
+  /** Backoff ladder in seconds (the last repeats); text while being edited. */
+  sync_retry_delays?: number[] | string;
+  /** Read-only: whether the saved config is live, and why not when it is enabled but is not. */
+  active?: boolean;
+  unavailable_reason?: string | null;
   field_catalog?: string[];
   /** Read-only, server-derived: catalog field -> the JSON key it goes out under. */
   default_keys?: Record<string, string>;
@@ -220,6 +232,9 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
   // indicator; a long settings form otherwise loses edits silently.
   const [baseline, setBaseline] = useState('');
   const [loading, setLoading] = useState(true);
+  // The stored config could not be read: the form shows defaults, and saving them would
+  // overwrite what is stored (sync fields, directions, maps), so Save stays off until a load works.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -243,21 +258,16 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
     setMessage(null);
     try {
       const response = await fetchWithAuth('/api/crm/config');
-      if (response.ok) {
-        applyLoaded(await response.json());
-      } else {
-        setConfig({
-          enabled: false, server_url: '', auth_type: 'api_key', endpoint_path: '/api/calls', timeout: 30, verify_ssl: true,
-        });
-        setBaseline('');
-      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      applyLoaded(await response.json());
+      setLoadFailed(false);
     } catch (error) {
       console.error('Failed to load CRM config:', error);
-      setMessage({ type: 'error', text: t('settings.crm.loadError') });
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  }, [applyLoaded, t]);
+  }, [applyLoaded]);
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
 
@@ -477,7 +487,8 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
         type="button"
         className="btn btn-primary"
         onClick={saveConfig}
-        disabled={saving || (config.enabled && !config.server_url.trim())}
+        disabled={saving || loadFailed || (config.enabled && !config.server_url.trim())}
+        title={loadFailed ? t('settings.crm.loadFailedSave', 'The saved settings could not be loaded, so saving is off.') : undefined}
       >
         {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
         {saving ? t('common.saving') : t('settings.save')}
@@ -498,6 +509,24 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
     />
   );
 
+  // Without the stored config there is nothing safe to edit: showing defaults would invite
+  // a save that overwrites the real settings.
+  if (loadFailed) {
+    return (
+      <Card {...card} className="crmx crmx-card" footer={footer}>
+        <Alert
+          action={
+            <button type="button" className="btn btn-sm" onClick={loadConfig}>
+              <RefreshCw size={14} />{t('common.retry', 'Retry')}
+            </button>
+          }
+        >
+          {t('settings.crm.loadFailed', 'The CRM settings could not be loaded. Saving is off so the stored settings are not overwritten.')}
+        </Alert>
+      </Card>
+    );
+  }
+
   return (
     <Card
       {...card}
@@ -514,6 +543,13 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
         <Alert tone={message?.type === 'success' ? 'success' : 'error'}>{message?.text}</Alert>
         {testResult && <Alert tone={testResult.type} onDismiss={() => setTestResult(null)}>{testResult.text}</Alert>}
+        {!dirty && savedConfig.enabled && savedConfig.active === false && (
+          <Alert tone="warning">
+            {t('settings.crm.notActive', 'CRM is enabled but not active: {{reason}}. Calls are logged as failed deliveries until this is fixed.', {
+              reason: savedConfig.unavailable_reason || t('settings.crm.notActiveUnknown', 'the connection could not be built'),
+            })}
+          </Alert>
+        )}
 
         {!config.enabled ? (
           <EmptyState
@@ -726,6 +762,43 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                             </FormField>
                           </FormRow>
 
+                          <FormRow>
+                            <FormField
+                              label={t('settings.crm.trigger', 'When to push')}
+                              hint={t('settings.crm.triggerHint',
+                                'After wrap-up waits until the agent who took the call finishes wrap-up, so the record matches the final call log. Unanswered calls go at once.')}
+                            >
+                              <Dropdown
+                                size="md"
+                                value={config.sync_trigger || 'hangup'}
+                                onChange={(v) => updateConfig({ sync_trigger: v as 'hangup' | 'wrapup' })}
+                                icon={Timer}
+                                ariaLabel={t('settings.crm.trigger', 'When to push')}
+                                options={[
+                                  { value: 'hangup', label: t('settings.crm.triggerHangup', 'At hangup'), dot: 'blue' },
+                                  { value: 'wrapup', label: t('settings.crm.triggerWrapup', 'After wrap-up'), dot: 'green' },
+                                ]}
+                              />
+                            </FormField>
+                            {config.sync_trigger === 'wrapup' && (
+                              <FormField
+                                label={t('settings.crm.wrapupTimeout', 'Longest wait (seconds)')}
+                                htmlFor="crm-wrapup-timeout"
+                                hint={t('settings.crm.wrapupTimeoutHint', 'Push anyway if wrap-up has not ended by then.')}
+                              >
+                                <input
+                                  id="crm-wrapup-timeout"
+                                  type="number"
+                                  className="form-input"
+                                  min={5}
+                                  max={86400}
+                                  value={config.sync_wrapup_timeout ?? 600}
+                                  onChange={(e) => updateConfig({ sync_wrapup_timeout: Math.max(5, parseInt(e.target.value, 10) || 600) })}
+                                />
+                              </FormField>
+                            )}
+                          </FormRow>
+
                           <AdvancedSection label={t('settings.crm.deliveryOptions', 'Delivery options')}>
                             <FormRow>
                               <FormField
@@ -776,6 +849,60 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                               </FormField>
                             </FormRow>
                           </AdvancedSection>
+                        </FormSection>
+
+                        <FormSection title={t('settings.crm.retries', 'Retries')}>
+                          <Toggle
+                            checked={config.sync_retry_enabled !== false}
+                            onChange={(v) => updateConfig({ sync_retry_enabled: v })}
+                            label={t('settings.crm.retryToggle', 'Retry failed pushes automatically')}
+                            description={t('settings.crm.retryDesc',
+                              'A push that times out, gets a server error or is rate-limited is sent again with the same idempotency key. A push the CRM rejects (4xx) is not retried; resend it from Logs.')}
+                          />
+                          {config.sync_retry_enabled !== false && (
+                            <FormRow>
+                              <FormField
+                                label={t('settings.crm.retryMaxAttempts', 'Attempts per call')}
+                                htmlFor="crm-retry-attempts"
+                                hint={t('settings.crm.retryMaxAttemptsHint', 'The first attempt included (1–20).')}
+                              >
+                                <input
+                                  id="crm-retry-attempts"
+                                  type="number"
+                                  className="form-input"
+                                  min={1}
+                                  max={20}
+                                  value={config.sync_retry_max_attempts ?? 5}
+                                  onChange={(e) => updateConfig({
+                                    sync_retry_max_attempts: Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 1)),
+                                  })}
+                                />
+                              </FormField>
+                              <FormField
+                                label={t('settings.crm.retryDelays', 'Wait between attempts (seconds)')}
+                                htmlFor="crm-retry-delays"
+                                hint={t('settings.crm.retryDelaysHint',
+                                  'Comma-separated; the last value repeats. A longer Retry-After from the CRM wins.')}
+                              >
+                                <input
+                                  id="crm-retry-delays"
+                                  type="text"
+                                  className="form-input"
+                                  dir="ltr"
+                                  inputMode="numeric"
+                                  placeholder="30, 120, 600, 1800"
+                                  value={Array.isArray(config.sync_retry_delays)
+                                    ? config.sync_retry_delays.join(', ')
+                                    : (config.sync_retry_delays ?? '30, 120, 600, 1800')}
+                                  onChange={(e) => updateConfig({ sync_retry_delays: e.target.value })}
+                                />
+                              </FormField>
+                            </FormRow>
+                          )}
+                          <p className="up-hint u-row u-gap-1">
+                            <Repeat size={14} aria-hidden />
+                            {t('settings.crm.retryLogHint', 'Every push and each retry is listed under Logs → CRM Deliveries.')}
+                          </p>
                         </FormSection>
 
                         <FormSection title={t('settings.crm.payload', 'Payload fields')}>

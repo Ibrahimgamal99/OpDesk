@@ -4,9 +4,11 @@
  * password, and the per-extension WebRTC switch.
  */
 
+import { randomInt } from 'crypto';
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { env } from '../../core/config';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import { truthy } from '../../core/py';
 import type { Principal } from '../../core/security';
@@ -352,6 +354,45 @@ export const ChangePasswordBody = v.model({
 /** `enabled: bool = Body(..., embed=True)` */
 export const EnabledBody = v.model({ enabled: v.bool() });
 
+export const ExtensionCredentialsBody = v.model({
+  regenerate: v.bool().default(false), // generate a new random SIP secret
+  password: v.str().nullish(), // or set this exact secret
+});
+
+export const SIP_SECRET_LENGTH = 16;
+const SECRET_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/** A random SIP secret: letters and digits only, which every SIP client and PBX accepts. */
+export function generateSipSecret(length = SIP_SECRET_LENGTH): string {
+  let out = '';
+  for (let i = 0; i < length; i++) out += SECRET_ALPHABET[randomInt(SECRET_ALPHABET.length)];
+  return out;
+}
+
+/** The PBX flavour for a reload: the PBX setting, else env PBX. */
+async function pbxSetting(): Promise<string | null> {
+  return (await dbm.getSetting('PBX', env('PBX', ''))) || process.env.PBX || null;
+}
+
+/**
+ * GET /api/settings/extensions/:extension/credentials's body, shared with the PUT. max_contacts
+ * is null when the PBX DB could not be read, so a form leaves its multi-device toggle alone
+ * rather than drawing (and then saving) a wrong state.
+ */
+export async function extensionCredentialsOut(extension: string) {
+  const secret = await dbm.getExtensionSecretFromDb(extension);
+  const names = await dbm.getExtensionNamesFromDb();
+  const webrtcList = await dbm.getExtensionsWithWebrtcFromUsers();
+  const webrtc = webrtcList.find((e) => String(e.extension) === extension)?.webrtc ?? 'no';
+  return {
+    username: extension,
+    password: secret || '',
+    name: names[extension] || '',
+    webrtc,
+    max_contacts: await dbm.getExtensionMaxContacts(extension),
+  };
+}
+
 /** True when `password` is the caller's current OpDesk sign-in password. */
 async function checkCurrentPassword(currentUser: Principal, password: string): Promise<Row> {
   const user = await dbm.getUserByUsername(currentUser.username || '');
@@ -430,6 +471,7 @@ export class SoftphoneController {
     if (!isValidSipSecret(pw)) throw new HttpError(400, SIP_SECRET_RULE);
     if (!(await dbm.setExtensionSecretInPbx(ext, pw))) throw new HttpError(500, 'Could not save the SIP password');
     await reloadAsteriskSip();
+    setRedactedAuditDetail(req, { extension: ext, secret: 'changed' });
     return respond({ message: 'SIP password changed. Sign your phones in again.' });
   }
 
@@ -515,16 +557,42 @@ export class SoftphoneController {
     return { extensions: all.filter((e) => allow.has(String(e.extension))) };
   }
 
-  /** PBX SIP username, secret, display name and WebRTC flag of an extension (admin only). */
+  /**
+   * PBX SIP username, secret, display name, WebRTC flag and max_contacts of an extension
+   * (admin only).
+   */
   @Get('/api/settings/extensions/:extension/credentials')
   @Auth('admin')
   async extensionCredentials(@Req() req: Request) {
-    const extension = pStr(req.params.extension);
-    const secret = await dbm.getExtensionSecretFromDb(extension);
-    const names = await dbm.getExtensionNamesFromDb();
-    const webrtcList = await dbm.getExtensionsWithWebrtcFromUsers();
-    const webrtc = webrtcList.find((e) => String(e.extension) === extension)?.webrtc ?? 'no';
-    return { username: extension, password: secret || '', name: names[extension] || '', webrtc };
+    return extensionCredentialsOut(pStr(req.params.extension));
+  }
+
+  /**
+   * Change an extension's SIP secret (admin only), independently of any OpDesk sign-in
+   * password: `regenerate: true` for a random one, or `password` for an exact value of at
+   * least 8 characters. Applies the PBX config and returns the same shape as the GET.
+   */
+  @Put('/api/settings/extensions/:extension/credentials')
+  @Auth('admin')
+  async setExtensionCredentials(@Req() req: Request) {
+    const ext = pStr(req.params.extension).trim();
+    const body = parseBody(ExtensionCredentialsBody, req.body);
+    if (!ext) throw new HttpError(400, 'Extension required');
+    const exists = await dbm.extensionExistsInPbx(ext);
+    if (exists === null) throw new HttpError(503, 'Cannot reach the PBX database to check the extension');
+    if (!exists) throw new HttpError(404, 'Extension not found');
+    let secret: string;
+    if (body.regenerate) {
+      secret = generateSipSecret();
+    } else {
+      secret = (body.password || '').trim();
+      if (!isValidSipSecret(secret)) throw new HttpError(400, SIP_SECRET_RULE);
+    }
+    if (!(await dbm.setExtensionSecretInPbx(ext, secret))) throw new HttpError(502, 'Could not update the SIP secret in the PBX');
+    await reloadAsteriskSip(await pbxSetting());
+    setRedactedAuditDetail(req, { extension: ext, secret: 'changed', regenerated: body.regenerate });
+    log.info('SIP secret changed for extension %s by user %s', ext, principal(req).id ?? null);
+    return extensionCredentialsOut(ext);
   }
 
   /**
@@ -543,6 +611,35 @@ export class SoftphoneController {
       throw new HttpError(404, 'Extension not found in users');
     }
     log.info('WebRTC enabled/disabled for extension: %s - %s', ext, enabled);
+    setRedactedAuditDetail(req, { extension: ext, webrtc: enabled });
     return { ok: true, extension: ext };
+  }
+
+  /**
+   * Allow (2) or forbid (1) web and mobile holding a registration on this extension at the
+   * same time. At 1 (the PBX default) the second client to REGISTER evicts the first; at 2
+   * Asterisk forks the call to both and the first answer wins. A value an admin set by hand
+   * above 2 is left alone when enabling: the toggle already reads on, and writing 2 would
+   * take a device away. Same permission rule as the WebRTC switch.
+   */
+  @Put('/api/settings/extensions/:extension/max-contacts')
+  @Auth('user')
+  async setExtensionMaxContacts(@Req() req: Request) {
+    const ext = pStr(req.params.extension);
+    const { enabled } = parseBody(EnabledBody, req.body);
+    if (!mayChangeExtension(principal(req), ext)) {
+      throw new HttpError(403, 'Not allowed to change devices for this extension');
+    }
+    const current = await dbm.getExtensionMaxContacts(ext);
+    if (current === null) throw new HttpError(503, 'Cannot reach the PBX database');
+    if (enabled && current >= dbm.MULTI_DEVICE_MAX_CONTACTS) return { ok: true, extension: ext, max_contacts: current };
+    const target = enabled ? dbm.MULTI_DEVICE_MAX_CONTACTS : dbm.SINGLE_DEVICE_MAX_CONTACTS;
+    if (current === target) return { ok: true, extension: ext, max_contacts: current };
+    if (!(await dbm.setExtensionMaxContacts(ext, target, { pbx: await pbxSetting() }))) {
+      throw new HttpError(502, 'Could not update the extension in the PBX');
+    }
+    setRedactedAuditDetail(req, { extension: ext, max_contacts: target, previous: current });
+    log.info('Multi-device %s for extension %s (max_contacts=%s)', enabled ? 'enabled' : 'disabled', ext, target);
+    return { ok: true, extension: ext, max_contacts: target };
   }
 }

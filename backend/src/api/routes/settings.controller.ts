@@ -13,6 +13,7 @@
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import * as dbm from '../../db/db-manager';
 import { HttpError } from '../http-error';
@@ -146,6 +147,18 @@ export class SettingsController {
       }
 
       if (failed.length) log.warning('Failed to save some settings: %s', failed);
+      // Saved values as a read shows them: secrets masked (maskSetting covers the
+      // APNs/FCM keys too), so the audit row never holds a credential.
+      setRedactedAuditDetail(req, {
+        saved: Object.fromEntries(
+          saved.map((k) => {
+            const value = settingsData[k];
+            return [k, maskSetting(k, value !== null && value !== undefined ? pyStrValue(value) : '')];
+          }),
+        ),
+        kept,
+        failed,
+      });
 
       return {
         success: failed.length === 0,

@@ -9,6 +9,7 @@
 
 import type { NextFunction, Request, Response } from 'express';
 import { clientHost } from '../api/client-host';
+import { isSecretKey, SECRET_MASK } from '../api/shared';
 import { insertAuditLog } from '../db/manager/audit';
 import { getLogger } from './logger';
 import { pyDatetimeStr } from './py';
@@ -29,6 +30,26 @@ type WithAudit = Request & { auditDetail?: unknown };
 /** request.state.audit_detail = detail */
 export function setAuditDetail(req: Request, detail: unknown): void {
   (req as WithAudit).auditDetail = detail;
+}
+
+/**
+ * A copy of `value` safe to store as an audit detail: at any depth, a non-empty value under
+ * a secret-named key (api_key, password, bearer_token, *_SECRET, *_PASS ...: api/shared's
+ * isSecretKey) becomes SECRET_MASK, so the row says THAT a secret changed, never what to.
+ */
+export function redactAuditDetail(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactAuditDetail);
+  if (value === null || typeof value !== 'object' || value instanceof Date) return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = isSecretKey(k) && v !== null && v !== undefined && v !== '' ? SECRET_MASK : redactAuditDetail(v);
+  }
+  return out;
+}
+
+/** setAuditDetail(req, redactAuditDetail(detail)): the form every route should use. */
+export function setRedactedAuditDetail(req: Request, detail: unknown): void {
+  setAuditDetail(req, redactAuditDetail(detail));
 }
 
 /** json.dumps(x, ensure_ascii=False, default=str) with Python's default separators. */

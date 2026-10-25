@@ -89,32 +89,77 @@ describe('schema.sql', () => {
 describe('applyColumnGuards', () => {
   beforeEach(() => jest.resetAllMocks());
 
+  /** information_schema as a table: {table: {column: COLUMN_TYPE}}; a column not listed is missing. */
+  const schemaOf = (tables: Record<string, Record<string, string>>) =>
+    q1.mockImplementation(async (sql: string, params: string[]) => {
+      if (/information_schema.TABLES/.test(sql)) return tables[params[0]] ? { found: 1 } : null;
+      const type = tables[params[0]]?.[params[1]];
+      return type === undefined ? null : { COLUMN_TYPE: type, IS_NULLABLE: 'NO', COLUMN_DEFAULT: null };
+    });
+  const deliveryCols = Object.fromEntries(
+    ['delivery_uuid', 'status', 'attempts', 'max_attempts', 'next_attempt_at', 'endpoint_path', 'trigger_kind', 'delivered_at'].map((c) => [c, 'x']),
+  );
+  const current = {
+    device_tokens: { platform: "enum('ios','android','web')" },
+    webhook_deliveries: deliveryCols,
+    contacts: { source: "enum('manual','api','crm')", external_id: 'varchar(128)' },
+    analytics_fcr_settings: { callback_window_hours: 'smallint' },
+  };
+
   it("widens device_tokens.platform only while 'web' is missing", async () => {
-    q1.mockImplementation(async (sql: string) =>
-      /information_schema.TABLES/.test(sql) ? { found: 1 } : { COLUMN_TYPE: "enum('ios','android')", IS_NULLABLE: 'NO', COLUMN_DEFAULT: null },
-    );
+    schemaOf({ ...current, device_tokens: { platform: "enum('ios','android')" } });
     ex.mockResolvedValue({ affectedRows: 0 });
     expect(await mig.applyColumnGuards()).toEqual(["ALTER TABLE device_tokens MODIFY platform ENUM('ios','android','web') NOT NULL"]);
 
     jest.resetAllMocks();
-    q1.mockImplementation(async (sql: string) =>
-      /information_schema.TABLES/.test(sql) ? { found: 1 } : { COLUMN_TYPE: "enum('ios','android','web')", IS_NULLABLE: 'NO', COLUMN_DEFAULT: null },
-    );
+    schemaOf(current);
     expect(await mig.applyColumnGuards()).toEqual([]);
     expect(ex).not.toHaveBeenCalled();
   });
 
   it('adds analytics_fcr_settings.callback_window_hours only while it is missing', async () => {
-    q1.mockImplementation(async (sql: string, params: unknown[]) =>
-      /information_schema.TABLES/.test(sql) ? { found: 1 }
-        : params[1] === 'callback_window_hours' ? null
-          : { COLUMN_TYPE: "enum('ios','android','web')", IS_NULLABLE: 'NO', COLUMN_DEFAULT: null },
-    );
+    schemaOf({ ...current, analytics_fcr_settings: { window_days: 'tinyint' } });
     ex.mockResolvedValue({ affectedRows: 0 });
     expect(await mig.applyColumnGuards()).toEqual([
       'ALTER TABLE analytics_fcr_settings ADD COLUMN callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24 AFTER short_abandon_secs',
     ]);
     expect(fs.readFileSync(mig.SCHEMA_FILE, 'utf8')).toMatch(/callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24/);
+  });
+
+  it('turns an old webhook_deliveries into the retry queue, backfilling finished rows', async () => {
+    schemaOf({ ...current, webhook_deliveries: { id: 'bigint' } });
+    ex.mockResolvedValue({ affectedRows: 0 });
+    const ran = await mig.applyColumnGuards();
+    expect(ran).toEqual([
+      'ALTER TABLE webhook_deliveries ADD COLUMN delivery_uuid CHAR(36) NULL, ADD UNIQUE KEY uq_delivery_uuid (delivery_uuid)',
+      "ALTER TABLE webhook_deliveries ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT 'pending'",
+      "UPDATE webhook_deliveries SET status = IF(success = 1, 'delivered', 'failed')",
+      'ALTER TABLE webhook_deliveries ADD COLUMN attempts SMALLINT UNSIGNED NOT NULL DEFAULT 1',
+      'ALTER TABLE webhook_deliveries ADD COLUMN max_attempts SMALLINT UNSIGNED NOT NULL DEFAULT 1',
+      'ALTER TABLE webhook_deliveries ADD COLUMN next_attempt_at DATETIME NULL, ADD INDEX idx_due (status, next_attempt_at)',
+      'ALTER TABLE webhook_deliveries ADD COLUMN endpoint_path VARCHAR(255) NULL',
+      "ALTER TABLE webhook_deliveries ADD COLUMN trigger_kind VARCHAR(16) NOT NULL DEFAULT 'hangup'",
+      'ALTER TABLE webhook_deliveries ADD COLUMN delivered_at DATETIME NULL',
+    ]);
+  });
+
+  it("gives contacts the 'api' source and the pushing system's identity", async () => {
+    schemaOf({ ...current, contacts: { source: "enum('manual','crm')" } });
+    ex.mockResolvedValue({ affectedRows: 0 });
+    expect(await mig.applyColumnGuards()).toEqual([
+      "ALTER TABLE contacts MODIFY source ENUM('manual','api','crm') NOT NULL DEFAULT 'manual'",
+      'ALTER TABLE contacts ADD COLUMN external_id VARCHAR(128) NULL, ADD COLUMN source_system VARCHAR(48) NULL, ' +
+        'ADD UNIQUE KEY uniq_contact_external (source_system, external_id), ADD INDEX idx_contact_name (name(150), id)',
+    ]);
+  });
+
+  it('a failed ALTER skips its backfill and the next guard still runs', async () => {
+    schemaOf({ ...current, webhook_deliveries: { ...deliveryCols, status: undefined as unknown as string, trigger_kind: undefined as unknown as string } });
+    ex.mockImplementation(async (sql: string) => {
+      if (/ADD COLUMN status/.test(sql)) throw new Error('lock wait timeout');
+      return { affectedRows: 0 };
+    });
+    expect(await mig.applyColumnGuards()).toEqual(["ALTER TABLE webhook_deliveries ADD COLUMN trigger_kind VARCHAR(16) NOT NULL DEFAULT 'hangup'"]);
   });
 
   it('skips a table that does not exist', async () => {
@@ -181,7 +226,7 @@ describe('migrate', () => {
 
     expect(settings.WEBRTC_PBX_SERVER).toBe('wss://pbx.example.test/sip-ws');
     expect(settings.CRM_SYNC_FIELDS).toBe('caller,destination,duration,talk_time,datetime,call_status,call_type,queue');
-    expect(Object.keys(mig.defaultSettings('x'))).toHaveLength(27);
+    expect(Object.keys(mig.defaultSettings('x'))).toHaveLength(32);
     for (const k of Object.keys(mig.defaultSettings('x'))) expect(k in settings).toBe(true);
     for (const k of ['SLA_DEFAULT_SECS', 'ANALYTICS_ENABLED', 'WRAPUP_MAX_SECS', 'SHIFT_RESET_TIME']) expect(k in settings).toBe(true);
     expect(sqls()).toContain('INSERT IGNORE INTO analytics_fcr_settings (id, window_days, short_abandon_secs) VALUES (1, 7, 5)');

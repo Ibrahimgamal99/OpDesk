@@ -5,6 +5,7 @@
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import { runtime } from '../../core/runtime';
 import * as security from '../../core/security';
@@ -103,6 +104,13 @@ export class GroupsController {
     if (body.queue_extensions && body.queue_extensions.length) await dbm.setGroupQueues(gid, body.queue_extensions);
     if (body.user_ids !== null && body.user_ids !== undefined) await dbm.setGroupUsers(gid, body.user_ids);
     await refreshLiveScopes();
+    setRedactedAuditDetail(req, {
+      id: gid,
+      name,
+      agent_extensions: body.agent_extensions ?? [],
+      queue_extensions: body.queue_extensions ?? [],
+      user_ids: body.user_ids ?? null,
+    });
     return dbm.getGroup(gid);
   }
 
@@ -130,6 +138,14 @@ export class GroupsController {
     }
     if (body.user_ids !== null && body.user_ids !== undefined) await dbm.setGroupUsers(groupId, body.user_ids);
     await refreshLiveScopes();
+    // The lists sent replace the membership; the ones left out were not touched.
+    setRedactedAuditDetail(req, {
+      before: { name: g.name },
+      name: body.name ?? null,
+      agent_extensions: body.agent_extensions ?? null,
+      queue_extensions: body.queue_extensions ?? null,
+      user_ids: body.user_ids ?? null,
+    });
     return dbm.getGroup(groupId);
   }
 
@@ -138,8 +154,10 @@ export class GroupsController {
   @Auth('admin')
   async apiDeleteGroup(@Req() req: Request) {
     const groupId = pInt(req.params.group_id, 'group_id');
+    const before = await dbm.getGroup(groupId);
     if (!(await dbm.deleteGroup(groupId))) throw new HttpError(404, 'Group not found or cannot delete');
     await refreshLiveScopes();
+    setRedactedAuditDetail(req, { deleted: before ? { id: groupId, name: before.name } : { id: groupId } });
     return { ok: true };
   }
 }

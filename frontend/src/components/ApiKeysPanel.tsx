@@ -27,6 +27,7 @@ const blank: FormState = { name: '', scopes: [], expires_at: '' };
 const SCOPE_GROUPS: { key: string; label: string; scopes: string[] }[] = [
   { key: 'calls', label: 'Calls & CDR', scopes: ['calls:read', 'calls:write', 'cdr:read'] },
   { key: 'analytics', label: 'Analytics', scopes: ['analytics:read'] },
+  { key: 'contacts', label: 'Contacts', scopes: ['contacts:read', 'contacts:write'] },
 ];
 
 // English defaults with their i18n keys (':' is i18next's namespace separator,
@@ -36,6 +37,8 @@ const SCOPE_LABELS: Record<string, { key: string; label: string }> = {
   'calls:write': { key: 'settings.apiKeys.scopeLabels.calls_originate', label: 'Originate calls (click-to-call)' },
   'cdr:read': { key: 'settings.apiKeys.scopeLabels.cdr_read', label: 'Read call history & recordings' },
   'analytics:read': { key: 'settings.apiKeys.scopeLabels.analytics_read', label: 'Read analytics & exports' },
+  'contacts:read': { key: 'settings.apiKeys.scopeLabels.contacts_read', label: 'Read the phonebook' },
+  'contacts:write': { key: 'settings.apiKeys.scopeLabels.contacts_write', label: 'Push contacts into the phonebook' },
 };
 
 // A checkbox that supports an indeterminate (some-but-not-all) state.
@@ -157,12 +160,14 @@ function ScopeBadges({ scopes }: { scopes: string[] }) {
   );
 }
 
-/** Convert an ISO timestamp to the YYYY-MM-DD value an <input type="date"> expects. */
+/**
+ * The YYYY-MM-DD an <input type="date"> expects, sliced from the server's timestamp. Never
+ * through Date: the server sends a local wall-clock time without a zone, and toISOString()
+ * would shift it to UTC (east of UTC, midnight becomes the previous day).
+ */
 function isoToDateInput(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 10);
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec((iso || '').trim());
+  return m ? m[1] : '';
 }
 
 function isEnabled(k: ApiKey): boolean { return k.enabled === true || k.enabled === 1; }
@@ -233,8 +238,10 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
     setSaving(true);
     try {
       if (editing) {
-        // Send the plain YYYY-MM-DD (or '' to clear) — the backend normalizes it.
-        const body = { name: form.name.trim(), scopes: form.scopes, expires_at: form.expires_at };
+        // Send the plain YYYY-MM-DD (or '' to clear) — the backend normalizes it — and
+        // only when it changed, so saving a rename keeps an expiry's time of day.
+        const body: Record<string, unknown> = { name: form.name.trim(), scopes: form.scopes };
+        if (form.expires_at !== isoToDateInput(editing.expires_at)) body.expires_at = form.expires_at;
         const res = await fetchWithAuth(`/api/api-keys/${editing.id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });

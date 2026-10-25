@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Terminal, Send, Play, Pause, Download, Trash2, Tag, ScrollText, Braces, Loader2,
   ChevronRight, RefreshCw, Copy, Check, ArrowDown, Inbox, PhoneIncoming, PhoneOutgoing,
-  ArrowLeftRight, RotateCcw, History,
+  ArrowLeftRight, RotateCcw, History, Repeat,
 } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
 import { PageRange } from './PageRange';
@@ -13,11 +13,13 @@ import { quickRanges } from './analyticsUtils';
 import type { DateRange } from './analyticsUtils';
 import {
   Alert, Badge, Card, Dropdown, EmptyState, Loading, Modal, Page, Pagination, SearchInput,
-  Table, Tabs, Toggle, Toolbar, useActionError, useConfirm, type Column,
+  Table, Tabs, Toggle, Toolbar, useActionError, useConfirm, type BadgeTone, type Column,
 } from './ui';
-import type { AmiEvent, WebhookDelivery, WebhookDeliveryDetail } from '../types';
+import type {
+  AmiEvent, WebhookDelivery, WebhookDeliveryDetail, WebhookDeliveryFacets, WebhookDeliveryStatus,
+} from '../types';
 import { api, apiList, messageFrom, messageOf, toApiError } from '../lib/api';
-import { countBy } from '../lib/filters';
+import { countBy, presentOptions } from '../lib/filters';
 import { AuditPanel } from './AuditPanel';
 
 type LogsTab = 'system' | 'deliveries' | 'audit';
@@ -504,8 +506,30 @@ function DirectionBadge({ type }: { type?: string | null }) {
   return <Badge tone="info">{type}</Badge>;
 }
 
+const DELIVERY_STATUSES: readonly WebhookDeliveryStatus[] = ['pending', 'delivered', 'failed', 'abandoned'];
+const DELIVERY_STATUS_TONE: Record<WebhookDeliveryStatus, BadgeTone> = {
+  pending: 'warning', delivered: 'success', failed: 'danger', abandoned: 'danger',
+};
+const DELIVERY_STATUS_DOT: Record<WebhookDeliveryStatus, 'orange' | 'green' | 'red'> = {
+  pending: 'orange', delivered: 'green', failed: 'red', abandoned: 'red',
+};
+const DELIVERY_STATUS_LABELS: Record<WebhookDeliveryStatus, string> = {
+  pending: 'Retrying', delivered: 'Delivered', failed: 'Failed', abandoned: 'Gave up',
+};
+
+/** A row's queue status; rows written before the retry queue only carry `success`. */
+function deliveryStatus(r: WebhookDelivery): WebhookDeliveryStatus {
+  return r.status ?? (r.success ? 'delivered' : 'failed');
+}
+
+/** A delivery the operator may retry in place: not landed, and its body is replayable. */
+function canRetry(r: WebhookDelivery): boolean {
+  return deliveryStatus(r) !== 'delivered' && !r.truncated;
+}
+
 function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
   const { t } = useTranslation();
+  const statusLabel = (s: WebhookDeliveryStatus) => t(`logs.deliveries.status.${s}`, DELIVERY_STATUS_LABELS[s]);
   const [rows, setRows] = useState<WebhookDelivery[]>([]);
   // Cursor pagination. `stack` holds the cursor for each visited page so Previous
   // can go back -- a forward-only cursor has no way to address the page before it.
@@ -514,7 +538,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState('');       // '' | 'success' | 'failed'
+  const [status, setStatus] = useState('');       // '' | 'unresolved' | a WebhookDeliveryStatus
   const [direction, setDirection] = useState(''); // '' | inbound | outbound | internal
   // `search` is already the settled term — ui/SearchInput owns the debounce.
   const [search, setSearch] = useState('');
@@ -525,23 +549,29 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [resendingId, setResendingId] = useState<number | null>(null);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
+  // Totals per status (whole log) and the filters' per-value counts (current query).
+  const [counts, setCounts] = useState<Partial<Record<WebhookDeliveryStatus, number>> | null>(null);
+  const [facets, setFacets] = useState<WebhookDeliveryFacets | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [confirm, confirmDialog] = useConfirm();
 
   const fetchPage = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), facets: '1' });
       const cur = stack[stack.length - 1];
       if (cur) params.set('cursor', cur);
-      if (status) params.set('success', status === 'success' ? 'true' : 'false');
+      if (status) params.set('status', status);
       if (direction) params.set('call_type', direction);
       if (search) params.set('search', search);
       if (dateRange?.from) params.set('date_from', dateRange.from);
       if (dateRange?.to) params.set('date_to', dateRange.to);
-      const { items, page } = await apiList<WebhookDelivery>(`/api/logs/deliveries?${params}`);
+      const { items, page, meta } = await apiList<WebhookDelivery>(`/api/logs/deliveries?${params}`);
       setRows(items);
       setNextCursor(page.next_cursor);
+      setCounts((meta.counts as Partial<Record<WebhookDeliveryStatus, number>>) ?? null);
+      setFacets((meta.facets as WebhookDeliveryFacets) ?? null);
       setError(null);
     } catch (e) {
       setError(toApiError(e).message);
@@ -603,6 +633,39 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
     setTimeout(() => setMessage(null), 5000);
   };
 
+  // Retry in place: the same delivery (same idempotency key) is made due now and swept at
+  // once, so the outcome is on screen when this returns.
+  const retry = async (row: WebhookDelivery) => {
+    setRetryingId(row.id);
+    try {
+      const res = await api<{ ok: boolean; delivery: WebhookDelivery | null }>(
+        `/api/logs/deliveries/${row.id}/retry`, { method: 'POST' });
+      const now = res.delivery;
+      if (now) setRows(rs => rs.map(r => (r.id === now.id ? { ...r, ...now } : r)));
+      setDetail(d => { const next = { ...d }; delete next[row.id]; return next; });
+      const landed = now && deliveryStatus(now) === 'delivered';
+      setMessage(landed
+        ? { type: 'success', text: t('logs.deliveries.retryOk', 'Delivered on retry.') }
+        : { type: 'error', text: t('logs.deliveries.retryStillFailing', 'Retried — the CRM still did not accept it.') });
+    } catch (e) {
+      setMessage({ type: 'error', text: messageOf(e, t('logs.deliveries.retryFail', 'Retry failed.')) });
+    }
+    setRetryingId(null);
+    setTimeout(() => setMessage(null), 5000);
+  };
+
+  // The filters offer what occurs under the other filters, each with its count (facets);
+  // without facets (an error, an older server) every value is offered.
+  const statusOptions = DELIVERY_STATUSES.map(s => ({ value: s, label: statusLabel(s), dot: DELIVERY_STATUS_DOT[s] }));
+  const shownStatuses = facets?.status ? presentOptions(statusOptions, facets.status, status) : statusOptions;
+  const unresolved = (facets?.status?.pending ?? 0) + (facets?.status?.failed ?? 0) + (facets?.status?.abandoned ?? 0);
+  const directionOptions = [
+    { value: 'inbound', label: t('direction.inbound', 'Inbound'), dot: 'green' as const },
+    { value: 'outbound', label: t('direction.outbound', 'Outbound'), dot: 'blue' as const },
+    { value: 'internal', label: t('direction.internal', 'Internal'), dot: 'neutral' as const },
+  ];
+  const shownDirections = facets?.call_type ? presentOptions(directionOptions, facets.call_type, direction) : directionOptions;
+
   const columns: Column<WebhookDelivery>[] = [
     {
       key: 'time', header: t('logs.deliveries.time', 'Time'), primary: true,
@@ -631,18 +694,27 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
     },
     {
       key: 'result', header: t('logs.deliveries.result', 'Result'),
-      cell: (r) => (
-        <span className="u-col u-gap-1 u-min-w-0">
-          <span>
-            <Badge tone={r.success ? 'success' : 'danger'} title={r.error || undefined}>
-              {r.status_code ?? t('logs.deliveries.noResponse', 'no response')}
-            </Badge>
+      cell: (r) => {
+        const st = deliveryStatus(r);
+        return (
+          <span className="u-col u-gap-1 u-min-w-0">
+            <span className="u-row u-gap-1 u-wrap">
+              <Badge tone={DELIVERY_STATUS_TONE[st]}>{statusLabel(st)}</Badge>
+              <Badge tone="neutral" title={r.error || undefined}>
+                {r.status_code ?? t('logs.deliveries.noResponse', 'no response')}
+              </Badge>
+            </span>
+            {st === 'pending' && r.next_attempt_at && (
+              <span className="u-text-sm u-fg-muted u-nowrap">
+                {t('logs.deliveries.nextAttempt', 'Next try {{when}}', { when: new Date(r.next_attempt_at).toLocaleTimeString() })}
+              </span>
+            )}
+            {!r.success && r.error && (
+              <span className="u-text-sm u-fg-danger u-truncate" title={r.error}>{r.error}</span>
+            )}
           </span>
-          {!r.success && r.error && (
-            <span className="u-text-sm u-fg-danger u-truncate" title={r.error}>{r.error}</span>
-          )}
-        </span>
-      ),
+        );
+      },
     },
     {
       key: 'latency', header: t('common.latency', 'Latency'), align: 'end', hideOnMobile: true,
@@ -653,6 +725,11 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
       cell: (r) => (
         <span className="u-text-sm u-nowrap">
           #{r.attempt}
+          {r.max_attempts != null && r.max_attempts > 1 && (
+            <span className="u-fg-muted u-ms-1">
+              {t('logs.deliveries.tries', '{{count}}/{{max}} tries', { count: r.attempts ?? 0, max: r.max_attempts })}
+            </span>
+          )}
           {r.parent_id != null && (
             <span
               className="u-fg-muted u-ms-1"
@@ -677,6 +754,18 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
           >
             <Braces size={14} />
           </button>
+          {canRetry(r) && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => retry(r)}
+              disabled={retryingId === r.id}
+              title={t('logs.deliveries.retryHint', 'Send this delivery again now, with the same idempotency key.')}
+            >
+              {retryingId === r.id ? <Loader2 size={14} className="spinner" /> : <Repeat size={14} />}
+              {t('logs.deliveries.retry', 'Retry now')}
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-ghost btn-sm"
@@ -724,8 +813,13 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
                   ariaLabel={t('logs.deliveries.result', 'Result')}
                   options={[
                     { value: '', label: t('logs.deliveries.allStatuses', 'All results') },
-                    { value: 'success', label: t('logs.deliveries.status.success', 'Delivered'), dot: 'green' },
-                    { value: 'failed', label: t('logs.deliveries.status.failed', 'Failed'), dot: 'red' },
+                    {
+                      value: 'unresolved',
+                      label: t('logs.deliveries.status.unresolved', 'Not delivered'),
+                      dot: 'red',
+                      ...(facets?.status ? { count: unresolved } : {}),
+                    },
+                    ...shownStatuses,
                   ]}
                 />
               </div>
@@ -737,9 +831,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
                   ariaLabel={t('fields.direction', 'Direction')}
                   options={[
                     { value: '', label: t('direction.all', 'All directions') },
-                    { value: 'inbound', label: t('direction.inbound', 'Inbound'), dot: 'green' },
-                    { value: 'outbound', label: t('direction.outbound', 'Outbound'), dot: 'blue' },
-                    { value: 'internal', label: t('direction.internal', 'Internal'), dot: 'neutral' },
+                    ...shownDirections,
                   ]}
                 />
               </div>
@@ -761,6 +853,24 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
       >
         {message?.text}
       </Alert>
+
+      {/* The whole log at a glance: what landed, what is still being retried, what never will. */}
+      {counts && (
+        <div className="u-row u-gap-2 u-wrap u-mb-3" role="group" aria-label={t('logs.deliveries.totals', 'Deliveries by status')}>
+          {DELIVERY_STATUSES.map(s => (
+            <button
+              key={s}
+              type="button"
+              className={`btn btn-ghost btn-sm${status === s ? ' is-selected' : ''}`}
+              aria-pressed={status === s}
+              onClick={() => setStatus(status === s ? '' : s)}
+            >
+              <Badge tone={DELIVERY_STATUS_TONE[s]}>{counts[s] ?? 0}</Badge>
+              {statusLabel(s)}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading && !rows.length ? (
         <Loading />
@@ -852,6 +962,31 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
                 <span className="crmx-meta-k">{t('logs.deliveries.attempt', 'Attempt')}</span>
                 <span className="crmx-meta-v crmx-num">#{openRow.attempt}</span>
               </div>
+              <div className="crmx-meta-cell">
+                <span className="crmx-meta-k">{t('common.status', 'Status')}</span>
+                <span className="crmx-meta-v">
+                  {statusLabel(deliveryStatus(openRow))}
+                  {openRow.max_attempts != null && (
+                    <span className="u-fg-muted u-ms-1">
+                      {t('logs.deliveries.tries', '{{count}}/{{max}} tries', { count: openRow.attempts ?? 0, max: openRow.max_attempts })}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {openRow.trigger_kind && (
+                <div className="crmx-meta-cell">
+                  <span className="crmx-meta-k">{t('logs.deliveries.trigger', 'Sent')}</span>
+                  <span className="crmx-meta-v">
+                    {t(`logs.deliveries.triggers.${openRow.trigger_kind}`, openRow.trigger_kind)}
+                  </span>
+                </div>
+              )}
+              {openRow.delivery_uuid && (
+                <div className="crmx-meta-cell">
+                  <span className="crmx-meta-k">{t('logs.deliveries.idempotencyKey', 'Idempotency key')}</span>
+                  <span className="crmx-meta-v mono" dir="ltr">{openRow.delivery_uuid}</span>
+                </div>
+              )}
             </div>
 
             <div>

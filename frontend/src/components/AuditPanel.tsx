@@ -36,6 +36,16 @@ interface AuditResponse {
   page?: { next_cursor?: string | null };
 }
 
+/** An audit detail as readable text: pretty JSON, or the stored text as it is. */
+function detailText(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  try {
+    return JSON.stringify(detail, null, 2);
+  } catch {
+    return String(detail);
+  }
+}
+
 function fmtTime(s?: string | null): string {
   if (!s) return '—';
   const d = new Date(s);
@@ -162,7 +172,17 @@ export function AuditPanel({ tabStrip }: { tabStrip: React.ReactNode }) {
     },
     {
       key: 'summary', header: t('audit.summary', 'Details'), className: 'u-text-xs u-fg-muted u-mono audit-summary',
-      cell: r => <bdi>{r.summary || '—'}</bdi>,
+      cell: r => (
+        <>
+          <bdi>{r.summary || '—'}</bdi>
+          {r.detail !== null && r.detail !== undefined && (
+            <details className="audit-detail">
+              <summary>{t('audit.showDetail', 'What changed')}</summary>
+              <pre dir="ltr">{detailText(r.detail)}</pre>
+            </details>
+          )}
+        </>
+      ),
     },
     {
       key: 'ip', header: t('audit.ip', 'IP'), hideOnMobile: true, className: 'u-text-xs u-fg-muted u-mono',
