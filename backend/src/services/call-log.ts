@@ -12,9 +12,15 @@
  *   * the journey uses ISO times, says UNANSWERED (not NO_ANSWER), shows supervision
  *     (LISTEN/WHISPER/BARGE) and IVR menus, never claims an ANSWER for a leg that was not
  *     answered, and orders OUTBOUND first among same-second events.
+ *
+ * A multi-leg call's status, talk time and agent come from the last leg a party answered,
+ * not the last leg (a call answered and then transferred to nobody was still answered); a
+ * queue caller who hung up while waiting is ABANDONED; each row names its customer (cnam on
+ * inbound calls only, else the phonebook), its agent and its route.
  */
 
 import * as dbm from '../db/db-manager';
+import { decodeCursor, encodeCursor } from '../db/pool';
 import type { Row, SqlValue } from '../db/pool';
 import { pyStr } from '../core/logger';
 import { addSeconds, floorDiv, isoformat, pyInt, pyMod, pyRound, truthy } from '../core/py';
@@ -94,6 +100,59 @@ function asDate(v: unknown): Date | null {
     return Number.isNaN(d.getTime()) ? null : d;
   }
   return null;
+}
+
+// ===========================================================================
+// Phonebook name resolution for history rows
+// ===========================================================================
+// Installed by core/lifespan at startup rather than imported, because this module is also
+// imported by analytics and must not pull in the resolver (or the CRM connector it holds)
+// just to classify a disposition.
+//
+// The callable must be a pure in-memory lookup: a history page resolves one name per row,
+// so anything that could hit the DB or the network here turns one page view into hundreds
+// of round trips. ContactResolver.nameFor() is that lookup, and it deliberately does NOT
+// schedule a CRM fetch for an unknown historical number.
+export type ContactNameResolver = (phoneNumber: string) => string | null | undefined;
+let contactNameResolver: ContactNameResolver | null = null;
+
+/** Install the phonebook lookup used to name history rows. Pass null to disable. */
+export function setContactNameResolver(fn: ContactNameResolver | null): void {
+  contactNameResolver = fn;
+}
+
+// Caller-ID names that carry no information. FreePBX's inbound route sets an empty
+// CALLERID(name) to the number itself, so a CDR very often has cnam set to the number --
+// which would otherwise shadow a real phonebook name.
+export const CNAM_NOISE: readonly string[] = ['', 'unknown', '<unknown>', 'anonymous', 'restricted', 'private'];
+
+/**
+ * Best display name for a history row's remote party, or null.
+ *
+ * `cnam` is the caller-ID name the network delivered, and it names the remote party only on
+ * an INBOUND call: on an outbound or internal call it is our own agent's name (the row for
+ * agent hema's *43 test call read "hema" as its customer), so callers pass null there. A
+ * cnam that says something wins; one that is absent, noise, or merely the number again
+ * falls back to the phonebook -- which also puts names added today on older calls.
+ */
+export function resolveCustomerName(cnam: unknown, phoneNumber: unknown): string | null {
+  let name = strOr(cnam).trim();
+  if (CNAM_NOISE.includes(name.toLowerCase())) {
+    name = '';
+  } else {
+    // cnam is just the number again. Only when the number has digits: a digit-free name
+    // against an empty/withheld number ('' == '') is a real name and is kept.
+    const numDigits = strOr(phoneNumber).replace(/\P{Nd}/gu, '');
+    if (numDigits && name.replace(/\P{Nd}/gu, '') === numDigits) name = '';
+  }
+  if (name) return name;
+  if (contactNameResolver === null || !truthy(phoneNumber)) return null;
+  try {
+    const r = contactNameResolver(pyStr(phoneNumber));
+    return truthy(r) ? (r as string) : null;
+  } catch {
+    return null;
+  }
 }
 
 // ===========================================================================
@@ -212,17 +271,45 @@ export function mapCallOutcome(opts: MapCallOutcomeOptions = {}): string {
 export type CelFacts = Record<string, Row>;
 
 /**
+ * Did the caller give up while waiting in a queue (ABANDONED)?
+ *
+ * Queue() leaves no DIALSTATUS and the CDR has no QUEUESTATUS, so this is read off the
+ * call's own legs and CEL:
+ *   * the call went through Queue() and its final leg is still a Queue() leg -- a queue
+ *     that times out moves the caller on to its failover destination, a later leg;
+ *   * no party answered on any leg (billsec > 0 with a destination channel). A caller's own
+ *     leg can carry billsec with no member at all: FreePBX answers the caller to play
+ *     music on hold, so billsec alone does not mean an agent took the call;
+ *   * the caller ended it: CEL names the caller's channel as the source of its own hangup.
+ *     With no CEL for the call at all (a PBX without CEL, or the analytics scan that skips
+ *     it), a call that ended inside Queue() with nobody answering is the caller leaving.
+ */
+export function queueAbandoned(cdr: Row, celFacts: CelFacts | null | undefined): boolean {
+  if (strOr(dget(cdr, 'lastapp')) !== 'Queue') return false;
+  const partyAnswered = has(cdr, 'party_answered')
+    ? truthy(Number(dget(cdr, 'party_answered')))
+    : (Number(dget(cdr, 'billsec')) || 0) > 0 && truthy(dget(cdr, 'dstchannel'));
+  if (partyAnswered) return false;
+  if (!truthy(celFacts)) return true;
+  const callerCh = strOr(dget(cdr, 'channel'));
+  const caller: Row | null = callerCh ? dget(celFacts as CelFacts, callerCh) : null;
+  return truthy(caller) && dget(caller, 'source') === callerCh;
+}
+
+/**
  * The call's outcome, read from the CEL hangup facts of its own two channels.
  *
  * Which channel to believe:
- *   * the CALLEE's leg (the last leg's dstchannel) is the one that says busy / declined /
+ *   * the CALLEE's leg (the outcome leg's dstchannel) is the one that says busy / declined /
  *     unreachable -- it is their phone reporting on itself;
- *   * the CALLER's leg (the last leg's channel, `last_channel`) carries the DIALSTATUS
+ *   * the CALLER's leg (the outcome leg's channel, `last_channel`) carries the DIALSTATUS
  *     Dial() left behind, and is the fallback cause when the callee's leg never existed.
  * A cause of 0 means "none reported" rather than a verdict, so it is skipped in favour of a
- * real one from the other leg, and failing that the CDR disposition still decides.
+ * real one from the other leg, and failing that the CDR disposition still decides. A queue
+ * caller who hung up while waiting is ABANDONED (queueAbandoned), whatever the legs say.
  */
 export function outcomeFromCel(cdr: Row, celFacts: CelFacts): string {
+  if (queueAbandoned(cdr, celFacts)) return ABANDONED;
   const factsFor = (ch: unknown): Row | null => {
     const k = truthy(ch) ? pyStr(ch) : '';
     const f = has(celFacts, k) ? celFacts[k] : null;
@@ -323,6 +410,52 @@ export function classifyCdrDirection(cdr: Row): string {
   return (['IN', 'OUT', 'INTERNAL'] as const).find((k) => votes[k] === maxVotes) as string;
 }
 
+// How a call reached (or left) the agent, one value per row. Prefixed by the side it counts
+// on, so a consumer can group on the prefix: outbound_*, inbound_*, internal_*.
+export const CALL_ROUTES = [
+  'outbound_direct',
+  'inbound_queue',
+  'inbound_ivr',
+  'inbound_direct',
+  'internal_extension',
+  'internal_supervision',
+  'internal_feature',
+] as const;
+export type CallRoute = (typeof CALL_ROUTES)[number];
+
+/**
+ * The route of one call-log row, read off its first leg once call_type is settled.
+ * Structural throughout -- channel names, apps and dialplan contexts the PBX writes -- so
+ * it holds for calls made before any setting changed:
+ *   * a supervisor's ChanSpy call                        -> internal_supervision;
+ *   * a feature code (*43, *97...) or an app- context    -> internal_feature (not for
+ *     inbound: a DID routed to an announcement starts in an app- context too);
+ *   * outbound                                           -> outbound_direct;
+ *   * inbound through Queue() on any leg, or a queue context -> inbound_queue; an IVR
+ *     context -> inbound_ivr; anything else inbound      -> inbound_direct;
+ *   * the rest (extension to extension)                  -> internal_extension.
+ */
+export function callRoute(cdr: Row): CallRoute {
+  const dcontext = strOr(dget(cdr, 'dcontext')).toLowerCase();
+  const firstApp = strOr(dget(cdr, 'first_lastapp') || dget(cdr, 'lastapp'));
+  const dst = strOr(dget(cdr, 'dst'));
+  const callType = dget(cdr, 'call_type');
+  if (firstApp === 'ChanSpy' || strOr(dget(cdr, 'linkedid')).startsWith('spy-')) return 'internal_supervision';
+  if (callType !== 'IN' && (dst.startsWith('*') || dcontext.startsWith('app-'))) return 'internal_feature';
+  if (callType === 'OUT') return 'outbound_direct';
+  if (callType === 'IN') {
+    if (dcontext.includes('queue') || firstApp === 'Queue' || (Number(dget(cdr, 'queue_legs')) || 0) > 0) return 'inbound_queue';
+    if (dcontext.includes('ivr')) return 'inbound_ivr';
+    return 'inbound_direct';
+  }
+  return 'internal_extension';
+}
+
+/** The side a route counts on: 'inbound' | 'outbound' | 'internal'. */
+export function routeSide(route: unknown): string {
+  return strOr(route).split('_')[0];
+}
+
 /**
  * The extension a call leg reached: from the destination channel, else the origin channel.
  *
@@ -420,6 +553,36 @@ export function callEndedBy(
 // CRM identity
 // ===========================================================================
 
+/** A leg a party answered: it had talk time with someone on its destination channel. */
+function partyAnsweredLeg(leg: Row): boolean {
+  return (Number(dget(leg, 'billsec')) || 0) > 0 && truthy(dget(leg, 'dstchannel'));
+}
+
+/**
+ * The leg a multi-leg call's outcome is read from, of legs in sequence order: the last one
+ * a party answered, else the last one. The twin of getCallLogFromDb's out_seq, so the CRM
+ * push and Call History name the same agent, status and talk time.
+ */
+export function outcomeLeg(legs: Row[]): Row {
+  const answered = legs.filter(partyAnsweredLeg);
+  return answered.length ? answered[answered.length - 1] : legs[legs.length - 1];
+}
+
+/** Whole-call seconds, first leg start to the end of the last-ending leg; null without dates. */
+export function callSpanSeconds(legs: Row[]): number | null {
+  let startMs: number | null = null;
+  let endMs: number | null = null;
+  for (const leg of legs) {
+    const at = asDate(dget(leg, 'calldate'));
+    if (!at) continue;
+    const s = at.getTime();
+    const e = s + (Number(dget(leg, 'duration')) || 0) * 1000;
+    if (startMs === null || s < startMs) startMs = s;
+    if (endMs === null || e > endMs) endMs = e;
+  }
+  return startMs === null || endMs === null ? null : Math.round((endMs - startMs) / 1000);
+}
+
 /**
  * CRM identity fields from the finalized CDR -- the SAME source and normalization Call
  * History uses -- so the CRM push matches the call log (direction, external destination,
@@ -437,10 +600,11 @@ export async function crmIdentityFromCdr(linkedid: string): Promise<Record<strin
   if (!truthy(rows)) return {};
 
   // Raw per-leg rows with no ordering: collapse them the SAME way Call History does --
-  // identity from the first leg (min sequence = origin), outcome from the last leg.
+  // identity from the first leg (min sequence = origin), outcome from the last leg a party
+  // answered (else the last leg), duration over the whole call.
   const legs = [...rows].sort((a, b) => (dget(a, 'sequence') || 0) - (dget(b, 'sequence') || 0));
   const first = legs[0];
-  const last = legs[legs.length - 1];
+  const last = outcomeLeg(legs);
   const cdr: Row = {
     calldate: dget(first, 'calldate'),
     src: dget(first, 'src'),
@@ -451,7 +615,7 @@ export async function crmIdentityFromCdr(linkedid: string): Promise<Record<strin
     lastapp: dget(last, 'lastapp'),
     disposition: dget(last, 'disposition'),
     billsec: dget(last, 'billsec'),
-    duration: dget(last, 'duration'),
+    duration: callSpanSeconds(legs) ?? dget(last, 'duration'),
   };
   const direction = classifyCdrDirection(cdr);
   const ext = convertChannelToExtension(cdr.dstchannel, cdr.channel);
@@ -505,12 +669,18 @@ export async function crmIdentityFromCdr(linkedid: string): Promise<Record<strin
 
 export interface CallLogOptions {
   limit?: number | null;
+  /** Keyset position: the [calldate, linkedid] of the previous page's last call. */
+  after?: readonly [SqlValue, SqlValue] | null;
   date?: string | null;
   dateFrom?: string | null;
   dateTo?: string | null;
   allowedExtensions?: SqlValue[] | null;
   search?: string | null;
-  /** Call History UI: resolve recording paths and flag/attach supervision. Default true. */
+  /** Leave out supervisors' ChanSpy calls (an agent's own history never shows them). */
+  excludeSupervision?: boolean;
+  /** 'desc' (newest first, the default) or 'asc'. */
+  order?: 'asc' | 'desc' | null;
+  /** Call History UI: resolve recording paths, agent names and flag/attach supervision. Default true. */
   enrich?: boolean;
   /** Read the CEL hangup facts for status + ended_by. Default: same as enrich. */
   outcomes?: boolean | null;
@@ -518,19 +688,151 @@ export interface CallLogOptions {
   supervision?: boolean | null;
 }
 
+/** What enrichCallLogRows adds to built rows. */
+export interface CallLogEnrichment {
+  /** recording_path from the recordings index. */
+  recordings?: boolean;
+  /** is_supervision / supervision on ChanSpy rows, supervision_count on supervised calls. */
+  supervision?: boolean;
+  /** agent_name from the PBX extension names. */
+  names?: boolean;
+}
+
+/**
+ * One Call History row from a getCallLogFromDb row and its call's CEL hangup facts. Pure:
+ * everything that needs a lookup (recording path, agent name, supervision) is added by
+ * enrichCallLogRows, so a filtered scan can build every row and enrich only one page.
+ */
+export function callLogRow(cdr: Row, facts: CelFacts | null | undefined): Row {
+  const callType = classifyCdrDirection(cdr);
+  cdr.call_type = callType;
+  const extension = convertChannelToExtension(cdr.dstchannel, cdr.channel);
+
+  // Phone number (external party) by direction.
+  let phoneNumber: any;
+  if (callType === 'IN') phoneNumber = dgetOr(cdr, 'src', '');
+  else if (callType === 'OUT') phoneNumber = dgetOr(cdr, 'dst', '');
+  else phoneNumber = dgetOr(cdr, 'dst', '') || dgetOr(cdr, 'src', '');
+
+  // Canonical outcome, computed on read (never stored), so the whole history renders in
+  // this vocabulary with no backfill. `disposition` stays the RAW CDR value on purpose --
+  // the analytics KPIs key off it.
+  const disposition = pyStr(dgetOr(cdr, 'disposition', '')).toUpperCase();
+  const status = outcomeFromCel(cdr, truthy(facts) ? (facts as CelFacts) : {});
+  const talk = dget(cdr, 'billsec');
+  // Who ended it, from the same CEL facts and the same two channels the journey's HANGUP
+  // reads -- so the row and its journey cannot disagree. Absent without CEL.
+  const endedBy = truthy(facts)
+    ? callEndedBy(dget(cdr, 'channel'), dget(cdr, 'dstchannel'), facts as CelFacts, (Number(talk) || 0) > 0)
+    : {};
+
+  return {
+    calldate: dget(cdr, 'calldate'),
+    src: dget(cdr, 'src'),
+    dst: dget(cdr, 'dst'),
+    phone_number: phoneNumber,
+    // The caller-ID name is the remote party's only on an inbound call.
+    customer_name: resolveCustomerName(callType === 'IN' ? dget(cdr, 'cnam') : null, phoneNumber),
+    duration: dget(cdr, 'duration'),
+    talk, // billsec of the outcome leg, renamed
+    disposition,
+    // One of CALL_OUTCOMES. `canonical_status` is the same value, kept for mobile clients
+    // written when the two could differ.
+    status,
+    canonical_status: status,
+    QoS: dget(cdr, 'userfield'),
+    extension,
+    agent_name: null,
+    call_type: callType,
+    route: callRoute(cdr),
+    recording_path: null,
+    recording_file: dget(cdr, 'recordingfile') || null,
+    app: dget(cdr, 'call_app'),
+    ended_by: endedBy.ended_by ?? null,
+    ended_by_agent: endedBy.ended_by_agent ?? null,
+    call_journey_count: dget(cdr, 'call_journey_count'),
+    linkedid: dget(cdr, 'linkedid'),
+    uniqueid: dget(cdr, 'uniqueid'),
+    // Supervision (listen/whisper/barge). A standalone ChanSpy leg is flagged so the UI
+    // can hide it behind a "supervision" filter.
+    is_supervision: false,
+    supervision: null,
+  };
+}
+
+/**
+ * Add the looked-up parts of Call History rows, in place: recording paths, agent names, and
+ * supervision. Supervision is two lookups in the OpDesk DB merged here (no cross-DB join to
+ * the CDR):
+ *   spyByKey       rows whose linkedid/uniqueid IS a ChanSpy leg -- the standalone "-> s"
+ *                  rows; flagged so the UI can hide them by default;
+ *   superByTarget  supervision events grouped by the MONITORED call, so a supervised call
+ *                  surfaces its journey button and its journey can show them.
+ */
+export async function enrichCallLogRows(rows: Row[], what: CallLogEnrichment): Promise<Row[]> {
+  if (what.recordings) {
+    for (const r of rows) {
+      const p = truthy(r.recording_file) ? await getRecordingPath(r.recording_file) : null;
+      r.recording_path = truthy(p) ? pyStr(p) : null;
+    }
+  }
+  if (what.names && rows.length) {
+    // The PBX extension name, the same one the Extensions board shows. One small table,
+    // read once per page.
+    let names: Record<string, string> = {};
+    try {
+      names = (await dbm.getExtensionNamesFromDb()) || {};
+    } catch {
+      names = {};
+    }
+    for (const r of rows) r.agent_name = truthy(r.extension) ? dget(names, pyStr(r.extension)) : null;
+  }
+  const linkedids = rows.filter((c) => truthy(dget(c, 'linkedid'))).map((c) => pyStr(c.linkedid));
+  if (what.supervision && linkedids.length) {
+    const keys = [...linkedids, ...rows.filter((c) => truthy(dget(c, 'uniqueid'))).map((c) => pyStr(c.uniqueid))];
+    const spyByKey: Record<string, Row> = (await dbm.getSupervisionBySpyKeys(keys)) || {};
+    const superByTarget: Record<string, Row[]> = (await dbm.getSupervisionTargets(linkedids)) || {};
+    for (const r of rows) {
+      const lid = strOr(dget(r, 'linkedid'));
+      const uid = strOr(dget(r, 'uniqueid'));
+      const spy = dget(spyByKey, lid) || dget(spyByKey, uid);
+      if (truthy(spy)) {
+        r.is_supervision = true;
+        r.supervision = {
+          mode: dget(spy, 'mode'),
+          supervisor_extension: dget(spy, 'supervisor_extension'),
+          target_extension: dget(spy, 'target_extension'),
+          target_linkedid: dget(spy, 'target_linkedid'),
+        };
+      }
+      // Was this (normal) call supervised? Expose the count so the journey button shows
+      // even for a single-leg call; the journey endpoint injects the LISTEN/WHISPER/BARGE
+      // events.
+      const supers = lid ? dget(superByTarget, lid) : null;
+      if (truthy(supers)) {
+        r.supervision_count = supers.length;
+        r.call_journey_count = Math.max(Number(r.call_journey_count) || 1, 2);
+      }
+    }
+  }
+  return rows;
+}
+
 /**
  * Build normalized call-history rows from the CDR.
  *
- * enrich=true (Call History UI) resolves each row's recording path and flags supervision.
- * Analytics reuses this data source but only needs direction/disposition/duration/talk, so
- * it passes enrich=false to skip the recording lookup, the supervision queries and the CEL
- * read -- real savings when scanning a whole period with no row limit.
+ * enrich=true (Call History UI) resolves each row's recording path and agent name and flags
+ * supervision. Analytics reuses this data source but only needs direction/disposition/
+ * duration/talk, so it passes enrich=false to skip the recording lookup, the name and
+ * supervision queries and the CEL read -- real savings when scanning a whole period with no
+ * row limit.
  *
  * outcomes (default: same as enrich) reads the CEL hangup facts that give each row its exact
  * status and its ended_by. A caller that shows or filters by status without the rest of the
- * enrichment -- the analytics drill-down, the CSV export -- passes enrich=false,
- * outcomes=true, so a call reads the same status there as in Call History. Without CEL the
- * status still comes from the CDR (disposition + billsec), at the coarser grain.
+ * enrichment -- the analytics drill-down, the CSV export, a filtered Call History scan --
+ * passes enrich=false, outcomes=true, so a call reads the same status there as in Call
+ * History. Without CEL the status still comes from the CDR (disposition + billsec), at the
+ * coarser grain.
  */
 export async function callLog(opts: CallLogOptions = {}): Promise<Row[]> {
   const enrich = opts.enrich ?? true;
@@ -538,106 +840,130 @@ export async function callLog(opts: CallLogOptions = {}): Promise<Row[]> {
   const withSupervision = opts.supervision ?? enrich;
   const rows: Row[] = await dbm.getCallLogFromDb({
     limit: opts.limit ?? null,
+    after: opts.after ?? null,
     date: opts.date ?? null,
     dateFrom: opts.dateFrom ?? null,
     dateTo: opts.dateTo ?? null,
     allowedExtensions: opts.allowedExtensions ?? null,
     search: opts.search ?? null,
+    excludeSupervision: opts.excludeSupervision ?? false,
+    order: opts.order ?? null,
   });
 
   const linkedids = rows.filter((c) => truthy(dget(c, 'linkedid'))).map((c) => pyStr(c.linkedid));
-
-  // Supervision (listen/whisper/barge), two lookups in the OpDesk DB merged here (no
-  // cross-DB join to the CDR):
-  //   spyByKey       rows whose linkedid/uniqueid IS a ChanSpy leg -- the standalone "-> s"
-  //                  rows; flagged so the UI can hide them by default;
-  //   superByTarget  supervision events grouped by the MONITORED call, so a supervised call
-  //                  surfaces its journey button and its journey can show them.
-  let spyByKey: Record<string, Row> = {};
-  let superByTarget: Record<string, Row[]> = {};
-  if (withSupervision && linkedids.length) {
-    const keys = [...linkedids, ...rows.filter((c) => truthy(dget(c, 'uniqueid'))).map((c) => pyStr(c.uniqueid))];
-    spyByKey = (await dbm.getSupervisionBySpyKeys(keys)) || {};
-    superByTarget = (await dbm.getSupervisionTargets(linkedids)) || {};
-  }
   const celByLinkedid: Record<string, CelFacts> =
     withOutcomes && linkedids.length ? await dbm.celHangupsByLinkedid(linkedids) : {};
 
-  const result: Row[] = [];
-  for (const cdr of rows) {
-    cdr.call_type = classifyCdrDirection(cdr);
-    cdr.extension = convertChannelToExtension(cdr.dstchannel, cdr.channel);
-    cdr.recording_path = enrich && truthy(dget(cdr, 'recordingfile')) ? await getRecordingPath(cdr.recordingfile) : null;
+  const result = rows.map((cdr) => callLogRow(cdr, dget(celByLinkedid, pyStr(dget(cdr, 'linkedid')))));
+  return enrichCallLogRows(result, { recordings: enrich, names: enrich, supervision: withSupervision });
+}
 
-    // Phone number (external party) by direction.
-    const callType = dgetOr(cdr, 'call_type', '');
-    let phoneNumber: any;
-    if (callType === 'IN') phoneNumber = dgetOr(cdr, 'src', '');
-    else if (callType === 'OUT') phoneNumber = dgetOr(cdr, 'dst', '');
-    else phoneNumber = dgetOr(cdr, 'dst', '') || dgetOr(cdr, 'src', '');
+// ===========================================================================
+// Call History pages (server-side filters and paging)
+// ===========================================================================
 
-    // Canonical outcome, computed on read (never stored), so the whole history renders in
-    // this vocabulary with no backfill. `disposition` stays the RAW CDR value on purpose --
-    // the analytics KPIs key off it.
-    const disposition = pyStr(dgetOr(cdr, 'disposition', '')).toUpperCase();
-    const facts = dget(celByLinkedid, pyStr(dget(cdr, 'linkedid')));
-    const status = outcomeFromCel(cdr, truthy(facts) ? (facts as CelFacts) : {});
-    const talk = dget(cdr, 'billsec');
-    // Who ended it, from the same CEL facts and the same two channels the journey's HANGUP
-    // reads -- so the row and its journey cannot disagree. Absent without CEL.
-    const endedBy = truthy(facts)
-      ? callEndedBy(dget(cdr, 'channel'), dget(cdr, 'dstchannel'), facts as CelFacts, (Number(talk) || 0) > 0)
-      : {};
+// The most calls a filtered page scans: the filters below are on DERIVED values (the status
+// from CEL, the direction vote, the route), which no SQL can test, so a filtered page reads
+// the whole window and slices it. The CSV export's cap, for the same reason.
+export const CALL_LOG_SCAN_MAX = 50_000;
 
-    const filteredCdr: Row = {
-      calldate: dget(cdr, 'calldate'),
-      src: dget(cdr, 'src'),
-      dst: dget(cdr, 'dst'),
-      phone_number: phoneNumber,
-      customer_name: dget(cdr, 'cnam') || null,
-      duration: dget(cdr, 'duration'),
-      talk, // billsec renamed to talk
-      disposition,
-      status,
-      QoS: dget(cdr, 'userfield'),
-      extension: dget(cdr, 'extension'),
-      call_type: dget(cdr, 'call_type'),
-      recording_path: truthy(dget(cdr, 'recording_path')) ? pyStr(cdr.recording_path) : null,
-      recording_file: dget(cdr, 'recordingfile') || null,
-      app: dget(cdr, 'call_app'),
-      ended_by: endedBy.ended_by ?? null,
-      ended_by_agent: endedBy.ended_by_agent ?? null,
-      call_journey_count: dget(cdr, 'call_journey_count'),
-      linkedid: dget(cdr, 'linkedid'),
-      uniqueid: dget(cdr, 'uniqueid'),
-      // Supervision (listen/whisper/barge). A standalone ChanSpy leg is flagged so the UI
-      // can hide it behind a "supervision" filter.
-      is_supervision: false,
-      supervision: null,
-    };
+/** Call History's table filters; each a set of accepted values, null = any. */
+export interface CallLogFilters {
+  /** Call statuses (CALL_OUTCOMES). */
+  status?: ReadonlySet<string> | null;
+  /** IN / OUT / INTERNAL. */
+  callType?: ReadonlySet<string> | null;
+  /** queue / ivr / direct. */
+  app?: ReadonlySet<string> | null;
+  /** Routes (inbound_queue, ...) or route sides (inbound / outbound / internal). */
+  route?: ReadonlySet<string> | null;
+}
 
-    const lid = strOr(dget(cdr, 'linkedid'));
-    const uid = strOr(dget(cdr, 'uniqueid'));
-    const spy = dget(spyByKey, lid) || dget(spyByKey, uid);
-    if (truthy(spy)) {
-      filteredCdr.is_supervision = true;
-      filteredCdr.supervision = {
-        mode: dget(spy, 'mode'),
-        supervisor_extension: dget(spy, 'supervisor_extension'),
-        target_extension: dget(spy, 'target_extension'),
-        target_linkedid: dget(spy, 'target_linkedid'),
-      };
-    }
-    // Was this (normal) call supervised? Expose the count so the journey button shows even
-    // for a single-leg call; the journey endpoint injects the LISTEN/WHISPER/BARGE events.
-    const supers = lid ? dget(superByTarget, lid) : null;
-    if (truthy(supers)) {
-      filteredCdr.supervision_count = supers.length;
-      filteredCdr.call_journey_count = Math.max(Number(filteredCdr.call_journey_count) || 1, 2);
-    }
-    result.push(filteredCdr);
+export function hasCallLogFilters(f: CallLogFilters | null | undefined): boolean {
+  return Boolean(f && (f.status?.size || f.callType?.size || f.app?.size || f.route?.size));
+}
+
+/** Whether one built Call History row passes the table filters. */
+export function matchesCallLogFilters(r: Row, f: CallLogFilters | null | undefined): boolean {
+  if (!f) return true;
+  if (f.status?.size && !f.status.has(strOr(r.status))) return false;
+  if (f.callType?.size && !f.callType.has(strOr(r.call_type).toUpperCase())) return false;
+  if (f.app?.size && !f.app.has(strOr(r.app).toLowerCase())) return false;
+  if (f.route?.size && !f.route.has(strOr(r.route)) && !f.route.has(routeSide(r.route))) return false;
+  return true;
+}
+
+/** A Call History row's keyset position, in the order the list sorts by. */
+function rowKey(r: Row): [string, string] {
+  const cd = r.calldate instanceof Date ? isoformat(r.calldate) : strOr(r.calldate);
+  return [cd, strOr(r.linkedid)];
+}
+
+/** Keyset order of two row keys: calldate, then linkedid (what the SQL sorts by). */
+function compareKeys(a: [string, string], b: [string, string]): number {
+  if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+  return a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+}
+
+/** The opaque next-page cursor for the last row of a page. */
+function nextCursorFor(r: Row): string {
+  return encodeCursor(...rowKey(r));
+}
+
+/**
+ * One page of Call History, {calls, total, next_cursor}, with the table's filters applied
+ * on the server. Pages are keyset-paged: pass the returned next_cursor as `cursor` for the
+ * following page (null on the last one).
+ *
+ * Without a table filter the page is a keyset query after the cursor and the total its
+ * COUNT, both under the one predicate (db callLogFilter). With one, the window is scanned
+ * once with the statuses read from CEL (at most CALL_LOG_SCAN_MAX calls; `capped` says the
+ * scan stopped there), filtered, the page taken after the cursor, and only that page
+ * enriched. Either way `total` counts exactly the rows the pages hold.
+ */
+export async function callLogPage(
+  opts: CallLogOptions & { cursor?: string | null; filters?: CallLogFilters | null },
+): Promise<{ calls: Row[]; total: number; next_cursor: string | null; capped?: boolean }> {
+  const base = {
+    date: opts.date ?? null,
+    dateFrom: opts.dateFrom ?? null,
+    dateTo: opts.dateTo ?? null,
+    allowedExtensions: opts.allowedExtensions ?? null,
+    search: opts.search ?? null,
+    excludeSupervision: opts.excludeSupervision ?? false,
+  };
+  const limit = opts.limit ?? 100;
+  const order = opts.order === 'asc' ? 'asc' : 'desc';
+  const after = decodeCursor(opts.cursor, 2) as [SqlValue, SqlValue] | null;
+  if (!hasCallLogFilters(opts.filters)) {
+    // One row past the page says whether there is a next one.
+    const [rows, total] = await Promise.all([
+      callLog({ ...base, limit: limit + 1, after, order, supervision: opts.supervision ?? null }),
+      dbm.getCallLogCountFromDb(base),
+    ]);
+    const calls = rows.slice(0, limit);
+    return { calls, total, next_cursor: rows.length > limit ? nextCursorFor(calls[calls.length - 1]) : null };
   }
-  return result;
+  const scanned = await callLog({ ...base, limit: CALL_LOG_SCAN_MAX, order, enrich: false, outcomes: true, supervision: false });
+  const matched = scanned.filter((r) => matchesCallLogFilters(r, opts.filters));
+  let start = 0;
+  if (after) {
+    // The first row past the cursor, in the order the scan came back in.
+    const key: [string, string] = [strOr(after[0]), strOr(after[1])];
+    start = matched.findIndex((r) => {
+      const c = compareKeys(rowKey(r), key);
+      return order === 'asc' ? c > 0 : c < 0;
+    });
+    if (start === -1) start = matched.length;
+  }
+  const page = matched.slice(start, start + limit);
+  const calls = await enrichCallLogRows(page, { recordings: true, names: true, supervision: opts.supervision ?? true });
+  return {
+    calls,
+    total: matched.length,
+    next_cursor: start + limit < matched.length ? nextCursorFor(page[page.length - 1]) : null,
+    ...(scanned.length >= CALL_LOG_SCAN_MAX ? { capped: true } : {}),
+  };
 }
 
 // ===========================================================================
@@ -774,12 +1100,20 @@ export async function buildCallJourneyFromCdr(
     }
   }
 
-  /** TRANSFER events for rows[1:] (a later leg reaching another extension). */
+  /**
+   * TRANSFER events for rows[1:] (a later leg reaching another extension), each followed by
+   * how that leg ended: ANSWER when the agent took it, UNANSWERED when they did not -- so a
+   * call answered by one agent and blind-transferred to one who never picked up reads the
+   * way its row does (answered by the first agent), not as a transfer into silence.
+   */
   const addTransfers = (): void => {
     for (const row of rows.slice(1)) {
       const agent = convertChannelToExtension(dget(row, 'dstchannel'), dget(row, 'channel'));
       if (!agent) continue;
       add('TRANSFER', start(row), { agent });
+      const at = answerTime(row);
+      if (at) add('ANSWER', at, { agent });
+      else if (truthy(dget(row, 'dstchannel'))) add('UNANSWERED', end(row), { agent });
     }
   };
 

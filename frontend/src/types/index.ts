@@ -199,8 +199,14 @@ export interface CallLogRecord {
   disposition: string;
   status: string;
   QoS: string | null;
+  // The answering agent's extension, and their name as the PBX knows it.
   extension: string | null;
+  agent_name?: string | null;
   call_type: string;
+  // How the call reached (or left) the agent: inbound_queue, inbound_ivr, inbound_direct,
+  // outbound_direct, internal_extension, internal_feature, internal_supervision. Its prefix
+  // is the side the call counts on.
+  route?: string | null;
   recording_path: string | null;
   recording_file: string | null;
   app: string;

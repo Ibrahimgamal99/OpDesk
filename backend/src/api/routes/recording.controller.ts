@@ -27,17 +27,13 @@ import {
 import {
   boolSetting,
   intSettingOrNone,
-  invalidateRecordingIndex,
   LOCAL_MAX_BYTES_SETTING,
   LOCAL_RETENTION_DAYS_SETTING,
-  RECORDING_ROOT_SETTING,
-  RecordingRootError,
   recordingPolicySnapshot,
   recordingRoot,
   recordingStorageStats,
   runRecordingRetention,
   VAD_DELETE_LEGS_SETTING,
-  validateRecordingRoot,
 } from '../../services/recording';
 import { HttpError } from '../http-error';
 import { respond } from '../respond';
@@ -170,7 +166,10 @@ export class RecordingController {
     return { updated: targets.map(String) };
   }
 
-  /** Local retention: {local_days, local_max_bytes, vad_delete_legs, root_dir} (null / 0 = off). */
+  /**
+   * Local retention: {local_days, local_max_bytes, vad_delete_legs, root_dir} (null / 0 =
+   * off). root_dir is informational: where the dialplan records (services/recording.recordingRoot).
+   */
   @Get('/api/recording/retention')
   @Auth('admin')
   async getRecordingRetention() {
@@ -183,9 +182,10 @@ export class RecordingController {
   }
 
   /**
-   * Save retention settings; each field only when sent. A new root_dir must be an
-   * absolute, readable directory that is not a filesystem root (it is both the audio
-   * route's sandbox and the tree retention deletes from).
+   * Save retention settings; each field only when sent. root_dir cannot be changed: the
+   * recorder always writes to the PBX's monitor directory, so another directory would only
+   * hide every recording and aim retention at a tree OpDesk does not write. Sending the
+   * current directory is accepted (an older client re-saving the form); any other is a 400.
    */
   @Post('/api/recording/retention')
   @Auth('admin')
@@ -197,13 +197,12 @@ export class RecordingController {
     ] as const) {
       if (value !== null && value !== undefined && value < 0) throw new HttpError(400, `${field} must not be negative`);
     }
-    let newRoot: string | null = null;
     if (body.root_dir !== null && body.root_dir !== undefined) {
-      try {
-        newRoot = await validateRecordingRoot(body.root_dir);
-      } catch (e) {
-        if (e instanceof RecordingRootError) throw new HttpError(400, e.message);
-        throw e;
+      // Compare without trailing slashes: the unchanged directory is not a change.
+      const norm = (p: string): string => p.trim().replace(/\/+$/, '') || '/';
+      const root = await recordingRoot();
+      if (norm(body.root_dir) !== norm(root)) {
+        throw new HttpError(400, `The recordings directory is where the PBX records (${root}) and cannot be changed`);
       }
     }
     if (body.local_days !== null && body.local_days !== undefined) {
@@ -214,16 +213,6 @@ export class RecordingController {
     }
     if (body.vad_delete_legs !== null && body.vad_delete_legs !== undefined) {
       await dbm.setSetting(VAD_DELETE_LEGS_SETTING, body.vad_delete_legs ? 'true' : 'false');
-    }
-    if (newRoot !== null) {
-      // Compare without trailing slashes: an unchanged directory must not rewrite the
-      // setting or drop the index.
-      const norm = (p: string): string => p.replace(/\/+$/, '') || '/';
-      if (norm(newRoot) !== norm(await recordingRoot())) {
-        await dbm.setSetting(RECORDING_ROOT_SETTING, newRoot);
-        await invalidateRecordingIndex();
-        log.info('Recordings directory changed to %s', newRoot);
-      }
     }
     return {};
   }

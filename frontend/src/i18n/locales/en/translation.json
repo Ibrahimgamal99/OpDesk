@@ -20,6 +20,7 @@
     "groups": "Groups",
     "users": "Users",
     "analytics": "Analytics",
+    "recordings": "Recordings",
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
     "logs": "Logs",
@@ -179,7 +180,7 @@
   },
   "callLog": {
     "viewManage": "View and manage call records",
-    "searchPlaceholder": "Search by src or dest...",
+    "searchPlaceholder": "Number, name or Call ID...",
     "sortOldest": "Sort: Oldest First",
     "sortNewest": "Sort: Newest First",
     "sortOldestBtn": "Oldest first",
@@ -192,7 +193,7 @@
     "loading": "Loading call history...",
     "noCallsFound": "No calls found",
     "allApps": "All apps",
-    "supervisionHidden": "Supervision hidden ({{count}})",
+    "supervisionOff": "Supervision hidden",
     "supervisionShown": "Showing supervision",
     "supervision": {
       "LISTEN": "LISTEN",
@@ -201,6 +202,7 @@
     },
     "totalCalls": "Total calls",
     "showing": "Showing {{start}} to {{end}} of {{total}} calls",
+    "showingCapped": "Showing {{start}} to {{end}} of more than {{total}} calls",
     "previous": "Previous",
     "next": "Next",
     "play": "Play",
@@ -294,6 +296,7 @@
     "noMatches": "No calls match \"{{query}}\"",
     "recordingVadTitle": "{{file}} — click to view voice activity",
     "search": "Search calls",
+    "searchScopeNote": "Searching all history — the date range does not apply to search results.",
     "seek": "Seek",
     "type": {},
     "typeShort": {
@@ -314,6 +317,19 @@
     "exportCsv": "Download CSV",
     "exportCsvHint": "Download these calls as a CSV file (up to 50,000 rows)",
     "exportFailed": "Could not download the CSV file."
+  },
+  "recordings": {
+    "loading": "Loading recordings…",
+    "loadFailed": "Could not load the recordings.",
+    "search": "Search recordings",
+    "searchPlaceholder": "Number or Call ID…",
+    "empty": "No recordings in this period.",
+    "size": "Size",
+    "showing": "{{start}}–{{end}} of {{total}}",
+    "delete": "Delete recording",
+    "deleteTitle": "Delete this recording?",
+    "deleteMessage": "The recording of the call from {{from}} to {{to}} on {{when}} is deleted from the server. The call stays in Call History. This cannot be undone.",
+    "deleted": "Recording deleted."
   },
   "softphone": {
     "title": "Softphone",
@@ -868,7 +884,7 @@
       "totalRecordings": "Recorded calls",
       "location": "Location",
       "directory": "Recordings directory",
-      "directoryHint": "Absolute path on the PBX where Asterisk writes recordings. Retention deletes from this tree.",
+      "directoryFixedHint": "Where the PBX records calls. Playback, the statistics above and retention all use this folder; the recorder fixes it, so it cannot be changed here.",
       "retention": "Retention",
       "localDays": "Delete recordings after (days)",
       "keepForever": "Blank = keep forever",
