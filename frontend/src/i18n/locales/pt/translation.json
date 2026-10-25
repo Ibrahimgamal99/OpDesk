@@ -1002,6 +1002,8 @@
     "kpi": {
       "slaDesc": "Chamadas atendidas dentro do limite",
       "fcrDesc": "Resolução no primeiro contato",
+      "fcrCallers": "{{repeat}} de {{callers}} chamadores voltaram",
+      "provisional": "provisório",
       "abandonmentDesc": "Taxa de chamadas abandonadas",
       "ahtDesc": "Tempo médio de atendimento",
       "na": "N/D",
@@ -1012,6 +1014,9 @@
       "avgWaitDesc": "Tempo médio de espera na fila",
       "shortAbandon": "Abandono rápido",
       "shortAbandonDesc": "Abandonadas antes do limite",
+      "recovered": "Chamadores recuperados",
+      "recoveredOf": "{{recovered}} de {{abandoned}} chamadores que desistiram",
+      "netAbandon": "Taxa de abandono líquida",
       "marketDesc": "Tempo total de chamadas saintes",
       "unansweredCalls": "Não atendidas"
     },
@@ -1031,7 +1036,10 @@
       "compareBy": "Comparar por",
       "compareTitle": "Comparar filas",
       "heatmapCell": "{{day}} {{hour}}: {{count}} chamadas ({{abandoned}} abandonadas)",
-      "offered": "Oferecidas"
+      "offered": "Oferecidas",
+      "detailTitle": "Detalhe da fila",
+      "allQueues": "Todas as filas",
+      "waitTitle": "Quanto tempo os chamadores esperaram"
     },
     "agents": {
       "rank": "#",
@@ -1045,6 +1053,8 @@
       "title": "Explorador detalhado",
       "filterQueue": "Fila...",
       "filterAgent": "Agente...",
+      "allQueues": "Todas as filas",
+      "allAgents": "Todos os agentes",
       "records": "registros",
       "date": "Data",
       "src": "Chamante",
@@ -1056,14 +1066,22 @@
       "page": "Página",
       "exportCsv": "Exportar CSV",
       "exportXlsx": "Exportar XLSX",
+      "exportCapped": "Uma exportação inclui as primeiras {{cap}} destas {{total}} chamadas. Restrinja o período ou os filtros para exportar o restante.",
       "dst": "Destino"
     },
     "settings": {
       "slaSection": "Limites de SLA",
       "slaPerQueue": "Segundos para atender — substituição por fila (usa o padrão global se não definido)",
       "slaDefault": "Limite padrão",
+      "slaOverride": "Limite",
+      "slaRemove": "Usar o padrão",
+      "slaPickQueue": "Escolha uma fila",
+      "slaAdd": "Adicionar substituição",
       "fcrSection": "Configurações de FCR e abandono",
-      "fcrWindow": "Janela de retorno FCR",
+      "fcrWindow": "Janela de FCR",
+      "fcrWindowHint": "dias · 0 desativa o FCR",
+      "callbackWindow": "Janela de retorno",
+      "callbackWindowHint": "horas · o nosso retorno conta como contato repetido e como chamador recuperado · 0 desativa",
       "shortAbandon": "Limite de abandono curto",
       "save": "Salvar configurações de análises",
       "saved": "Salvo!",
@@ -1075,7 +1093,10 @@
     "overview": {
       "byDirection": "Chamadas por direção",
       "inboundOutcomes": "Resultados das chamadas de entrada",
-      "queueService": "Atendimento das filas"
+      "queueService": "Atendimento das filas",
+      "viaQueue": "Fila",
+      "direct": "Diretas",
+      "byHour": "Chamadas por hora do dia"
     },
     "tip": {
       "agents": {
@@ -1084,23 +1105,56 @@
         },
         "compare": {
           "text": "Todos os agentes em um número de cada vez, o maior primeiro. Escolha o número no menu."
+        },
+        "rank": {
+          "text": "Posição pelas chamadas de clientes atendidas. Chamadas internas não contam."
+        },
+        "totalAll": {
+          "text": "Todas as chamadas de clientes que este agente tratou, de entrada e de saída. As internas são contadas à parte."
+        },
+        "answered": {
+          "text": "Chamadas de clientes que este agente conectou: a classificação ordena por este número."
+        },
+        "inbound": {
+          "text": "Chamadas que chegaram a este agente."
+        },
+        "outbound": {
+          "text": "Chamadas que este agente fez."
+        },
+        "internal": {
+          "text": "Chamadas entre ramais. Mostradas pelo tempo que ocupam, mas não são trabalho com clientes: não entram no total nem contam para a classificação."
+        },
+        "slaContribution": {
+          "text": "Com que frequência este agente atendeu a tempo as chamadas de fila. Em branco se não atende chamadas de fila.",
+          "formula": "atendidas a tempo ÷ chamadas de fila atendidas"
         }
       },
       "kpi": {
         "shortAbandonShare": {
           "formula": "desligamentos rápidos ÷ oferecidas",
           "text": "Chamadores de entrada que desligaram dentro do limite de abandono rápido — geralmente engano de discagem."
+        },
+        "recovered": {
+          "text": "Chamadores que desistiram de esperar numa fila e a quem um agente retornou a ligação em até {{hours}} horas. Contam-se pessoas: três abandonos e um retorno são um chamador recuperado.",
+          "formula": "chamadores retornados ÷ chamadores que abandonaram"
+        },
+        "netAbandon": {
+          "text": "A taxa de abandono sem as chamadas dos chamadores a quem retornamos a ligação. A taxa de abandono em si continua a contá-las.",
+          "formula": "(abandonadas − chamadas abandonadas de chamadores recuperados) ÷ oferecidas"
         }
       },
       "overview": {
-        "byDirectionInOut": {
-          "text": "Chamadas de entrada e de saída por dia."
-        },
         "inboundOutcomes": {
           "text": "Chamadas de entrada por dia: atendidas e as que ninguém atendeu — abandonos de fila e chamadas diretas perdidas juntos."
         },
         "queueService": {
           "text": "Como as filas trataram as pessoas que esperaram nelas: com que rapidez foram atendidas, quantas desistiram e se precisaram ligar de novo."
+        },
+        "byDirection": {
+          "text": "Chamadas de entrada, de saída e internas por dia."
+        },
+        "byHour": {
+          "text": "Todas as chamadas do período pela hora em que começaram — de entrada, de saída e internas: as horas mais movimentadas."
         }
       },
       "queues": {
@@ -1112,7 +1166,13 @@
           "text": "Esta fila no período: chamadas oferecidas a ela, quantas um agente atendeu e quantas desistiram, e quão bem ela as atendeu."
         },
         "compare": {
-          "text": "Todas as filas em um indicador por vez, da melhor para a pior. Escolha o indicador no menu."
+          "text": "Todas as filas em um indicador por vez, da melhor para a pior: o mais alto para SLA e taxas, o mais baixo para taxa de abandono e espera. Escolha o indicador no menu."
+        },
+        "detail": {
+          "text": "Uma fila, ou todas juntas: chamadas atendidas e abandonadas por dia, quanto tempo os chamadores esperaram e quando as chamadas chegam."
+        },
+        "wait": {
+          "text": "Chamadas por quanto tempo o chamador esperou na fila: as atendidas e as de quem desistiu."
         },
         "heatmap": {
           "text": "Quando suas chamadas chegam, por dia e hora. Mais escuro significa mais movimentado."
@@ -1140,6 +1200,17 @@
       "queuesTitle": "Os números de cada fila como arquivo CSV",
       "heatmapTitle": "Chamadas por dia da semana e hora como arquivo CSV",
       "agentsTitle": "Os números de cada agente como arquivo CSV"
+    },
+    "agentCalls": {
+      "open": "Ver as chamadas deste agente",
+      "calls": "Chamadas",
+      "other": "Não conectadas",
+      "otherHint": "O outro lado não atendeu, estava ocupado ou inacessível, ou a linha falhou",
+      "missedHint": "Tocou para este agente e ele não atendeu, incluindo chamadas atendidas por um colega",
+      "number": "Número",
+      "takenBy": "Atendida por {{id}}",
+      "callCount_one": "{{count}} chamada",
+      "callCount_other": "{{count}} chamadas"
     }
   },
   "agent": {
@@ -1568,12 +1639,12 @@
         "text": "Chamadas que realmente se conectaram e tiveram tempo de conversa."
       },
       "abandoned": {
-        "text": "Chamadores de entrada que desligaram antes de alguém atender.",
-        "formula": "chamadas de entrada não atendidas"
+        "text": "Chamadores que desligaram numa fila antes de um agente atender. Uma chamada direta para um ramal que não foi atendida não é um abandono.",
+        "formula": "chamadas de fila não atendidas"
       },
       "abandonRate": {
         "formula": "não atendidas ÷ oferecidas",
-        "text": "Quantos chamadores de entrada desligaram antes de alguém atender."
+        "text": "Quantos chamadores de fila desligaram antes de um agente atender."
       },
       "missed": {
         "text": "Suas chamadas de hoje que não conectaram.",
@@ -1581,11 +1652,11 @@
       },
       "sla": {
         "formula": "atendidas a tempo ÷ atendidas",
-        "text": "Com que frequência as chamadas de entrada atendidas foram atendidas dentro do limite de SLA da fila."
+        "text": "Com que frequência as chamadas de fila atendidas foram atendidas dentro do limite de SLA da fila."
       },
       "fcr": {
-        "formula": "chamadores sem nova chamada ÷ chamadores atendidos",
-        "text": "Chamadores de fila atendidos que não ligaram novamente para uma fila dentro da janela de FCR."
+        "formula": "chamadores sem contato repetido ÷ chamadores atendidos",
+        "text": "Chamadores cuja primeira chamada de fila atendida resolveu o assunto: sem contato repetido dentro da janela de FCR — nenhuma outra chamada deles para uma fila, atendida ou não, e nenhum retorno nosso dentro da janela de retorno. Os números são comparados pelos últimos nove dígitos; chamadores anônimos e internos não contam."
       },
       "avgWait": {
         "formula": "espera total ÷ chamadores",

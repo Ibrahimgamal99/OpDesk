@@ -232,6 +232,13 @@ export const COLUMN_GUARDS: ColumnGuard[] = [
     ddl: "ALTER TABLE device_tokens MODIFY platform ENUM('ios','android','web') NOT NULL",
     why: "browser Web Push subscriptions are stored with platform='web'",
   },
+  {
+    table: 'analytics_fcr_settings',
+    column: 'callback_window_hours',
+    needed: (col) => col === null,
+    ddl: 'ALTER TABLE analytics_fcr_settings ADD COLUMN callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24 AFTER short_abandon_secs',
+    why: 'FCR and abandoned-caller recovery count our own callbacks within this window',
+  },
 ];
 
 /** Apply every COLUMN_GUARDS change the live table still needs. Returns the ALTERs run. */

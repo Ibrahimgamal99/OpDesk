@@ -12,8 +12,10 @@ import {
 } from './analyticsUtils';
 import { Alert, Badge, Card, Dropdown, EmptyState, Tooltip } from './ui';
 import { AnalyticsExportButton } from './AnalyticsExport';
+import { AgentCallsModal } from './AgentCallsModal';
 
-type SortKey = 'rank' | 'agent_name' | 'total_calls' | 'answered_calls' | 'inbound_calls' | 'outbound_calls' | 'aht_secs' | 'sla_contribution_pct';
+type SortKey = 'rank' | 'agent_name' | 'total_calls' | 'answered_calls' | 'inbound_calls' | 'outbound_calls'
+  | 'internal_calls' | 'aht_secs' | 'sla_contribution_pct';
 type SortDir = 'asc' | 'desc';
 
 function sortRows(rows: AgentKPIRow[], key: SortKey, dir: SortDir): AgentKPIRow[] {
@@ -72,11 +74,17 @@ type CompareFormat = 'count' | 'pct' | 'secs';
 
 interface Props { dateRange: DateRange }
 
+/**
+ * Analytics → Agents: one ranked row per agent on customer work (inbound + outbound;
+ * internal calls are counted in their own column and never ranked), and the agents side
+ * by side on one figure. A row opens that agent's calls by direction (AgentCallsModal).
+ */
 export function AnalyticsAgents({ dateRange }: Props) {
   const { t } = useTranslation();
   const [sortKey, setSortKey] = useState<SortKey>('rank');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [compareBy, setCompareBy] = useState<CompareKey>('answered');
+  const [callsFor, setCallsFor] = useState<AgentRow | null>(null);
   const { data, loading, error } = useAnalyticsFetch(
     () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
@@ -115,13 +123,15 @@ export function AnalyticsAgents({ dateRange }: Props) {
       tip: { text: 'Position by calls answered.' } },
     { key: 'agent_name',           label: t('fields.agent') },
     { key: 'total_calls',          label: t('analytics.queues.total'),    tipKey: 'analytics.tip.agents.totalAll',
-      tip: { text: 'Every call this agent handled: inbound, outbound and internal.' } },
+      tip: { text: 'Every customer call this agent handled, inbound and outbound. Internal calls are counted apart.' } },
     { key: 'answered_calls',       label: t('metrics.answered'), tipKey: 'analytics.tip.agents.answered',
-      tip: { text: 'Calls this agent picked up.' } },
+      tip: { text: 'Customer calls this agent connected: the rank orders by this.' } },
     { key: 'inbound_calls',        label: t('direction.inbound', 'Inbound'),   tipKey: 'analytics.tip.agents.inbound',
       tip: { text: 'Calls that came in to this agent.' } },
     { key: 'outbound_calls',       label: t('direction.outbound', 'Outbound'), tipKey: 'analytics.tip.agents.outbound',
       tip: { text: 'Calls this agent placed.' } },
+    { key: 'internal_calls',       label: t('direction.internal', 'Internal'), tipKey: 'analytics.tip.agents.internal',
+      tip: { text: 'Calls between extensions. Shown for the time they take, but not customer work: they are not in the total and do not count towards the rank.' } },
     { key: 'aht_secs',             label: t('metrics.aht'),      tipKey: 'metrics.tip.aht' },
     { key: 'sla_contribution_pct', label: t('analytics.agents.slaContrib'), tipKey: 'analytics.tip.agents.slaContribution',
       tip: { text: 'How often this agent picked up queue calls in time. Blank if they take no queue calls.', formula: 'answered in time ÷ queue calls answered' } },
@@ -206,14 +216,23 @@ export function AnalyticsAgents({ dateRange }: Props) {
               </thead>
               <tbody>
                 {sorted.map(a => (
-                  <tr key={a.agent_extension}>
+                  <tr key={a.agent_extension} className="an-row-clickable" onClick={() => setCallsFor(a)}>
                     <td className="an-col-fit">
                       <RankBadge rank={a.rank} />
                     </td>
                     <td className="sticky">
                       <div className="an-agent-cell">
                         <div className="an-agent-info">
-                          <div className="an-agent-name">{a.agent_name}</div>
+                          {/* The name is the control, not the row: a role="button" on the <tr>
+                              would strip every cell of its column for a screen reader. */}
+                          <button
+                            type="button"
+                            className="an-agent-name an-tl-open"
+                            onClick={e => { e.stopPropagation(); setCallsFor(a); }}
+                            title={t('analytics.agentCalls.open', 'Show this agent’s calls')}
+                          >
+                            {a.agent_name}
+                          </button>
                           <div className="an-agent-ext">{a.agent_extension}</div>
                         </div>
                       </div>
@@ -224,6 +243,7 @@ export function AnalyticsAgents({ dateRange }: Props) {
                     <td className="num">{a.answered_calls.toLocaleString()}</td>
                     <td className="num u-fg-accent">{(a.inbound_calls ?? 0).toLocaleString()}</td>
                     <td className="num u-fg-warning">{(a.outbound_calls ?? 0).toLocaleString()}</td>
+                    <td className="num muted">{(a.internal_calls ?? 0).toLocaleString()}</td>
                     <td className="num">{fmtSecs(a.aht_secs)}</td>
                     <td>
                       {a.sla_contribution_pct !== null ? (
@@ -298,6 +318,14 @@ export function AnalyticsAgents({ dateRange }: Props) {
             </div>
           )}
         </Card>
+      )}
+      {callsFor && (
+        <AgentCallsModal
+          agent={callsFor.agent_extension}
+          name={callsFor.agent_name}
+          dateRange={dateRange}
+          onClose={() => setCallsFor(null)}
+        />
       )}
     </div>
   );

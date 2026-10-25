@@ -588,7 +588,7 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Agent Performance — per-agent route breakdown (AgentCallsModal)
+   Agent Performance — per-agent call breakdown by direction (AgentCallsModal)
    --------------------------------------------------------------------------- */
 .an-ac-body {
   display: flex;

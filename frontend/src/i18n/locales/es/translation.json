@@ -1002,6 +1002,8 @@
     "kpi": {
       "slaDesc": "Llamadas respondidas dentro del umbral",
       "fcrDesc": "Resolución en el primer contacto",
+      "fcrCallers": "{{repeat}} de {{callers}} llamantes volvieron",
+      "provisional": "provisional",
       "abandonmentDesc": "Tasa de llamadas abandonadas",
       "ahtDesc": "Tiempo medio de operación",
       "na": "N/D",
@@ -1012,6 +1014,9 @@
       "avgWaitDesc": "Tiempo medio de espera en cola",
       "shortAbandon": "Abandono rápido",
       "shortAbandonDesc": "Abandonadas antes del umbral",
+      "recovered": "Llamantes recuperados",
+      "recoveredOf": "{{recovered}} de {{abandoned}} llamantes que abandonaron",
+      "netAbandon": "Tasa de abandono neta",
       "marketDesc": "Tiempo total de llamadas salientes",
       "unansweredCalls": "No respondidas"
     },
@@ -1031,7 +1036,10 @@
       "compareBy": "Comparar por",
       "compareTitle": "Comparar colas",
       "heatmapCell": "{{day}} {{hour}}: {{count}} llamadas ({{abandoned}} abandonadas)",
-      "offered": "Ofrecidas"
+      "offered": "Ofrecidas",
+      "detailTitle": "Detalle de la cola",
+      "allQueues": "Todas las colas",
+      "waitTitle": "Cuánto esperaron los llamantes"
     },
     "agents": {
       "rank": "#",
@@ -1045,6 +1053,8 @@
       "title": "Explorador detallado",
       "filterQueue": "Cola...",
       "filterAgent": "Agente...",
+      "allQueues": "Todas las colas",
+      "allAgents": "Todos los agentes",
       "records": "registros",
       "date": "Fecha",
       "src": "Llamante",
@@ -1056,14 +1066,22 @@
       "page": "Página",
       "exportCsv": "Exportar CSV",
       "exportXlsx": "Exportar XLSX",
+      "exportCapped": "Una exportación incluye las primeras {{cap}} de estas {{total}} llamadas. Acota el rango o los filtros para exportar el resto.",
       "dst": "Destino"
     },
     "settings": {
       "slaSection": "Umbrales de SLA",
       "slaPerQueue": "Segundos para responder — anulación por cola (usa el predeterminado global si no se establece)",
       "slaDefault": "Umbral predeterminado",
+      "slaOverride": "Umbral",
+      "slaRemove": "Usar el predeterminado",
+      "slaPickQueue": "Elige una cola",
+      "slaAdd": "Añadir anulación",
       "fcrSection": "Configuración de FCR y abandono",
-      "fcrWindow": "Ventana de rellamada FCR",
+      "fcrWindow": "Ventana de FCR",
+      "fcrWindowHint": "días · 0 desactiva el FCR",
+      "callbackWindow": "Ventana de devolución de llamada",
+      "callbackWindowHint": "horas · nuestra devolución cuenta como contacto repetido y como llamante recuperado · 0 la desactiva",
       "shortAbandon": "Umbral de abandono corto",
       "save": "Guardar configuración de analíticas",
       "saved": "¡Guardado!",
@@ -1075,7 +1093,10 @@
     "overview": {
       "byDirection": "Llamadas por dirección",
       "inboundOutcomes": "Resultados de entrantes",
-      "queueService": "Servicio de colas"
+      "queueService": "Servicio de colas",
+      "viaQueue": "Cola",
+      "direct": "Directas",
+      "byHour": "Llamadas por hora del día"
     },
     "tip": {
       "agents": {
@@ -1084,23 +1105,56 @@
         },
         "compare": {
           "text": "Todos los agentes en una cifra a la vez, el mayor primero. Elige la cifra en el menú."
+        },
+        "rank": {
+          "text": "Posición según las llamadas de clientes respondidas. Las llamadas internas no cuentan."
+        },
+        "totalAll": {
+          "text": "Todas las llamadas de clientes que atendió este agente, entrantes y salientes. Las internas se cuentan aparte."
+        },
+        "answered": {
+          "text": "Llamadas de clientes que este agente conectó: el ranking se ordena por esta cifra."
+        },
+        "inbound": {
+          "text": "Llamadas que entraron a este agente."
+        },
+        "outbound": {
+          "text": "Llamadas que realizó este agente."
+        },
+        "internal": {
+          "text": "Llamadas entre extensiones. Se muestran por el tiempo que ocupan, pero no son trabajo con clientes: no entran en el total ni cuentan para el ranking."
+        },
+        "slaContribution": {
+          "text": "Con qué frecuencia este agente respondió a tiempo las llamadas de cola. En blanco si no atiende llamadas de cola.",
+          "formula": "respondidas a tiempo ÷ llamadas de cola respondidas"
         }
       },
       "kpi": {
         "shortAbandonShare": {
           "formula": "cuelgues rápidos ÷ ofrecidas",
           "text": "Llamantes entrantes que colgaron dentro del umbral de abandono corto; suelen ser errores de marcación."
+        },
+        "recovered": {
+          "text": "Llamantes que abandonaron la espera en una cola y a quienes un agente devolvió la llamada en {{hours}} horas. Se cuentan personas: tres abandonos y una devolución son un llamante recuperado.",
+          "formula": "llamantes devueltos ÷ llamantes que abandonaron"
+        },
+        "netAbandon": {
+          "text": "La tasa de abandono sin las llamadas de los llamantes a quienes devolvimos la llamada. La tasa de abandono en sí sigue contándolas.",
+          "formula": "(abandonadas − llamadas abandonadas de llamantes recuperados) ÷ ofrecidas"
         }
       },
       "overview": {
-        "byDirectionInOut": {
-          "text": "Llamadas entrantes y salientes por día."
-        },
         "inboundOutcomes": {
           "text": "Llamadas entrantes por día: las respondidas y las que nadie contestó (abandonos de cola y llamadas directas perdidas, en conjunto)."
         },
         "queueService": {
           "text": "Cómo atendieron las colas a las personas que esperaron en ellas: qué tan rápido se les contestó, cuántas abandonaron y si tuvieron que volver a llamar."
+        },
+        "byDirection": {
+          "text": "Llamadas entrantes, salientes e internas por día."
+        },
+        "byHour": {
+          "text": "Todas las llamadas del periodo según la hora en que empezaron — entrantes, salientes e internas: las horas de más actividad."
         }
       },
       "queues": {
@@ -1112,7 +1166,13 @@
           "text": "Esta cola durante el período: llamadas ofrecidas, cuántas respondió un agente y cuántas se abandonaron, y qué tan bien las atendió."
         },
         "compare": {
-          "text": "Todas las colas según una cifra a la vez, de mejor a peor. Elige la cifra en el menú."
+          "text": "Todas las colas según una cifra a la vez, de mejor a peor: la más alta para el SLA y las tasas, la más baja para la tasa de abandono y la espera. Elige la cifra en el menú."
+        },
+        "detail": {
+          "text": "Una cola, o todas juntas: llamadas respondidas y abandonadas por día, cuánto esperaron los llamantes y cuándo llegan las llamadas."
+        },
+        "wait": {
+          "text": "Llamadas según cuánto esperó el llamante en la cola: las respondidas y las de quienes abandonaron."
         },
         "heatmap": {
           "text": "Cuándo entran tus llamadas, por día y hora. Más oscuro significa más actividad."
@@ -1140,6 +1200,17 @@
       "queuesTitle": "Las cifras de cada cola como archivo CSV",
       "heatmapTitle": "Llamadas por día de la semana y hora como archivo CSV",
       "agentsTitle": "Las cifras de cada agente como archivo CSV"
+    },
+    "agentCalls": {
+      "open": "Ver las llamadas de este agente",
+      "calls": "Llamadas",
+      "other": "Sin conectar",
+      "otherHint": "El otro extremo no contestó, estaba ocupado o inaccesible, o la línea falló",
+      "missedHint": "Sonó para este agente y no la atendió, incluidas las que respondió un compañero",
+      "number": "Número",
+      "takenBy": "Atendida por {{id}}",
+      "callCount_one": "{{count}} llamada",
+      "callCount_other": "{{count}} llamadas"
     }
   },
   "agent": {
@@ -1568,12 +1639,12 @@
         "text": "Llamadas que realmente se conectaron y tuvieron tiempo de conversación."
       },
       "abandoned": {
-        "text": "Llamantes entrantes que colgaron antes de que alguien contestara.",
-        "formula": "llamadas entrantes no contestadas"
+        "text": "Llamantes que colgaron en una cola antes de que un agente contestara. Una llamada directa a una extensión que no se contestó no es un abandono.",
+        "formula": "llamadas de cola no contestadas"
       },
       "abandonRate": {
         "formula": "no respondidas ÷ ofrecidas",
-        "text": "Cuántos llamantes entrantes colgaron antes de que alguien contestara."
+        "text": "Cuántos llamantes de cola colgaron antes de que un agente contestara."
       },
       "missed": {
         "text": "Tus llamadas de hoy que no conectaron.",
@@ -1581,11 +1652,11 @@
       },
       "sla": {
         "formula": "respondidas a tiempo ÷ respondidas",
-        "text": "Con qué frecuencia las llamadas entrantes respondidas se contestaron dentro del umbral de SLA de la cola."
+        "text": "Con qué frecuencia las llamadas de cola respondidas se contestaron dentro del umbral de SLA de la cola."
       },
       "fcr": {
-        "formula": "llamantes sin rellamada ÷ llamantes respondidos",
-        "text": "Llamantes de cola respondidos que no volvieron a llamar a una cola dentro de la ventana de FCR."
+        "formula": "llamantes sin contacto repetido ÷ llamantes respondidos",
+        "text": "Llamantes cuya primera llamada de cola respondida resolvió el asunto: sin contacto repetido dentro de la ventana de FCR — ninguna otra llamada suya a una cola, respondida o no, ni una devolución de llamada nuestra dentro de la ventana de devolución. Los números se comparan por sus últimos nueve dígitos; los llamantes anónimos e internos no cuentan."
       },
       "avgWait": {
         "formula": "espera total ÷ llamantes",

@@ -1002,6 +1002,8 @@
     "kpi": {
       "slaDesc": "Calls answered within threshold",
       "fcrDesc": "First contact resolution",
+      "fcrCallers": "{{repeat}} of {{callers}} callers came back",
+      "provisional": "provisional",
       "abandonmentDesc": "Abandoned calls rate",
       "ahtDesc": "Average handle time",
       "na": "N/A",
@@ -1012,6 +1014,9 @@
       "avgWaitDesc": "Average queue wait time",
       "shortAbandon": "Short abandon",
       "shortAbandonDesc": "Abandoned before wait threshold",
+      "recovered": "Recovered callers",
+      "recoveredOf": "{{recovered}} of {{abandoned}} callers who gave up",
+      "netAbandon": "Net abandon rate",
       "marketDesc": "Total outbound talk time",
       "unansweredCalls": "Unanswered"
     },
@@ -1031,7 +1036,10 @@
       "compareBy": "Compare by",
       "compareTitle": "Compare queues",
       "heatmapCell": "{{day}} {{hour}}: {{count}} calls ({{abandoned}} abandoned)",
-      "offered": "Offered"
+      "offered": "Offered",
+      "detailTitle": "Queue detail",
+      "allQueues": "All queues",
+      "waitTitle": "How long callers waited"
     },
     "agents": {
       "rank": "#",
@@ -1045,6 +1053,8 @@
       "title": "Drilldown explorer",
       "filterQueue": "Queue...",
       "filterAgent": "Agent...",
+      "allQueues": "All queues",
+      "allAgents": "All agents",
       "records": "records",
       "date": "Date",
       "src": "Caller",
@@ -1056,14 +1066,22 @@
       "slaFailed": "SLA miss",
       "page": "Page",
       "exportCsv": "Export CSV",
-      "exportXlsx": "Export XLSX"
+      "exportXlsx": "Export XLSX",
+      "exportCapped": "An export holds the first {{cap}} of these {{total}} calls. Narrow the range or the filters to export the rest."
     },
     "settings": {
       "slaSection": "SLA thresholds",
       "slaPerQueue": "Seconds to answer — per queue override (uses global default if not set)",
       "slaDefault": "Default threshold",
+      "slaOverride": "Threshold",
+      "slaRemove": "Use the default",
+      "slaPickQueue": "Pick a queue",
+      "slaAdd": "Add override",
       "fcrSection": "FCR & abandon Settings",
-      "fcrWindow": "FCR callback window",
+      "fcrWindow": "FCR window",
+      "fcrWindowHint": "days · 0 turns FCR off",
+      "callbackWindow": "Callback window",
+      "callbackWindowHint": "hours · our call back counts as a repeat contact and as a recovered caller · 0 turns it off",
       "shortAbandon": "Short abandon threshold",
       "save": "Save analytics Settings",
       "saved": "Saved!",
@@ -1075,7 +1093,10 @@
     "overview": {
       "byDirection": "Calls by direction",
       "inboundOutcomes": "Inbound outcomes",
-      "queueService": "Queue service"
+      "queueService": "Queue service",
+      "viaQueue": "Queue",
+      "direct": "Direct",
+      "byHour": "Calls by hour of day"
     },
     "tip": {
       "agents": {
@@ -1084,23 +1105,56 @@
         },
         "compare": {
           "text": "Every agent on one figure at a time, highest first. Pick the figure from the menu."
+        },
+        "rank": {
+          "text": "Position by customer calls answered. Internal calls do not count."
+        },
+        "totalAll": {
+          "text": "Every customer call this agent handled, inbound and outbound. Internal calls are counted apart."
+        },
+        "answered": {
+          "text": "Customer calls this agent connected: the rank orders by this."
+        },
+        "inbound": {
+          "text": "Calls that came in to this agent."
+        },
+        "outbound": {
+          "text": "Calls this agent placed."
+        },
+        "internal": {
+          "text": "Calls between extensions. Shown for the time they take, but not customer work: they are not in the total and do not count towards the rank."
+        },
+        "slaContribution": {
+          "text": "How often this agent picked up queue calls in time. Blank if they take no queue calls.",
+          "formula": "answered in time ÷ queue calls answered"
         }
       },
       "kpi": {
         "shortAbandonShare": {
           "formula": "quick hang-ups ÷ offered",
           "text": "Inbound callers who hung up within the short-abandon threshold — usually misdials."
+        },
+        "recovered": {
+          "text": "Callers who gave up waiting in a queue and whom an agent rang back within {{hours}} hours. Counted in people: three abandons and one call back is one caller recovered.",
+          "formula": "callers rung back ÷ callers who abandoned"
+        },
+        "netAbandon": {
+          "text": "The abandon rate with the calls of the callers we rang back taken out. The abandon rate itself still counts them.",
+          "formula": "(abandoned − abandoned calls of recovered callers) ÷ offered"
         }
       },
       "overview": {
-        "byDirectionInOut": {
-          "text": "Inbound and outbound calls per day."
-        },
         "inboundOutcomes": {
           "text": "Inbound calls per day: answered, and the ones nobody answered — queue abandons and missed direct calls together."
         },
         "queueService": {
           "text": "How the queues treated the people who waited in them: how fast they were answered, how many gave up, and whether they had to call again."
+        },
+        "byDirection": {
+          "text": "Inbound, outbound and internal calls per day."
+        },
+        "byHour": {
+          "text": "Every call in the period by the hour it started — inbound, outbound and internal: the busiest hours of the day."
         }
       },
       "queues": {
@@ -1112,7 +1166,13 @@
           "text": "This queue over the period: calls offered to it, how many an agent answered and how many gave up, and how well it served them."
         },
         "compare": {
-          "text": "Every queue on one figure at a time, best first. Pick the figure from the menu."
+          "text": "Every queue on one figure at a time, best first: highest for SLA and the rates, lowest for abandon rate and wait. Pick the figure from the menu."
+        },
+        "detail": {
+          "text": "One queue, or all of them together: answered and abandoned calls per day, how long callers waited, and when the calls arrive."
+        },
+        "wait": {
+          "text": "Calls by how long the caller waited in the queue: the answered ones, and the ones who gave up."
         },
         "heatmap": {
           "text": "When your calls come in, by day and hour. Darker means busier."
@@ -1140,6 +1200,17 @@
       "queuesTitle": "Every queue’s figures as a CSV file",
       "heatmapTitle": "Calls by weekday and hour as a CSV file",
       "agentsTitle": "Every agent’s figures as a CSV file"
+    },
+    "agentCalls": {
+      "open": "Show this agent’s calls",
+      "calls": "Calls",
+      "other": "Not connected",
+      "otherHint": "The other end never picked up, was busy or unreachable, or the line failed",
+      "missedHint": "Rang this agent and they did not take it, including calls a colleague answered",
+      "number": "Number",
+      "takenBy": "Taken by {{id}}",
+      "callCount_one": "{{count}} call",
+      "callCount_other": "{{count}} calls"
     }
   },
   "agent": {
@@ -1568,12 +1639,12 @@
         "text": "Calls that actually connected and had talk time."
       },
       "abandoned": {
-        "text": "Inbound callers who hung up before anyone answered.",
-        "formula": "inbound calls not answered"
+        "text": "Callers who hung up in a queue before an agent answered. A direct call to an extension that rang out is not an abandon.",
+        "formula": "queue calls not answered"
       },
       "abandonRate": {
         "formula": "not answered ÷ offered",
-        "text": "How many inbound callers hung up before anyone answered."
+        "text": "How many queue callers hung up before an agent answered."
       },
       "missed": {
         "text": "Your calls today that did not connect.",
@@ -1581,11 +1652,11 @@
       },
       "sla": {
         "formula": "answered in time ÷ answered",
-        "text": "How often answered inbound calls were picked up within the queue’s SLA threshold."
+        "text": "How often answered queue calls were picked up within the queue’s SLA threshold."
       },
       "fcr": {
-        "formula": "callers with no repeat call ÷ answered callers",
-        "text": "Answered queue callers who did not call a queue again within the FCR window."
+        "formula": "callers with no repeat contact ÷ answered callers",
+        "text": "Callers whose first answered queue call settled it: no repeat contact within the FCR window — no further queue call from them, answered or not, and no call back from us within the callback window. Numbers compare on their last nine digits; anonymous and internal callers are not counted."
       },
       "avgWait": {
         "formula": "total wait ÷ callers",

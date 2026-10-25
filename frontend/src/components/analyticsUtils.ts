@@ -21,8 +21,13 @@ export function toISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export function todayStr(): string {
-  return toISO(new Date());
+/** Today's local date, or the local date `offsetDays` from it (negative = the past). Local
+ *  on purpose: toISOString() is UTC, which is yesterday for part of every evening east of
+ *  Greenwich -- and the backend reads these dates on the PBX's clock. */
+export function todayStr(offsetDays = 0): string {
+  const d = new Date();
+  if (offsetDays) d.setDate(d.getDate() + offsetDays);
+  return toISO(d);
 }
 
 export function quickRanges(): Record<QuickSelect, DateRange> {
@@ -178,6 +183,26 @@ export function pctOf(part: number | null | undefined, whole: number | null | un
 /** The range as the cards and charts caption it: one date, or "from → to". */
 export function rangeLabel(r: DateRange): string {
   return r.from === r.to ? r.from : `${r.from} → ${r.to}`;
+}
+
+/** A wait bucket's name, from its edges in seconds: "0–10s", "1–2m", "5m+". */
+export function waitBucketLabel(from: number, to: number | null): string {
+  const f = (s: number) => (s < 60 ? `${s}s` : `${s / 60}m`);
+  if (to === null) return `${f(from)}+`;
+  const unit = to <= 60 ? 's' : 'm';
+  const n = (s: number) => (unit === 's' ? s : s / 60);
+  return `${n(from)}–${n(to)}${unit}`;
+}
+
+/**
+ * Rows for a "compare" bar chart, best first. `lowerIsBetter` flips the order for a figure
+ * where less is the good direction (abandon rate, wait), so the top bar is always the one to
+ * copy, whatever the figure. Rows without a value are left out.
+ */
+export function rankBest<T extends { value: number | null }>(rows: T[], lowerIsBetter = false): (T & { value: number })[] {
+  return rows
+    .filter((r): r is T & { value: number } => r.value !== null)
+    .sort((a, b) => (lowerIsBetter ? a.value - b.value : b.value - a.value));
 }
 
 export function slaProgressClass(v: number | null): string {

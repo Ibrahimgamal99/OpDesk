@@ -175,7 +175,7 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
     let cancelled = false;
     const load = async () => {
       const to = todayStr();
-      const from = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+      const from = todayStr(-6);
       try {
         const r = await fetchWithAuth(`/api/analytics/trend?date_from=${from}&date_to=${to}`);
         if (!r.ok) throw new Error(String(r.status));

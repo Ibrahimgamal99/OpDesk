@@ -310,6 +310,31 @@ export interface CombinedKpis {
   contact_rate?: number | null;
 }
 
+/** One slice of the period's calls from the call history (every inbound call, the direct
+ *  ones, internal): the same shape for each, so a rate means the same on every card. */
+export interface VolumeKpis {
+  total_calls: number;
+  answered_calls: number;
+  missed_calls: number;
+  aht_secs: number | null;
+  sum_billsec: number;
+  customers: number;
+  customers_answered: number;
+  answer_rate: number | null;
+  contact_rate: number | null;
+}
+
+/** The thresholds an overview was computed against, so its explanations quote them. */
+export interface AnalyticsKpiSettings {
+  sla_default_secs: number;
+  fcr_window_days: number;
+  short_abandon_secs: number;
+  callback_window_hours: number;
+}
+
+/** The top level is the QUEUE's own figures (queue CDR, as Queue Performance counts
+ *  them); call volumes are in the `inbound` / `inbound_direct` / `outbound` / `internal` /
+ *  `combined` blocks (call history, as Call History counts them). */
 export interface KpiSummary {
   sla_pct: number | null;
   fcr_pct: number | null;
@@ -328,12 +353,44 @@ export interface KpiSummary {
   contact_rate?: number | null;
   outbound?: OutboundKpis;
   combined?: CombinedKpis;
+  inbound?: VolumeKpis;
+  inbound_direct?: VolumeKpis;
+  internal?: VolumeKpis;
+  short_abandoned?: number;
+  /** FCR's population: callers answered in the period, those with a repeat contact, and
+   *  whether the window is still open on the newest of them. */
+  fcr_callers?: number;
+  fcr_repeat_callers?: number;
+  fcr_provisional?: boolean;
+  /** Callers who gave up in a queue, and those an agent rang back within the callback window. */
+  abandoned_callers?: number;
+  recovered_callers?: number;
+  recovery_rate?: number | null;
+  net_abandonment_rate?: number | null;
 }
 
 export interface ExecutiveKPIResponse {
   period: AnalyticsPeriod;
   current: KpiSummary;
-  prev_period: KpiSummary;
+  /** Null past 31 days: a wide range gets no comparison. */
+  prev_period: KpiSummary | null;
+  settings?: AnalyticsKpiSettings;
+}
+
+/** One day of one queue, for the Queues tab's detail chart. */
+export interface QueueDay {
+  date: string;
+  offered: number;
+  answered: number;
+  abandoned: number;
+}
+
+/** One wait-time bucket of one queue: [from_secs, to_secs), to_secs null = open-ended. */
+export interface QueueWaitBucket {
+  from_secs: number;
+  to_secs: number | null;
+  answered: number;
+  abandoned: number;
 }
 
 export interface QueueKPIRow {
@@ -346,19 +403,63 @@ export interface QueueKPIRow {
   aht_secs: number | null;
   avg_wait_secs: number | null;
   peak_hour: number | null;
+  answer_rate?: number | null;
+  abandonment_rate?: number | null;
+  short_abandon_rate?: number | null;
+  daily?: QueueDay[];
+  wait_distribution?: QueueWaitBucket[];
 }
 
 export interface AgentKPIRow {
   rank: number;
   agent_extension: string;
   agent_name: string;
+  /** Customer calls (inbound + outbound); internal calls are counted apart. */
   total_calls: number;
   answered_calls: number;
   inbound_calls: number;
   outbound_calls: number;
+  internal_calls?: number;
   aht_secs: number | null;
   sla_contribution_pct: number | null;
   daily_trend: number[];
+}
+
+/** GET /api/analytics/agent-calls: one agent's calls by direction, and the list behind them. */
+export interface AgentCallsDirection {
+  direction: 'IN' | 'OUT' | 'INTERNAL';
+  calls: number;
+  answered: number;
+  missed: number;
+  not_connected: number;
+  talk_secs: number;
+}
+
+export interface AgentCallRecord {
+  calldate: string | null;
+  direction: 'IN' | 'OUT' | 'INTERNAL';
+  src: string;
+  dst: string;
+  queue_extension: string;
+  agent_extension: string;
+  duration: number;
+  talk: number;
+  /** How the call ended; `agent_status` is the same call from this agent's side. */
+  status: string;
+  agent_status: string;
+  is_handled: boolean;
+  linkedid: string;
+}
+
+export interface AgentCallsResponse {
+  agent: string;
+  agent_name: string;
+  directions: AgentCallsDirection[];
+  status_counts: Record<string, number>;
+  calls: AgentCallRecord[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface HeatmapData {
@@ -374,12 +475,25 @@ export interface VolumeTrendPoint {
   abandoned_calls: number;    // inbound abandoned
   outbound_total: number;     // outbound total
   outbound_answered: number;  // outbound answered
+  internal_total?: number;    // extension to extension
+  customers?: number;         // distinct inbound callers that day
+  customers_answered?: number;
+}
+
+/** Calls in one hour of the day across the range; the 24 of them sum to the trend. */
+export interface HourVolume {
+  hour: number;
+  inbound: number;
+  outbound: number;
+  internal: number;
 }
 
 /** GET /api/analytics/drilldown?facets=1 adds per-value counts over the whole filtered set. */
 export interface AnalyticsDrilldownFacets {
   direction?: Record<string, number>;
   status?: Record<string, number>;
+  queue?: Record<string, number>;
+  agent?: Record<string, number>;
 }
 
 export interface AnalyticsDrilldownRecord {
@@ -403,6 +517,7 @@ export interface AnalyticsSettings {
   sla_default_secs: number;
   fcr_window_days: number;
   short_abandon_secs: number;
+  callback_window_hours: number;
 }
 
 
