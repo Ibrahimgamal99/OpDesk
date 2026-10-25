@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Loader2, CheckCircle2, AlertCircle, KeyRound, Plus, Trash2, X, Copy, Check, Power,
-  Pencil, RefreshCw,
+  Loader2, KeyRound, Plus, Trash2, Copy, Check, Power, Pencil, RefreshCw, Save,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../auth';
-import { Modal } from './ui';
+import { Modal, Alert, Badge, Card, EmptyState, FormField, FormRow, Loading, Table, useConfirm } from './ui';
+import type { SectionCard } from './SettingsPanel';
 import type { ApiKey } from '../types';
 import { raiseFor, toApiError } from '../lib/api';
 
@@ -22,33 +23,28 @@ const blank: FormState = { name: '', scopes: [], expires_at: '' };
 // Scopes grouped for display. Only scopes the backend actually reports
 // (GET /api/api-keys/permissions) are rendered; anything returned that has no group
 // here falls into "Other", so this list degrading is cosmetic, not functional.
+// `label` is the English default; the rendered text is settings.apiKeys.groups.<key>.
 const SCOPE_GROUPS: { key: string; label: string; scopes: string[] }[] = [
   { key: 'calls', label: 'Calls & CDR', scopes: ['calls:read', 'calls:write', 'cdr:read'] },
   { key: 'analytics', label: 'Analytics', scopes: ['analytics:read'] },
 ];
 
-const SCOPE_LABELS: Record<string, string> = {
-  'calls:read': 'Read live calls, extensions, queues & status',
-  'calls:write': 'Originate calls (click-to-call)',
-  'cdr:read': 'Read call history & recordings',
-  'analytics:read': 'Read analytics & exports',
+// English defaults with their i18n keys (':' is i18next's namespace separator,
+// so the raw scope cannot be a key).
+const SCOPE_LABELS: Record<string, { key: string; label: string }> = {
+  'calls:read': { key: 'settings.apiKeys.scopeLabels.calls_read', label: 'Read live calls, extensions, queues & status' },
+  'calls:write': { key: 'settings.apiKeys.scopeLabels.calls_originate', label: 'Originate calls (click-to-call)' },
+  'cdr:read': { key: 'settings.apiKeys.scopeLabels.cdr_read', label: 'Read call history & recordings' },
+  'analytics:read': { key: 'settings.apiKeys.scopeLabels.analytics_read', label: 'Read analytics & exports' },
 };
 
 // A checkbox that supports an indeterminate (some-but-not-all) state.
 function TriCheck({ checked, indeterminate }: { checked: boolean; indeterminate: boolean }) {
   return (
-    <div style={{
-      width: 14, height: 14, borderRadius: 3, border: '1.5px solid var(--border-primary)',
-      background: checked
-        ? 'var(--accent-primary)'
-        : indeterminate ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'transparent',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-    }}>
-      {checked && <Check size={9} color="var(--text-on-accent)" strokeWidth={3} />}
-      {!checked && indeterminate && (
-        <span style={{ width: 6, height: 6, background: 'var(--accent-primary)', borderRadius: 1, display: 'block' }} />
-      )}
-    </div>
+    <span className={`apikey-tricheck${checked ? ' is-checked' : indeterminate ? ' is-mixed' : ''}`} aria-hidden>
+      {checked && <Check size={9} strokeWidth={3} />}
+      {!checked && indeterminate && <span className="apikey-tricheck-mixed" />}
+    </span>
   );
 }
 
@@ -57,6 +53,7 @@ function ScopesChecklist({ available, value, onChange }: {
   value: string[];
   onChange: (scopes: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const set = new Set(value);
   const avail = new Set(available);
 
@@ -87,20 +84,17 @@ function ScopesChecklist({ available, value, onChange }: {
   const readOnlySelected = value.length > 0 && value.every(s => s.endsWith(':read'));
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div className="u-col u-gap-4">
       {/* Toolbar: live count + quick presets */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span className="gp-chip" style={{ fontSize: 11 }}>{value.length} selected</span>
-        <div style={{ flex: 1 }} />
-        <button type="button" className="btn ak-preset" onClick={() => onChange(allSelected ? [] : [...available])}>
-          Select all
-        </button>
-        <button type="button" className={`btn ak-preset${readOnlySelected ? ' btn-primary' : ''}`} onClick={() => onChange([...readScopes])}>
-          Read-only
-        </button>
-        <button type="button" className="btn ak-preset" disabled={value.length === 0} onClick={() => onChange([])}>
-          Clear
-        </button>
+      <div className="u-row u-gap-2 u-wrap">
+        <Badge tone="info">{t('settings.apiKeys.selectedCount', { defaultValue: '{{count}} selected', count: value.length })}</Badge>
+        <div className="u-flex-1" />
+        <button type="button" className="btn btn-ghost btn-sm" aria-pressed={allSelected}
+          onClick={() => onChange(allSelected ? [] : [...available])}>{t('settings.apiKeys.selectAll', 'Select all')}</button>
+        <button type="button" className="btn btn-ghost btn-sm" aria-pressed={readOnlySelected}
+          onClick={() => onChange([...readScopes])}>{t('settings.apiKeys.readOnly', 'Read-only')}</button>
+        <button type="button" className="btn btn-ghost btn-sm"
+          disabled={value.length === 0} onClick={() => onChange([])}>{t('common.clear', 'Clear')}</button>
       </div>
 
       {groups.map(group => {
@@ -109,24 +103,34 @@ function ScopesChecklist({ available, value, onChange }: {
         const groupCount = group.scopes.filter(s => set.has(s)).length;
         return (
           <div key={group.key}>
-            <div className="ak-group-head" onClick={() => toggleGroup(group.scopes, allChecked)}>
+            {/* A real button: it toggles every scope in the group, so it must be
+                keyboard-reachable and announced as a checkbox. */}
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={allChecked ? true : (someChecked ? 'mixed' : false)}
+              onClick={() => toggleGroup(group.scopes, allChecked)}
+              className="apikey-scope-group u-row u-gap-2 u-mb-1h u-pointer u-w-full u-start"
+            >
               <TriCheck checked={allChecked} indeterminate={!allChecked && someChecked} />
-              <span className="ak-group-label">{group.label}</span>
+              <span className="u-text-xs u-bold u-upper u-fg-muted">{t(`settings.apiKeys.groups.${group.key}`, group.label)}</span>
               {groupCount > 0 && (
-                <span className="ak-group-count">{groupCount}/{group.scopes.length}</span>
+                <span className="u-text-xs u-semibold u-fg-muted">{groupCount}/{group.scopes.length}</span>
               )}
-            </div>
-            <div className="ak-scope-grid">
+            </button>
+            <div className="apikey-scope-grid">
               {group.scopes.map(scope => (
-                <label key={scope} className="ak-scope">
+                <label key={scope} className="u-row u-gap-2 u-pointer u-py-1">
                   <input
                     type="checkbox"
+                    className="u-flex-none u-pointer"
                     checked={set.has(scope)}
                     onChange={() => toggle(scope)}
-                    style={{ width: 13, height: 13, accentColor: 'var(--accent-primary)', cursor: 'pointer', flexShrink: 0 }}
                   />
-                  <span className="ak-scope-label">{SCOPE_LABELS[scope] || scope}</span>
-                  <span className="ak-scope-token">{scope}</span>
+                  <span className="u-text-sm u-fg-secondary">
+                    {SCOPE_LABELS[scope] ? t(SCOPE_LABELS[scope].key, SCOPE_LABELS[scope].label) : scope}
+                  </span>
+                  <span className="u-text-xs u-fg-muted u-mono">{scope}</span>
                 </label>
               ))}
             </div>
@@ -139,16 +143,16 @@ function ScopesChecklist({ available, value, onChange }: {
 
 function ScopeBadges({ scopes }: { scopes: string[] }) {
   if (!scopes || scopes.length === 0) {
-    return <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>;
+    return <span className="u-fg-muted u-text-xs">—</span>;
   }
   const shown = scopes.slice(0, 3);
   const rest = scopes.length - shown.length;
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+    <div className="u-row u-wrap u-gap-1">
       {shown.map(s => (
-        <span key={s} className="gp-chip gp-chip-queue" style={{ fontSize: 9, fontFamily: 'var(--font-mono)' }}>{s}</span>
+        <Badge key={s} tone="info" className="u-mono">{s}</Badge>
       ))}
-      {rest > 0 && <span className="gp-chip" style={{ fontSize: 9 }}>+{rest}</span>}
+      {rest > 0 && <Badge>+{rest}</Badge>}
     </div>
   );
 }
@@ -164,13 +168,22 @@ function isoToDateInput(iso: string | null | undefined): string {
 function isEnabled(k: ApiKey): boolean { return k.enabled === true || k.enabled === 1; }
 const fmtDate = (s: string | null | undefined) => (s ? new Date(s).toLocaleString() : '—');
 
+export interface ApiKeysPanelProps {
+  /** The section's Card header, from Settings. */
+  card: SectionCard;
+  /** The number of enabled keys after every load — for the Settings card's status line. */
+  onCountChange?: (count: number) => void;
+}
+
 /**
  * Management UI for machine-to-machine API keys — system credentials with explicit
  * permission scopes. The plaintext key is returned by the backend only once, on
  * creation, and shown in a copy-once modal; thereafter only the prefix is ever
  * displayed. Admin-only (mounted inside the Settings panel).
  */
-export function ApiKeysPanel() {
+export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
+  const { t } = useTranslation();
+  const [confirm, confirmDialog] = useConfirm();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [available, setAvailable] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,7 +196,10 @@ export function ApiKeysPanel() {
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [copied, setCopied] = useState(false);
 
-  async function load() {
+  const onCountRef = useRef(onCountChange);
+  useEffect(() => { onCountRef.current = onCountChange; });
+
+  const load = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
     try {
@@ -192,15 +208,18 @@ export function ApiKeysPanel() {
         fetchWithAuth('/api/api-keys/permissions'),
       ]);
       if (!keysRes.ok) throw new Error('load failed');
-      setKeys((await keysRes.json()).api_keys || []);
+      const list: ApiKey[] = (await keysRes.json()).api_keys || [];
+      setKeys(list);
+      onCountRef.current?.(list.filter(isEnabled).length);
       if (permsRes.ok) setAvailable((await permsRes.json()).permissions || []);
     } catch { setLoadError(true); }
     finally { setLoading(false); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
-  function openCreate() { setEditing(null); setForm(blank); setModalOpen(true); }
+  function openCreate() { setMessage(null); setEditing(null); setForm(blank); setModalOpen(true); }
   function openEdit(k: ApiKey) {
+    setMessage(null);
     setEditing(k);
     setForm({ name: k.name, scopes: k.scopes || [], expires_at: isoToDateInput(k.expires_at) });
     setModalOpen(true);
@@ -209,8 +228,8 @@ export function ApiKeysPanel() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim()) { setMessage({ type: 'error', text: 'Name is required' }); return; }
-    if (form.scopes.length === 0) { setMessage({ type: 'error', text: 'Select at least one scope' }); return; }
+    if (!form.name.trim()) { setMessage({ type: 'error', text: t('settings.apiKeys.nameRequired', 'Name is required') }); return; }
+    if (form.scopes.length === 0) { setMessage({ type: 'error', text: t('settings.apiKeys.scopeRequired', 'Select at least one scope') }); return; }
     setSaving(true);
     try {
       if (editing) {
@@ -221,7 +240,7 @@ export function ApiKeysPanel() {
         });
         if (!res.ok) await raiseFor(res);
         closeModal();
-        setMessage({ type: 'success', text: 'API key saved' });
+        setMessage({ type: 'success', text: t('settings.apiKeys.saved', 'API key saved') });
         load();
       } else {
         const body: Record<string, unknown> = { name: form.name.trim(), scopes: form.scopes };
@@ -250,17 +269,26 @@ export function ApiKeysPanel() {
       });
       if (!res.ok) throw new Error();
       load();
-    } catch { setMessage({ type: 'error', text: 'Failed to update API key' }); }
+    } catch { setMessage({ type: 'error', text: t('settings.apiKeys.updateFailed', 'Failed to update API key') }); }
   }
 
   async function handleDelete(k: ApiKey) {
-    if (!window.confirm(`Revoke API key "${k.name}"? Any integration using it will stop working immediately.`)) return;
+    const ok = await confirm({
+      title: t('settings.apiKeys.revokeTitle', 'Revoke API key?'),
+      message: t('settings.apiKeys.revokeConfirmNow', {
+        defaultValue: 'Revoke API key "{{name}}"? Any integration using it will stop working immediately.',
+        name: k.name,
+      }),
+      confirmLabel: t('settings.apiKeys.revoke', 'Revoke'),
+      cancelLabel: t('common.cancel', 'Cancel'),
+    });
+    if (!ok) return;
     try {
       const res = await fetchWithAuth(`/api/api-keys/${k.id}`, { method: 'DELETE' });
       if (!res.ok && res.status !== 204) throw new Error();
-      setMessage({ type: 'success', text: 'API key revoked' });
+      setMessage({ type: 'success', text: t('settings.apiKeys.revoked', 'API key revoked') });
       load();
-    } catch { setMessage({ type: 'error', text: 'Failed to revoke API key' }); }
+    } catch { setMessage({ type: 'error', text: t('settings.apiKeys.revokeFailed', 'Failed to revoke API key') }); }
   }
 
   async function copyKey() {
@@ -272,157 +300,118 @@ export function ApiKeysPanel() {
     } catch { /* clipboard may be blocked; the field is selectable for manual copy */ }
   }
 
-  if (loading) {
-    return (
-      <div className="ak-loading">
-        <Loader2 size={28} className="spinner" /><span style={{ marginTop: 12 }}>Loading…</span>
-      </div>
-    );
-  }
+  const createButton = (
+    <button type="button" className="btn" onClick={openCreate}>
+      <Plus size={14} /> {t('settings.apiKeys.add', 'Add key')}
+    </button>
+  );
+  // Validation and save errors belong to the form while it is open, so they show
+  // at the top of the Modal body instead of on the list behind it.
+  const formMessage = modalOpen && message?.type === 'error' ? message : null;
+  const listMessage = formMessage ? null : message;
 
   return (
-    <div>
-      <div className="up-add-header">
-        <div className="up-add-icon"><KeyRound size={22} /></div>
-        <div style={{ flex: 1 }}>
-          <h2 className="up-add-title">API Keys</h2>
-          <p className="up-add-desc">
-            Machine-to-machine credentials for the integration API, scoped to explicit permissions.
-          </p>
-        </div>
-        <button className="btn btn-primary" onClick={openCreate}><Plus size={14} /> Create</button>
-      </div>
-
+    <Card {...card} flush actions={<>{card.actions}{createButton}</>}>
       <AnimatePresence>
-        {message && (
-          <motion.div
-            className={`up-alert ${message.type}`}
-            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0' }}
-          >
-            {message.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-            <span>{message.text}</span>
-            <button
-              onClick={() => setMessage(null)}
-              style={{ marginInlineStart: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex' }}
-            >
-              <X size={14} />
-            </button>
+        {listMessage && (
+          <motion.div className="u-p-3" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <Alert tone={listMessage.type === 'success' ? 'success' : 'error'} onDismiss={() => setMessage(null)}>
+              {listMessage.text}
+            </Alert>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {loadError ? (
-        <div className="ak-loading">
-          <AlertCircle size={32} style={{ color: 'var(--accent-danger)' }} />
-          <span>Failed to load API keys.</span>
-          <button className="btn btn-primary" onClick={load}><RefreshCw size={14} /> Retry</button>
+      {loading ? (
+        <Loading size="sm" label={t('settings.loading', 'Loading…')} />
+      ) : loadError ? (
+        <div className="u-p-4">
+          <Alert tone="error" action={<button type="button" className="btn" onClick={load}><RefreshCw size={14} /> {t('common.retry', 'Retry')}</button>}>
+            {t('settings.apiKeys.loadFailed', 'Failed to load API keys.')}
+          </Alert>
         </div>
       ) : (
-        <div className="cl-table-wrap">
-          <table className="cl-table ak-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Key</th>
-                <th>Scopes</th>
-                <th>Last used</th>
-                <th>Expires</th>
-                <th>Status</th>
-                <th aria-label="actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((k, idx) => (
-                <tr key={k.id} className={idx % 2 === 0 ? 'cl-row-even' : 'cl-row-odd'}>
-                  <td data-label="Name" style={{ fontWeight: 600 }}>{k.name}</td>
-                  <td data-label="Key"><span className="ak-prefix">{k.key_prefix}…</span></td>
-                  <td data-label="Scopes"><ScopeBadges scopes={k.scopes} /></td>
-                  <td data-label="Last used" className="ak-dim">{fmtDate(k.last_used_at)}</td>
-                  <td data-label="Expires" className="ak-dim">{k.expires_at ? fmtDate(k.expires_at) : 'Never'}</td>
-                  <td data-label="Status">
-                    <span className={`crm-badge ${isEnabled(k) ? 'on' : 'off'}`}>
-                      {isEnabled(k) ? 'Enabled' : 'Disabled'}
-                    </span>
-                  </td>
-                  <td data-label="">
-                    <div className="ak-row-actions">
-                      <button className="btn btn-icon" onClick={() => openEdit(k)} title="Edit"><Pencil size={13} /></button>
-                      <button className="btn btn-icon" onClick={() => toggleEnabled(k)} title={isEnabled(k) ? 'Disable' : 'Enable'}>
-                        <Power size={13} />
-                      </button>
-                      <button className="btn btn-icon ak-danger" onClick={() => handleDelete(k)} title="Revoke">
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {keys.length === 0 && (
-                <tr>
-                  <td colSpan={7} data-label="" style={{ textAlign: 'center', padding: '48px 24px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                      <KeyRound size={32} style={{ opacity: 0.3 }} />
-                      <span className="gp-empty-hint">No API keys yet. Create one to integrate with OpDesk.</span>
-                      <button className="btn btn-primary" onClick={openCreate}><Plus size={14} /> Create</button>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <Table
+          caption={t('settings.apiKeys.caption', 'API keys')}
+          rows={keys}
+          rowKey={k => k.id}
+          empty={
+            <EmptyState
+              size="sm"
+              icon={KeyRound}
+              title={t('settings.apiKeys.emptyTitle', 'No API keys yet')}
+              description={t('settings.apiKeys.emptyHintIntegrate', 'Add one to integrate with OpDesk.')}
+              action={createButton}
+            />
+          }
+          columns={[
+            { key: 'name', header: t('settings.apiKeys.name', 'Name'), primary: true, cell: k => <span className="u-semibold">{k.name}</span> },
+            { key: 'key', header: t('settings.apiKeys.key', 'Key'), cell: k => <span className="u-mono u-text-sm u-fg-muted">{k.key_prefix}…</span> },
+            { key: 'scopes', header: t('settings.apiKeys.scopes', 'Scopes'), cell: k => <ScopeBadges scopes={k.scopes} /> },
+            { key: 'used', header: t('settings.apiKeys.lastUsed', 'Last used'), hideOnMobile: true, cell: k => <span className="u-text-sm u-fg-muted">{fmtDate(k.last_used_at)}</span> },
+            {
+              key: 'expires', header: t('settings.apiKeys.expires', 'Expires'), hideOnMobile: true,
+              cell: k => <span className="u-text-sm u-fg-muted">{k.expires_at ? fmtDate(k.expires_at) : t('settings.apiKeys.never', 'Never')}</span>,
+            },
+            {
+              key: 'status', header: t('settings.apiKeys.status', 'Status'),
+              cell: k => <Badge tone={isEnabled(k) ? 'success' : 'neutral'}>{isEnabled(k) ? t('common.enabled', 'Enabled') : t('common.disabled', 'Disabled')}</Badge>,
+            },
+            {
+              key: 'actions', header: t('common.actions', 'Actions'), align: 'end',
+              cell: k => (
+                <div className="u-row u-gap-1 u-justify-end">
+                  <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => openEdit(k)}
+                    title={t('common.edit', 'Edit')} aria-label={`${t('common.edit', 'Edit')} ${k.name}`}><Pencil size={14} /></button>
+                  <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => toggleEnabled(k)}
+                    title={isEnabled(k) ? t('settings.apiKeys.disable', 'Disable') : t('settings.apiKeys.enable', 'Enable')}
+                    aria-label={`${isEnabled(k) ? t('settings.apiKeys.disable', 'Disable') : t('settings.apiKeys.enable', 'Enable')} ${k.name}`}><Power size={14} /></button>
+                  <button type="button" className="btn btn-ghost btn-danger btn-sm btn-icon" onClick={() => handleDelete(k)}
+                    title={t('settings.apiKeys.revoke', 'Revoke')} aria-label={`${t('settings.apiKeys.revoke', 'Revoke')} ${k.name}`}><Trash2 size={14} /></button>
+                </div>
+              ),
+            },
+          ]}
+        />
       )}
 
       {/* Create / edit modal */}
       <Modal
         open={modalOpen}
         onClose={closeModal}
-        title={editing ? 'Edit API Key' : 'Create API Key'}
+        title={editing ? t('settings.apiKeys.editTitle', 'Edit API key') : t('settings.apiKeys.addTitle', 'Add API key')}
         icon={<KeyRound size={16} />}
         width="xl"
         footer={
           <>
-            <button className="btn" onClick={closeModal}>Cancel</button>
-            <button className="btn btn-primary" disabled={saving} onClick={handleSubmit}
-              style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {saving && <Loader2 size={14} className="spinner" />}
-              {editing ? 'Save' : 'Create'}
+            <button type="button" className="btn" onClick={closeModal}>{t('common.cancel', 'Cancel')}</button>
+            <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSubmit}>
+              {saving ? <Loader2 size={14} className="spinner" /> : editing ? <Save size={14} /> : <Plus size={14} />}
+              {editing ? t('common.saveChanges', 'Save changes') : t('settings.apiKeys.add', 'Add key')}
             </button>
           </>
         }
       >
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 240px' }}>
-              <label className="ak-label">Name <span style={{ color: 'var(--accent-danger)' }}>*</span></label>
-              <input
-                className="form-input" value={form.name} autoFocus style={{ width: '100%' }}
+        <form onSubmit={handleSubmit} className="u-col u-gap-4">
+          {formMessage && <Alert tone="error" onDismiss={() => setMessage(null)}>{formMessage.text}</Alert>}
+          <FormRow>
+            <FormField label={t('settings.apiKeys.name', 'Name')} htmlFor="ak-name" required>
+              <input id="ak-name" className="form-input" value={form.name} autoFocus
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="e.g. Reporting integration"
-              />
-            </div>
-            <div style={{ flex: '0 1 200px' }}>
-              <label className="ak-label">Expires</label>
-              <input
-                className="form-input" type="date" value={form.expires_at}
-                onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))}
-              />
-              <div className="gp-empty-hint" style={{ marginTop: 4 }}>Leave blank to never expire.</div>
-            </div>
-          </div>
-          <div>
-            <label className="ak-label">Scopes</label>
-            <div className="gp-empty-hint" style={{ marginBottom: 8 }}>
-              The key can only call endpoints covered by the scopes you grant. Settings, user
-              management and the logs are never reachable with a key.
-            </div>
-            <ScopesChecklist
-              available={available}
-              value={form.scopes}
-              onChange={scopes => setForm(f => ({ ...f, scopes }))}
-            />
-          </div>
+                placeholder={t('settings.apiKeys.namePlaceholder', 'e.g. Reporting integration')} />
+            </FormField>
+            <FormField label={t('settings.apiKeys.expires', 'Expires')} htmlFor="ak-expires" hint={t('settings.apiKeys.expiresHint', 'Leave blank to never expire.')}>
+              <input id="ak-expires" className="form-input" type="date" value={form.expires_at}
+                onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))} />
+            </FormField>
+          </FormRow>
+          <FormField label={t('settings.apiKeys.scopes', 'Scopes')}>
+            <p className="up-hint u-mb-2">
+              {t('settings.apiKeys.scopesHint', 'The key can only call endpoints covered by the scopes you grant.')}{' '}
+              {t('settings.apiKeys.scopesNever', 'Settings, user management and the logs are never reachable with a key.')}
+            </p>
+            <ScopesChecklist available={available} value={form.scopes} onChange={scopes => setForm(f => ({ ...f, scopes }))} />
+          </FormField>
         </form>
       </Modal>
 
@@ -430,34 +419,30 @@ export function ApiKeysPanel() {
       <Modal
         open={!!createdKey}
         onClose={() => setCreatedKey(null)}
-        title="API Key Created"
+        title={t('settings.apiKeys.createdTitle', 'API key created')}
         icon={<KeyRound size={16} />}
-        footer={<button className="btn btn-primary" onClick={() => setCreatedKey(null)}>Done</button>}
+        footer={<button type="button" className="btn btn-primary" onClick={() => setCreatedKey(null)}>{t('common.done', 'Done')}</button>}
       >
-        <div className="up-alert error" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <AlertCircle size={16} />
-          <span>Copy this key now — it will not be shown again.</span>
-        </div>
-        <label className="ak-label">Your key</label>
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-          <input
-            className="form-input ak-key-reveal"
-            readOnly
-            value={createdKey?.key || ''}
-            onFocus={e => e.target.select()}
-          />
-          <button
-            type="button" onClick={copyKey} title="Copy"
-            style={{
-              position: 'absolute', insetInlineEnd: 8, background: 'none', border: 'none',
-              cursor: 'pointer', padding: 0, display: 'flex',
-              color: copied ? 'var(--accent-success)' : 'var(--text-muted)',
-            }}
-          >
-            {copied ? <Check size={16} /> : <Copy size={16} />}
-          </button>
-        </div>
+        <Alert tone="warning" className="u-mb-3">
+          {t('settings.apiKeys.copyNow', 'Copy this key now — it will not be shown again.')}
+        </Alert>
+        <FormField label={t('settings.apiKeys.yourKey', 'Your key')}>
+          <div className="u-row u-gap-2">
+            <input
+              className="form-input u-flex-1 u-mono u-text-sm"
+              readOnly
+              value={createdKey?.key || ''}
+              onFocus={e => e.target.select()}
+              aria-label={t('settings.apiKeys.yourKey', 'Your key')}
+            />
+            <button type="button" className={`btn btn-icon${copied ? ' u-fg-success' : ''}`} onClick={copyKey}
+              title={t('settings.apiKeys.copy', 'Copy')} aria-label={t('settings.apiKeys.copyKey', 'Copy key')}>
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+          </div>
+        </FormField>
       </Modal>
-    </div>
+      {confirmDialog}
+    </Card>
   );
 }

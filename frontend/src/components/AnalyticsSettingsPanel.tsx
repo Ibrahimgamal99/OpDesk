@@ -1,74 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Save, CheckCircle2, Loader2 } from 'lucide-react';
+import { Save, Loader2 } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
+import { Alert, Card, FormField, FormRow, FormSection, Loading } from './ui';
+import type { SectionCard } from './SettingsPanel';
 import type { AnalyticsSettings } from '../types';
 
-const inputStyle: React.CSSProperties = {
-  width: 76,
-  padding: '6px 10px',
-  borderRadius: 'var(--radius-sm, 8px)',
-  border: '1px solid var(--border-subtle, rgba(48,54,61,0.5))',
-  background: 'var(--bg-primary)',
-  color: 'var(--text-primary)',
-  fontSize: '0.85rem',
-  fontFamily: 'inherit',
-  transition: 'border-color 150ms, box-shadow 150ms',
-  outline: 'none',
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: '0.82rem',
-  color: 'var(--text-secondary)',
-  minWidth: 220,
-};
-
-const unitStyle: React.CSSProperties = {
-  fontSize: '0.78rem',
-  color: 'var(--text-muted)',
-};
-
-const sectionHeadStyle: React.CSSProperties = {
-  margin: '0 0 4px',
-  fontSize: '0.75rem',
-  fontWeight: 700,
-  color: 'var(--text-secondary)',
-  textTransform: 'uppercase',
-  letterSpacing: '0.06em',
-};
-
-function SettingsInput({
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  value: number;
-  min: number;
-  max: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <input
-      type="number"
-      min={min}
-      max={max}
-      value={value}
-      onChange={e => onChange(parseInt(e.target.value) || min)}
-      style={inputStyle}
-      onFocus={e => {
-        (e.target as HTMLInputElement).style.borderColor = 'var(--accent-primary)';
-        (e.target as HTMLInputElement).style.boxShadow = '0 0 0 3px var(--status-call-glow, rgba(88,166,255,0.2))';
-      }}
-      onBlur={e => {
-        (e.target as HTMLInputElement).style.borderColor = 'var(--border-subtle, rgba(48,54,61,0.5))';
-        (e.target as HTMLInputElement).style.boxShadow = 'none';
-      }}
-    />
-  );
+export interface AnalyticsSettingsPanelProps {
+  /** The section's Card header, from Settings. */
+  card: SectionCard;
+  /** The settings as saved — for the Settings card's status line. */
+  onSaved?: (settings: AnalyticsSettings) => void;
 }
 
-export function AnalyticsSettingsPanel() {
+/** Settings → Analytics: the KPI definitions every analytics figure is computed with. */
+export function AnalyticsSettingsPanel({ card, onSaved }: AnalyticsSettingsPanelProps) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<AnalyticsSettings>({
     sla_thresholds: {},
@@ -78,26 +24,18 @@ export function AnalyticsSettingsPanel() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    setLoading(true);
     fetchWithAuth('/api/analytics/settings')
-      .then(async r => {
-        if (r.ok) {
-          const d = await r.json();
-          setSettings(d);
-        }
-      })
-      .catch(e => setError(e.message))
+      .then(async r => { if (r.ok) setSettings(await r.json()); })
+      .catch(e => setMessage({ type: 'error', text: e instanceof Error ? e.message : String(e) }))
       .finally(() => setLoading(false));
   }, []);
 
   async function handleSave() {
     setSaving(true);
-    setSaved(false);
-    setError(null);
+    setMessage(null);
     try {
       const resp = await fetchWithAuth('/api/analytics/settings', {
         method: 'POST',
@@ -108,113 +46,79 @@ export function AnalyticsSettingsPanel() {
           short_abandon_secs: settings.short_abandon_secs,
         }),
       });
-      if (!resp.ok) throw new Error('Failed to save');
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      if (!resp.ok) throw new Error(t('analytics.settings.saveFailed', 'Failed to save'));
+      onSaved?.(settings);
+      setMessage({ type: 'success', text: t('analytics.settings.saved') });
+      setTimeout(() => setMessage(null), 2500);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed');
+      setMessage({ type: 'error', text: e instanceof Error ? e.message : t('notReady.saveFailed', 'Save failed') });
     } finally {
       setSaving(false);
     }
   }
 
+  const saveButton = (
+    <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || loading}>
+      {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+      {saving ? t('settings.saving') : t('analytics.settings.save')}
+    </button>
+  );
+
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '20px 0', color: 'var(--text-muted)' }}>
-        <Loader2 size={16} className="spin" />
-        {t('analytics.loading')}
-      </div>
+      <Card {...card}>
+        <Loading size="sm" label={t('analytics.loading')} />
+      </Card>
     );
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24, padding: '4px 0' }}>
+    <Card {...card} footer={saveButton}>
+      <FormSection title={t('analytics.settings.slaSection')} first>
+        <p className="u-text-sm u-fg-muted u-mb-3">{t('analytics.settings.slaPerQueue')}</p>
+        <FormRow triple>
+          <FormField label={t('analytics.settings.slaDefault')} htmlFor="an-sla" hint={t('analytics.settings.unitSeconds', 'seconds')}>
+            <input
+              id="an-sla"
+              type="number"
+              className="form-input"
+              min={1}
+              max={600}
+              value={settings.sla_default_secs}
+              onChange={e => setSettings(s => ({ ...s, sla_default_secs: parseInt(e.target.value) || 1 }))}
+            />
+          </FormField>
+        </FormRow>
+      </FormSection>
 
-      {/* SLA */}
-      <div>
-        <h4 style={sectionHeadStyle}>{t('analytics.settings.slaSection')}</h4>
-        <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)', margin: '0 0 14px', lineHeight: 1.5 }}>
-          {t('analytics.settings.slaPerQueue')}
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={labelStyle}>{t('analytics.settings.slaDefault')} (global)</span>
-          <SettingsInput
-            value={settings.sla_default_secs}
-            min={1} max={600}
-            onChange={v => setSettings(s => ({ ...s, sla_default_secs: v }))}
-          />
-          <span style={unitStyle}>s</span>
-        </div>
-      </div>
-
-      {/* FCR */}
-      <div>
-        <h4 style={sectionHeadStyle}>{t('analytics.settings.fcrSection')}</h4>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={labelStyle}>{t('analytics.settings.fcrWindow')}</span>
-            <SettingsInput
+      <FormSection title={t('analytics.settings.fcrSection')}>
+        <FormRow triple>
+          <FormField label={t('analytics.settings.fcrWindow')} htmlFor="an-fcr" hint={t('analytics.settings.unitDays', 'days')}>
+            <input
+              id="an-fcr"
+              type="number"
+              className="form-input"
+              min={1}
+              max={90}
               value={settings.fcr_window_days}
-              min={1} max={90}
-              onChange={v => setSettings(s => ({ ...s, fcr_window_days: v }))}
+              onChange={e => setSettings(s => ({ ...s, fcr_window_days: parseInt(e.target.value) || 1 }))}
             />
-            <span style={unitStyle}>days</span>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={labelStyle}>{t('analytics.settings.shortAbandon')}</span>
-            <SettingsInput
+          </FormField>
+          <FormField label={t('analytics.settings.shortAbandon')} htmlFor="an-abandon" hint={t('analytics.settings.unitSeconds', 'seconds')}>
+            <input
+              id="an-abandon"
+              type="number"
+              className="form-input"
+              min={1}
+              max={120}
               value={settings.short_abandon_secs}
-              min={1} max={120}
-              onChange={v => setSettings(s => ({ ...s, short_abandon_secs: v }))}
+              onChange={e => setSettings(s => ({ ...s, short_abandon_secs: parseInt(e.target.value) || 1 }))}
             />
-            <span style={unitStyle}>s</span>
-          </div>
-        </div>
-      </div>
+          </FormField>
+        </FormRow>
+      </FormSection>
 
-      {error && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '10px 14px',
-          borderRadius: 'var(--radius-sm, 8px)',
-          background: 'rgba(248,81,73,0.10)',
-          border: '1px solid rgba(248,81,73,0.3)',
-          color: 'var(--accent-danger)',
-          fontSize: '0.82rem',
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* Save */}
-      <div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '8px 18px',
-            borderRadius: 'var(--radius-sm, 8px)',
-            border: 'none',
-            background: 'var(--accent-primary)',
-            color: 'var(--bg-primary)',
-            cursor: saving ? 'default' : 'pointer',
-            fontSize: '0.83rem',
-            fontWeight: 600,
-            fontFamily: 'inherit',
-            opacity: saving ? 0.75 : 1,
-            transition: 'opacity 150ms',
-          }}
-        >
-          {saving ? <Loader2 size={14} className="spin" /> : saved ? <CheckCircle2 size={14} /> : <Save size={14} />}
-          {saved ? t('analytics.settings.saved') : t('analytics.settings.save')}
-        </button>
-      </div>
-    </div>
+      <Alert tone={message?.type === 'success' ? 'success' : 'error'}>{message?.text}</Alert>
+    </Card>
   );
 }
