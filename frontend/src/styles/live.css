@@ -69,3 +69,45 @@
   background: var(--bg-secondary);
 }
 .call-transfer-input { max-inline-size: 8rem; }
+
+/* ── Queues: Agents tab (the supervisor's board) ── */
+.agent-board-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+}
+.agent-board-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  /* The presence colour arrives per card as --agent-accent. */
+  border-inline-start: 3px solid var(--agent-accent, var(--status-unavailable));
+  border-radius: var(--radius-md);
+}
+.agent-board-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.agent-board-name { font-weight: 600; color: var(--text-primary); }
+.agent-board-ext { font-size: var(--text-sm); color: var(--text-muted); }
+.agent-board-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.agent-board-timer { font-variant-numeric: tabular-nums; font-weight: 600; }
+.agent-board-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block-start: auto;
+}

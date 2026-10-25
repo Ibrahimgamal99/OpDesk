@@ -10,8 +10,13 @@ import type { QueueMember } from '../types';
  * Asterisk gives the status either as a name ("In Use") or as a numeric device-state code,
  * depending on which AMI event carried it, so both spellings are tested.
  */
-export type QueueMemberState = 'paused' | 'unavailable' | 'busy' | 'available';
+export type QueueMemberState = 'paused' | 'unavailable' | 'unknown' | 'busy' | 'ringing' | 'on_hold' | 'available';
 
+/**
+ * Only an idle device ("Not in use", code 1) is available. A phone that is ringing or holding
+ * a call cannot take the next caller, and an Unknown device state proves nothing either way,
+ * so none of them reads as Ready.
+ */
 export function memberState(member: QueueMember): QueueMemberState {
   // Paused first: a paused member takes no calls whatever their phone is doing.
   if (member.paused) return 'paused';
@@ -20,10 +25,24 @@ export function memberState(member: QueueMember): QueueMemberState {
     return 'unavailable';
   }
   if (s === 'in use' || s === 'busy' || s === 'ring+in use'
-      || member.status === '2' || member.status === '3') {
+      || member.status === '2' || member.status === '3' || member.status === '7') {
     return 'busy';
   }
-  return 'available';
+  if (s === 'ringing' || member.status === '6') return 'ringing';
+  if (s === 'on hold' || member.status === '8') return 'on_hold';
+  if (s === 'not in use' || member.status === '1') return 'available';
+  return 'unknown';
+}
+
+/** The four buckets the Dashboard's queue board counts: a ringing or held phone is busy, and
+ *  an unknown one is not counted on. */
+export type QueueMemberBucket = 'available' | 'busy' | 'paused' | 'unavailable';
+
+export function memberBucket(member: QueueMember): QueueMemberBucket {
+  const state = memberState(member);
+  if (state === 'ringing' || state === 'on_hold') return 'busy';
+  if (state === 'unknown') return 'unavailable';
+  return state;
 }
 
 /**
@@ -33,7 +52,7 @@ export function memberState(member: QueueMember): QueueMemberState {
  */
 export function memberStateClass(member: QueueMember): string {
   const state = memberState(member);
-  return state === 'available' ? '' : state;
+  return state === 'available' ? '' : state.replace('_', '-');
 }
 
 /**

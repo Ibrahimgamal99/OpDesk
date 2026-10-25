@@ -936,7 +936,7 @@ function App({ onLogout }: AppProps) {
               agentStates={state?.agent_states || {}}
               memberPresence={memberPresence}
               onSupervisorAction={handleSupervisorAction}
-              onSync={() => sendAction({ action: 'sync' })}
+              onSync={() => sendAction({ action: isAdminRole ? 'sync' : 'sync_calls' })}
               webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
               allowedDndExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
               onDndToggle={async (ext, enabled) => {
@@ -955,9 +955,9 @@ function App({ onLogout }: AppProps) {
               calls={state?.active_calls || {}}
               onSupervisorAction={handleSupervisorAction}
               onHangup={(target) => sendAction({ action: 'hangup', target })}
-              onTransfer={(source, destination) => sendAction({ action: 'transfer', source, destination })}
-              onTakeOver={(source) => sendAction({ action: 'take_over', source })}
-              onSync={() => sendAction({ action: 'sync' })}
+              onTransfer={(source, destination, ext) => sendAction({ action: 'transfer', source, destination, ext })}
+              onTakeOver={(source, ext) => sendAction({ action: 'take_over', source, ext })}
+              onSync={() => sendAction({ action: isAdminRole ? 'sync' : 'sync_calls' })}
             />
           )}
           {activeTab === 'queues' && (
@@ -966,8 +966,9 @@ function App({ onLogout }: AppProps) {
               members={state?.queue_members || {}}
               entries={state?.queue_entries || {}}
               extensions={state?.extensions || {}}
+              agentStates={state?.agent_states || {}}
               sendAction={sendAction}
-              onSync={() => sendAction({ action: 'sync' })}
+              onSync={() => sendAction({ action: isAdminRole ? 'sync' : 'sync_queues' })}
             />
           )}
           {activeTab === 'call-log' && <CallLogPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}

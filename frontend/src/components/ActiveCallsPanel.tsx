@@ -8,8 +8,8 @@ interface ActiveCallsPanelProps {
   calls: Record<string, CallInfo>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   onHangup?: (target: string) => void;
-  onTransfer?: (source: string, destination: string) => void;
-  onTakeOver?: (source: string) => void;
+  onTransfer?: (source: string, destination: string, ext: string) => void;
+  onTakeOver?: (source: string, ext: string) => void;
   onSync?: () => void;
 }
 
