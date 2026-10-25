@@ -1,8 +1,9 @@
 /**
- * Call history routes: history scope on the list and the export, the CSV itself (BOM,
- * filters, filename), 403 for journey / VAD / recording audio outside the caller's scope,
- * the notifications scope, and the recording audio route's sandbox answers. Handlers are
- * called directly with a fake request; the database and the recording files are mocked.
+ * Call history routes: history scope on the list and the export, server-side paging and
+ * filters, the CSV itself (BOM, filters, filename), 403 for journey / VAD / recording audio
+ * outside the caller's scope, supervision hidden from agents, the notifications scope and
+ * total, and the recording audio route's sandbox answers. Handlers are called directly with
+ * a fake request; the database and the recording files are mocked.
  */
 
 jest.mock('../src/core/security', () => ({ principalOf: (req: { principal?: unknown }) => req.principal ?? null }));
@@ -13,6 +14,8 @@ jest.mock('../src/db/db-manager', () => ({
   getCallVadFromDb: jest.fn(async () => null),
   getCallLogCountFromDb: jest.fn(async () => 0),
   getCallNotificationsFromDb: jest.fn(async () => []),
+  getCallNotificationsCountFromDb: jest.fn(async () => 0),
+  LimitValueError: class LimitValueError extends Error {},
   getCallNotificationById: jest.fn(async () => null),
   updateCallNotificationStatus: jest.fn(async () => true),
   getRecordingsFromDb: jest.fn(async () => ({ items: [], next_cursor: null })),
@@ -20,8 +23,10 @@ jest.mock('../src/db/db-manager', () => ({
 }));
 jest.mock('../src/services/call-log', () => ({
   callLog: jest.fn(async () => []),
+  callLogPage: jest.fn(async () => ({ calls: [], total: 0 })),
   buildCallJourneyFromCdr: jest.fn(async () => [{ event: 'OUTBOUND' }]),
   callStatus: jest.requireActual('../src/services/call-outcomes').callStatus,
+  matchesCallLogFilters: jest.requireActual('../src/services/call-log').matchesCallLogFilters,
 }));
 jest.mock('../src/services/recording', () => ({
   resolveRecordingRequest: jest.fn(),
@@ -34,7 +39,7 @@ jest.mock('../src/services/recording', () => ({
 import * as dbm from '../src/db/db-manager';
 import { CallHistoryController, csvCell } from '../src/api/routes/call-history.controller';
 import { FileResponse, RawResponse } from '../src/api/respond';
-import { callLog } from '../src/services/call-log';
+import { callLog, callLogPage } from '../src/services/call-log';
 import { resolveRecordingRequest } from '../src/services/recording';
 
 const ctl = new CallHistoryController();
@@ -51,17 +56,19 @@ beforeEach(() => jest.clearAllMocks());
 describe('/api/call-log', () => {
   it('an agent reads only their own extension (not their group), admin everything', async () => {
     await ctl.getCallLogEndpoint(req(AGENT, { query: { date_from: '2026-10-01' } }));
-    expect(mocked(callLog).mock.calls[0][0]).toMatchObject({ allowedExtensions: ['100'], dateFrom: '2026-10-01', limit: 100 });
+    expect(mocked(callLogPage).mock.calls[0][0]).toMatchObject({
+      allowedExtensions: ['100'], dateFrom: '2026-10-01', limit: 100, cursor: null,
+    });
     await ctl.getCallLogEndpoint(req(ADMIN));
-    expect(mocked(callLog).mock.calls[1][0].allowedExtensions).toBeNull();
+    expect(mocked(callLogPage).mock.calls[1][0].allowedExtensions).toBeNull();
     // no date: the last 30 days
-    expect(mocked(callLog).mock.calls[1][0].dateFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(mocked(callLogPage).mock.calls[1][0].dateFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     await ctl.getCallLogEndpoint(req(SUPERVISOR));
-    expect(mocked(callLog).mock.calls[2][0].allowedExtensions).toEqual(['100', '101']);
+    expect(mocked(callLogPage).mock.calls[2][0].allowedExtensions).toEqual(['100', '101']);
   });
 
   it('a failure is a 500 that does not leak the exception text', async () => {
-    mocked(callLog).mockRejectedValueOnce(new Error('ER_ACCESS_DENIED secret detail'));
+    mocked(callLogPage).mockRejectedValueOnce(new Error('ER_ACCESS_DENIED secret detail'));
     await expect(ctl.getCallLogEndpoint(req(ADMIN))).rejects.toMatchObject({ status: 500, message: 'Failed to fetch call log' });
   });
 });
@@ -75,7 +82,7 @@ describe('/api/call-log/export', () => {
       extension: '101', app: 'queue', duration: 60, talk: 50, status: 'ANSWERED', ended_by: 'customer', ended_by_agent: null,
       recording_file: 'x.wav', linkedid: 'N' },
     { calldate: new Date(2026, 9, 17, 18, 1, 0), call_type: 'INTERNAL', src: '101', dst: 's', extension: null, app: 'direct',
-      status: 'ANSWERED', linkedid: 'spy-101-100-1' },
+      status: 'ANSWERED', linkedid: 'spy-101-100-1', route: 'internal_supervision' },
   ];
 
   it('UTF-8 BOM, attachment filename, the table columns, supervision legs hidden', async () => {
@@ -95,6 +102,7 @@ describe('/api/call-log/export', () => {
     expect(lines).toHaveLength(3);
     expect(mocked(callLog).mock.calls[0][0]).toMatchObject({
       limit: 50000, allowedExtensions: ['100', '101'], enrich: false, outcomes: true, supervision: false,
+      excludeSupervision: true,
     });
   });
 
@@ -128,7 +136,7 @@ describe('single-call routes: 403 outside the history scope', () => {
       status: 403, message: 'Not allowed to view this call',
     });
     mocked(dbm.getCdrByLinkedid).mockResolvedValue([LEG_100]);
-    expect(await ctl.getCallJourneyEndpoint(req(AGENT, { query: { linkedid: 'L' } }))).toEqual({ journey: [{ event: 'OUTBOUND' }] });
+    expect(await ctl.getCallJourneyEndpoint(req(SUPERVISOR, { query: { linkedid: 'L' } }))).toEqual({ journey: [{ event: 'OUTBOUND' }] });
     expect(dbm.getSupervisionForTarget).toHaveBeenCalledWith('L');
   });
 
@@ -174,7 +182,7 @@ describe('single-call routes: 403 outside the history scope', () => {
 });
 
 describe('/api/call-notifications', () => {
-  it('a user with an extension sees their own; a supervisor their scope in SQL', async () => {
+  it('an agent sees their own; a supervisor their scope in SQL', async () => {
     await ctl.getCallNotificationsEndpoint(req(AGENT, { query: { extension: '101' } }));
     expect(mocked(dbm.getCallNotificationsFromDb).mock.calls[0][0]).toMatchObject({ extension: '100', extensions: null });
     await ctl.getCallNotificationsEndpoint(req(SUPERVISOR));

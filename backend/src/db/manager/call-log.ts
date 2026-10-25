@@ -11,8 +11,9 @@
 import { getLogger, pyStr } from '../../core/logger';
 import { isoformat, truthy } from '../../core/py';
 import { callStatus } from '../../services/call-outcomes';
-import { execute, keysetPage, placeholders, query, queryOne } from '../pool';
+import { execute, keysetPage, likeEscape, placeholders, query, queryOne } from '../pool';
 import type { KeysetPage, Params, Row, SqlValue } from '../pool';
+import { getExtensionNamesFromDb } from './pbx';
 
 const log = getLogger('db.db_manager');
 
@@ -55,6 +56,95 @@ function cdrExtensionMatch(extensions: SqlValue[]): [string, Params] {
     'OR ' + channelExtSql('channel') + ' IN (' + ph + ') ' +
     'OR src IN (' + ph + '))';
   return [sql, [...extensions, ...extensions, ...extensions]];
+}
+
+// ===========================================================================
+// Call History search
+// ===========================================================================
+
+// How many agents and contacts one search term may expand to. A two-letter term matches
+// half the phonebook, and every match is another OR in a query that already scans the CDR,
+// so past this it stops being a name search.
+export const SEARCH_NAME_CAP = 50;
+// The tail of a number that identifies the person, and the shortest that is an outside
+// line at all.
+export const SEARCH_NUMBER_TAIL = 9;
+export const SEARCH_MIN_EXTERNAL_DIGITS = 7;
+// Most matched calls getCallLogFromDb pushes down as an id list (see callLogFilter).
+export const SEARCH_PUSHDOWN_MAX = 20000;
+
+/**
+ * [agent extensions, customer number tails] whose NAME contains `term`.
+ *
+ * The CDR holds numbers, not people, so a name has to become numbers before it can match a
+ * call: an agent's name lives on their OpDesk user and on the PBX extension, a customer's in
+ * the phonebook. Never fatal: a lookup that fails just contributes nothing.
+ */
+export async function namesMatching(term: string): Promise<[string[], string[]]> {
+  const like = '%' + likeEscape(term) + '%';
+  const exts = new Set<string>();
+  let phones: unknown[] = [];
+  try {
+    const rows = await query(
+      "SELECT extension FROM users WHERE name LIKE ? AND extension IS NOT NULL AND extension <> '' LIMIT ?",
+      [like, SEARCH_NAME_CAP],
+    );
+    for (const r of rows) exts.add(pyStr(r.extension));
+  } catch (e) {
+    log.warning('⚠️  Database error matching agent names for call search: %s', e);
+  }
+  // The PBX's own extension names (one small table): an extension without an OpDesk user
+  // is still somebody's phone.
+  const needle = term.toLowerCase();
+  let pbxNames: Record<string, string> = {};
+  try {
+    pbxNames = (await getExtensionNamesFromDb()) || {};
+  } catch (e) {
+    log.warning('⚠️  Database error reading extension names for call search: %s', e);
+  }
+  for (const [ext, name] of Object.entries(pbxNames)) {
+    if (exts.size >= SEARCH_NAME_CAP) break;
+    if (name.toLowerCase().includes(needle)) exts.add(ext);
+  }
+  try {
+    const rows = await query('SELECT phone_key FROM contacts WHERE name LIKE ? LIMIT ?', [like, SEARCH_NAME_CAP]);
+    phones = rows.map((r) => r.phone_key);
+  } catch (e) {
+    log.warning('⚠️  Database error matching contact names for call search: %s', e);
+  }
+  const tails = new Set<string>();
+  for (const p of phones) {
+    const digits = strOr(p).replace(/\D/g, '');
+    if (digits.length >= SEARCH_MIN_EXTERNAL_DIGITS) tails.add(digits.slice(-SEARCH_NUMBER_TAIL));
+  }
+  return [[...exts], [...tails].sort()];
+}
+
+/**
+ * WHERE fragment over bare `cdr` columns for Call History's free-text search, and its
+ * params. Shared by the list and the count, so both match a term the same way.
+ *
+ * A LEG matches when the term is in its Call ID (linkedid -- what the CRM stores) or
+ * uniqueid, either number, or its caller-ID name; or when the term names an agent (any leg
+ * on their extension) or a phonebook contact (any call to or from their number). Callers
+ * widen a matching leg to its whole call by linkedid.
+ */
+export async function callSearchSql(search: unknown): Promise<[string, Params]> {
+  const term = pyStr(search).trim();
+  const like = '%' + likeEscape(term) + '%';
+  const parts = ['linkedid LIKE ?', 'uniqueid LIKE ?', 'src LIKE ?', 'dst LIKE ?', 'cnam LIKE ?'];
+  const params: Params = [like, like, like, like, like];
+  const [exts, tails] = await namesMatching(term);
+  if (exts.length) {
+    const [sql, extParams] = cdrExtensionMatch(exts);
+    parts.push(sql);
+    params.push(...extParams);
+  }
+  for (const tail of tails) {
+    parts.push('src LIKE ? OR dst LIKE ?');
+    params.push('%' + tail, '%' + tail);
+  }
+  return ['(' + parts.join(' OR ') + ')', params];
 }
 
 // ===========================================================================
@@ -231,7 +321,8 @@ export async function getCdrByLinkedid(linkedid: string): Promise<Row[]> {
 export async function getCallLegs(
   opts: { linkedid?: string | null; uniqueid?: string | null; recordingfile?: string | null } = {},
 ): Promise<Row[]> {
-  const cols = 'linkedid, uniqueid, src, dst, channel, dstchannel';
+  // lastapp: a ChanSpy leg is supervision, which the controller hides from agents.
+  const cols = 'linkedid, uniqueid, src, dst, channel, dstchannel, lastapp';
   try {
     let lid: string | null = null;
     if (truthy(opts.linkedid) && pyStr(opts.linkedid).trim()) {
@@ -259,11 +350,20 @@ export async function getCallLegs(
 
 export interface CallLogQuery {
   limit?: number | null;
+  /**
+   * Keyset position: the [calldate, linkedid] of the last call of the previous page. The
+   * page holds the calls after it in `order`.
+   */
+  after?: readonly [SqlValue, SqlValue] | null;
   date?: string | null;
   dateFrom?: string | null;
   dateTo?: string | null;
   allowedExtensions?: SqlValue[] | null;
   search?: string | null;
+  /** Leave out supervision calls (ChanSpy legs): what an agent's history never shows. */
+  excludeSupervision?: boolean;
+  /** 'desc' (newest first, the default) or 'asc'. */
+  order?: 'asc' | 'desc' | null;
 }
 
 /** Python's ValueError for a bad `limit`: not a database error, so it propagates. */
@@ -275,56 +375,179 @@ export class LimitValueError extends Error {
 }
 
 /**
- * Get call log data from the database: one row per call (linkedid), newest first.
- *
- *   limit              maximum number of calls (optional)
- *   date               exact date 'YYYY-MM-DD' (legacy)
- *   date_from/date_to  inclusive date range 'YYYY-MM-DD'
- *   allowed_extensions only calls where one of these extensions took part on ANY leg
- *                      (null = unrestricted, [] = nothing)
- *   search             free text over caller / destination / call ids (whole history)
- *
- * Each row joins the call's first leg (min sequence: who called, when, where it entered)
- * with its last leg (max sequence: the final outcome and talk time). Two fixes over the
- * query OpDesk had:
- *   * the last leg's caller channel is `last_channel` -- it was aliased `channel` and then
- *     overwritten by first_leg.channel in the row, losing the channel Dial() leaves
- *     DIALSTATUS on, which the status derivation (call-log.outcomeFromCel) needs;
- *   * `recordingfile` is the call's recording from ANY leg (MAX(NULLIF(...,'')) per
- *     linkedid), not the first leg's: [opdesk-record] stamps CDR(recordingfile) on the
- *     channel that ran the predial hook, which on a queue call is a member's Local leg.
+ * SQL for a supervision call's first leg: OpDesk's own spy originate is keyed
+ * spy-<supervisor>-<target>-<ms>; a ChanSpy started any other way (a feature code) still
+ * runs ChanSpy on its first leg.
  */
-export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> {
+export const SUPERVISION_FIRST_LEG_SQL = "(first_leg.linkedid LIKE 'spy-%' OR first_leg.lastapp = 'ChanSpy')";
+
+/** The call-level filter one Call History query applies: see callLogFilter. */
+interface CallLogFilter {
+  /** Nothing can match (an empty scope, a search with no hit): skip the query. */
+  none: boolean;
+  /** WHERE for the GROUP BY linkedid subqueries, over bare `cdr` columns. */
+  subWhere: string;
+  subParams: Params;
+  /** Conditions over `first_leg` (the call's first leg), ANDed by the caller. */
+  conditions: string[];
+  params: Params;
+}
+
+/**
+ * The ONE predicate behind both the Call History list and its total, so the two cannot
+ * disagree (the count once matched a search on any leg while the list matched only the
+ * first and last, so a search for an agent leg's uniqueid read "1 call" over an empty
+ * table). Every filter selects whole calls: a leg that matches widens to its linkedid.
+ *
+ *   * the date window is pushed INTO each GROUP BY linkedid subquery (an index on calldate
+ *     is usable) with a 2-day upper buffer for calls that span midnight; the precise bound
+ *     is on the first leg's calldate;
+ *   * a search is resolved to the calls it matches FIRST, in one scan narrowed by the
+ *     caller's own scope, and up to SEARCH_PUSHDOWN_MAX of them are pushed down as an id
+ *     list -- left as a semi-join the plan walks the CDR newest-first and joins every call
+ *     before testing it, which is fast only when matches are common enough for LIMIT to
+ *     stop early. Past the cap the semi-join stays;
+ *   * the extension scope matches the agent on ANY leg (origin channel outbound,
+ *     destination channel inbound/queue, or src);
+ *   * excludeSupervision drops the supervisor's ChanSpy calls.
+ */
+async function callLogFilter(opts: CallLogQuery): Promise<CallLogFilter> {
   const date = opts.date ?? null;
   const dateFrom = opts.dateFrom ?? null;
   const dateTo = opts.dateTo ?? null;
   const allowedExtensions = opts.allowedExtensions ?? null;
-  const search = opts.search ?? null;
+  const search = truthy(opts.search) ? pyStr(opts.search).trim() : '';
+  const out: CallLogFilter = { none: false, subWhere: '', subParams: [], conditions: [], params: [] };
+
+  if (allowedExtensions !== null && !allowedExtensions.length) {
+    out.none = true;
+    return out;
+  }
+
+  const subConds: string[] = [];
+  const subParams: Params = [];
+  if (truthy(date)) {
+    subConds.push('calldate >= ? AND calldate < DATE_ADD(?, INTERVAL 2 DAY)');
+    subParams.push(date, date);
+  } else {
+    if (truthy(dateFrom)) {
+      subConds.push('calldate >= ?');
+      subParams.push(dateFrom);
+    }
+    if (truthy(dateTo)) {
+      subConds.push('calldate < DATE_ADD(?, INTERVAL 2 DAY)');
+      subParams.push(dateTo);
+    }
+  }
+
+  if (search) {
+    const [searchSql, searchParams] = await callSearchSql(search);
+    const scanConds = [...subConds, searchSql];
+    const scanParams: Params = [...subParams, ...searchParams];
+    if (allowedExtensions !== null) {
+      const [extSql, extParams] = cdrExtensionMatch(allowedExtensions);
+      scanConds.push('linkedid IN (SELECT linkedid FROM cdr WHERE ' + extSql + ')');
+      scanParams.push(...extParams);
+    }
+    const scanned = await query(
+      'SELECT DISTINCT linkedid FROM cdr WHERE ' + scanConds.join(' AND ') + ' LIMIT ?',
+      [...scanParams, SEARCH_PUSHDOWN_MAX + 1],
+      'cdr',
+    );
+    const matched = scanned.filter((r) => truthy(r.linkedid)).map((r) => r.linkedid as SqlValue);
+    if (!matched.length) {
+      out.none = true;
+      return out;
+    }
+    if (matched.length <= SEARCH_PUSHDOWN_MAX) {
+      subConds.push('linkedid IN (' + placeholders(matched.length) + ')');
+      subParams.push(...matched);
+    } else {
+      out.conditions.push('first_leg.linkedid IN (SELECT linkedid FROM cdr WHERE ' + searchSql + ')');
+      out.params.push(...searchParams);
+    }
+  }
+  out.subWhere = subConds.length ? 'WHERE ' + subConds.join(' AND ') : '';
+  out.subParams = subParams;
+
+  // Precise outer date bound, against the bare column so an index on calldate is usable.
+  if (truthy(date)) {
+    out.conditions.push('first_leg.calldate >= ? AND first_leg.calldate < DATE_ADD(?, INTERVAL 1 DAY)');
+    out.params.push(date, date);
+  }
+  if (truthy(dateFrom)) {
+    out.conditions.push('first_leg.calldate >= ?');
+    out.params.push(dateFrom);
+  }
+  if (truthy(dateTo)) {
+    out.conditions.push('first_leg.calldate < DATE_ADD(?, INTERVAL 1 DAY)');
+    out.params.push(dateTo);
+  }
+  // The agent's extension lives in a DIFFERENT place per direction -- the origin `channel`
+  // outbound, the `dstchannel` inbound/queue -- and usually on an intermediate leg (queue
+  // answer, transfer), so every leg is scanned and collapsed via linkedid.
+  if (allowedExtensions !== null) {
+    const [extSql, extParams] = cdrExtensionMatch(allowedExtensions);
+    out.conditions.push('first_leg.linkedid IN (SELECT linkedid FROM cdr WHERE ' + extSql + ')');
+    out.params.push(...extParams);
+  }
+  if (opts.excludeSupervision) out.conditions.push('NOT ' + SUPERVISION_FIRST_LEG_SQL);
+  return out;
+}
+
+/** The first leg (min sequence) of every call in the window, as a derived table. */
+function firstLegSql(subWhere: string): string {
+  return `
+                (
+                    SELECT c.*
+                    FROM cdr c
+                    JOIN (
+                        SELECT linkedid, MIN(sequence) AS min_seq
+                        FROM cdr
+                        ${subWhere}
+                        GROUP BY linkedid
+                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.min_seq
+                ) first_leg`;
+}
+
+/**
+ * Get call log data from the database: one row per call (linkedid).
+ *
+ *   limit / after      one page of calls (optional): after the [calldate, linkedid] keyset
+ *                      position of the previous page's last call
+ *   date               exact date 'YYYY-MM-DD' (legacy)
+ *   date_from/date_to  inclusive date range 'YYYY-MM-DD'
+ *   allowed_extensions only calls where one of these extensions took part on ANY leg
+ *                      (null = unrestricted, [] = nothing)
+ *   search             Call ID, number, caller-ID name, or an agent's / contact's name
+ *                      (callSearchSql), matched on any leg
+ *   excludeSupervision leave out ChanSpy calls
+ *   order              'desc' (newest first, the default) or 'asc'
+ *
+ * Each row joins the call's first leg (min sequence: who called, when, where it entered)
+ * with its OUTCOME leg: the last leg on which a party answered (billsec > 0 with a
+ * destination channel), else the last leg. A call that one agent answered and then
+ * blind-transferred to a colleague who never picked up was answered -- by the first agent,
+ * for as long as they talked -- and the max-sequence leg alone said MISSED, talk 0, agent
+ * the colleague. `duration` is the whole call, first leg start to the end of the
+ * last-ending leg. Also:
+ *   * the outcome leg's caller channel is `last_channel` (not overwritten by
+ *     first_leg.channel), the channel Dial() leaves DIALSTATUS on;
+ *   * `recordingfile` is the call's recording from ANY leg;
+ *   * `party_answered` / `queue_legs` say whether anyone answered at all and whether the
+ *     call went through Queue() -- what call-log.queueAbandoned reads.
+ */
+export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> {
   const limit = opts.limit ?? null;
+  if (truthy(limit) && (!Number.isInteger(limit) || (limit as number) <= 0)) {
+    throw new LimitValueError('limit must be a positive integer');
+  }
   let data: Row[] = [];
 
   try {
-    // Push the date window INTO each GROUP BY linkedid subquery so they scan only the
-    // relevant slice of `cdr` (using an index on calldate) instead of grouping the entire
-    // table and filtering afterwards. A 2-day upper buffer keeps legs of calls that span
-    // midnight; the outer WHERE below still applies the precise 1-day-granular bound. No
-    // date filter (a CRM uniqueid search reaching all history) -> no pushdown.
-    const subConds: string[] = [];
-    const subParams: Params = [];
-    if (truthy(date)) {
-      subConds.push('calldate >= ? AND calldate < DATE_ADD(?, INTERVAL 2 DAY)');
-      subParams.push(date, date);
-    } else {
-      if (truthy(dateFrom)) {
-        subConds.push('calldate >= ?');
-        subParams.push(dateFrom);
-      }
-      if (truthy(dateTo)) {
-        subConds.push('calldate < DATE_ADD(?, INTERVAL 2 DAY)');
-        subParams.push(dateTo);
-      }
-    }
-    const subWhere = subConds.length ? 'WHERE ' + subConds.join(' AND ') : '';
+    const f = await callLogFilter(opts);
+    if (f.none) return [];
+    const subWhere = f.subWhere;
 
     let sql = `
             SELECT
@@ -337,7 +560,7 @@ export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> 
                 last_leg.dstchannel    AS dstchannel,
                 last_leg.lastapp,
                 first_leg.lastapp      AS first_lastapp,
-                last_leg.duration,
+                GREATEST(TIMESTAMPDIFF(SECOND, first_leg.calldate, leg_count.ended_at), last_leg.duration) AS duration,
                 last_leg.billsec,
                 last_leg.disposition,
                 first_leg.channel,
@@ -347,34 +570,33 @@ export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> 
                 first_leg.linkedid,
                 last_leg.userfield,
                 leg_count.total_legs AS call_journey_count,
+                leg_count.party_answered,
+                leg_count.queue_legs,
                 CASE
                     WHEN first_leg.dcontext LIKE '%queue%' THEN 'queue'
                     WHEN first_leg.dcontext LIKE '%ivr%'   THEN 'ivr'
                     ELSE 'direct'
                 END AS call_app
-            FROM
-                (
-                    SELECT c.*
-                    FROM cdr c
-                    JOIN (
-                        SELECT linkedid, MIN(sequence) AS min_seq
-                        FROM cdr
-                        ${subWhere}
-                        GROUP BY linkedid
-                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.min_seq
-                ) first_leg
+            FROM ${firstLegSql(subWhere)}
             JOIN (
                     SELECT c.*
                     FROM cdr c
                     JOIN (
-                        SELECT linkedid, MAX(sequence) AS max_seq
+                        -- The outcome leg: the last one a party answered, else the last.
+                        SELECT linkedid,
+                               COALESCE(MAX(CASE WHEN billsec > 0 AND dstchannel <> '' THEN sequence END),
+                                        MAX(sequence)) AS out_seq
                         FROM cdr
                         ${subWhere}
                         GROUP BY linkedid
-                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.max_seq
+                    ) x ON c.linkedid = x.linkedid AND c.sequence = x.out_seq
                 ) last_leg ON first_leg.linkedid = last_leg.linkedid
             JOIN (
-                SELECT linkedid, COUNT(*) AS total_legs
+                SELECT linkedid,
+                       COUNT(*) AS total_legs,
+                       MAX(DATE_ADD(calldate, INTERVAL duration SECOND)) AS ended_at,
+                       MAX(CASE WHEN billsec > 0 AND dstchannel <> '' THEN 1 ELSE 0 END) AS party_answered,
+                       SUM(CASE WHEN lastapp = 'Queue' THEN 1 ELSE 0 END) AS queue_legs
                 FROM cdr
                 ${subWhere}
                 GROUP BY linkedid
@@ -389,63 +611,29 @@ export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> 
             ) rec ON first_leg.linkedid = rec.linkedid
         `;
 
-    // The four GROUP BY subqueries reference subWhere left-to-right, so their date params
-    // come first (once per subquery), then the outer params.
-    const conditions: string[] = [];
-    const params: Params = [...subParams, ...subParams, ...subParams, ...subParams];
-
-    // Precise outer date bound, against the bare column so an index on calldate is usable.
-    if (truthy(date)) {
-      conditions.push('first_leg.calldate >= ? AND first_leg.calldate < DATE_ADD(?, INTERVAL 1 DAY)');
-      params.push(date, date);
+    const dir = opts.order === 'asc' ? 'ASC' : 'DESC';
+    const conditions = [...f.conditions];
+    const outerParams: Params = [...f.params];
+    // Keyset paging (never OFFSET): the calls past the previous page's last one, in the
+    // same (calldate, linkedid) order -- linkedid breaks same-second ties, so pages neither
+    // repeat nor skip a call while new ones arrive.
+    if (opts.after) {
+      conditions.push(`(first_leg.calldate, first_leg.linkedid) ${dir === 'ASC' ? '>' : '<'} (?, ?)`);
+      outerParams.push(opts.after[0], opts.after[1]);
     }
-    if (truthy(dateFrom)) {
-      conditions.push('first_leg.calldate >= ?');
-      params.push(dateFrom);
-    }
-    if (truthy(dateTo)) {
-      conditions.push('first_leg.calldate < DATE_ADD(?, INTERVAL 1 DAY)');
-      params.push(dateTo);
-    }
-    // Filter by agent extension. The agent's extension lives in a DIFFERENT place per
-    // direction: on an OUTBOUND call it is the origin `channel`, on an INBOUND/queue call
-    // the `dstchannel`, and it is usually on an intermediate leg (queue answer, transfer),
-    // not the first or last. Scan all legs and collapse via linkedid so any matching leg
-    // surfaces the one call-log row (kept identical to getCallLogCountFromDb).
-    if (allowedExtensions !== null) {
-      if (!allowedExtensions.length) {
-        conditions.push('1 = 0');
-      } else {
-        const [extSql, extParams] = cdrExtensionMatch(allowedExtensions);
-        conditions.push('first_leg.linkedid IN (SELECT linkedid FROM cdr WHERE ' + extSql + ')');
-        params.push(...extParams);
-      }
-    }
-
-    // Free-text search across caller/destination and call ids (whole-history search).
-    if (truthy(search)) {
-      const like = `%${pyStr(search).trim()}%`;
-      conditions.push(
-        '(first_leg.src LIKE ? OR first_leg.dst LIKE ? OR last_leg.dst LIKE ? ' +
-          'OR first_leg.uniqueid LIKE ? OR first_leg.linkedid LIKE ?)',
-      );
-      params.push(like, like, like, like, like);
-    }
-
+    // The four GROUP BY subqueries reference subWhere left-to-right, so their params come
+    // first (once per subquery), then the outer params.
+    const params: Params = [...f.subParams, ...f.subParams, ...f.subParams, ...f.subParams, ...outerParams];
     if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
-    sql += ' ORDER BY first_leg.calldate DESC';
+    sql += ` ORDER BY first_leg.calldate ${dir}, first_leg.linkedid ${dir}`;
 
     if (truthy(limit)) {
-      if (!Number.isInteger(limit) || (limit as number) <= 0) {
-        throw new LimitValueError('limit must be a positive integer');
-      }
       sql += ' LIMIT ?';
       params.push(limit);
     }
 
     data = await query(sql, params, 'cdr');
   } catch (e) {
-    if (e instanceof LimitValueError) throw e;
     log.warning('⚠️  Database error getting call log: %s', e);
   }
   return data;
@@ -453,44 +641,18 @@ export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> 
 
 /**
  * Total count of call log rows with the same filters as getCallLogFromDb (no limit), so the
- * UI can show the total beyond the fetch limit. COUNT(DISTINCT linkedid) over bare cdr is
- * orders of magnitude faster than the self-join on large CDR tables, and each linkedid is
- * one call-log row, so the count is equivalent.
+ * UI can show the total beyond the page. It counts the same first legs under the same
+ * callLogFilter predicate, so the total always agrees with the rows the list returns.
  */
 export async function getCallLogCountFromDb(
-  opts: Omit<CallLogQuery, 'limit'> = {},
+  opts: Omit<CallLogQuery, 'limit' | 'after' | 'order'> = {},
 ): Promise<number> {
-  const allowedExtensions = opts.allowedExtensions ?? null;
   try {
-    const conditions: string[] = [];
-    const params: Params = [];
-    if (truthy(opts.date)) {
-      conditions.push('calldate >= ? AND calldate < DATE_ADD(?, INTERVAL 1 DAY)');
-      params.push(opts.date, opts.date);
-    }
-    if (truthy(opts.dateFrom)) {
-      conditions.push('calldate >= ?');
-      params.push(opts.dateFrom);
-    }
-    if (truthy(opts.dateTo)) {
-      conditions.push('calldate < DATE_ADD(?, INTERVAL 1 DAY)');
-      params.push(opts.dateTo);
-    }
-    if (allowedExtensions !== null) {
-      if (!allowedExtensions.length) return 0; // no allowed extensions -> zero results
-      // Same predicate as getCallLogFromDb, widened to the call: COUNT(DISTINCT linkedid)
-      // then counts every call one of the extensions took part in.
-      const [extSql, extParams] = cdrExtensionMatch(allowedExtensions);
-      conditions.push('linkedid IN (SELECT linkedid FROM cdr WHERE ' + extSql + ')');
-      params.push(...extParams);
-    }
-    if (truthy(opts.search)) {
-      const like = `%${pyStr(opts.search).trim()}%`;
-      conditions.push('(src LIKE ? OR dst LIKE ? OR uniqueid LIKE ? OR linkedid LIKE ?)');
-      params.push(like, like, like, like);
-    }
-    const whereClause = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
-    const row = await queryOne('SELECT COUNT(DISTINCT linkedid) AS cnt FROM cdr' + whereClause, params, 'cdr');
+    const f = await callLogFilter(opts);
+    if (f.none) return 0;
+    let sql = `SELECT COUNT(*) AS cnt FROM ${firstLegSql(f.subWhere)}`;
+    if (f.conditions.length) sql += ' WHERE ' + f.conditions.join(' AND ');
+    const row = await queryOne(sql, [...f.subParams, ...f.params], 'cdr');
     return row && truthy(row.cnt) ? Number(row.cnt) : 0;
   } catch (e) {
     log.warning('⚠️  Database error getting call log count: %s', e);
@@ -539,32 +701,45 @@ function notificationRow(row: Row): Row {
   return out;
 }
 
+export interface CallNotificationQuery {
+  extension?: string | null;
+  extensions?: string[] | null;
+  statusFlag?: string | null;
+}
+
+/** WHERE (with its leading space) and params for a notification query; null = matches nothing. */
+function notificationsWhere(opts: CallNotificationQuery): [string, Params] | null {
+  const conditions: string[] = [];
+  const params: Params = [];
+  if (opts.extension !== null && opts.extension !== undefined) {
+    conditions.push('extension = ?');
+    params.push(opts.extension);
+  }
+  if (opts.extensions !== null && opts.extensions !== undefined) {
+    if (!opts.extensions.length) return null;
+    conditions.push(`extension IN (${placeholders(opts.extensions.length)})`);
+    params.push(...opts.extensions);
+  }
+  if (opts.statusFlag !== null && opts.statusFlag !== undefined) {
+    conditions.push('status_flag = ?');
+    params.push(opts.statusFlag);
+  }
+  return [conditions.length ? ' WHERE ' + conditions.join(' AND ') : '', params];
+}
+
 /**
  * Get call notifications from the OpDesk DB, newest first. Filter by extension (or a set
  * of extensions: a supervisor's scope, applied in SQL so the limit counts only rows they
  * may see) and/or status (new, read, archived).
  */
 export async function getCallNotificationsFromDb(
-  opts: { extension?: string | null; extensions?: string[] | null; statusFlag?: string | null; limit?: number } = {},
+  opts: CallNotificationQuery & { limit?: number } = {},
 ): Promise<Row[]> {
   const limit = opts.limit ?? 200;
   try {
-    const conditions: string[] = [];
-    const params: Params = [];
-    if (opts.extension !== null && opts.extension !== undefined) {
-      conditions.push('extension = ?');
-      params.push(opts.extension);
-    }
-    if (opts.extensions !== null && opts.extensions !== undefined) {
-      if (!opts.extensions.length) return [];
-      conditions.push(`extension IN (${placeholders(opts.extensions.length)})`);
-      params.push(...opts.extensions);
-    }
-    if (opts.statusFlag !== null && opts.statusFlag !== undefined) {
-      conditions.push('status_flag = ?');
-      params.push(opts.statusFlag);
-    }
-    const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+    const w = notificationsWhere(opts);
+    if (w === null) return [];
+    const [where, params] = w;
     params.push(limit);
     const rows = await query(
       'SELECT id, extension, caller_from, queue, status_flag, event_time, call_id, reason ' +
@@ -575,6 +750,19 @@ export async function getCallNotificationsFromDb(
   } catch (e) {
     log.warning('⚠️  Database error getting call notifications: %s', e);
     return [];
+  }
+}
+
+/** How many notifications match the same filters as getCallNotificationsFromDb, unlimited. */
+export async function getCallNotificationsCountFromDb(opts: CallNotificationQuery = {}): Promise<number> {
+  try {
+    const w = notificationsWhere(opts);
+    if (w === null) return 0;
+    const row = await queryOne(`SELECT COUNT(*) AS cnt FROM call_notifications${w[0]}`, w[1]);
+    return row && truthy(row.cnt) ? Number(row.cnt) : 0;
+  } catch (e) {
+    log.warning('⚠️  Database error counting call notifications: %s', e);
+    return 0;
   }
 }
 
@@ -732,12 +920,27 @@ export async function getCallVadFromDb(uniqueid: string): Promise<Row | null> {
 // Recordings (the admin Recordings page)
 // ===========================================================================
 
-function recordingsWhere(search: string | null | undefined, params: Params): string {
+export interface RecordingsQuery {
+  search?: string | null;
+  /** Inclusive 'YYYY-MM-DD' bounds on the leg's calldate. */
+  dateFrom?: string | null;
+  dateTo?: string | null;
+}
+
+function recordingsWhere(opts: RecordingsQuery, params: Params): string {
   const conds = ['recordingfile IS NOT NULL', "recordingfile != ''"];
-  if (search) {
-    const like = '%' + String(search).trim() + '%';
+  if (opts.search) {
+    const like = '%' + likeEscape(String(opts.search).trim()) + '%';
     conds.push('(src LIKE ? OR dst LIKE ? OR uniqueid LIKE ? OR linkedid LIKE ?)');
     params.push(like, like, like, like);
+  }
+  if (opts.dateFrom) {
+    conds.push('calldate >= ?');
+    params.push(opts.dateFrom);
+  }
+  if (opts.dateTo) {
+    conds.push('calldate < DATE_ADD(?, INTERVAL 1 DAY)');
+    params.push(opts.dateTo);
   }
   return 'WHERE ' + conds.join(' AND ');
 }
@@ -748,11 +951,11 @@ function recordingsWhere(search: string | null | undefined, params: Params): str
  * row's (calldate, uniqueid, sequence), so paging stays stable while new calls arrive.
  */
 export async function getRecordingsFromDb(
-  opts: { limit?: number; cursor?: string | null; search?: string | null } = {},
+  opts: RecordingsQuery & { limit?: number; cursor?: string | null } = {},
 ): Promise<KeysetPage> {
   try {
     const params: Params = [];
-    const where = recordingsWhere(opts.search ?? null, params);
+    const where = recordingsWhere(opts, params);
     return await keysetPage(
       'cdr',
       'calldate, src, dst, duration, billsec, disposition, recordingfile, uniqueid, linkedid, sequence',
@@ -772,10 +975,10 @@ export async function getRecordingsFromDb(
 }
 
 /** Total count of CDR rows with a recording, same filter as getRecordingsFromDb. */
-export async function getRecordingsCountFromDb(search: string | null = null): Promise<number> {
+export async function getRecordingsCountFromDb(opts: RecordingsQuery = {}): Promise<number> {
   try {
     const params: Params = [];
-    const where = recordingsWhere(search, params);
+    const where = recordingsWhere(opts, params);
     const row = await queryOne(`SELECT COUNT(*) AS cnt FROM cdr ${where}`, params, 'cdr');
     return row && truthy(row.cnt) ? Number(row.cnt) : 0;
   } catch (e) {

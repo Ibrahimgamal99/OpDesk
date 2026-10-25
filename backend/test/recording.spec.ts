@@ -1,7 +1,8 @@
 /**
- * services/recording on a throwaway directory tree: the recordings root (DB setting, env,
- * default), the audio route's sandbox (traversal, symlinks out, bare basenames), root
- * validation, retention (age and size, audio files only), ring-only cleanup, delete by
+ * services/recording on a throwaway directory tree: the recordings root (where the dialplan
+ * records, or the deployment's env; never the retired DB setting), the audio route's sandbox
+ * (traversal, symlinks out, bare basenames), retention (age and size, audio files only),
+ * ring-only cleanup, delete by
  * uniqueid, and the VAD runner's ring-only path. The PBX's real spool is never touched:
  * the dialplan's spool constants point into the temp tree.
  */
@@ -42,7 +43,6 @@ import {
   recordingStorageStats,
   resolveRecordingRequest,
   runRecordingRetention,
-  validateRecordingRoot,
 } from '../src/services/recording';
 import { waitAndAnalyze } from '../src/services/vad-runner';
 
@@ -62,20 +62,25 @@ beforeEach(async () => {
   fs.mkdirSync(MIX, { recursive: true });
   fs.mkdirSync(SINGLE, { recursive: true });
   for (const k of Object.keys(mockSettings)) delete mockSettings[k];
-  mockSettings.RECORDING_ROOT_DIR = `${MIX}/`;
   await invalidateRecordingIndex();
   delete process.env.ASTERISK_RECORDING_ROOT_DIR;
 });
 afterAll(() => fs.rmSync(mockTmp, { recursive: true, force: true }));
 
 describe('recordingRoot', () => {
-  it('DB setting, else env, else the FreePBX/Issabel default', async () => {
+  it('where the dialplan records, else the deployment env; the old Settings value is ignored', async () => {
+    // A directory an earlier version let an admin save: lookup and retention stay put.
+    mockSettings.RECORDING_ROOT_DIR = `${mockTmp}/elsewhere/`;
     expect(await recordingRoot()).toBe(MIX);
-    delete mockSettings.RECORDING_ROOT_DIR;
     process.env.ASTERISK_RECORDING_ROOT_DIR = '/srv/rec//';
     expect(await recordingRoot()).toBe('/srv/rec');
+    // Never a filesystem root, nor a relative path: retention deletes from this tree.
+    for (const bad of ['/', '/var/', 'monitor']) {
+      process.env.ASTERISK_RECORDING_ROOT_DIR = bad;
+      expect(await recordingRoot()).toBe(MIX);
+    }
     delete process.env.ASTERISK_RECORDING_ROOT_DIR;
-    expect(await recordingRoot()).toBe('/var/spool/asterisk/monitor');
+    expect(await recordingRoot()).toBe(MIX);
   });
 });
 
@@ -122,17 +127,6 @@ describe('audio sandbox', () => {
     expect(recordingContentType('a.WAV')).toBe('audio/x-wav');
     expect(recordingContentType('a.gsm')).toBe('audio/x-gsm');
     expect(recordingContentType('a')).toBe('audio/wav');
-  });
-});
-
-describe('validateRecordingRoot', () => {
-  it('needs an absolute, existing directory below a filesystem root', async () => {
-    await expect(validateRecordingRoot('')).rejects.toThrow('cannot be empty');
-    await expect(validateRecordingRoot('monitor')).rejects.toThrow('absolute path');
-    await expect(validateRecordingRoot('/')).rejects.toThrow('filesystem root');
-    await expect(validateRecordingRoot('/var')).rejects.toThrow('filesystem root');
-    await expect(validateRecordingRoot(`${MIX}/missing`)).rejects.toThrow('Not a directory');
-    expect(await validateRecordingRoot(MIX)).toBe(`${fs.realpathSync(MIX)}/`);
   });
 });
 

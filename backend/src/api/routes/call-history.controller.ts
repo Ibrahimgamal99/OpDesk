@@ -6,16 +6,29 @@
  * the extensions in their groups; an agent only calls their own extension took part in. The
  * list routes filter by that scope; every route that takes one call's id (journey, VAD,
  * recording) answers 403 "Not allowed to view this call" for a call outside it.
+ *
+ * Supervision is not the monitored agent's to see: a supervisor's ChanSpy call is keyed to
+ * its target (the spy leg's src is the agent's extension), so the agent's own history would
+ * list "Listen" and its journey would show LISTEN/WHISPER/BARGE. Role agent never gets
+ * ChanSpy calls, nor supervision events in a journey; supervisors and admins keep both.
  */
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { getLogger } from '../../core/logger';
 import { dateIso } from '../../core/py';
-import { assertCallVisible, historyExtensions } from '../../core/scope';
+import { assertCallVisible, historyExtensions, isUnrestricted, type ScopeLike } from '../../core/scope';
 import * as dbm from '../../db/db-manager';
+import { LimitValueError } from '../../db/db-manager';
 import type { Row } from '../../db/pool';
-import { buildCallJourneyFromCdr, callLog as getCallLog, callStatus } from '../../services/call-log';
+import {
+  buildCallJourneyFromCdr,
+  callLog as getCallLog,
+  callLogPage,
+  callStatus,
+  type CallLogFilters,
+  matchesCallLogFilters,
+} from '../../services/call-log';
 import {
   deleteRecordingByUniqueid,
   getRecordingPath,
@@ -55,6 +68,49 @@ function qSet(q: QueryParams, name: string, upper = true): Set<string> | null {
   return vals.length ? new Set(vals) : null;
 }
 
+/**
+ * The table filters as query parameters: status (call statuses, any spelling the UI ever
+ * used), call_type (IN/OUT/INTERNAL), app (queue/ivr/direct), route (a route or its side:
+ * inbound/outbound/internal), each a comma list or repeated.
+ */
+function qFilters(q: QueryParams): CallLogFilters {
+  const status = qSet(q, 'status');
+  return {
+    status: status ? new Set([...status].map((s) => callStatus(s) || s)) : null,
+    callType: qSet(q, 'call_type'),
+    app: qSet(q, 'app', false),
+    route: qSet(q, 'route', false),
+  };
+}
+
+/** Role agent never sees supervision (see the module note); supervisors, admins and API keys do. */
+export function hidesSupervision(p: ScopeLike): boolean {
+  return p.role === 'agent' && !p.api_key;
+}
+
+/** A supervisor's ChanSpy call: OpDesk's spy-<supervisor>-<target>-<ms> key, or a ChanSpy leg. */
+export function isSupervisionCall(legs: Row[]): boolean {
+  return (legs || []).some((l) => String(l.linkedid ?? '').startsWith('spy-') || l.lastapp === 'ChanSpy');
+}
+
+/** A single-call read of a supervision call is 403 for an agent, as a call outside their scope is. */
+function assertNotHiddenSupervision(p: ScopeLike, legs: Row[]): void {
+  if (hidesSupervision(p) && isSupervisionCall(legs)) throw new HttpError(403, 'Not allowed to view this call');
+}
+
+/**
+ * Extensions whose missed-call notifications `p` may read; null = every extension. An agent
+ * reads their own; a supervisor the agents of their groups AND their own extension -- the
+ * realtime fan-out rings a supervisor's bell for every agent in scope, and their own
+ * extension is usually not one of their groups' agents, which made the bell a 403.
+ */
+export function notificationExtensions(p: ScopeLike): string[] | null {
+  if (isUnrestricted(p)) return null;
+  const allowed = historyExtensions(p) ?? [];
+  const own = String(p.extension ?? '').trim();
+  return own && !allowed.includes(own) ? [...allowed, own] : allowed;
+}
+
 // ---------------------------------------------------------------------------
 // CSV
 // ---------------------------------------------------------------------------
@@ -92,7 +148,7 @@ export function callLogCsvRow(r: Row): unknown[] {
     DIRECTION_LABEL[r.call_type] ?? r.call_type ?? '',
     r.src,
     r.dst,
-    r.customer_name,
+    r.customer_name, // the remote party's name (call-log.resolveCustomerName), never our agent's
     r.extension,
     r.app,
     r.app === 'queue' ? r.dst : '',
@@ -117,29 +173,50 @@ export class CallHistoryController {
   // ---------------------------------------------------------------------------
 
   /**
-   * Call log / CDR history: {calls, total}.
-   * Query: limit (100), date | date_from + date_to ('YYYY-MM-DD'), search.
+   * Call log / CDR history: {calls, total, next_cursor}, one keyset page at a time, newest
+   * first. Pass next_cursor as `cursor` for the following page (null on the last).
+   *
+   * Query: limit (100), cursor; date | date_from + date_to ('YYYY-MM-DD'); search
+   * (Call ID, number, caller-ID name, or an agent's / contact's name, on any leg of the
+   * call); the table filters status, call_type, app, route (comma lists);
+   * include_supervision (default true; always false for an agent); order (desc | asc).
+   * `total` counts exactly the rows the pages hold; `capped` says a filtered scan stopped at
+   * its 50 000-call ceiling.
+   *
    * No date at all -> the last 30 days, so a large CDR table is never scanned whole by
-   * accident (the frontend sends the same default).
+   * accident -- except for a search, which reaches all history (a Call ID the CRM stored
+   * can be from any time) and is bounded by its own predicate.
    */
   @Get('/api/call-log')
   @Auth({ scope: 'cdr:read' })
   async getCallLogEndpoint(@Req() req: Request) {
     const q = req.query as QueryParams;
     const limit = qInt(q, 'limit', 100);
+    if (limit <= 0) throw new HttpError(400, 'limit must be a positive integer');
     const date = qStr(q, 'date', null);
     let dateFrom = qStr(q, 'date_from', null);
     const dateTo = qStr(q, 'date_to', null);
     const search = (qStr(q, 'search', null) || '').trim() || null;
-    if (!date && !dateFrom && !dateTo) dateFrom = defaultDateFrom();
-    const allowedExtensions = historyExtensions(principal(req));
+    if (!date && !dateFrom && !dateTo && !search) dateFrom = defaultDateFrom();
+    const p = principal(req);
+    const agentView = hidesSupervision(p);
+    const includeSupervision = !agentView && qBool(q, 'include_supervision', true);
     try {
-      const [calls, total] = await Promise.all([
-        getCallLog({ limit, date, dateFrom, dateTo, allowedExtensions, search }),
-        dbm.getCallLogCountFromDb({ date, dateFrom, dateTo, allowedExtensions, search }),
-      ]);
-      return { calls, total };
+      return await callLogPage({
+        limit,
+        cursor: qStr(q, 'cursor', null),
+        date,
+        dateFrom,
+        dateTo,
+        allowedExtensions: historyExtensions(p),
+        search,
+        excludeSupervision: !includeSupervision,
+        supervision: !agentView,
+        order: qStr(q, 'order', 'desc') === 'asc' ? 'asc' : 'desc',
+        filters: qFilters(q),
+      });
     } catch (e) {
+      if (e instanceof LimitValueError) throw new HttpError(400, e.message);
       log.error('Error fetching call log: %s', e);
       throw new HttpError(500, 'Failed to fetch call log');
     }
@@ -147,10 +224,9 @@ export class CallHistoryController {
 
   /**
    * The Call History table as CSV (UTF-8 with BOM, so Excel reads Arabic names right):
-   * the same date / search filters and scope as /api/call-log, plus the table's own filters
-   * -- status (call statuses), call_type (IN/OUT/INTERNAL), app (queue/ivr/direct), each a
-   * comma list -- and include_supervision (default false: ChanSpy legs are hidden, as on
-   * screen). At most 50 000 calls, newest first.
+   * the same date / search / table filters and scope as /api/call-log -- status, call_type,
+   * app, route, each a comma list -- and include_supervision (default false: ChanSpy legs
+   * are hidden, as on screen; never shown to an agent). At most 50 000 calls, newest first.
    */
   @Get('/api/call-log/export')
   @Auth({ scope: 'cdr:read' })
@@ -160,12 +236,11 @@ export class CallHistoryController {
     let dateFrom = qStr(q, 'date_from', null);
     const dateTo = qStr(q, 'date_to', null);
     const search = (qStr(q, 'search', null) || '').trim() || null;
-    const includeSupervision = qBool(q, 'include_supervision', false);
-    const statusSet = qSet(q, 'status');
-    const typeSet = qSet(q, 'call_type');
-    const appSet = qSet(q, 'app', false);
-    if (!date && !dateFrom && !dateTo) dateFrom = defaultDateFrom();
-    const allowedExtensions = historyExtensions(principal(req));
+    const p = principal(req);
+    const includeSupervision = !hidesSupervision(p) && qBool(q, 'include_supervision', false);
+    const filters = qFilters(q);
+    if (!date && !dateFrom && !dateTo && !search) dateFrom = defaultDateFrom();
+    const allowedExtensions = historyExtensions(p);
 
     let rows: Row[];
     try {
@@ -176,6 +251,7 @@ export class CallHistoryController {
         dateTo,
         allowedExtensions,
         search,
+        excludeSupervision: !includeSupervision,
         enrich: false,
         outcomes: true,
         supervision: false,
@@ -184,15 +260,10 @@ export class CallHistoryController {
       log.error('Error exporting call log: %s', e);
       throw new HttpError(500, 'Failed to fetch call log');
     }
-    // Status values may arrive in any spelling the UI ever used; compare canonical words.
-    const wantStatus = statusSet ? new Set([...statusSet].map((s) => callStatus(s) || s)) : null;
     const filtered = rows.filter((r) => {
-      // A supervisor's ChanSpy leg is its own CDR call, keyed spy-<supervisor>-<target>-<ms>.
-      if (!includeSupervision && String(r.linkedid ?? '').startsWith('spy-')) return false;
-      if (wantStatus && !wantStatus.has(String(r.status))) return false;
-      if (typeSet && !typeSet.has(String(r.call_type ?? '').toUpperCase())) return false;
-      if (appSet && !appSet.has(String(r.app ?? '').toLowerCase())) return false;
-      return true;
+      // A supervisor's ChanSpy leg is its own CDR call (also excluded in SQL).
+      if (!includeSupervision && r.route === 'internal_supervision') return false;
+      return matchesCallLogFilters(r, filters);
     });
     const from = date || dateFrom || 'all';
     const to = date || dateTo || dateIso(new Date());
@@ -223,11 +294,13 @@ export class CallHistoryController {
       throw new HttpError(500, 'Failed to fetch call journey');
     }
     await assertCallVisible(p, cdrRows);
+    assertNotHiddenSupervision(p, cdrRows);
     try {
       if (!cdrRows.length) return { journey: [] };
       // Supervision (listen/whisper/barge) events for this call, injected into the timeline
-      // so the supervisor shows up here instead of as a separate "-> s" row.
-      const supervision = await dbm.getSupervisionForTarget(lid);
+      // so the supervisor shows up here instead of as a separate "-> s" row. Not for the
+      // monitored agent.
+      const supervision = hidesSupervision(p) ? [] : await dbm.getSupervisionForTarget(lid);
       return { journey: await buildCallJourneyFromCdr(cdrRows, supervision) };
     } catch (e) {
       log.error('Error fetching call journey: %s', e);
@@ -242,7 +315,11 @@ export class CallHistoryController {
     const uniqueid = pStr(req.params.uniqueid).trim();
     if (!uniqueid) throw new HttpError(400, 'uniqueid is required');
     const p = principal(req);
-    if (historyExtensions(p) !== null) await assertCallVisible(p, await dbm.getCallLegs({ uniqueid }));
+    if (historyExtensions(p) !== null) {
+      const legs = await dbm.getCallLegs({ uniqueid });
+      await assertCallVisible(p, legs);
+      assertNotHiddenSupervision(p, legs);
+    }
     let data: Row | null;
     try {
       data = await dbm.getCallVadFromDb(uniqueid);
@@ -268,10 +345,12 @@ export class CallHistoryController {
   // ---------------------------------------------------------------------------
 
   /**
-   * The missed-call bell. A user with an extension always sees their own extension's
-   * notifications (each user sees only their own missed calls); otherwise `extension`
-   * narrows within the caller's history scope. `status`: new | read | archived.
-   * `reason` is a call status (old lowercase rows are mapped on read).
+   * The missed-call bell: {notifications, total}, newest first; `total` counts every
+   * matching notification, not just the page. An agent reads their own extension's; a
+   * supervisor those of the agents in their groups plus their own (notificationExtensions),
+   * narrowed by `extension` within that; an admin their own extension's by default, any
+   * with `extension`. `status`: new | read | archived. `reason` is a call status (old
+   * lowercase rows are mapped on read).
    */
   @Get('/api/call-notifications')
   @Auth('user')
@@ -280,29 +359,37 @@ export class CallHistoryController {
     let extension = qStr(q, 'extension', null);
     const status = qStr(q, 'status', null);
     const limit = qInt(q, 'limit', 200);
+    if (limit <= 0) throw new HttpError(400, 'limit must be a positive integer');
     const p = principal(req);
-    if (p.extension) extension = p.extension;
-    const allowed = historyExtensions(p);
+    const allowed = notificationExtensions(p);
+    if (allowed === null || p.role === 'agent') {
+      // An admin's bell is their own extension unless they ask for another; an agent's
+      // is always their own.
+      if (p.extension && (p.role === 'agent' || !extension)) extension = p.extension;
+    }
     if (allowed !== null) {
       if (!allowed.length) return { notifications: [], total: 0 };
       if (extension && !allowed.includes(extension)) throw new HttpError(403, 'Not allowed to view this extension');
     }
     if (status && !['new', 'read', 'archived'].includes(status)) throw new HttpError(400, 'Invalid status');
+    const filter = {
+      extension: extension || null,
+      extensions: !extension && allowed !== null ? allowed : null,
+      statusFlag: status,
+    };
     try {
-      const notifications = await dbm.getCallNotificationsFromDb({
-        extension: extension || null,
-        extensions: !extension && allowed !== null ? allowed : null,
-        statusFlag: status,
-        limit,
-      });
-      return { notifications, total: notifications.length };
+      const [notifications, total] = await Promise.all([
+        dbm.getCallNotificationsFromDb({ ...filter, limit }),
+        dbm.getCallNotificationsCountFromDb(filter),
+      ]);
+      return { notifications, total };
     } catch (e) {
       log.error('Error fetching call notifications: %s', e);
       throw new HttpError(500, 'Failed to fetch call notifications');
     }
   }
 
-  /** Mark a notification read or archived; only for an extension in the caller's scope. */
+  /** Mark a notification read or archived; only for an extension whose bell the caller reads. */
   @Patch('/api/call-notifications/:notification_id')
   @Auth('user')
   async updateCallNotificationEndpoint(@Req() req: Request) {
@@ -313,7 +400,7 @@ export class CallHistoryController {
     }
     const notification = await dbm.getCallNotificationById(notificationId);
     if (!notification) throw new HttpError(404, 'Notification not found');
-    const allowed = historyExtensions(principal(req));
+    const allowed = notificationExtensions(principal(req));
     if (allowed !== null && !allowed.includes(String(notification.extension ?? ''))) {
       throw new HttpError(403, 'Not allowed to update this notification');
     }
@@ -329,8 +416,9 @@ export class CallHistoryController {
   /**
    * Recorded calls for the admin Recordings page, newest first, keyset-paged:
    * {recordings: [{calldate, src, dst, duration, billsec, disposition, recordingfile,
-   * uniqueid, linkedid, recording_path, size_bytes}], total, next_cursor}. Pass the
-   * returned next_cursor as `cursor` for the following page.
+   * uniqueid, linkedid, recording_path, size_bytes}], total, next_cursor}. Filters: search
+   * (number or call id), date_from / date_to ('YYYY-MM-DD', inclusive). Pass the returned
+   * next_cursor as `cursor` for the following page.
    */
   @Get('/api/recordings')
   @Auth('admin')
@@ -338,8 +426,12 @@ export class CallHistoryController {
     const q = req.query as QueryParams;
     const limit = qInt(q, 'limit', 25);
     const cursor = qStr(q, 'cursor', null);
-    const search = (qStr(q, 'search', null) || '').trim() || null;
-    const page = await dbm.getRecordingsFromDb({ limit, cursor, search });
+    const filter = {
+      search: (qStr(q, 'search', null) || '').trim() || null,
+      dateFrom: qStr(q, 'date_from', null),
+      dateTo: qStr(q, 'date_to', null),
+    };
+    const page = await dbm.getRecordingsFromDb({ ...filter, limit, cursor });
     for (const r of page.items) {
       delete r.sequence;
       const p = await getRecordingPath(r.recordingfile ?? null);
@@ -350,7 +442,7 @@ export class CallHistoryController {
         r.size_bytes = null;
       }
     }
-    return { recordings: page.items, total: await dbm.getRecordingsCountFromDb(search), next_cursor: page.next_cursor };
+    return { recordings: page.items, total: await dbm.getRecordingsCountFromDb(filter), next_cursor: page.next_cursor };
   }
 
   /**
@@ -388,7 +480,9 @@ export class CallHistoryController {
     // Authorize on the RESOLVED name, so a rewritten basename is the one checked. Admins
     // and API keys skip the lookup.
     if (historyExtensions(p) !== null) {
-      await assertCallVisible(p, await dbm.getCallLegs({ recordingfile: pyBasename(resolved.path) }));
+      const legs = await dbm.getCallLegs({ recordingfile: pyBasename(resolved.path) });
+      await assertCallVisible(p, legs);
+      assertNotHiddenSupervision(p, legs);
     }
     return new FileResponse(resolved.path, {
       contentType: recordingContentType(resolved.path),

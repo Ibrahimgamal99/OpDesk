@@ -197,20 +197,30 @@ extension, a supervisor the agents and queues of their groups.
 ### `GET /api/call-log`
 **Auth:** JWT (any) · **Key:** `cdr:read`
 
-Query: `date`, `date_from`, `date_to`, `search`, `limit` (default 100). With no date at
-all the last 30 days are returned.
+Query: `date`, `date_from`, `date_to`, `search`, `limit` (default 100, must be positive),
+`cursor` (the previous page's `next_cursor`), `order` (`desc` default, or `asc`), the table filters `status`,
+`call_type` (`IN`/`OUT`/`INTERNAL`), `app` (`queue`/`ivr`/`direct`) and `route` (a route, or
+its side `inbound`/`outbound`/`internal`), each a comma list, and `include_supervision`
+(default `true`; supervisors' Listen/Whisper/Barge calls are never returned to an agent).
+With no date and no search the last 30 days are returned; a `search` reaches all history.
+`search` matches a Call ID, a number or caller-ID name on any leg of the call, or the name
+of an agent or a phonebook contact.
 
-Returns `{"calls": [...], "total": n}`. Each record carries:
+Returns `{"calls": [...], "total": n, "next_cursor": "..." | null}`: `total` counts every
+matching call, the same set the pages hold (`"capped": true` when a filtered page stopped scanning at 50,000 calls).
+Each record carries:
 
 | Field | Notes |
 |---|---|
-| `status` | The canonical outcome, one of the 10 [outcome values](webhooks.md#outcome-values) |
+| `status` | The canonical outcome, one of the 10 [outcome values](webhooks.md#outcome-values); `canonical_status` repeats it for older mobile clients |
 | `disposition` | The raw CDR disposition, kept alongside |
 | `ended_by` | `agent`, `customer`, `system`, or `null` when Asterisk did not say |
 | `ended_by_agent` | The agent's extension when `ended_by` is `agent`, else `null` |
-| `duration`, `talk` | Wall-clock and billed seconds |
+| `duration`, `talk` | Wall-clock seconds of the whole call, and the talk time of the leg that was answered |
 | `call_type` | `IN`, `OUT` or `INTERNAL` |
-| `extension`, `phone_number`, `customer_name` | The agent's extension and the external party |
+| `route` | `inbound_queue`, `inbound_ivr`, `inbound_direct`, `outbound_direct`, `internal_extension`, `internal_feature` or `internal_supervision` |
+| `extension`, `agent_name` | The answering agent's extension and name |
+| `phone_number`, `customer_name` | The external party, named by caller ID on inbound calls or the phonebook |
 | `recording_file`, `recording_path` | Found on whichever leg of the call was recorded |
 | `linkedid`, `uniqueid` | Cross-references into the journey, VAD and the CRM push |
 | `call_journey_count` | Number of legs; at least 2 for a supervised call |
@@ -218,7 +228,10 @@ Returns `{"calls": [...], "total": n}`. Each record carries:
 
 The outcome comes from the Asterisk hangup cause and dial status (read from CEL), not
 only from the CDR disposition, so a caller who gave up (`MISSED`), an unregistered phone
-(`UNREACHABLE`) and a carrier fault (`NETWORK_ERROR`) are told apart.
+(`UNREACHABLE`) and a carrier fault (`NETWORK_ERROR`) are told apart. A call with several
+legs takes its outcome, talk time and agent from the last leg someone answered (a call
+answered and then transferred to nobody is still `ANSWERED`), and a queue caller who hung
+up while waiting is `ABANDONED`.
 
 ### `GET /api/call-log/export`
 **Auth:** JWT (any) · **Key:** `cdr:read`
@@ -284,8 +297,9 @@ and confined to the recording directory; anything outside it is `403`, and so is
 recording of a call outside the caller's history scope. `Range` requests are honoured
 (`206 Partial Content`), so players can seek.
 
-The recording directory is the `RECORDING_ROOT_DIR` setting (Settings → Recording),
-falling back to `ASTERISK_RECORDING_ROOT_DIR` and then `/var/spool/asterisk/monitor`.
+The recording directory is where the recorder writes, `/var/spool/asterisk/monitor`, or
+`ASTERISK_RECORDING_ROOT_DIR` when the deployment mounts the spool elsewhere. It is shown
+under Settings → Recording but cannot be changed there.
 
 ### Recording management
 **Auth:** JWT (admin) unless noted. None are key-reachable.
@@ -300,10 +314,10 @@ falling back to `ASTERISK_RECORDING_ROOT_DIR` and then `/var/spool/asterisk/moni
 | `POST /api/recording/extension/{ext}` | `{recording}` — record calls involving one extension or not |
 | `POST /api/recording/extensions/bulk` | `{recording, extensions?}` — many extensions at once (all when omitted); returns `{updated: [...]}` |
 | `GET /api/recording/retention` | `{local_days, local_max_bytes, vad_delete_legs, root_dir}` |
-| `POST /api/recording/retention` | Any of the same keys; `root_dir` must be an existing directory |
+| `POST /api/recording/retention` | Any of the same keys; `root_dir` is read-only (sending another directory is a 400) |
 | `POST /api/recording/retention/run` | Run the daily clean-up now; returns what it deleted |
 | `GET /api/recording/storage-stats` | `{total_recordings, local: {used_bytes, max_bytes, disk_free_bytes, disk_total_bytes, retention_days}}` |
-| `GET /api/recordings` | `?limit=25&offset=0&search=` — `{recordings: [{calldate, src, dst, duration, recordingfile, uniqueid, recording_path, size_bytes}], total}` |
+| `GET /api/recordings` | `?limit=25&cursor=&search=&date_from=&date_to=` — `{recordings: [{calldate, src, dst, duration, billsec, recordingfile, uniqueid, linkedid, recording_path, size_bytes}], total, next_cursor}`; pass `next_cursor` as `cursor` for the next page |
 | `DELETE /api/recordings/{uniqueid}` | Delete the recording file of one call (the CDR row stays); `{deleted, deleted_legs}` |
 
 Recordings are kept on the PBX's disk only. The recorder keeps both directions of a call
@@ -312,7 +326,10 @@ in one file, and the ring-only files of legs that were never answered are remove
 ### `GET /api/call-notifications`
 **Auth:** JWT (any)
 
-The missed-call bell. Query `extension`, `status` (`new`, `read`, `archived`), `limit`.
+The missed-call bell: `{notifications, total}`, where `total` counts every match, not just
+the page. An agent reads their own extension's notifications, a supervisor those of the
+agents in their groups and their own, an admin their own unless `extension` names another.
+Query `extension`, `status` (`new`, `read`, `archived`), `limit`.
 Each notification's `reason` is a canonical [outcome value](webhooks.md#outcome-values)
 (`BUSY`, `UNANSWERED`, `MISSED`, `UNREACHABLE`, `FAILURE`, `NETWORK_ERROR`); rows stored
 by older versions in other spellings are converted on read.

@@ -15,7 +15,7 @@ variables it does not manage itself. The previous version is saved as `backend/.
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` | MySQL/MariaDB connection. |
 | `DB_NAME`, `DB_CDR`, `DB_OpDesk` | The PBX config database (`asterisk`), the CDR database (`asteriskcdrdb`) and OpDesk's own. |
 | `AMI_HOST`, `AMI_PORT`, `AMI_USERNAME`, `AMI_SECRET`, `AMI_CONTEXT` | The Asterisk Manager connection, and the dialplan context used for originated calls. |
-| `ASTERISK_RECORDING_ROOT_DIR` | Fallback for where Asterisk writes recordings (default `/var/spool/asterisk/monitor/`). The **Recording root** set under Settings → Recording takes precedence. |
+| `ASTERISK_RECORDING_ROOT_DIR` | Where the recordings directory is mounted, when not at `/var/spool/asterisk/monitor/` (the directory the recorder writes to). Playback, the Recordings page and retention all use it; Settings → Recording only shows it. |
 | `PORT`, `OPDESK_BIND_HOST` | Where the backend (Node.js) listens (default `127.0.0.1:8765`). |
 | `OPDESK_LISTEN_PORT` | Optional. Overrides the listen port, for example to run a second instance next to the live one. |
 | `OPDESK_SHADOW` | Optional, for that second instance. `1` makes it watch-only towards the PBX: read-only AMI actions, no Asterisk config writes or reloads, no recording deletes. It still writes its own database, so point `DB_OpDesk` at a copy. |
