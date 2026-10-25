@@ -775,7 +775,6 @@
         "mobileWake": "Envia um push de despertar antes de discar para que os apps móveis se registrem novamente.",
         "qos": "Capture métricas de qualidade das chamadas nos registros CDR.",
         "sipTls": "SIP criptografado na porta 5061 para softphones tradicionais.",
-        "audit": "Quem alterou o quê e quando: cada alteração feita pela API.",
         "recordingPolicy": "Grave chamadas por direção e ramal; onde os arquivos ficam e por quanto tempo são mantidos.",
         "notReadyCodes": "Motivos de Indisponível, o limite de pós-atendimento e a redefinição diária do turno."
       },
@@ -793,8 +792,7 @@
       "title": {
         "apiKeys": "Chaves de API",
         "mobileWake": "Despertar móvel",
-        "recording": "Gravação de chamadas",
-        "audit": "Registro de auditoria"
+        "recording": "Gravação de chamadas"
       }
     },
     "mobileWake": {
@@ -1223,7 +1221,8 @@
   "logs": {
     "tabs": {
       "system": "Sistema",
-      "deliveries": "Envios ao CRM"
+      "deliveries": "Envios ao CRM",
+      "audit": "Registro de auditoria"
     },
     "system": {
       "title": "Fluxo de eventos AMI",

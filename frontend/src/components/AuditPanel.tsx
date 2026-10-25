@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, RefreshCw, ScrollText, Tag, Boxes, ChevronDown } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
@@ -7,14 +8,13 @@ import type { AuditLogEntry } from '../types';
 import { presentOptions, showFilter } from '../lib/filters';
 import { PageRange } from './PageRange';
 import { quickRanges, type DateRange } from './analyticsUtils';
-import type { SectionCard } from './SettingsPanel';
 import {
-  Alert, Badge, Card, Dropdown, EmptyState, Loading, SearchInput, Table, Toolbar, type BadgeTone, type Column,
+  Alert, Badge, Dropdown, EmptyState, Loading, Page, SearchInput, Table, Toolbar, type BadgeTone, type Column,
 } from './ui';
 import '../styles/settings-extra.css';
 
 /* The audit log: every change made through the API (create, update, delete, apply), who made it,
- * from where, and when. Admin-only, as a Settings section.
+ * from where, and when. The Audit log tab of Logs (admin only, like the rest of Logs).
  *
  * GET /api/audit-log takes action / entity_type / actor / from / to filters, pages with a cursor
  * (`next_cursor`), and with ?facets=1 counts each action and entity type under the other
@@ -42,7 +42,7 @@ function fmtTime(s?: string | null): string {
   return isNaN(d.getTime()) ? s : d.toLocaleString();
 }
 
-export function AuditPanel({ card }: { card: SectionCard }) {
+export function AuditPanel({ tabStrip }: { tabStrip: React.ReactNode }) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -173,18 +173,13 @@ export function AuditPanel({ card }: { card: SectionCard }) {
   const anyFilter = Boolean(action || entityType || actor.trim());
 
   return (
-    <Card
-      {...card}
-      actions={
-        <button type="button" className="btn btn-ghost" onClick={load} disabled={loading}>
-          {loading ? <Loader2 size={14} className="spinner" /> : <RefreshCw size={14} />}
-          {t('audit.refresh', 'Refresh')}
-        </button>
-      }
+    <Page
+      icon={ScrollText}
+      title={t('nav.logs', 'Logs')}
+      scope={<PageRange value={range} onChange={setRange} />}
+      tabs={tabStrip}
       flush
-      bodyClassName="audit-body"
-    >
-      <div className="audit-toolbar">
+      toolbar={
         <Toolbar
           search={
             <SearchInput
@@ -197,7 +192,6 @@ export function AuditPanel({ card }: { card: SectionCard }) {
           }
           filters={
             <>
-              <PageRange value={range} onChange={setRange} />
               {showFilter(actionOptions, action) && (
                 <div data-active={action || undefined}>
                   <Dropdown
@@ -224,9 +218,15 @@ export function AuditPanel({ card }: { card: SectionCard }) {
               )}
             </>
           }
+          actions={
+            <button type="button" className="btn btn-ghost" onClick={load} disabled={loading}>
+              {loading ? <Loader2 size={14} className="spinner" /> : <RefreshCw size={14} />}
+              {t('common.refresh', 'Refresh')}
+            </button>
+          }
         />
-      </div>
-
+      }
+    >
       {error && <div className="u-p-3"><Alert>{error}</Alert></div>}
 
       {loading ? (
@@ -257,6 +257,6 @@ export function AuditPanel({ card }: { card: SectionCard }) {
           </button>
         </div>
       )}
-    </Card>
+    </Page>
   );
 }

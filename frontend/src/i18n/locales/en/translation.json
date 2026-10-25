@@ -775,7 +775,6 @@
         "mobileWake": "Push a wake-up before dialing so mobile apps can re-register.",
         "qos": "Capture call quality metrics into CDR records.",
         "sipTls": "Encrypted SIP on port 5061 for traditional softphones.",
-        "audit": "Who changed what, and when: every change made through the API.",
         "recordingPolicy": "Record calls by direction and extension; where the files live and how long they are kept.",
         "notReadyCodes": "Not-Ready reasons, the wrap-up ceiling and the daily shift reset."
       },
@@ -793,8 +792,7 @@
       "title": {
         "apiKeys": "API keys",
         "mobileWake": "Mobile wake",
-        "recording": "Call recording",
-        "audit": "Audit log"
+        "recording": "Call recording"
       }
     },
     "mobileWake": {
@@ -1223,7 +1221,8 @@
   "logs": {
     "tabs": {
       "system": "System",
-      "deliveries": "CRM deliveries"
+      "deliveries": "CRM deliveries",
+      "audit": "Audit log"
     },
     "system": {
       "title": "AMI event stream",

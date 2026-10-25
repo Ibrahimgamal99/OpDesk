@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Terminal, Send, Play, Pause, Download, Trash2, Tag, ScrollText, Braces, Loader2,
   ChevronRight, RefreshCw, Copy, Check, ArrowDown, Inbox, PhoneIncoming, PhoneOutgoing,
-  ArrowLeftRight, RotateCcw,
+  ArrowLeftRight, RotateCcw, History,
 } from 'lucide-react';
 import { fetchWithAuth } from '../auth';
 import { PageRange } from './PageRange';
@@ -18,18 +18,21 @@ import {
 import type { AmiEvent, WebhookDelivery, WebhookDeliveryDetail } from '../types';
 import { api, apiList, messageFrom, messageOf, toApiError } from '../lib/api';
 import { countBy } from '../lib/filters';
+import { AuditPanel } from './AuditPanel';
 
-type LogsTab = 'system' | 'deliveries';
+type LogsTab = 'system' | 'deliveries' | 'audit';
+const LOGS_TABS: readonly LogsTab[] = ['system', 'deliveries', 'audit'];
 
 // ===========================================================================
 // Shell
 // ===========================================================================
 export function LogsPanel() {
   const { t } = useTranslation();
-  // Sub-tab lives in the URL so /logs?tab=deliveries is deep-linkable and survives a
+  // Sub-tab lives in the URL so /logs?tab=audit is deep-linkable and survives a
   // refresh, matching how Settings handles its sub-tabs.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab: LogsTab = searchParams.get('tab') === 'deliveries' ? 'deliveries' : 'system';
+  const requested = searchParams.get('tab') as LogsTab | null;
+  const tab: LogsTab = requested && LOGS_TABS.includes(requested) ? requested : 'system';
 
   // Capture state lives here rather than in the tab so pausing and the AMI switch
   // survive a trip through the Deliveries tab.
@@ -73,6 +76,7 @@ export function LogsPanel() {
       tabs={[
         { key: 'system', label: t('logs.tabs.system', 'System'), icon: <Terminal size={14} /> },
         { key: 'deliveries', label: t('logs.tabs.deliveries', 'CRM Deliveries'), icon: <Send size={14} /> },
+        { key: 'audit', label: t('logs.tabs.audit', 'Audit log'), icon: <History size={14} /> },
       ]}
       active={tab}
       onChange={(k) => setSearchParams({ tab: k }, { replace: true })}
@@ -80,6 +84,7 @@ export function LogsPanel() {
     />
   );
 
+  if (tab === 'audit') return <AuditPanel tabStrip={tabStrip} />;
   return tab === 'system'
     ? (
       <SystemLogsTab
