@@ -1,16 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, PhoneCall, PhoneIncoming, PhoneOff, Pause, Ear, MicVocal, UserPlus, RefreshCw, Loader2, Radio, BellOff, MinusCircle, PauseCircle, CircleDot, Rows3, LayoutGrid } from 'lucide-react';
+import { Phone, RefreshCw, Radio, Clock, Loader2, MinusCircle, CircleDot, Rows3, LayoutGrid } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { Extension, ExtensionStatus } from '../types';
-import { getUser, getAllowedMonitorModes } from '../auth';
+import type { TFunction } from 'i18next';
+import type { Extension } from '../types';
+import { getUser } from '../auth';
+import { StatusBadge, AGENT_STATE_META, DEVICE_STATUS_META, type StatusMeta } from './statusBadge';
+import { SuperviseActions } from './SuperviseActions';
+import { countBy, presentOptions, showFilter } from '../lib/filters';
+import { Badge, Dropdown, EmptyState, Page, SearchInput, Toolbar } from './ui';
+import type { DropdownOption } from './ui';
+import '../styles/live.css';
 
 /** Live queue presence for an extension (Ready / Not-Ready · reason). */
 export interface MemberPresence { queueOn: boolean; paused: boolean; reason: string }
 
 interface ExtensionsPanelProps {
   extensions: Record<string, Extension>;
-  /** Extension -> queue presence, so the card reflects agent status like echo. */
+  /** Extension -> queue presence, so the card reflects agent status. */
   memberPresence?: Record<string, MemberPresence>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   onSync?: () => void;
@@ -23,14 +30,49 @@ interface ExtensionsPanelProps {
 
 const COMPACT_STORAGE_KEY = 'opdesk:extensions-compact';
 
-const STATUS_ICONS: Record<ExtensionStatus, typeof Phone> = {
-  idle: Phone,
-  ringing: PhoneIncoming,
-  in_call: PhoneCall,
-  dialing: PhoneCall,
-  unavailable: PhoneOff,
-  on_hold: Pause,
+/** What the Status filter narrows by: the status the card's badge is showing. */
+type StatusBucket = 'available' | 'in_call' | 'ringing' | 'on_hold' | 'offline' | 'dnd' | 'not_ready';
+
+/** One extension's resolved status: the badge it wears and the filter bucket it falls in. */
+interface ResolvedStatus {
+  meta: StatusMeta;
+  label: string;
+  bucket: StatusBucket;
+}
+
+const DEVICE_BUCKET: Record<Extension['status'], StatusBucket> = {
+  idle: 'available', ringing: 'ringing', in_call: 'in_call', dialing: 'in_call',
+  on_hold: 'on_hold', unavailable: 'offline',
 };
+
+/**
+ * One status per card. Live telephony wins (a real call/ring must show), then DND, then
+ * queue presence (Not-Ready · reason / Ready), then the raw device status. Resolved here
+ * rather than inside the card so the Status filter and the badge cannot disagree.
+ */
+function resolveStatus(extension: Extension, presence: MemberPresence | undefined, t: TFunction): ResolvedStatus {
+  const deviceBusy = ['in_call', 'dialing', 'ringing', 'on_hold'].includes(extension.status);
+  if (!deviceBusy && extension.dnd) {
+    const meta = AGENT_STATE_META.dnd;
+    return { meta, label: t('extensions.status.dnd', 'Do Not Disturb'), bucket: 'dnd' };
+  }
+  if (!deviceBusy && presence?.queueOn && presence.paused) {
+    const base = t('extensions.status.notReady', 'Not Ready');
+    return {
+      meta: AGENT_STATE_META.not_ready,
+      label: presence.reason ? `${base} · ${presence.reason}` : base,
+      bucket: 'not_ready',
+    };
+  }
+  if (!deviceBusy && presence?.queueOn && extension.status !== 'unavailable') {
+    return { meta: AGENT_STATE_META.ready, label: t('extensions.status.ready', 'Ready'), bucket: 'available' };
+  }
+  return {
+    meta: DEVICE_STATUS_META[extension.status] ?? DEVICE_STATUS_META.unavailable,
+    label: t(`extensions.status.${extension.status}`, { defaultValue: extension.status }),
+    bucket: DEVICE_BUCKET[extension.status] ?? 'offline',
+  };
+}
 
 export function ExtensionsPanel({
   extensions,
@@ -42,6 +84,9 @@ export function ExtensionsPanel({
   onDndToggle,
 }: ExtensionsPanelProps) {
   const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const [compact, setCompact] = useState<boolean>(() => {
     try { return localStorage.getItem(COMPACT_STORAGE_KEY) === '1'; } catch { return false; }
   });
@@ -50,22 +95,54 @@ export function ExtensionsPanel({
     try { localStorage.setItem(COMPACT_STORAGE_KEY, compact ? '1' : '0'); } catch { /* best-effort */ }
   }, [compact]);
 
-  const extensionList = Object.values(extensions).sort((a, b) =>
-    a.extension.localeCompare(b.extension, undefined, { numeric: true })
-  );
+  const rows = useMemo(() => Object.values(extensions)
+    .sort((a, b) => a.extension.localeCompare(b.extension, undefined, { numeric: true }))
+    .map((ext) => ({ ext, status: resolveStatus(ext, memberPresence[ext.extension], t) })),
+  [extensions, memberPresence, t]);
+
+  // Filters offer only what is on the page: each status or type that occurs, with its count.
+  const typeOf = (ext: string) => (webrtcMap[ext] === 'yes' ? 'webrtc' : 'desk');
+  const statusCounts = countBy(rows, (r) => r.status.bucket);
+  const typeCounts = Object.keys(webrtcMap).length > 0 ? countBy(rows, (r) => typeOf(r.ext.extension)) : {};
+
+  const term = query.trim().toLowerCase();
+  const filtered = rows.filter(({ ext, status }) => {
+    if (term && !ext.extension.toLowerCase().includes(term) && !(ext.name || '').toLowerCase().includes(term)) return false;
+    if (statusFilter && status.bucket !== statusFilter) return false;
+    if (typeFilter && typeOf(ext.extension) !== typeFilter) return false;
+    return true;
+  });
+  const filtering = Boolean(term || statusFilter || typeFilter);
+  const clearFilters = () => { setQuery(''); setStatusFilter(''); setTypeFilter(''); };
+
+  // Each option wears its badge colour, so the filter dots and the cards agree.
+  const statusOption = (value: StatusBucket, meta: StatusMeta, label: string): DropdownOption =>
+    ({ value, label, dotColor: `var(${meta.varName})` });
+  const statusOptions = presentOptions([
+    statusOption('available', DEVICE_STATUS_META.idle, t('extensions.status.idle')),
+    statusOption('in_call', DEVICE_STATUS_META.in_call, t('extensions.status.in_call')),
+    statusOption('ringing', DEVICE_STATUS_META.ringing, t('extensions.status.ringing')),
+    statusOption('on_hold', DEVICE_STATUS_META.on_hold, t('extensions.status.on_hold')),
+    statusOption('not_ready', AGENT_STATE_META.not_ready, t('extensions.status.notReady', 'Not Ready')),
+    statusOption('dnd', AGENT_STATE_META.dnd, t('extensions.status.dnd', 'Do Not Disturb')),
+    statusOption('offline', DEVICE_STATUS_META.unavailable, t('extensions.status.unavailable')),
+  ], statusCounts, statusFilter);
+  const typeOptions = presentOptions([
+    { value: 'webrtc', label: t('extensions.webrtcBadge') },
+    { value: 'desk', label: t('extensions.filter.deskPhone', 'Desk phone') },
+  ], typeCounts, typeFilter);
 
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2 className="panel-title">
-          <Phone size={18} className="panel-title-icon" />
-          {t('extensions.title')} ({extensionList.length})
-        </h2>
-        <div className="panel-header-actions">
+    <Page
+      icon={Phone}
+      title={t('extensions.title')}
+      count={rows.length}
+      actions={
+        <>
           <button
             type="button"
-            className="btn btn-panel-sync"
-            onClick={() => setCompact(c => !c)}
+            className="btn btn-ghost"
+            onClick={() => setCompact((c) => !c)}
             title={compact ? t('extensions.comfortableView') : t('extensions.compactView')}
             aria-pressed={compact}
           >
@@ -73,77 +150,115 @@ export function ExtensionsPanel({
             {compact ? t('extensions.comfortable') : t('extensions.compact')}
           </button>
           {onSync && (
-            <button type="button" className="btn btn-panel-sync" onClick={onSync} title={t('extensions.syncAll')}>
+            <button type="button" className="btn btn-ghost" onClick={onSync} title={t('extensions.syncAll')}>
               <RefreshCw size={14} />
               {t('extensions.sync')}
             </button>
           )}
+        </>
+      }
+      toolbar={
+        <Toolbar
+          search={
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              debounceMs={0}
+              label={t('extensions.search', 'Search extensions')}
+              placeholder={t('extensions.searchPlaceholder', 'Search by number or name')}
+            />
+          }
+          filters={
+            <>
+              {showFilter(statusOptions, statusFilter) && (
+                <div data-active={statusFilter || undefined}>
+                  <Dropdown
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    size="md"
+                    ariaLabel={t('common.status', 'Status')}
+                    options={[{ value: '', label: t('extensions.filter.allStatuses', 'All statuses') }, ...statusOptions]}
+                  />
+                </div>
+              )}
+              {showFilter(typeOptions, typeFilter) && (
+                <div data-active={typeFilter || undefined}>
+                  <Dropdown
+                    value={typeFilter}
+                    onChange={setTypeFilter}
+                    size="md"
+                    ariaLabel={t('extensions.filter.type', 'Type')}
+                    options={[{ value: '', label: t('extensions.filter.allTypes', 'All types') }, ...typeOptions]}
+                  />
+                </div>
+              )}
+            </>
+          }
+          actions={filtering && (
+            <span className="u-text-sm u-fg-muted">
+              {t('extensions.filter.matches', { shown: filtered.length, total: rows.length, defaultValue: '{{shown}} of {{total}}' })}
+            </span>
+          )}
+        />
+      }
+    >
+      {rows.length === 0 ? (
+        <EmptyState icon={Phone} title={t('extensions.noExtensions')} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={Phone}
+          title={t('extensions.noMatchesTitle', 'No matching extensions')}
+          description={t('extensions.noMatches', 'No extensions match these filters.')}
+          action={<button type="button" className="btn" onClick={clearFilters}>{t('common.clearFilters', 'Clear filters')}</button>}
+        />
+      ) : (
+        <div className={`extensions-grid${compact ? ' compact' : ''}`}>
+          <AnimatePresence>
+            {filtered.map(({ ext, status }) => (
+              <ExtensionCard
+                key={ext.extension}
+                extension={ext}
+                status={status}
+                onSupervisorAction={onSupervisorAction}
+                webrtcEnabled={webrtcMap[ext.extension] === 'yes'}
+                canToggleDnd={allowedDndExtensions.has(ext.extension)}
+                onDndToggle={onDndToggle}
+              />
+            ))}
+          </AnimatePresence>
         </div>
-      </div>
-      <div className="panel-content">
-        {extensionList.length === 0 ? (
-          <div className="empty-state">
-            <Phone size={48} className="empty-state-icon" />
-            <p className="empty-state-text">{t('extensions.noExtensions')}</p>
-          </div>
-        ) : (
-          <div className={`extensions-grid${compact ? ' compact' : ''}`}>
-            <AnimatePresence>
-              {extensionList.map((ext) => (
-                <ExtensionCard
-                  key={ext.extension}
-                  extension={ext}
-                  onSupervisorAction={onSupervisorAction}
-                  webrtcEnabled={webrtcMap[ext.extension] === 'yes'}
-                  canToggleDnd={allowedDndExtensions.has(ext.extension)}
-                  onDndToggle={onDndToggle}
-                  presence={memberPresence[ext.extension]}
-                />
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </Page>
   );
 }
 
 interface ExtensionCardProps {
   extension: Extension;
+  status: ResolvedStatus;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   webrtcEnabled: boolean;
   canToggleDnd: boolean;
   onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
-  presence?: MemberPresence;
 }
 
-function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggleDnd, onDndToggle, presence }: ExtensionCardProps) {
+/** Two-letter monogram from the display name, falling back to the extension digits. */
+function monogram(name: string | undefined, ext: string): string {
+  const src = (name || '').trim();
+  if (!src) return ext.slice(0, 2);
+  const parts = src.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return src.slice(0, 2).toUpperCase();
+}
+
+function ExtensionCard({
+  extension, status, onSupervisorAction, webrtcEnabled, canToggleDnd, onDndToggle,
+}: ExtensionCardProps) {
   const { t } = useTranslation();
   const [dndSaving, setDndSaving] = useState(false);
   const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
   const isRinging = extension.status === 'ringing';
   const dndOn = !!extension.dnd;
-  const deviceBusy = isInCall || isRinging || extension.status === 'on_hold';
-
-  // Status shown on the card, echo-style. Live telephony wins (a real call/ring must
-  // show), then DND, then queue presence (Not-Ready · reason / Ready), then raw device.
-  let displayStatus = extension.status as string;
-  let StatusIcon = STATUS_ICONS[extension.status] || PhoneOff;
-  let statusLabel = t(`extensions.status.${extension.status}`, { defaultValue: extension.status });
-  if (!deviceBusy && dndOn) {
-    displayStatus = 'dnd';
-    StatusIcon = BellOff;
-    statusLabel = t('extensions.status.dnd', { defaultValue: 'Do Not Disturb' });
-  } else if (!deviceBusy && presence?.queueOn && presence.paused) {
-    displayStatus = 'not_ready';
-    StatusIcon = PauseCircle;
-    const base = t('extensions.status.notReady', { defaultValue: 'Not Ready' });
-    statusLabel = presence.reason ? `${base} · ${presence.reason}` : base;
-  } else if (!deviceBusy && presence?.queueOn && extension.status !== 'unavailable') {
-    displayStatus = 'ready';
-    StatusIcon = CircleDot;
-    statusLabel = t('extensions.status.ready', { defaultValue: 'Ready' });
-  }
+  const { meta } = status;
 
   const handleDndClick = async () => {
     // DND cannot be toggled while the extension is on a call.
@@ -156,53 +271,61 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
     }
   };
 
+  const dndTitle = dndOn
+    ? t('extensions.dndOn', 'Do Not Disturb: on')
+    : t('extensions.dndOff', 'Do Not Disturb: off');
+
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ duration: 0.2 }}
-      className={`extension-card status-${displayStatus}`}
+      className={`extension-card status-${extension.status}`}
+      style={{
+        ['--ext-accent' as string]: `var(${meta.varName})`,
+        ['--ext-accent-bg' as string]: `var(${meta.bgVar})`,
+      }}
     >
-      <div className="extension-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="extension-number">{extension.extension}</div>
-          {extension.name && (
-            <div className="extension-name">{extension.name}</div>
-          )}
+      <div className="ext-card-top">
+        <div className="ext-avatar" aria-hidden="true">
+          {monogram(extension.name, extension.extension)}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-          {webrtcEnabled && (
-            <span className="ext-webrtc-tag" title={t('extensions.webrtcOn')}>
-              <Radio size={11} />
-              {t('extensions.webrtcBadge')}
-            </span>
-          )}
-          {canToggleDnd && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={dndOn}
-              className={`agent-dnd-toggle${dndOn ? ' on' : ''}`}
-              style={{ ['--dt-color' as string]: dndOn ? 'var(--accent-danger)' : 'var(--status-unavailable)' }}
-              onClick={(e) => { e.stopPropagation(); handleDndClick(); }}
-              disabled={dndSaving || isInCall}
-              title={dndOn ? t('extensions.dndOn', { defaultValue: 'Do Not Disturb: on' }) : t('extensions.dndOff', { defaultValue: 'Do Not Disturb: off' })}
-              aria-label={dndOn ? 'DND on' : 'DND off'}
-            >
-              <span className="agent-dnd-toggle-track">
-                <span className="agent-dnd-toggle-knob">
-                  {dndSaving ? <Loader2 size={12} className="spinner" /> : dndOn ? <MinusCircle size={12} /> : <CircleDot size={12} />}
-                </span>
-              </span>
-            </button>
+        <div className="ext-identity">
+          <div className="ext-identity-head">
+            <div className="extension-number">{extension.extension}</div>
+            {webrtcEnabled && (
+              <Badge tone="info" icon={<Radio size={14} />} title={t('extensions.webrtcOn')}>
+                {t('extensions.webrtcBadge')}
+              </Badge>
+            )}
+          </div>
+          {extension.name && (
+            <div className="extension-name" title={extension.name}>{extension.name}</div>
           )}
         </div>
       </div>
 
-      <div className={`extension-status ${displayStatus}`}>
-        <StatusIcon size={16} />
-        {statusLabel}
+      <div className="ext-badges">
+        <StatusBadge meta={meta} label={status.label} />
+        {canToggleDnd && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={dndOn}
+            className={`agent-dnd-toggle ext-dnd-toggle${dndOn ? ' on' : ''}`}
+            onClick={(e) => { e.stopPropagation(); handleDndClick(); }}
+            disabled={dndSaving || isInCall}
+            title={dndTitle}
+            aria-label={dndTitle}
+          >
+            <span className="agent-dnd-toggle-track">
+              <span className="agent-dnd-toggle-knob">
+                {dndSaving ? <Loader2 size={12} className="spinner" /> : dndOn ? <MinusCircle size={12} /> : <CircleDot size={12} />}
+              </span>
+            </span>
+          </button>
+        )}
       </div>
 
       {extension.call_info && (isInCall || isRinging) && (
@@ -210,67 +333,25 @@ function ExtensionCard({ extension, onSupervisorAction, webrtcEnabled, canToggle
           {extension.call_info.talking_to && extension.call_info.talking_to !== 'Unknown' && (
             <div className="extension-info-row">
               <Phone size={14} />
-              {extension.call_info.contact_name ? (
-                <>
-                  {extension.call_info.contact_name}{' '}
-                  <span className="call-contact-number">({extension.call_info.talking_to})</span>
-                </>
-              ) : (
-                extension.call_info.talking_to
-              )}
+              {extension.call_info.contact_name
+                ? <>{extension.call_info.contact_name} <span className="u-fg-muted u-mono">({extension.call_info.talking_to})</span></>
+                : extension.call_info.talking_to}
             </div>
           )}
           {extension.call_info.duration && (
-            <div className="extension-info-row" style={{ color: 'var(--text-muted)' }}>
-              ⏱ {extension.call_info.duration}
+            <div className="extension-info-row u-fg-muted">
+              <Clock size={14} />
+              <span className="u-mono">{extension.call_info.duration}</span>
             </div>
           )}
         </div>
       )}
 
-      {isInCall && getUser()?.role !== 'agent' && (() => {
-        const allowed = getAllowedMonitorModes();
-        return (
-          <div className="extension-actions">
-            {allowed.includes('listen') && (
-              <button
-                className="btn btn-icon btn-listen"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSupervisorAction('listen', extension.extension);
-                }}
-                title={t('activeCalls.actions.listen')}
-              >
-                <Ear size={18} />
-              </button>
-            )}
-            {allowed.includes('whisper') && (
-              <button
-                className="btn btn-icon btn-whisper"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSupervisorAction('whisper', extension.extension);
-                }}
-                title={t('activeCalls.actions.whisper')}
-              >
-                <MicVocal size={18} />
-              </button>
-            )}
-            {allowed.includes('barge') && (
-              <button
-                className="btn btn-icon btn-barge"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSupervisorAction('barge', extension.extension);
-                }}
-                title={t('activeCalls.actions.barge')}
-              >
-                <UserPlus size={18} />
-              </button>
-            )}
-          </div>
-        );
-      })()}
+      {isInCall && getUser()?.role !== 'agent' && (
+        <div className="u-row-stretch u-gap-2 u-mt-4 u-justify-center">
+          <SuperviseActions target={extension.extension} onAction={onSupervisorAction} />
+        </div>
+      )}
     </motion.div>
   );
 }

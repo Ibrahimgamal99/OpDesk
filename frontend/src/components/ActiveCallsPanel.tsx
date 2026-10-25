@@ -1,10 +1,8 @@
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { PhoneCall, Ear, MicVocal, UserPlus, Phone, RefreshCw, PhoneOff, ArrowRightLeft, User } from 'lucide-react';
-import { FilterSelect } from './FilterSelect';
+import { PhoneCall, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CallInfo } from '../types';
-import { getUser, getAllowedMonitorModes } from '../auth';
+import { ActiveCallsTable } from './ActiveCallsTable';
+import { Page } from './ui';
 
 interface ActiveCallsPanelProps {
   calls: Record<string, CallInfo>;
@@ -22,261 +20,25 @@ export function ActiveCallsPanel({ calls, onSupervisorAction, onHangup, onTransf
   );
 
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2 className="panel-title">
-          <PhoneCall size={18} className="panel-title-icon" />
-          {t('activeCalls.title')} ({callList.length})
-        </h2>
-        {onSync && (
-          <button type="button" className="btn btn-panel-sync" onClick={onSync} title={t('activeCalls.syncAll')}>
-            <RefreshCw size={14} />
-            {t('activeCalls.sync')}
-          </button>
-        )}
-      </div>
-      <div className="panel-content" style={{ padding: 0 }}>
-        {callList.length === 0 ? (
-          <div className="empty-state">
-            <Phone size={48} className="empty-state-icon" />
-            <p className="empty-state-text">{t('activeCalls.noActiveCalls')}</p>
-          </div>
-        ) : (
-          <table className="calls-table">
-            <thead>
-              <tr>
-                <th>{t('activeCalls.table.extension')}</th>
-                <th>{t('activeCalls.table.state')}</th>
-                <th>{t('activeCalls.table.talkingTo')}</th>
-                <th>{t('activeCalls.table.duration')}</th>
-                <th>{t('activeCalls.table.talkTime')}</th>
-                {getUser()?.role !== 'agent' && <th>{t('activeCalls.table.actions')}</th>}
-              </tr>
-            </thead>
-            <tbody>
-              <AnimatePresence>
-                {callList.map((call) => (
-                  <CallRow
-                    key={call.extension}
-                    call={call}
-                    onSupervisorAction={onSupervisorAction}
-                    onHangup={onHangup}
-                    onTransfer={onTransfer}
-                    onTakeOver={onTakeOver}
-                  />
-                ))}
-              </AnimatePresence>
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-}
-
-interface CallRowProps {
-  call: CallInfo;
-  onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
-  onHangup?: (target: string) => void;
-  onTransfer?: (source: string, destination: string) => void;
-  onTakeOver?: (source: string) => void;
-}
-
-function CallRow({ call, onSupervisorAction, onHangup, onTransfer, onTakeOver }: CallRowProps) {
-  const { t } = useTranslation();
-  const stateClass = call.state.toLowerCase().replace(/\s+/g, '_');
-  const [showTransfer, setShowTransfer] = useState(false);
-  const [transferSource, setTransferSource] = useState('');
-  const [transferDest, setTransferDest] = useState('');
-
-  const callLegs = [
-    { value: call.extension, label: t('activeCalls.transfer.legExtension', { ext: call.extension }) },
-    ...(call.talking_to?.trim()
-      ? [{ value: call.talking_to.trim(), label: t('activeCalls.transfer.legTalkingTo', { ext: call.talking_to.trim() }) }]
-      : []),
-  ];
-
-  const openTransfer = () => {
-    setShowTransfer(true);
-    setTransferSource(call.extension);
-    setTransferDest('');
-  };
-
-  const closeTransfer = () => {
-    setShowTransfer(false);
-    setTransferSource('');
-    setTransferDest('');
-  };
-
-  return (
-    <motion.tr
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      transition={{ duration: 0.2 }}
-    >
-      <td data-label={t('activeCalls.table.extension')}>
-        <span className="call-ext">{call.extension}</span>
-      </td>
-      <td data-label={t('activeCalls.table.state')}>
-        <span className={`call-state ${stateClass}`}>
-          {call.state}
-        </span>
-      </td>
-      <td data-label={t('activeCalls.table.talkingTo')}>
-        <span className="call-talking-to">
-          {call.contact_name ? (
-            <>
-              {call.contact_name}{' '}
-              <span className="call-contact-number">({call.talking_to})</span>
-            </>
-          ) : (
-            call.talking_to || '—'
-          )}
-        </span>
-      </td>
-      <td data-label={t('activeCalls.table.duration')}>
-        <span className="call-duration">
-          {call.duration || '—'}
-        </span>
-      </td>
-      <td data-label={t('activeCalls.table.talkTime')}>
-        <span className="call-duration">
-          {call.talk_time || '—'}
-        </span>
-      </td>
-      {getUser()?.role !== 'agent' && (
-        <td data-label="">
-          <div className="call-actions" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {getAllowedMonitorModes().includes('listen') && (
-                <button
-                  className="btn btn-icon btn-listen"
-                  onClick={() => onSupervisorAction('listen', call.extension)}
-                  title={t('activeCalls.actions.listen')}
-                >
-                  <Ear size={18} />
-                </button>
-              )}
-              {getAllowedMonitorModes().includes('whisper') && (
-                <button
-                  className="btn btn-icon btn-whisper"
-                  onClick={() => onSupervisorAction('whisper', call.extension)}
-                  title={t('activeCalls.actions.whisper')}
-                >
-                  <MicVocal size={18} />
-                </button>
-              )}
-              {getAllowedMonitorModes().includes('barge') && (
-                <button
-                  className="btn btn-icon btn-barge"
-                  onClick={() => onSupervisorAction('barge', call.extension)}
-                  title={t('activeCalls.actions.barge')}
-                >
-                  <UserPlus size={18} />
-                </button>
-              )}
-              {onTransfer && (
-                <button
-                  className="btn btn-icon"
-                  onClick={() => (showTransfer ? closeTransfer() : openTransfer())}
-                  title={t('activeCalls.actions.transfer')}
-                >
-                  <ArrowRightLeft size={18} />
-                </button>
-              )}
-              {onHangup && (
-                <button
-                  className="btn btn-icon btn-danger"
-                  onClick={() => onHangup(call.extension)}
-                  title={t('activeCalls.actions.endCall')}
-                >
-                  <PhoneOff size={18} />
-                </button>
-              )}
-            </div>
-            {onTransfer && showTransfer && (
-              <div
-                style={{
-                  marginTop: 4,
-                  padding: 8,
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border-primary)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <label style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    {t('activeCalls.transfer.source')}
-                  </label>
-                  <FilterSelect
-                    value={transferSource}
-                    onChange={setTransferSource}
-                    options={callLegs.map(leg => ({ value: leg.value, label: leg.label }))}
-                    minWidth={120}
-                    style={{ fontSize: 12 }}
-                  />
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('activeCalls.transfer.option1')}</span>
-                  <span style={{ fontSize: 11 }}>{t('activeCalls.transfer.transferTo')}</span>
-                  <input
-                    type="text"
-                    value={transferDest}
-                    onChange={(e) => setTransferDest(e.target.value)}
-                    placeholder={t('activeCalls.transfer.extOrNumber')}
-                    className="form-input"
-                    style={{ maxWidth: 100, fontSize: 12, padding: '4px 6px' }}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={!transferDest.trim()}
-                    style={{ fontSize: 11, padding: '4px 8px' }}
-                    onClick={() => {
-                      const dest = transferDest.trim();
-                      if (!dest) return;
-                      onTransfer(transferSource, dest);
-                      closeTransfer();
-                    }}
-                  >
-                    {t('activeCalls.transfer.transfer')}
-                  </button>
-                </div>
-                {onTakeOver && getUser()?.extension && call.talking_to?.trim() && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('activeCalls.transfer.option2')}</span>
-                    <button
-                      type="button"
-                      className="btn"
-                      style={{ fontSize: 11, padding: '4px 8px' }}
-                      onClick={() => {
-                        onTakeOver(call.talking_to!.trim());
-                        closeTransfer();
-                      }}
-                      title={`Transfer caller (${call.talking_to?.trim()}) to your extension (${getUser()?.extension})`}
-                    >
-                      <User size={14} style={{ verticalAlign: -2, marginInlineEnd: 4 }} />
-                      {t('activeCalls.transfer.takeOver')}
-                    </button>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ fontSize: 11, padding: '4px 8px', alignSelf: 'flex-start' }}
-                  onClick={closeTransfer}
-                >
-                  {t('activeCalls.transfer.cancel')}
-                </button>
-              </div>
-            )}
-          </div>
-        </td>
+    <Page
+      icon={PhoneCall}
+      title={t('activeCalls.title')}
+      count={callList.length}
+      flush
+      actions={onSync && (
+        <button type="button" className="btn btn-ghost" onClick={onSync} title={t('activeCalls.syncAll')}>
+          <RefreshCw size={14} />
+          {t('activeCalls.sync')}
+        </button>
       )}
-    </motion.tr>
+    >
+      <ActiveCallsTable
+        calls={callList}
+        onSupervisorAction={onSupervisorAction}
+        onHangup={onHangup}
+        onTransfer={onTransfer}
+        onTakeOver={onTakeOver}
+      />
+    </Page>
   );
 }
