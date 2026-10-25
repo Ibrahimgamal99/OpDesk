@@ -643,6 +643,21 @@ describe('pause reasons', () => {
     expect(upd[1]).toEqual(['X', 1, 100, 1]);
   });
 
+  it('sort_order 0 is kept as 0 on create and update; blank means the default 100', async () => {
+    route([[/^INSERT INTO pause_reasons/, () => ({ insertId: 9, affectedRows: 1 })]]);
+    expect(await ops.pauseReasonCreate({ code: 'first', label: 'First', sort_order: 0 })).toBe(9);
+    expect(ex.mock.calls[0][1][4]).toBe(0);
+    expect(await ops.pauseReasonCreate({ code: 'blank', label: 'Blank', sort_order: '' })).toBe(9);
+    expect(ex.mock.calls[1][1][4]).toBe(100);
+    expect(await ops.pauseReasonCreate({ code: 'bad', label: 'Bad', sort_order: 'x' })).toBeNull();
+    route([
+      [/SELECT is_system FROM pause_reasons/, () => ({ is_system: 0 })],
+      [/^UPDATE pause_reasons/, () => ({ affectedRows: 1 })],
+    ]);
+    expect(await ops.pauseReasonUpdate(1, { sort_order: 0 })).toBe(true);
+    expect(ex.mock.calls.find((c) => /^UPDATE pause_reasons/.test(c[0]))?.[1]).toEqual([0, 1]);
+  });
+
   it('pauseReasonCreate takes Python positional args or a fields object, always non-system', async () => {
     route([[/^INSERT INTO pause_reasons/, () => ({ insertId: 8, affectedRows: 1 })]]);
     expect(await ops.pauseReasonCreate(' coffee ', 'Coffee', true, '#fff', '15', false)).toBe(8);
