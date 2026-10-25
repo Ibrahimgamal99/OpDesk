@@ -1003,7 +1003,9 @@
       "shortAbandonDesc": "Abandonadas antes do limite",
       "market": "Tempo de mercado",
       "marketDesc": "Tempo total de chamadas saintes",
-      "unansweredCalls": "Não atendidas"
+      "unansweredCalls": "Não atendidas",
+      "contactRate": "Taxa de contato",
+      "contactRateOf": "Taxa de contato {{rate}}"
     },
     "delta": {
       "vsPrevPeriod": "vs período anterior"
@@ -1113,10 +1115,6 @@
           "formula": "espera total ÷ chamadores",
           "text": "Quanto tempo os chamadores da fila esperam até alguém atender."
         },
-        "callAnswerRate": {
-          "formula": "atendidas ÷ chamadas",
-          "text": "Proporção de todas as chamadas deste período que foram atendidas — de entrada, de saída e internas."
-        },
         "delta": {
           "formula": "este período − anterior",
           "text": "Variação em relação ao período imediatamente anterior."
@@ -1125,16 +1123,8 @@
           "formula": "chamadores sem nova chamada ÷ chamadores atendidos",
           "text": "Chamadores de fila atendidos que não ligaram novamente para uma fila dentro da janela de FCR."
         },
-        "inboundAnswerRate": {
-          "formula": "atendidas ÷ chamadas de entrada",
-          "text": "Proporção das chamadas de entrada que foram atendidas."
-        },
         "market": {
           "text": "Tempo total de conversa nas chamadas de saída atendidas."
-        },
-        "outboundAnswerRate": {
-          "formula": "atendidas ÷ chamadas realizadas",
-          "text": "Proporção das chamadas de saída que foram atendidas."
         },
         "shortAbandonShare": {
           "formula": "desligamentos rápidos ÷ oferecidas",
@@ -1146,6 +1136,22 @@
         },
         "volume": {
           "text": "Todas as chamadas deste período — de entrada, de saída e internas."
+        },
+        "answerRate": {
+          "text": "Proporção dos números externos distintos do período com os quais se falou de fato, entrada e saída juntas — independentemente de quantas chamadas cada um levou. Conta pessoas, não chamadas.",
+          "formula": "números que atenderam ÷ números distintos"
+        },
+        "contactRate": {
+          "text": "Proporção das chamadas que conectaram — cada chamada conta, tentativas repetidas incluídas. A taxa de atendimento conta as pessoas por trás das chamadas.",
+          "formula": "atendidas ÷ chamadas"
+        },
+        "inboundPeopleRate": {
+          "text": "Proporção dos números distintos que ligaram e tiveram a chamada atendida — independentemente de quantas vezes cada um ligou.",
+          "formula": "chamadores atendidos ÷ chamadores distintos"
+        },
+        "outboundPeopleRate": {
+          "text": "Proporção dos números distintos discados que atenderam pelo menos uma vez — independentemente de quantas tentativas cada um levou.",
+          "formula": "números que atenderam ÷ números distintos discados"
         }
       },
       "overview": {
@@ -1535,7 +1541,13 @@
       "ringing": "Tocando",
       "sla": "SLA",
       "talkTime": "Tempo de conversa",
-      "waiting": "Chamadas em espera"
+      "waiting": "Chamadas em espera",
+      "totalCalls": "Total de chamadas",
+      "totalSplit": "{{in}} de entrada · {{out}} de saída",
+      "contactRate": "Taxa de contato",
+      "contactRateOf": "Taxa de contato {{rate}}",
+      "peopleReached": "{{reached}} de {{people}} números alcançados",
+      "abandonRateOf": "Taxa de abandono {{rate}}"
     },
     "live": "Ao vivo",
     "now": "Agora",
@@ -1577,6 +1589,29 @@
       },
       "longestWaitLive": {
         "text": "Há quanto tempo a pessoa que espera há mais tempo está aguardando. Fica vermelho após um minuto."
+      },
+      "totalCalls": {
+        "text": "Todas as chamadas de hoje — de entrada, de saída e entre ramais."
+      },
+      "abandoned": {
+        "text": "Chamadores de entrada que desligaram antes de alguém atender.",
+        "formula": "chamadas de entrada não atendidas"
+      },
+      "missed": {
+        "text": "Suas chamadas de hoje que não conectaram.",
+        "formula": "chamadas − atendidas"
+      },
+      "aht": {
+        "text": "Tempo médio de conversa de uma chamada atendida.",
+        "formula": "tempo de conversa ÷ atendidas"
+      },
+      "answerRate": {
+        "text": "Proporção dos números externos distintos com os quais se falou de fato — independentemente de quantas chamadas cada um levou. Conta pessoas: dez tentativas para uma pessoa que finalmente atende contam como uma pessoa alcançada. Chamadas internas entre ramais ficam de fora.",
+        "formula": "números que atenderam ÷ números distintos"
+      },
+      "contactRate": {
+        "text": "Proporção das chamadas que conectaram — cada chamada conta, então um número tentado cinco vezes conta cinco vezes. A taxa de atendimento conta as pessoas por trás das chamadas.",
+        "formula": "atendidas ÷ chamadas"
       }
     },
     "title": "Painel",
@@ -1592,6 +1627,7 @@
       "offline": "Desconectados",
       "title": "Disponibilidade dos agentes",
       "total": "{{count}} agentes"
-    }
+    },
+    "today": "Hoje"
   }
 }

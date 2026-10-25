@@ -114,6 +114,14 @@ export function kpiTip(
 /** A rate's verdict: drives the good/warn/bad tone of a KPI card or metric. */
 export type RateVerdict = 'good' | 'warn' | 'bad' | '';
 
+/** Distinct people reached over people involved: >=50% healthy, >=25% watchable. A
+ *  person tried five times who answers once counts once, so this runs above the
+ *  per-call rate. */
+export function perPersonRateVerdict(v: number | null | undefined): RateVerdict {
+  if (v === null || v === undefined) return '';
+  return v >= 50 ? 'good' : v >= 25 ? 'warn' : 'bad';
+}
+
 /** Answered per call placed: >=40% healthy, >=20% watchable, below that poor.
  *  Outbound answers far less often than an inbound queue picks up. */
 export function perCallRateVerdict(v: number | null | undefined): RateVerdict {
