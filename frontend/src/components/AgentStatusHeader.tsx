@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronDown, Play, CheckCircle2, RefreshCw, RotateCw, MinusCircle, CircleDot,
-  Pause, PhoneCall, Headset, HeadphoneOff, LogOut,
+  ChevronDown, Play, RefreshCw, RotateCw, MinusCircle, CircleDot,
+  Headset, HeadphoneOff, LogOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { fetchWithAuth, getUser } from '../auth';
-import type { AgentPresence } from './AgentStatusBar';
+import { AGENT_STATE_META } from './statusBadge';
+import type { AgentState } from './statusBadge';
+import { fmtTimer } from '../lib/format';
+import { Badge } from './ui';
+
+/** Live agent presence derived from the WebSocket state (passed from App). */
+export interface AgentPresence {
+  ext: string;
+  dnd: boolean;
+  queueOn: boolean;   // logged into at least one queue
+  paused: boolean;    // Not-Ready
+  reason: string;     // pause reason (when paused)
+  onCall: boolean;
+}
 
 interface PauseReason {
   id: number;
@@ -51,25 +64,8 @@ function RegSignal({ on }: { on: boolean }) {
   );
 }
 
-function fmtTimer(secs: number): string {
-  const s = Math.max(0, Math.floor(secs));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
-}
-
 // Display states (echo's agent states minus wrap-up, which OpDesk doesn't track).
-// Each carries its own colour + tinted background token so the band reads by state.
-type DState = 'ready' | 'not_ready' | 'on_call' | 'dnd' | 'available';
-const STATE_META: Record<DState, { Icon: LucideIcon; color: string; bg: string; key: string; fallback: string }> = {
-  ready:     { Icon: CheckCircle2, color: 'var(--status-idle)',    bg: 'var(--status-idle-bg)',    key: 'agent.state.ready',     fallback: 'Ready' },
-  on_call:   { Icon: PhoneCall,    color: 'var(--status-call)',    bg: 'var(--status-call-bg)',    key: 'agent.state.onCall',    fallback: 'On Call' },
-  not_ready: { Icon: Pause,        color: 'var(--accent-warning)', bg: 'var(--status-ringing-bg)', key: 'agent.state.notReady',  fallback: 'Not Ready' },
-  dnd:       { Icon: MinusCircle,  color: 'var(--accent-danger)',  bg: 'var(--status-ringing-bg)', key: 'agent.state.dnd',       fallback: 'Do Not Disturb' },
-  available: { Icon: CircleDot,    color: 'var(--status-idle)',    bg: 'var(--status-idle-bg)',    key: 'agent.state.available', fallback: 'Available' },
-};
+type DState = Extract<AgentState, 'ready' | 'not_ready' | 'on_call' | 'dnd' | 'available'>;
 
 interface Props {
   /** Fallback title when the user is not an agent (no extension). */
@@ -167,7 +163,13 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
             </button>
           )}
           {onRefresh && (
-            <button type="button" className="softphone-header-btn" onClick={onRefresh} disabled={refreshDisabled}>
+            <button
+              type="button"
+              className="softphone-header-btn"
+              onClick={onRefresh}
+              disabled={refreshDisabled}
+              title={t('softphone.refresh', 'Refresh')}
+            >
               <RefreshCw size={14} />
             </button>
           )}
@@ -176,7 +178,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
     );
   }
 
-  const meta = STATE_META[dState];
+  const meta = AGENT_STATE_META[dState];
   const StateIcon = meta.Icon;
   const stateLabel = (dState === 'not_ready' && presence?.reason) || t(meta.key, meta.fallback);
   // A plain extension only ever toggles Idle ⇄ DND, so it gets an inline switch
@@ -220,8 +222,12 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
   const hasAbove = showReasons || !queueOn;
 
   const mItem = (Ic: LucideIcon, label: string, onClick: () => void, danger = false) => (
-    <button type="button" className={`agent-header-menu-item${danger ? ' danger' : ''}`} onClick={onClick}>
-      <Ic size={13} /> <span>{label}</span>
+    <button
+      type="button"
+      className={`agent-bar-menu-item${danger ? ' agent-header-menu-danger' : ''}`}
+      onClick={onClick}
+    >
+      <Ic size={14} /> <span>{label}</span>
     </button>
   );
 
@@ -229,7 +235,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
     <div
       ref={rootRef}
       className={`agent-header agent-header-${dState}`}
-      style={{ ['--ah-color' as string]: meta.color, ['--ah-bg' as string]: meta.bg }}
+      style={{ ['--ah-color' as string]: `var(${meta.varName})`, ['--ah-bg' as string]: `var(${meta.bgVar})` }}
     >
       {/* Status selector — opens the transition menu (locked while on a call).
          For a plain extension it's a static label; the DND toggle lives on the right. */}
@@ -262,7 +268,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
           >
             <span className="agent-dnd-toggle-track">
               <span className="agent-dnd-toggle-knob">
-                {isDnd ? <MinusCircle size={12} /> : <CircleDot size={12} />}
+                {isDnd ? <MinusCircle size={14} /> : <CircleDot size={14} />}
               </span>
             </span>
           </button>
@@ -282,7 +288,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
           >
             <span className="agent-queue-toggle-track">
               <span className="agent-queue-toggle-knob">
-                {queueOn ? <Headset size={12} /> : <HeadphoneOff size={12} />}
+                {queueOn ? <Headset size={14} /> : <HeadphoneOff size={14} />}
               </span>
             </span>
           </button>
@@ -300,12 +306,12 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
             onClick={onReconnect}
             title={t('softphone.reconnect', 'Reconnect')}
           >
-            <RotateCw size={13} />
+            <RotateCw size={14} />
           </button>
         )}
         {onRefresh && (
           <button type="button" className="agent-header-refresh" onClick={onRefresh} disabled={refreshDisabled} title={t('softphone.refresh', 'Refresh')}>
-            <RefreshCw size={13} />
+            <RefreshCw size={14} />
           </button>
         )}
       </div>
@@ -321,14 +327,17 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
             <>
               <div className="agent-header-menu-label">{t('agent.notReady', 'Not Ready')}</div>
               {reasons.length === 0 && (
-                <div className="agent-header-menu-empty">{t('agent.noReasons', 'No reason codes')}</div>
+                <div className="agent-bar-menu-empty">{t('agent.noReasons', 'No reason codes')}</div>
               )}
               {reasons.map((r) => (
-                <button key={r.code} type="button" className="agent-header-menu-item" onClick={() => setNotReady(r.code)}>
-                  <span className="agent-header-menu-swatch" style={{ background: r.color || 'var(--text-muted)' }} />
+                <button key={r.code} type="button" className="agent-bar-menu-item" onClick={() => setNotReady(r.code)}>
+                  <span
+                    className="agent-header-menu-swatch u-bg-var"
+                    style={{ '--u-color': r.color || 'var(--text-muted)' } as CSSProperties}
+                  />
                   <span>{r.label}</span>
                   {!(r.productive === true || r.productive === 1) && (
-                    <span className="agent-header-menu-tag">{t('agent.unpaid', 'break')}</span>
+                    <Badge tone="neutral" className="u-push-end">{t('agent.unpaid', 'break')}</Badge>
                   )}
                 </button>
               ))}
