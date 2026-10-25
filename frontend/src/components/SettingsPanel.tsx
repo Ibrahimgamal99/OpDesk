@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2, Signal, Power, PowerOff, BarChart3, ShieldCheck, Smartphone, Disc, Settings, Pause,
-  Search, ChevronRight, Plug, KeyRound, ArrowLeft, ScrollText,
+  Search, ChevronRight, Plug, KeyRound, ArrowLeft,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
@@ -15,7 +15,6 @@ import { MobileWakePanel, type PushConfig } from './MobileWakePanel';
 import { CrmSettings, type CRMConfig } from './CrmConfigForm';
 import { RecordingSettings } from './RecordingSettings';
 import { ContactCenterSettings } from './ContactCenterSettings';
-import { AuditPanel } from './AuditPanel';
 import {
   Alert, Badge, Card, EmptyState, FormSection, Page, SearchInput, Toggle, Toolbar,
   matches, prepareQuery,
@@ -28,8 +27,7 @@ import type { CardProps } from './ui';
 export type SectionCard = Pick<CardProps, 'icon' | 'title' | 'description' | 'actions'>;
 
 export type SettingsTab =
-  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes'
-  | 'audit';
+  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
 
 /* ── Settings Home ─────────────────────────────────────────────────────
    The panel opens on a searchable grid of every section rather than on one
@@ -37,7 +35,7 @@ export type SettingsTab =
    unknown one) is the home grid. The ids are the ones the old tab bar used,
    so existing `/settings?tab=` links keep working.                        */
 const SETTINGS_TABS: SettingsTab[] = [
-  'integrations', 'api-keys', 'qos', 'analytics', 'sip-tls', 'mobile-wake', 'recording', 'not-ready-codes', 'audit',
+  'integrations', 'api-keys', 'qos', 'analytics', 'sip-tls', 'mobile-wake', 'recording', 'not-ready-codes',
 ];
 
 type SettingsCategory = 'telephony' | 'recording' | 'access' | 'contact-center' | 'analytics';
@@ -78,9 +76,6 @@ const SECTION_META: {
   { tab: 'api-keys', cat: 'access', Icon: KeyRound, adminOnly: true,
     titleKey: 'settings.home.title.apiKeys', titleFallback: 'API Keys',
     descKey: 'settings.home.desc.integrationApiKeys', descFallback: 'Machine-to-machine credentials for the integration API.' },
-  { tab: 'audit', cat: 'access', Icon: ScrollText, adminOnly: true,
-    titleKey: 'settings.home.title.audit', titleFallback: 'Audit log',
-    descKey: 'settings.home.desc.audit', descFallback: 'Who changed what, and when: every change made through the API.' },
   { tab: 'not-ready-codes', cat: 'contact-center', Icon: Pause,
     titleKey: 'notReady.title', titleFallback: 'Not-Ready Codes',
     descKey: 'settings.home.desc.notReadyCodes', descFallback: 'Not-Ready reasons, the wrap-up ceiling and the daily shift reset.' },
@@ -274,8 +269,6 @@ export function SettingsPanel() {
         return slaDefaultSecs === null
           ? unknown
           : on(t('settings.home.status.sla', { defaultValue: 'SLA target {{n}}s', n: slaDefaultSecs }));
-      case 'audit':
-        return unknown;
     }
   };
 
@@ -452,11 +445,6 @@ export function SettingsPanel() {
           isAdmin={isAdmin}
           onStatus={(enabled, format) => { setRecordingEnabled(enabled); setRecordingSavedFormat(format); }}
         />
-      )}
-
-      {/* ── Audit log (admin only) ── */}
-      {sectionCard && activeTab === 'audit' && (
-        isAdmin ? <AuditPanel card={sectionCard} /> : adminOnlyCard
       )}
 
       {/* ── Analytics ── */}

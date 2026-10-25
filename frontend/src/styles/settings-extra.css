@@ -8,13 +8,6 @@
   gap: var(--space-4);
 }
 
-/* The audit log runs edge to edge inside its card; the filters keep the card's padding. */
-.audit-toolbar {
-  padding-block: var(--space-3);
-  padding-inline: var(--space-4);
-  border-block-end: 1px solid var(--border-subtle);
-}
-
 .audit-summary {
   max-inline-size: 36rem;
   overflow-wrap: anywhere;
