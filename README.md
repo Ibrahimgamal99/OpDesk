@@ -50,9 +50,13 @@ A real-time operator panel for **Asterisk PBX** (Issabel 5 / FreePBX 16 and 17),
 |---|---|---|
 | [![Extensions](screenshots/extensions.png)](screenshots/extensions.png) | [![Active calls](screenshots/active_calls.png)](screenshots/active_calls.png) | [![Queues](screenshots/queues.png)](screenshots/queues.png) |
 
-| Call log | Call Journey | Contacts |
+| Agent board | Call log | Call Journey |
 |---|---|---|
-| [![Call log](screenshots/call_log.png)](screenshots/call_log.png) | [![Call Journey](screenshots/call_journey.png)](screenshots/call_journey.png) | [![Contacts](screenshots/contacts.png)](screenshots/contacts.png) |
+| [![Agent board](screenshots/agent_board.png)](screenshots/agent_board.png) | [![Call log](screenshots/call_log.png)](screenshots/call_log.png) | [![Call Journey](screenshots/call_journey.png)](screenshots/call_journey.png) |
+
+| Recordings | Contacts | Dark theme |
+|---|---|---|
+| [![Recordings](screenshots/recordings.png)](screenshots/recordings.png) | [![Contacts](screenshots/contacts.png)](screenshots/contacts.png) | [![Dark theme](screenshots/dashboard_dark.png)](screenshots/dashboard_dark.png) |
 
 | Analytics | Queue performance | Agent performance |
 |---|---|---|
@@ -62,9 +66,9 @@ A real-time operator panel for **Asterisk PBX** (Issabel 5 / FreePBX 16 and 17),
 |---|---|---|
 | [![Softphone](screenshots/softphone.png)](screenshots/softphone.png) | [![Incoming call](screenshots/softphone_ringing.png)](screenshots/softphone_ringing.png) | [![Mobile app QR](screenshots/mobile_qr.png)](screenshots/mobile_qr.png) |
 
-| Mobile Wake settings | Dark theme |   |
+| Mobile Wake settings |   |   |
 |---|---|---|
-| [![Mobile Wake settings](screenshots/mobile_wake.png)](screenshots/mobile_wake.png) | [![Dark theme](screenshots/dashboard_dark.png)](screenshots/dashboard_dark.png) |   |
+| [![Mobile Wake settings](screenshots/mobile_wake.png)](screenshots/mobile_wake.png) |   |   |
 
 ---
 
