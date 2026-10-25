@@ -1,0 +1,54 @@
+/* Work pages (Call History, Contacts): what echo's sheets do not already cover. */
+
+/* Call History table. Sized to fit a 1440px desktop beside the sidebar; anything
+   wider scrolls inside .ui-table-wrap, never the page. */
+.cl-log-table .cl-party {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.cl-log-table .cl-phone { white-space: nowrap; }
+
+/* The contact name under a number: one line, the full name in its tooltip. */
+.cl-log-table .cl-party-name {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.cl-log-table .cl-secondary {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Compact recording cell: a button row, plus a seek bar only while that row plays. */
+.cl-rec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.cl-rec-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.cl-rec-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.cl-rec-progress .cl-audio-progress-wrap {
+  padding-block: var(--space-1);
+}
+
+.cl-rec-progress .cl-audio-time { min-width: 0; }

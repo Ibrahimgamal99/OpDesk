@@ -795,6 +795,9 @@ html[lang='ar'] body {
   min-height: 0;
   overflow-y: auto;
   padding: 20px;
+  /* Clear the floating softphone button (58px, 20px off the bottom) so it never
+     sits on a page's last row or its pagination. */
+  padding-block-end: calc(20px + 58px + 20px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 20px;
