@@ -158,20 +158,20 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
   // the legend so the row does not reflow as people move about; it just draws no band.
   const wfSegments = [
     { key: 'available', n: live.available, label: t('dashboard.kpi.available', 'Available') },
-    { key: 'busy', n: live.onCall, label: t('dashboard.kpi.onCall', 'On call') },
+    { key: 'busy', n: live.onCall, label: t('agent.state.onCall', 'On call') },
     { key: 'ringing', n: live.ringing, label: t('dashboard.kpi.ringing', 'Ringing') },
     { key: 'offline', n: live.offline, label: t('dashboard.workforce.offline', 'Offline') },
   ];
 
   const liveBadge = (
     <Badge tone={connected ? 'live' : 'neutral'} dot>
-      {connected ? t('dashboard.live', 'Live') : t('header.disconnected')}
+      {connected ? t('common.live', 'Live') : t('header.disconnected')}
       {lastUpdate && <span className="u-mono u-fg-muted">{lastUpdate.toLocaleTimeString()}</span>}
     </Badge>
   );
 
   return (
-    <Page icon={LayoutDashboard} title={t('dashboard.title', 'Dashboard')} actions={liveBadge}>
+    <Page icon={LayoutDashboard} title={t('nav.dashboard', 'Dashboard')} actions={liveBadge}>
       <div className="dashboard-content">
         {!state ? (
           <Loading label={t('dashboard.waitingForData', 'Waiting for live data…')} />
@@ -181,13 +181,13 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
             <div className="dash-hero">
               <div className="dash-hero-main">
                 <div className="dash-hero-eyebrow">
-                  <Radio size={14} />{t('dashboard.live', 'Live')}
+                  <Radio size={14} />{t('common.live', 'Live')}
                 </div>
                 <div className={`dash-hero-figure${live.activeCalls > 0 ? ' active' : ''}`}>
                   <span className="dash-hero-value">{live.activeCalls}</span>
                   <span className="dash-hero-label">
-                    {t('dashboard.kpi.activeCalls', 'Active calls')}
-                    <Tooltip {...tip('activeCalls', t('dashboard.kpi.activeCalls', 'Active calls'), 'Calls happening right now.')} />
+                    {t('nav.activeCalls', 'Active calls')}
+                    <Tooltip {...tip('activeCalls', t('nav.activeCalls', 'Active calls'), 'Calls happening right now.')} />
                   </span>
                 </div>
                 <div className="dash-hero-stats">
@@ -241,7 +241,7 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
             )}
             {!todayUnavailable && (
               <>
-                <div className="dash-section-label"><CalendarDays size={14} />{t('dashboard.today', 'Today')}</div>
+                <div className="dash-section-label"><CalendarDays size={14} />{t('common.today', 'Today')}</div>
                 {today ? (
                   <>
                     <SummaryStats figures={today} isAgent={isAgent} />
@@ -259,8 +259,8 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
                     <TrendingUp size={14} />{t('dashboard.trend.title', '7-day volume')}
                   </span>
                   <span className="dash-trend-legend">
-                    <span className="dash-trend-key in"><i />{t('dashboard.trend.inbound', 'Inbound')}</span>
-                    <span className="dash-trend-key out"><i />{t('dashboard.trend.outbound', 'Outbound')}</span>
+                    <span className="dash-trend-key in"><i />{t('direction.inbound', 'Inbound')}</span>
+                    <span className="dash-trend-key out"><i />{t('direction.outbound', 'Outbound')}</span>
                   </span>
                 </div>
                 <div dir="ltr">
@@ -279,8 +279,8 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
                         cursor={{ stroke: 'var(--border-accent)' }}
                         labelFormatter={(idx) => trend[idx as number]?.date ?? ''}
                       />
-                      <Line type="monotone" dataKey="total_calls" name={t('dashboard.trend.inbound', 'Inbound')} stroke="var(--accent-primary)" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="outbound_total" name={t('dashboard.trend.outbound', 'Outbound')} stroke="var(--accent-teal)" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="total_calls" name={t('direction.inbound', 'Inbound')} stroke="var(--accent-primary)" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="outbound_total" name={t('direction.outbound', 'Outbound')} stroke="var(--accent-teal)" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>

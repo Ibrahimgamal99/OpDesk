@@ -22,13 +22,13 @@ export function ActiveCallsPanel({ calls, onSupervisorAction, onHangup, onTransf
   return (
     <Page
       icon={PhoneCall}
-      title={t('activeCalls.title')}
+      title={t('nav.activeCalls')}
       count={callList.length}
       flush
       actions={onSync && (
-        <button type="button" className="btn btn-ghost" onClick={onSync} title={t('activeCalls.syncAll')}>
+        <button type="button" className="btn btn-ghost" onClick={onSync} title={t('common.syncAll')}>
           <RefreshCw size={14} />
-          {t('activeCalls.sync')}
+          {t('common.sync')}
         </button>
       )}
     >

@@ -266,7 +266,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
   // as a chip in the same column, so the detail lines up under its header.
   const memberCell = (expanded: boolean, summary: string, chips: React.ReactNode[]) => {
     if (!expanded) return <span className="u-fg-secondary">{summary}</span>;
-    if (chips.length === 0) return <span className="u-fg-muted">{t('groups.none')}</span>;
+    if (chips.length === 0) return <span className="u-fg-muted">{t('common.none')}</span>;
     return <div className="u-row u-wrap u-gap-1">{chips}</div>;
   };
 
@@ -343,7 +343,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             ),
           },
           {
-            key: 'queues', header: t('groups.queuesLabel'),
+            key: 'queues', header: t('nav.queues'),
             cell: g => memberCell(
               expandedGroupId === g.id,
               t('groups.queuesCount', { count: g.queues?.length ?? 0 }),
@@ -351,7 +351,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             ),
           },
           {
-            key: 'users', header: t('groups.usersLabel'),
+            key: 'users', header: t('nav.users'),
             cell: g => memberCell(
               expandedGroupId === g.id,
               t('groups.usersCount', { count: g.user_ids?.length ?? 0 }),
@@ -395,7 +395,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
         footer={
           <>
             <button type="button" className="btn" onClick={resetForm}>
-              {t('groups.cancel')}
+              {t('common.cancel')}
             </button>
             <button type="submit" form="group-form" className="btn btn-primary">
               <Save size={14} />
@@ -451,7 +451,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
             </FormRow>
           </FormSection>
 
-          <FormSection title={t('groups.usersSection')}>
+          <FormSection title={t('nav.users')}>
             <FormRow single>
               <FormField label={t('groups.usersInGroup')}>
                 <Dropdown multiple size="md"

@@ -219,7 +219,7 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
           </button>
         ) : stored && source === 'ui' ? (
           <button type="button" className="btn" onClick={() => setFile(null)}>
-            <Trash2 size={14} /> {t('mobileWake.remove', 'Remove')}
+            <Trash2 size={14} /> {t('common.remove', 'Remove')}
           </button>
         ) : null}
       </div>
@@ -246,7 +246,7 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
   }
 
   const deviceColumns: Column<PushBinding>[] = [
-    { key: 'extension', header: t('mobileWake.devices.extension', 'Extension'), primary: true, cell: b => b.extension },
+    { key: 'extension', header: t('fields.extension', 'Extension'), primary: true, cell: b => b.extension },
     {
       key: 'provider', header: t('mobileWake.devices.provider', 'Provider'),
       cell: b => <>{b.provider}{b.param && <span className="u-fg-muted"> · {b.param}</span>}</>,
@@ -273,7 +273,7 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
   const footer = tab !== 'wake-devices' ? (
     <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
       {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
-      {saving ? t('mobileWake.saving', 'Saving…') : t('mobileWake.save', 'Save')}
+      {saving ? t('common.saving', 'Saving…') : t('common.save', 'Save')}
     </button>
   ) : undefined;
 
@@ -327,7 +327,7 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
             </a>
           </p>
           <Toggle checked={enabled} onChange={setEnabled}
-            label={t('mobileWake.enabled', 'Enabled')}
+            label={t('common.enabled', 'Enabled')}
             description={t('mobileWake.enabledHint', 'Before an extension with a push binding is dialed, push it and hold the call while the app wakes up.')} />
           <FormRow>
             <FormField label={t('mobileWake.hold', 'Hold time (seconds)')} htmlFor="mw-hold"

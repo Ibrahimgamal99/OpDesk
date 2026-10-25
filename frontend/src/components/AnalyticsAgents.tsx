@@ -92,14 +92,14 @@ export function AnalyticsAgents({ dateRange }: Props) {
   const columns: { key: SortKey; label: string; tipKey?: string; tip?: Tip }[] = [
     { key: 'rank',                 label: t('analytics.agents.rank'),     tipKey: 'analytics.tip.agents.rank',
       tip: { text: 'Position by calls answered.' } },
-    { key: 'agent_name',           label: t('analytics.agents.agent') },
+    { key: 'agent_name',           label: t('fields.agent') },
     { key: 'total_calls',          label: t('analytics.queues.total'),    tipKey: 'analytics.tip.agents.totalAll',
       tip: { text: 'Every call this agent handled: inbound, outbound and internal.' } },
     { key: 'answered_calls',       label: t('metrics.answered'), tipKey: 'analytics.tip.agents.answered',
       tip: { text: 'Calls this agent picked up.' } },
-    { key: 'inbound_calls',        label: t('analytics.directions.inbound', 'Inbound'),   tipKey: 'analytics.tip.agents.inbound',
+    { key: 'inbound_calls',        label: t('direction.inbound', 'Inbound'),   tipKey: 'analytics.tip.agents.inbound',
       tip: { text: 'Calls that came in to this agent.' } },
-    { key: 'outbound_calls',       label: t('analytics.directions.outbound', 'Outbound'), tipKey: 'analytics.tip.agents.outbound',
+    { key: 'outbound_calls',       label: t('direction.outbound', 'Outbound'), tipKey: 'analytics.tip.agents.outbound',
       tip: { text: 'Calls this agent placed.' } },
     { key: 'aht_secs',             label: t('metrics.aht'),      tipKey: 'metrics.tip.aht' },
     { key: 'sla_contribution_pct', label: t('analytics.agents.slaContrib'), tipKey: 'analytics.tip.agents.slaContribution',
@@ -109,7 +109,7 @@ export function AnalyticsAgents({ dateRange }: Props) {
   return (
     <Card
       icon={Users}
-      title={t('analytics.agents.title')}
+      title={t('analytics.nav.agents')}
       description={`${agents.length} ${t('analytics.agents.agents', 'agents')}`}
       flush
     >

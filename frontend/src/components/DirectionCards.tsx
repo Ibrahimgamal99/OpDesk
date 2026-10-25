@@ -7,6 +7,7 @@ import {
   abandonVerdict, fcrVerdict, fmtPct, fmtSecs, metricTips, perCallRateVerdict, perPersonRateVerdict, slaVerdict,
 } from './analyticsUtils';
 import { FigureCard, StatCard, StatRow, VERDICT_TONE, type Metric, type StatCardProps } from './FigureCards';
+import { callStatusLabel } from './callStatus';
 
 /**
  * A period's traffic as cards, the same on the Dashboard (today) and on Analytics (any
@@ -266,21 +267,21 @@ export function DirectionCards({ figures: f, previous: p, periodLabel }: Omit<Ca
   return (
     <div className="dcards">
       <FigureCard
-        icon={<PhoneIncoming size={18} />} title={t('dashboard.direction.inbound', 'Inbound')}
+        icon={<PhoneIncoming size={18} />} title={t('direction.inbound', 'Inbound')}
         periodLabel={periodLabel}
         period={f.inbound.calls}
         periodDelta={change(f.inbound.calls, p?.inbound.calls)}
         metrics={inboundMetrics}
       />
       <FigureCard
-        icon={<PhoneOutgoing size={18} />} title={t('dashboard.direction.outbound', 'Outbound')}
+        icon={<PhoneOutgoing size={18} />} title={t('direction.outbound', 'Outbound')}
         periodLabel={periodLabel}
         period={f.outbound.calls}
         periodDelta={change(f.outbound.calls, p?.outbound.calls)}
         periodParts={o ? [
-          { label: t('analytics.drilldown.noAnswer', 'No Answer'), n: o.noAnswer },
-          { label: t('analytics.drilldown.busy', 'Busy'), n: o.busy },
-          { label: t('analytics.drilldown.failed', 'Failed'), n: o.failed },
+          { label: callStatusLabel(t, 'NO_ANSWER'), n: o.noAnswer },
+          { label: callStatusLabel(t, 'BUSY'), n: o.busy },
+          { label: callStatusLabel(t, 'FAILURE'), n: o.failed },
         ] : []}
         metrics={outboundMetrics}
       />

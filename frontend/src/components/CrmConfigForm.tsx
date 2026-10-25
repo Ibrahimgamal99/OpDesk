@@ -80,9 +80,9 @@ const DEFAULT_CONFIG: CRMConfig = {
 
 // Icons + labels for the direction segmented control.
 const CRM_DIRECTIONS = [
-  { key: 'sync_dir_inbound' as const,  i18n: 'settings.crm.dirInbound',  label: 'Inbound',  Icon: PhoneIncoming },
-  { key: 'sync_dir_outbound' as const, i18n: 'settings.crm.dirOutbound', label: 'Outbound', Icon: PhoneOutgoing },
-  { key: 'sync_dir_internal' as const, i18n: 'settings.crm.dirInternal', label: 'Internal', Icon: ArrowLeftRight },
+  { key: 'sync_dir_inbound' as const,  i18n: 'direction.inbound',  label: 'Inbound',  Icon: PhoneIncoming },
+  { key: 'sync_dir_outbound' as const, i18n: 'direction.outbound', label: 'Outbound', Icon: PhoneOutgoing },
+  { key: 'sync_dir_internal' as const, i18n: 'direction.internal', label: 'Internal', Icon: ArrowLeftRight },
 ];
 
 const CRM_AUTH_LABELS: Record<string, string> = {
@@ -480,7 +480,7 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
         disabled={saving || (config.enabled && !config.server_url.trim())}
       >
         {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
-        {saving ? t('settings.saving') : t('settings.save')}
+        {saving ? t('common.saving') : t('settings.save')}
       </button>
     </>
   );
@@ -551,7 +551,7 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                 <span className="crmx-meta-k">{t('settings.crm.lookupTitle', 'Contact lookup')}</span>
                 <span className="crmx-meta-v">
                   <span className={`crmx-dot ${config.lookup_enabled ? 'ok' : 'off'}`} />
-                  {config.lookup_enabled ? t('settings.crm.enabled', 'Enabled') : t('settings.crm.disabled', 'Disabled')}
+                  {config.lookup_enabled ? t('common.enabled', 'Enabled') : t('common.disabled', 'Disabled')}
                 </span>
               </div>
             </div>
@@ -612,11 +612,11 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                   {config.auth_type === 'basic_auth' && (
                     <FormRow>
                       <FormField label={t('settings.crm.username')}>
-                        <input type="text" className="form-input" placeholder={t('settings.crm.usernamePh', 'Username')}
+                        <input type="text" className="form-input" placeholder={t('fields.username', 'Username')}
                           value={config.username || ''} onChange={(e) => updateConfig({ username: e.target.value })} />
                       </FormField>
                       <FormField label={t('settings.crm.password')}>
-                        <input {...secretProps('password', t('settings.crm.passwordPh', 'Password'))} />
+                        <input {...secretProps('password', t('fields.password', 'Password'))} />
                       </FormField>
                     </FormRow>
                   )}
@@ -798,7 +798,7 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                                   <div className="u-row u-gap-1 u-mb-2">
                                     <button type="button" className="btn btn-ghost btn-sm"
                                       onClick={() => updateConfig({ sync_fields: [...catalog] })}>
-                                      {t('settings.crm.selectAll', 'Select all')}
+                                      {t('common.selectAll', 'Select all')}
                                     </button>
                                     <button type="button" className="btn btn-ghost btn-sm"
                                       onClick={() => updateConfig({ sync_fields: [] })}>
@@ -1100,9 +1100,9 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
                       {/* Template debugging: name templates are JSON paths into
                           someone else's API, so the real response is what you need. */}
-                      <FormSection title={t('settings.crm.lookupTestTitle', 'Test lookup')}>
+                      <FormSection title={t('settings.crm.lookupTestRun', 'Test lookup')}>
                         <FormRow>
-                          <FormField label={t('contactLookup.testPhone', 'Phone number')} htmlFor="lk-test">
+                          <FormField label={t('fields.phoneNumber', 'Phone number')} htmlFor="lk-test">
                             <input
                               id="lk-test"
                               type="tel"

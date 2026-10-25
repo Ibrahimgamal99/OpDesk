@@ -43,7 +43,7 @@ const CATEGORIES: { key: SettingsCategory; labelKey: string; fallback: string }[
   { key: 'recording',      labelKey: 'settings.home.cat.recording',     fallback: 'Recording & Compliance' },
   { key: 'access',         labelKey: 'settings.home.cat.access',        fallback: 'Integrations & Access' },
   { key: 'contact-center', labelKey: 'settings.home.cat.contactCenter', fallback: 'Contact Center' },
-  { key: 'analytics',      labelKey: 'settings.home.cat.analytics',     fallback: 'Analytics' },
+  { key: 'analytics',      labelKey: 'nav.analytics',     fallback: 'Analytics' },
 ];
 
 /** Static half of a card: its category, icon and copy. The live half (the
@@ -78,7 +78,7 @@ const SECTION_META: {
     titleKey: 'notReady.title', titleFallback: 'Not-Ready Codes',
     descKey: 'notReady.description', descFallback: 'Pause reasons agents select when going Not-Ready.' },
   { tab: 'analytics', cat: 'analytics', Icon: BarChart3,
-    titleKey: 'analytics.settings.title', titleFallback: 'Analytics',
+    titleKey: 'nav.analytics', titleFallback: 'Analytics',
     descKey: 'settings.home.desc.analytics', descFallback: 'SLA target, FCR window and short-abandon threshold.' },
 ];
 
@@ -247,8 +247,8 @@ export function SettingsPanel() {
   const on = (text: string): CardStatus => ({ tone: 'on', text });
   const off = (text: string): CardStatus => ({ tone: 'off', text });
   const unknown: CardStatus = { tone: 'unknown', text: '' };
-  const enabledLabel = t('settings.qos.statusEnabled', 'Enabled');
-  const disabledLabel = t('settings.qos.statusDisabled', 'Disabled');
+  const enabledLabel = t('common.enabled', 'Enabled');
+  const disabledLabel = t('common.disabled', 'Disabled');
 
   const statusFor = (tab: SettingsTab): CardStatus => {
     switch (tab) {
@@ -273,7 +273,7 @@ export function SettingsPanel() {
         if (!crmSummary.enabled) return off(disabledLabel);
         const parts = [
           crmSummary.sync_enabled !== false ? t('settings.home.status.crmPush', 'Call-data push') : null,
-          crmSummary.lookup_enabled ? t('settings.home.status.crmLookup', 'Contact lookup') : null,
+          crmSummary.lookup_enabled ? t('settings.crm.lookupTitle', 'Contact lookup') : null,
         ].filter((p): p is string => !!p);
         return on(parts.length ? parts.join(' · ') : enabledLabel);
       }

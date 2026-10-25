@@ -168,7 +168,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
               className="softphone-header-btn"
               onClick={onRefresh}
               disabled={refreshDisabled}
-              title={t('softphone.refresh', 'Refresh')}
+              title={t('common.refresh', 'Refresh')}
             >
               <RefreshCw size={14} />
             </button>
@@ -263,8 +263,8 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
             className={`agent-dnd-toggle ${isDnd ? 'on' : ''}`}
             onClick={() => { if (locked) return; if (isDnd) goIdle(); else setDnd(); }}
             disabled={locked}
-            title={isDnd ? t('agent.state.available', 'Available') : t('agent.dnd', 'Do Not Disturb')}
-            aria-label={t('agent.dnd', 'Do Not Disturb')}
+            title={isDnd ? t('agent.state.available', 'Available') : t('agent.state.dnd', 'Do Not Disturb')}
+            aria-label={t('agent.state.dnd', 'Do Not Disturb')}
           >
             <span className="agent-dnd-toggle-track">
               <span className="agent-dnd-toggle-knob">
@@ -283,8 +283,8 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
             className={`agent-queue-toggle ${queueOn ? 'on' : ''}`}
             onClick={() => { if (locked) return; if (queueOn) logout(); else login(); }}
             disabled={locked}
-            title={queueOn ? t('agent.logout', 'Log out') : t('agent.login', 'Log in')}
-            aria-label={queueOn ? t('agent.logout', 'Log out') : t('agent.login', 'Log in')}
+            title={queueOn ? t('agent.logout', 'Log out') : t('common.logIn', 'Log in')}
+            aria-label={queueOn ? t('agent.logout', 'Log out') : t('common.logIn', 'Log in')}
           >
             <span className="agent-queue-toggle-track">
               <span className="agent-queue-toggle-knob">
@@ -310,7 +310,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
           </button>
         )}
         {onRefresh && (
-          <button type="button" className="agent-header-refresh" onClick={onRefresh} disabled={refreshDisabled} title={t('softphone.refresh', 'Refresh')}>
+          <button type="button" className="agent-header-refresh" onClick={onRefresh} disabled={refreshDisabled} title={t('common.refresh', 'Refresh')}>
             <RefreshCw size={14} />
           </button>
         )}
@@ -319,13 +319,13 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
       {menuOpen && menuable && (
         <div className="agent-header-menu">
           {/* Return-to-ready / come-online transitions */}
-          {dState === 'not_ready' && mItem(Play, t('agent.goReady', 'Ready'), setReady)}
-          {!queueOn && mItem(Play, t('agent.goReady', 'Ready'), login)}
+          {dState === 'not_ready' && mItem(Play, t('agent.state.ready', 'Ready'), setReady)}
+          {!queueOn && mItem(Play, t('agent.state.ready', 'Ready'), login)}
 
           {/* Not-Ready reasons (only meaningful in queue) */}
           {showReasons && (
             <>
-              <div className="agent-header-menu-label">{t('agent.notReady', 'Not Ready')}</div>
+              <div className="agent-header-menu-label">{t('agent.state.notReady', 'Not Ready')}</div>
               {reasons.length === 0 && (
                 <div className="agent-bar-menu-empty">{t('agent.noReasons', 'No reason codes')}</div>
               )}
@@ -348,7 +348,7 @@ export function AgentStatusHeader({ title, icon, isConnected, presence, onCall, 
           {showDnd && (
             <>
               {hasAbove && <div className="agent-header-menu-sep" />}
-              {mItem(MinusCircle, t('agent.dnd', 'Do Not Disturb'), setDnd)}
+              {mItem(MinusCircle, t('agent.state.dnd', 'Do Not Disturb'), setDnd)}
             </>
           )}
           {isDnd && mItem(CircleDot, t('agent.state.available', 'Available'), goIdle)}

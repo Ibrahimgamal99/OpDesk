@@ -394,7 +394,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           : <EmptyState icon={Users} title={t('users.noMatches', 'No users match "{{query}}"', { query: search })} />}
         columns={[
           {
-            key: 'name', header: t('users.username'), primary: true,
+            key: 'name', header: t('fields.username'), primary: true,
             cell: u => {
               const metaParts = [u.name, u.extension].filter(Boolean);
               return (
@@ -408,7 +408,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             },
           },
           {
-            key: 'role', header: t('users.role'),
+            key: 'role', header: t('fields.role'),
             cell: u => (
               <Badge tone={ROLE_TONE[u.role] ?? 'neutral'}>
                 {t(`users.roles.${u.role}`, { defaultValue: u.role })}
@@ -490,7 +490,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         footer={
           <>
             <button type="button" className="btn" onClick={resetForm}>
-              {t('users.cancel')}
+              {t('common.cancel')}
             </button>
             <button type="submit" form="user-form" className="btn btn-primary">
               <Save size={14} />
@@ -501,9 +501,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       >
         <form id="user-form" onSubmit={handleCreateOrUpdate}>
           <Alert tone={message?.type === 'success' ? 'success' : 'error'} className="u-mb-4">{message?.text}</Alert>
-          <FormSection title={t('users.account')} first>
+          <FormSection title={t('common.account')} first>
             <FormRow>
-              <FormField label={t('users.username')} htmlFor="up-user-username" required>
+              <FormField label={t('fields.username')} htmlFor="up-user-username" required>
                 <input
                   id="up-user-username"
                   type="text"
@@ -511,10 +511,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   className="form-input"
                   value={form.username}
                   onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                  placeholder={t('users.username')}
+                  placeholder={t('fields.username')}
                 />
               </FormField>
-              <FormField label={editingUser ? t('users.newPassword') : t('users.password')} htmlFor="up-user-password" required={!editingUser}>
+              <FormField label={editingUser ? t('users.newPassword') : t('fields.password')} htmlFor="up-user-password" required={!editingUser}>
                 <div className="u-row u-gap-2">
                   <input
                     id="up-user-password"
@@ -523,7 +523,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                     className="form-input u-flex-1 u-min-w-0"
                     value={form.password}
                     onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                    placeholder={editingUser ? t('users.keepBlank') : t('users.password')}
+                    placeholder={editingUser ? t('users.keepBlank') : t('fields.password')}
                   />
                   <button
                     type="button"
@@ -549,7 +549,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   className="form-input"
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder={t('users.fullName')}
+                  placeholder={t('fields.fullName')}
                 />
               </FormField>
               <FormField label={t('users.extension')}>
@@ -561,7 +561,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   ariaLabel={t('users.extension')}
                   searchPlaceholder={t('users.searchExtension', 'Search extension…')}
                   options={[
-                    { value: '', label: t('users.none', 'None') },
+                    { value: '', label: t('common.none', 'None') },
                     ...agents.map(a => ({
                       value: a.extension,
                       label: `${a.extension}${a.name !== a.extension ? ' — ' + a.name : ''}`,
@@ -586,7 +586,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             )}
             <FormRow>
               <FormField
-                label={t('users.role')}
+                label={t('fields.role')}
                 hint={form.role === 'admin' ? t('users.adminMonitorDesc') : form.role === 'agent' ? t('users.agentDesc') : undefined}
               >
                 <Dropdown
@@ -594,7 +594,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   value={form.role}
                   onChange={v => setForm(f => ({ ...f, role: v as Role }))}
                   icon={Shield}
-                  ariaLabel={t('users.role')}
+                  ariaLabel={t('fields.role')}
                   options={[
                     { value: 'supervisor', label: t('users.roles.supervisor'), dot: 'blue'    },
                     { value: 'agent',      label: t('users.roles.agent'),      dot: 'green'   },

@@ -29,7 +29,6 @@
     "dashboard": "Painel",
     "expandSidebar": "Expandir barra lateral",
     "group": {
-      "live": "Ao vivo",
       "reports": "Relatórios",
       "work": "Trabalho"
     },
@@ -52,7 +51,6 @@
     "noNewNotifications": "Nenhuma notificação nova",
     "ext": "Ramal",
     "from": "De",
-    "queue": "Fila",
     "read": "Ler",
     "markRead": "Marcar como lida",
     "markAllRead": "Marcar tudo como lido",
@@ -71,12 +69,9 @@
     "waiting": "Em espera"
   },
   "login": {
-    "title": "OpDesk",
     "subtitle": "Painel de operador do Asterisk",
     "extensionLabel": "Ramal ou nome de usuário",
     "extensionPlaceholder": "ex.: 1001 ou admin",
-    "passwordLabel": "Senha",
-    "passwordPlaceholder": "Senha",
     "signIn": "Entrar",
     "signingIn": "Entrando…",
     "errorEmpty": "Informe o ramal/nome de usuário e a senha",
@@ -85,10 +80,7 @@
     "errorNetwork": "Erro de rede. Tente novamente."
   },
   "extensions": {
-    "title": "Ramais",
     "noExtensions": "Nenhum ramal sendo monitorado",
-    "sync": "Sincronizar",
-    "syncAll": "Sincronizar todos os dados",
     "webrtcEnabled": "WebRTC habilitado (clique para desativar)",
     "webrtcDisabled": "WebRTC desabilitado (clique para ativar)",
     "webrtcOn": "WebRTC ativado",
@@ -112,7 +104,6 @@
     "dndOff": "Não perturbe: desativado",
     "dndOn": "Não perturbe: ativado",
     "filter": {
-      "allStatuses": "Todos os status",
       "allTypes": "Todos os tipos",
       "deskPhone": "Telefone de mesa",
       "matches": "{{shown}} de {{total}}",
@@ -124,44 +115,32 @@
     "searchPlaceholder": "Pesquisar por número ou nome"
   },
   "activeCalls": {
-    "title": "Chamadas ativas",
     "noActiveCalls": "Nenhuma chamada ativa",
-    "sync": "Sincronizar",
-    "syncAll": "Sincronizar todos os dados",
     "table": {
-      "extension": "Ramal",
       "state": "Estado",
       "talkingTo": "Falando com",
-      "duration": "Duração",
-      "talkTime": "Tempo de conversa",
-      "actions": "Ações"
+      "talkTime": "Tempo de conversa"
     },
     "actions": {
       "listen": "Ouvir (silencioso)",
       "whisper": "Sussurrar para o agente",
       "barge": "Entrar na chamada",
-      "transfer": "Transferir chamada",
-      "endCall": "Encerrar chamada"
+      "transfer": "Transferir chamada"
     },
     "transfer": {
       "source": "Origem",
       "option1": "Opção 1:",
       "transferTo": "Transferir para",
       "extOrNumber": "Ramal ou número",
-      "transfer": "Transferir",
       "option2": "Opção 2:",
       "takeOver": "Assumir",
-      "cancel": "Cancelar",
       "legExtension": "Ramal ({{ext}})",
       "legTalkingTo": "Falando com ({{ext}})",
       "takeOverTitle": "Transferir o chamador ({{caller}}) para o seu ramal ({{ext}})"
     }
   },
   "queues": {
-    "title": "Filas",
     "noQueues": "Nenhuma fila configurada",
-    "sync": "Sincronizar",
-    "syncAll": "Sincronizar todos os dados",
     "waiting": "{{count}} em espera",
     "callersWaiting": "Chamadores em espera",
     "members": "Membros ({{count}})",
@@ -170,45 +149,32 @@
     "selectExtension": "Buscar ramal ou nome…",
     "noExtensions": "Nenhum ramal disponível",
     "loginStatus": "Status de login",
-    "statusReady": "Disponível",
-    "statusNotReady": "Indisponível",
-    "login": "Entrar",
     "namePlaceholder": "Nome (opcional)",
     "add": "Adicionar",
-    "cancel": "Cancelar",
     "noMembers": "Nenhum membro na fila",
-    "pause": "Pausar",
     "unpause": "Retomar",
     "removeStatic": "Não é possível remover: o membro está configurado estaticamente em queues.conf. Edite a configuração e recarregue o Asterisk para removê-lo.",
     "removeDynamic": "Remover da fila (membro dinâmico)",
     "removeCheck": "Remover da fila (será verificado se pode ser removido)",
     "removeConfirm": "Remover {{member}} da fila {{queue}}?",
     "addMemberTo": "Adicionar membro a {{queue}}",
-    "extensionLabel": "Ramal",
     "filter": {
-      "agent": "Agente",
       "agentSearch": "Encontrar um agente",
       "allAgents": "Todos os agentes",
-      "allStatuses": "Todos os status",
       "idle": "Ociosa",
       "matches": "{{shown}} de {{total}}",
       "noReady": "Nenhum agente disponível",
       "waiting": "Com chamadores em espera"
     },
-    "memberInCall": "Em chamada",
-    "memberReady": "Disponível",
     "memberUnavailable": "Indisponível",
-    "nameLabel": "Nome",
     "noMatches": "Nenhuma fila corresponde a estes filtros.",
     "noMatchesTitle": "Nenhuma fila correspondente",
-    "notReady": "Indisponível",
     "removeMember": "Remover membro",
     "removeTitle": "Remover membro?",
     "search": "Pesquisar filas",
     "searchPlaceholder": "Pesquisar por nome ou número da fila"
   },
   "callLog": {
-    "title": "Histórico de chamadas",
     "viewManage": "Visualize e gerencie registros de chamadas",
     "searchPlaceholder": "Pesquisar por origem ou destino...",
     "sortOldest": "Ordenar: mais antigas primeiro",
@@ -217,16 +183,11 @@
     "sortNewestBtn": "Mais recentes primeiro",
     "dateFrom": "Data inicial",
     "dateTo": "Data final",
-    "today": "Hoje",
-    "yesterday": "Ontem",
     "noRecording": "Sem gravação",
     "viewQoS": "Ver relatório de QoS",
     "showJourney": "Mostrar jornada da chamada",
     "loading": "Carregando histórico de chamadas...",
-    "retry": "Tentar novamente",
     "noCallsFound": "Nenhuma chamada encontrada",
-    "allStatuses": "Todos os status",
-    "allDirections": "Todas as direções",
     "allApps": "Todos os aplicativos",
     "supervisionHidden": "Supervisão oculta ({{count}})",
     "supervisionShown": "Mostrando supervisão",
@@ -240,33 +201,16 @@
     "previous": "Anterior",
     "next": "Próxima",
     "play": "Reproduzir",
-    "pause": "Pausar",
     "download": "Baixar",
     "na": "N/D",
     "table": {
       "src": "Origem",
       "dest": "Destino",
       "app": "Aplicativo",
-      "direction": "Direção",
-      "status": "Status",
-      "agent": "Agente",
-      "duration": "Duração",
       "talk": "Conversa",
       "recording": "Gravação",
       "dateTime": "Data e hora",
-      "callJourney": "Jornada da chamada",
       "qos": "QoS"
-    },
-    "status": {
-      "ANSWERED": "Atendida",
-      "NO_ANSWER": "Sem resposta",
-      "BUSY": "Ocupado",
-      "FAILURE": "Falhou",
-      "ABANDONED": "Abandonada",
-      "CANCELED": "Cancelada",
-      "DROPPED": "Caiu",
-      "OUT_OF_REACH": "Fora de alcance",
-      "in_progress": "Em andamento"
     },
     "direction": {
       "incoming": "Entrada",
@@ -301,9 +245,7 @@
       "dataLoss": "Perda de dados",
       "audioScore": "Pontuação de áudio (MES)",
       "rtt": "RTT (tempo de ida e volta)",
-      "close": "Fechar",
       "packets": "{{count}} pacotes",
-      "agent": "Agente",
       "customer": "Cliente"
     },
     "journey": {
@@ -333,7 +275,6 @@
         "WHISPER": "Sussurro"
       }
     },
-    "clearFilters": "Limpar filtros",
     "emptyFiltered": "Limpe os filtros ou tente outra pesquisa.",
     "emptyRange": "Tente um intervalo de datas maior.",
     "loadFailed": "Falha ao carregar o histórico de chamadas",
@@ -341,18 +282,13 @@
     "recordingVadTitle": "{{file}} — clique para ver a atividade de voz",
     "search": "Pesquisar chamadas",
     "seek": "Avançar/retroceder",
-    "type": {
-      "inbound": "Entrada",
-      "internal": "Interna",
-      "outbound": "Saída"
-    },
+    "type": {},
     "typeShort": {
       "IN": "ENT",
       "INT": "INT",
       "OUT": "SAÍ"
     },
     "vad": {
-      "duration": "Duração",
       "overlap": "Sobreposição",
       "silence": "Silêncio",
       "speaker1": "Falante 1 ({{count}} segmentos)",
@@ -368,21 +304,15 @@
     "closeDialer": "Fechar teclado",
     "enterNumber": "Digite o número",
     "browser": "Navegador",
-    "incomingCall": "Chamada recebida",
     "hold": "Reter",
-    "resume": "Retomar",
     "mute": "Silenciar",
     "unmute": "Ativar som",
-    "transfer": "Transferir",
     "transferToExtension": "Transferir para o ramal",
     "transferPlaceholder": "ex.: 201",
-    "cancel": "Cancelar",
     "decline": "Recusar",
     "answer": "Atender",
     "log": "Registro",
     "noEntries": "Nenhuma entrada",
-    "refresh": "Atualizar",
-    "endCall": "Encerrar chamada",
     "backspace": "Apagar",
     "status": {
       "connecting": "Conectando...",
@@ -398,7 +328,6 @@
     "quality_mos": "MOS",
     "quality_jitter": "Jitter",
     "quality_loss": "Perda",
-    "quality_rtt": "Latência",
     "reconnect": "Reconectar",
     "adminServerHint": {
       "after": "em Configurações.",
@@ -409,7 +338,6 @@
     "callStatus": {
       "callError": "Erro na chamada",
       "calling": "Ligando para {{number}}...",
-      "inCall": "Em chamada",
       "inCallWith": "Em chamada com {{number}}",
       "incoming": "Chamada recebida...",
       "ringing": "Tocando..."
@@ -440,12 +368,9 @@
     "noUsers": "Ainda não há usuários. Adicione um acima.",
     "loading": "Carregando usuários...",
     "adminOnly": "Somente administradores podem gerenciar usuários.",
-    "username": "Nome de usuário",
-    "password": "Senha",
     "newPassword": "Nova senha (deixe em branco para manter)",
     "keepBlank": "Deixe em branco para manter",
     "displayName": "Nome de exibição",
-    "fullName": "Nome completo",
     "extension": "Ramal (opcional)",
     "noExtensions": "Não há ramais no sistema",
     "webrtcLabel": "Softphone WebRTC",
@@ -456,10 +381,8 @@
     "groupsLabel": "Grupos (o usuário terá acesso a agentes e filas dos grupos selecionados)",
     "createNewGroup": "Criar novo grupo",
     "newGroupNamePlaceholder": "Nome do novo grupo (opcional)",
-    "account": "Conta",
     "profile": "Perfil",
     "access": "Acesso (via grupos)",
-    "cancel": "Cancelar",
     "selectModes": "Selecione os modos...",
     "selectAtLeastOne": "Selecione pelo menos um",
     "selectGroups": "Selecione os grupos...",
@@ -492,7 +415,6 @@
     "searchPlaceholder": "Utilizador, nome, extensão, grupo…",
     "noMatches": "Nenhum utilizador corresponde a \"{{query}}\"",
     "deleteTitle": "Excluir usuário?",
-    "none": "Nenhum",
     "searchExtension": "Pesquisar ramal…"
   },
   "groups": {
@@ -510,15 +432,10 @@
     "agents": "Agentes (ramais aos quais este grupo pode acessar)",
     "queues": "Filas (filas às quais este grupo pode acessar)",
     "usersInGroup": "Usuários deste grupo (eles terão acesso aos agentes e filas acima)",
-    "cancel": "Cancelar",
     "groupSection": "Grupo",
     "agentsQueues": "Agentes e filas",
-    "usersSection": "Usuários",
     "description": "Crie grupos de acesso: nome, agentes (ramais), filas e atribua usuários. O acesso do usuário é derivado de seus grupos.",
-    "none": "Nenhum",
     "agentsLabel": "Agentes",
-    "queuesLabel": "Filas",
-    "usersLabel": "Usuários",
     "selectAgents": "Selecione agentes...",
     "selectQueues": "Selecione filas...",
     "selectUsers": "Selecione usuários...",
@@ -570,7 +487,6 @@
     "qualityOfService": "Qualidade de serviço",
     "webrtc": "WebRTC",
     "save": "Salvar configuração",
-    "saving": "Salvando...",
     "cancel": "Cancelar",
     "loading": "Carregando configuração...",
     "crm": {
@@ -607,8 +523,6 @@
       "outcomeMapHint": "Remapeie um resultado para o que o seu CRM espera (ex.: BUSY → NO_ANSWER). Aplica-se a status e disposition. Deixe em branco para enviar sem alteração.",
       "stateLive": "Ativo",
       "stateOff": "Inativo",
-      "enabled": "Ativado",
-      "disabled": "Desativado",
       "offTitle": "A integração com o CRM está desativada",
       "pushTarget": "Destino do envio",
       "sync": "Sincronização de chamadas",
@@ -649,15 +563,11 @@
       "syncEndpointHint": "Anexado à URL do servidor. Deixe em branco para usar o caminho da conexão.",
       "httpMethod": "Método HTTP",
       "directions": "Enviar estas direções de chamada",
-      "dirInbound": "Entrante",
-      "dirOutbound": "Saliente",
-      "dirInternal": "Interna",
       "noDirections": "Nenhuma direção selecionada — nada será enviado.",
       "payload": "Campos do payload",
       "payloadSub": "Escolha os valores a enviar e, se necessário, a chave usada para cada um.",
       "selected": "selecionados",
       "noCatalog": "Não foi possível carregar o catálogo de campos. Recarregue a página e tente novamente.",
-      "selectAll": "Selecionar tudo",
       "clear": "Limpar",
       "colField": "Campo",
       "colSentAs": "Enviado como",
@@ -692,7 +602,6 @@
       "lookupVerifyPathHint": "Caminho para o campo de telefone do registro retornado. Um resultado só vale se corresponder ao número pesquisado — protege contra falsos positivos de busca aproximada.",
       "lookupTtl": "Memória de números desconhecidos (horas)",
       "lookupTtlHint": "Por quanto tempo uma resposta \"sem correspondência\" é lembrada antes de perguntar novamente ao CRM sobre esse número. Contatos correspondentes são salvos permanentemente na agenda.",
-      "lookupTestTitle": "Testar consulta",
       "lookupTestPhone": "Número de telefone, p. ex. +20 100 555 1234",
       "lookupTestRun": "Testar consulta",
       "lookupTestFound": "Contato encontrado: {{name}}",
@@ -734,7 +643,6 @@
       "fieldsToSend": "Campos a enviar",
       "jsonKeyFor": "Chave JSON para {{field}}",
       "outcome": "Resultado",
-      "passwordPh": "Senha",
       "pickAtLeastOne": "Escolha ≥ 1",
       "pushDirections": "Enviar estas direções de chamada",
       "saveNeedsRestart": "Salvo, mas é necessário reiniciar para aplicar.",
@@ -744,8 +652,7 @@
       "sendOutcomeAs": "Enviar {{outcome}} como",
       "syncToggle": "Enviar registros de chamadas ao CRM",
       "testFailed": "Falha no teste de conexão",
-      "testOk": "Conexão bem-sucedida",
-      "usernamePh": "Nome de usuário"
+      "testOk": "Conexão bem-sucedida"
     },
     "qos": {
       "title": "Qualidade de serviço (QoS)",
@@ -757,8 +664,6 @@
       "disableError": "Falha ao desabilitar QoS",
       "enableConfigError": "Falha ao habilitar a configuração de QoS",
       "disableConfigError": "Falha ao desabilitar a configuração de QoS",
-      "statusDisabled": "Desabilitado",
-      "statusEnabled": "Habilitado",
       "statusError": "Não foi possível ler o status do QoS."
     },
     "webrtcSettings": {
@@ -796,8 +701,6 @@
     "apiKeys": {
       "add": "Adicionar chave",
       "addTitle": "Adicionar chave de API",
-      "caption": "Chaves de API",
-      "copy": "Copiar",
       "copyKey": "Copiar chave",
       "copyNow": "Copie esta chave agora — ela não será exibida novamente.",
       "createdTitle": "Chave de API criada",
@@ -835,9 +738,7 @@
       "scopes": "Escopos",
       "scopesHint": "A chave só pode chamar endpoints cobertos pelos escopos concedidos.",
       "scopesNever": "Configurações, gerenciamento de usuários e logs nunca podem ser acessados com uma chave.",
-      "selectAll": "Selecionar tudo",
       "selectedCount": "{{count}} selecionados",
-      "status": "Status",
       "updateFailed": "Falha ao atualizar a chave de API",
       "yourKey": "Sua chave"
     },
@@ -847,8 +748,7 @@
         "contactCenter": "Central de atendimento",
         "telephony": "Telefonia e rede",
         "recording": "Gravação e conformidade",
-        "access": "Integrações e acesso",
-        "analytics": "Análises"
+        "access": "Integrações e acesso"
       },
       "desc": {
         "analytics": "Meta de SLA, janela de FCR e limite de abandono rápido.",
@@ -863,7 +763,6 @@
       "searchPlaceholder": "Pesquisar configurações…",
       "status": {
         "activeCodes": "Códigos ativos: {{n}}",
-        "crmLookup": "Consulta de contatos",
         "crmPush": "Envio de dados de chamadas",
         "keys": "Chaves ativas: {{n}}",
         "noActiveCodes": "Nenhum código ativo",
@@ -910,8 +809,7 @@
   "time": {
     "justNow": "Agora mesmo",
     "minutesAgo": "Há {{count}} min",
-    "hoursAgo": "Há {{count}} h",
-    "yesterday": "Ontem"
+    "hoursAgo": "Há {{count}} h"
   },
   "reason": {
     "busy": "Ocupado",
@@ -951,10 +849,32 @@
     "remove": "Remover",
     "requestFailed": "Falha na requisição",
     "saveChanges": "Salvar alterações",
-    "status": "Status"
+    "status": "Status",
+    "save": "Salvar",
+    "saving": "Salvando…",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "selectAll": "Selecionar tudo",
+    "sync": "Sincronizar",
+    "syncAll": "Sincronizar todos os dados",
+    "pause": "Pausar",
+    "resume": "Retomar",
+    "transfer": "Transferir",
+    "endCall": "Encerrar chamada",
+    "exporting": "Exportando…",
+    "exportFailed": "Falha na exportação. Tente novamente.",
+    "logIn": "Entrar",
+    "changePassword": "Alterar senha",
+    "none": "Nenhum",
+    "live": "Ao vivo",
+    "today": "Hoje",
+    "yesterday": "Ontem",
+    "allStatuses": "Todos os status",
+    "inCall": "Em chamada",
+    "latency": "Latência",
+    "account": "Conta"
   },
   "analytics": {
-    "title": "Análises",
     "subtitle": "Métricas de desempenho do call center",
     "loading": "Carregando análises...",
     "error": "Falha ao carregar dados de análises",
@@ -967,8 +887,6 @@
       "drilldown": "Explorador"
     },
     "period": {
-      "today": "Hoje",
-      "yesterday": "Ontem",
       "last7": "Últimos 7 dias",
       "last30": "Últimos 30 dias",
       "thisMonth": "Este mês",
@@ -1010,9 +928,7 @@
       "offered": "Oferecidas"
     },
     "agents": {
-      "title": "Desempenho de agentes",
       "rank": "#",
-      "agent": "Agente",
       "slaContrib": "SLA %",
       "trend7d": "Tendência 7d",
       "agents": "agentes"
@@ -1021,14 +937,9 @@
       "title": "Explorador detalhado",
       "filterQueue": "Fila...",
       "filterAgent": "Agente...",
-      "allDirections": "Todas as direções",
-      "allDispositions": "Todas as disposições",
       "records": "registros",
       "date": "Data",
       "src": "Chamante",
-      "queue": "Fila",
-      "agent": "Agente",
-      "duration": "Duração",
       "talk": "Conversa",
       "waitTime": "Espera",
       "disposition": "Disposição",
@@ -1037,21 +948,9 @@
       "page": "Página",
       "exportCsv": "Exportar CSV",
       "exportXlsx": "Exportar XLSX",
-      "exporting": "Exportando...",
-      "exportFailed": "Falha na exportação. Tente novamente.",
-      "clearFilters": "Limpar",
-      "direction": "Direção",
-      "dst": "Destino",
-      "answered": "Atendida",
-      "busy": "Ocupado",
-      "dirIn": "Entrada",
-      "dirInternal": "Interna",
-      "dirOut": "Saída",
-      "failed": "Falhou",
-      "noAnswer": "Sem resposta"
+      "dst": "Destino"
     },
     "settings": {
-      "title": "Análises",
       "slaSection": "Limites de SLA",
       "slaPerQueue": "Segundos para atender — substituição por fila (usa o padrão global se não definido)",
       "slaDefault": "Limite padrão",
@@ -1064,10 +963,7 @@
       "unitDays": "dias",
       "unitSeconds": "segundos"
     },
-    "directions": {
-      "inbound": "Entrada",
-      "outbound": "Saída"
-    },
+    "directions": {},
     "overview": {
       "byDirection": "Chamadas por direção",
       "inboundOutcomes": "Resultados das chamadas de entrada",
@@ -1124,28 +1020,17 @@
     "adherence": {
       "title": "Aderência do agente",
       "subtitle": "Tempo de login, disponível, em chamada e pausa por agente no período selecionado.",
-      "agent": "Agente",
       "login": "Entrada",
       "logout": "Saída",
       "loggedIn": "Conectado",
-      "ready": "Disponível",
-      "onCall": "Em chamada",
-      "wrapUp": "Pós-atendimento",
-      "notReady": "Indisponível",
       "occupancy": "Ocupação",
       "stillIn": "Ativo",
       "empty": "Sem atividade de agentes neste período",
       "exportCsv": "CSV",
-      "exportXlsx": "Excel",
-      "exporting": "Exportando…",
-      "exportFailed": "Falha na exportação. Tente novamente."
+      "exportXlsx": "Excel"
     },
-    "goReady": "Disponível",
-    "notReady": "Indisponível",
     "noReasons": "Sem códigos de motivo",
     "unpaid": "pausa",
-    "dnd": "Não perturbe",
-    "login": "Entrar",
     "logout": "Sair",
     "state": {
       "ready": "Disponível",
@@ -1164,7 +1049,6 @@
     }
   },
   "logs": {
-    "title": "Logs",
     "tabs": {
       "system": "Sistema",
       "deliveries": "Envios ao CRM"
@@ -1182,11 +1066,7 @@
       "amiHint": "Ativar ou desativar o registo de eventos AMI",
       "sipHint": "Intercalar mensagens SIP em bruto no fluxo",
       "sipFail": "Falha ao alternar o rastreio SIP",
-      "pause": "Pausar",
-      "resume": "Retomar",
       "export": "Exportar",
-      "clear": "Limpar",
-      "live": "Ao vivo",
       "paused": "Pausado",
       "waiting": "A aguardar atividade AMI…",
       "pausedHint": "Fluxo em pausa — retome para receber eventos AMI.",
@@ -1196,14 +1076,11 @@
     },
     "deliveries": {
       "allStatuses": "Todos os resultados",
-      "allDirections": "Todas as direções",
       "searchPlaceholder": "chamador, destino, ID da chamada…",
       "time": "Hora",
-      "direction": "Direção",
       "call": "Chamada",
       "endpoint": "Endpoint",
       "result": "Resultado",
-      "latency": "Latência",
       "attempt": "Tentativa",
       "request": "Requisição",
       "response": "Resposta",
@@ -1215,8 +1092,6 @@
       "resendFail": "Falha ao reenviar.",
       "resentFrom": "Reenviado de #{{id}}",
       "truncatedHint": "O corpo da requisição foi truncado ao ser registrado — não pode ser reenviado.",
-      "copy": "Copiar",
-      "copied": "Copiado",
       "showingCount": "Mostrando {{count}}",
       "status": {
         "success": "Entregue",
@@ -1238,7 +1113,7 @@
     "waitingTitle": "Aguardando atividade AMI"
   },
   "notReady": {
-    "title": "Códigos de Indisponibilidade",
+    "title": "Códigos de indisponibilidade",
     "description": "Motivos de pausa que os agentes selecionam ao ficar Indisponível.",
     "subtitle": "Códigos de motivo que os agentes escolhem ao ficar Indisponível. Códigos produtivos contam como trabalho pago; pausas não.",
     "add": "Adicionar código",
@@ -1246,46 +1121,32 @@
     "label": "Rótulo",
     "productive": "Produtivo",
     "active": "Ativo",
-    "actions": "Ações",
     "system": "Sistema",
     "yes": "Sim",
     "break": "Pausa",
-    "enabled": "Ativado",
-    "disabled": "Desativado",
-    "edit": "Editar",
-    "delete": "Excluir",
     "none": "Nenhum código ainda",
     "addTitle": "Novo código de motivo",
     "editTitle": "Editar código de motivo",
-    "cancel": "Cancelar",
-    "save": "Salvar",
-    "saving": "Salvando…",
     "saveFailed": "Falha ao salvar",
     "confirmDelete": "Excluir este código?",
     "basic": "Básico",
     "color": "Cor",
     "order": "Ordem",
-    "status": "Status",
     "productiveHint": "Conta como trabalho pago (ex.: Reunião, Treinamento) em vez de pausa na aderência.",
     "activeHint": "Códigos inativos ficam ocultos do seletor do agente."
   },
   "contacts": {
-    "title": "Contatos",
     "loading": "Carregando contatos…",
     "loadError": "Falha ao carregar os contatos",
     "addContact": "Adicionar contato",
     "editContact": "Editar contato",
     "updateContact": "Atualizar contato",
     "formDesc": "Os contatos são exibidos onde o número do chamador aparece: painéis, ramais e o softphone.",
-    "name": "Nome",
-    "namePlaceholder": "Nome completo",
-    "phone": "Número de telefone",
     "phonePlaceholder": "ex.: +20 100 000 0000",
     "company": "Empresa",
     "companyPlaceholder": "Empresa (opcional)",
     "notes": "Notas",
     "notesPlaceholder": "Notas (opcional)",
-    "cancel": "Cancelar",
     "nameRequired": "O nome é obrigatório",
     "phoneRequired": "O número de telefone deve conter dígitos",
     "saveError": "Falha ao salvar o contato",
@@ -1316,8 +1177,6 @@
     "passwordOn": "Uma leitura já faz login. Trate o código como a própria senha.",
     "passwordOff": "Seguro para imprimir ou compartilhar: o app pede a senha.",
     "json": "JSON da conta",
-    "copied": "Copiado",
-    "copy": "Copiar",
     "download": "PNG",
     "formatLink": "Referência do formato da conta",
     "button": "QR do app móvel",
@@ -1344,12 +1203,10 @@
     "replace": "Substituir",
     "upload": "Enviar",
     "keepExisting": "Manter a atual",
-    "remove": "Remover",
     "title": "Despertar móvel",
     "description": "Desperta um softphone móvel fechado para chamadas recebidas (RFC 8599). O telefone coloca seu token push no SIP REGISTER; o OpDesk envia o push, segura a chamada até ele se registrar de novo e então deixa tocar.",
     "recommended": "App recomendado: Medut Softphone",
     "general": "Despertar móvel",
-    "enabled": "Ativado",
     "enabledHint": "Antes de discar para um ramal com vínculo push, envia o push e segura a chamada enquanto o app desperta.",
     "hold": "Tempo de espera (segundos)",
     "holdHint": "O máximo que quem liga espera o telefone despertar e se registrar. De 8 a 30.",
@@ -1379,19 +1236,14 @@
     "devices": {
       "title": "Dispositivos registrados (RFC 8599)",
       "none": "Nenhum ainda. Um dispositivo aparece aqui depois de se registrar com pn-provider, pn-prid e pn-param no Contact.",
-      "extension": "Ramal",
       "provider": "Provedor",
       "token": "Token",
       "app": "App",
       "lastSeen": "Visto por último",
       "forget": "Esquecer este dispositivo"
-    },
-    "saving": "Salvando…",
-    "save": "Salvar"
+    }
   },
   "account": {
-    "section": "Conta",
-    "loginPassword": "Alterar senha",
     "sipPassword": "Alterar senha SIP",
     "showNewQr": "Mostrar o novo QR do celular",
     "sipNote": "Todos os telefones e softphones do seu ramal saem e precisam entrar de novo com a nova senha (leia o novo QR).",
@@ -1405,57 +1257,41 @@
     "show": "Mostrar",
     "generate": "Gerar",
     "confirm": "Confirmar a nova senha",
-    "mismatch": "As senhas não coincidem.",
-    "saving": "Salvando…",
-    "save": "Alterar senha"
+    "mismatch": "As senhas não coincidem."
   },
   "profile": {
     "title": "Meu perfil",
-    "account": "Conta",
     "accountDesc": "Seus dados de acesso.",
-    "name": "Nome",
-    "username": "Usuário",
-    "role": "Função",
     "languageDesc": "O idioma em que o OpDesk é exibido neste navegador.",
     "passwordDesc": "A senha com que você entra no OpDesk.",
     "sipDesc": "A senha com que seus telefones e softphones se registram.",
     "qrDesc": "Escaneie com o Medut Softphone para adicionar seu ramal."
   },
   "callStatus": {
-    "ABANDONED": "Abandonada",
     "ANSWERED": "Atendida",
+    "NO_ANSWER": "Sem resposta",
     "BUSY": "Ocupado",
-    "DROPPED": "Caiu",
     "FAILURE": "Falhou",
-    "MISSED": "Perdida",
-    "NETWORK_ERROR": "Erro de rede",
-    "UNANSWERED": "Não atendida",
-    "UNREACHABLE": "Inacessível",
-    "VOICEMAIL": "Correio de voz",
-    "pickerAgentHangup": "Não atendida — o agente desligou enquanto tocava",
-    "pickerAgentNoAnswer": "Perdida — o agente nunca atendeu"
+    "ABANDONED": "Abandonada",
+    "CANCELED": "Cancelada",
+    "DROPPED": "Caiu",
+    "OUT_OF_REACH": "Fora de alcance",
+    "IN_PROGRESS": "Em andamento"
   },
   "contactLookup": {
     "secMatching": "Correspondência de números",
-    "secRequest": "O que perguntar e como ler a resposta",
-    "testPhone": "Número de telefone"
+    "secRequest": "O que perguntar e como ler a resposta"
   },
   "dashboard": {
-    "direction": {
-      "inbound": "Entrada",
-      "outbound": "Saída"
-    },
+    "direction": {},
     "kpi": {
-      "activeCalls": "Chamadas ativas",
       "available": "Disponíveis",
       "longestWait": "Maior espera",
-      "onCall": "Em chamada",
       "ringing": "Tocando",
       "waiting": "Chamadas em espera",
       "peopleReached": "{{reached}} de {{people}} números alcançados",
       "totalSplitInternal": "{{in}} de entrada · {{out}} de saída · {{internal}} internas"
     },
-    "live": "Ao vivo",
     "now": "Agora",
     "queues": {
       "agents": "Agentes",
@@ -1464,7 +1300,7 @@
       "longestWait": "Maior",
       "none": "Nenhuma fila no seu escopo",
       "paused": "Em pausa",
-      "title": "Filas — Ao vivo",
+      "title": "Filas — ao vivo",
       "waiting": "Em espera"
     },
     "tip": {
@@ -1490,12 +1326,9 @@
         "text": "Há quanto tempo a pessoa que espera há mais tempo está aguardando. Fica vermelho após um minuto."
       }
     },
-    "title": "Painel",
     "todaySoFar": "Hoje até agora",
     "todayUnavailable": "O resumo de hoje não está disponível para a sua função.",
     "trend": {
-      "inbound": "Entrada",
-      "outbound": "Saída",
       "title": "Volume de 7 dias"
     },
     "waitingForData": "Aguardando dados ao vivo…",
@@ -1503,8 +1336,7 @@
       "offline": "Desconectados",
       "title": "Disponibilidade dos agentes",
       "total": "{{count}} agentes"
-    },
-    "today": "Hoje"
+    }
   },
   "metrics": {
     "totalCalls": "Total de chamadas",
@@ -1569,5 +1401,24 @@
     },
     "missed": "Perdidas",
     "talkTime": "Tempo de conversa"
+  },
+  "fields": {
+    "agent": "Agente",
+    "extension": "Ramal",
+    "queue": "Fila",
+    "duration": "Duração",
+    "direction": "Direção",
+    "name": "Nome",
+    "username": "Nome de usuário",
+    "password": "Senha",
+    "fullName": "Nome completo",
+    "role": "Função",
+    "phoneNumber": "Número de telefone"
+  },
+  "direction": {
+    "inbound": "Entrada",
+    "outbound": "Saída",
+    "internal": "Interna",
+    "all": "Todas as direções"
   }
 }

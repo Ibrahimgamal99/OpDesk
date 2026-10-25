@@ -90,7 +90,7 @@ function ScopesChecklist({ available, value, onChange }: {
         <Badge tone="info">{t('settings.apiKeys.selectedCount', { defaultValue: '{{count}} selected', count: value.length })}</Badge>
         <div className="u-flex-1" />
         <button type="button" className="btn btn-ghost btn-sm" aria-pressed={allSelected}
-          onClick={() => onChange(allSelected ? [] : [...available])}>{t('settings.apiKeys.selectAll', 'Select all')}</button>
+          onClick={() => onChange(allSelected ? [] : [...available])}>{t('common.selectAll', 'Select all')}</button>
         <button type="button" className="btn btn-ghost btn-sm" aria-pressed={readOnlySelected}
           onClick={() => onChange([...readScopes])}>{t('settings.apiKeys.readOnly', 'Read-only')}</button>
         <button type="button" className="btn btn-ghost btn-sm"
@@ -332,7 +332,7 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
         </div>
       ) : (
         <Table
-          caption={t('settings.apiKeys.caption', 'API keys')}
+          caption={t('settings.home.title.apiKeys', 'API keys')}
           rows={keys}
           rowKey={k => k.id}
           empty={
@@ -354,7 +354,7 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
               cell: k => <span className="u-text-sm u-fg-muted">{k.expires_at ? fmtDate(k.expires_at) : t('settings.apiKeys.never', 'Never')}</span>,
             },
             {
-              key: 'status', header: t('settings.apiKeys.status', 'Status'),
+              key: 'status', header: t('common.status', 'Status'),
               cell: k => <Badge tone={isEnabled(k) ? 'success' : 'neutral'}>{isEnabled(k) ? t('common.enabled', 'Enabled') : t('common.disabled', 'Disabled')}</Badge>,
             },
             {
@@ -436,7 +436,7 @@ export function ApiKeysPanel({ card, onCountChange }: ApiKeysPanelProps) {
               aria-label={t('settings.apiKeys.yourKey', 'Your key')}
             />
             <button type="button" className={`btn btn-icon${copied ? ' u-fg-success' : ''}`} onClick={copyKey}
-              title={t('settings.apiKeys.copy', 'Copy')} aria-label={t('settings.apiKeys.copyKey', 'Copy key')}>
+              title={t('common.copy', 'Copy')} aria-label={t('settings.apiKeys.copyKey', 'Copy key')}>
               {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
           </div>

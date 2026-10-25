@@ -54,7 +54,7 @@ export function Login({ onSuccess }: Props) {
       <Card
         className="login-panel"
         icon={Radio}
-        title={t('login.title')}
+        title={t('app.title')}
         description={t('login.subtitle')}
       >
         <form onSubmit={handleSubmit} noValidate>
@@ -74,12 +74,12 @@ export function Login({ onSuccess }: Props) {
             </FormField>
           </FormRow>
           <FormRow single>
-            <FormField label={t('login.passwordLabel')} htmlFor="login-password">
+            <FormField label={t('fields.password')} htmlFor="login-password">
               <input
                 id="login-password"
                 type="password"
                 className="form-input"
-                placeholder={t('login.passwordPlaceholder')}
+                placeholder={t('fields.password')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"

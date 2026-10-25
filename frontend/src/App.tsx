@@ -81,7 +81,7 @@ function formatNotifTime(iso: string, t: (key: string, opts?: Record<string, unk
   if (sec < 60) return t('time.justNow');
   if (sec < 3600) return t('time.minutesAgo', { count: Math.floor(sec / 60) });
   if (sec < 86400) return t('time.hoursAgo', { count: Math.floor(sec / 3600) });
-  if (sec < 172800) return t('time.yesterday');
+  if (sec < 172800) return t('common.yesterday');
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
@@ -553,7 +553,7 @@ function App({ onLogout }: AppProps) {
   const isAgentRole = role === 'agent';
   const isAdminRole = role === 'admin';
   const navGroups: NavGroup[] = ([
-    { key: 'live', label: t('nav.group.live', 'Live'), items: [
+    { key: 'live', label: t('common.live', 'Live'), items: [
       { tab: 'dashboard', label: t('nav.dashboard', 'Dashboard'), Icon: LayoutDashboard },
       { tab: 'extensions', label: t('nav.extensions'), Icon: Phone },
       { tab: 'calls', label: t('nav.activeCalls'), Icon: PhoneCall, badge: stats.active_calls_count, badgeTone: 'call' },
@@ -668,7 +668,7 @@ function App({ onLogout }: AppProps) {
                           {n.queue != null && n.queue !== '' && (
                             <div className="header-bell-item-row">
                               <Users size={14} className="header-bell-item-icon" aria-hidden />
-                              <span className="header-bell-item-label">{t('header.queue')}</span>
+                              <span className="header-bell-item-label">{t('fields.queue')}</span>
                               <span className="header-bell-item-value" title={n.queue}>{n.queue}</span>
                             </div>
                           )}
@@ -733,7 +733,7 @@ function App({ onLogout }: AppProps) {
                 </div>
 
                 <div className="header-profile-divider" />
-                <div className="header-profile-section-label">{t('account.section', 'Account')}</div>
+                <div className="header-profile-section-label">{t('common.account', 'Account')}</div>
                 {/* Passwords, SIP, mobile QR and language all live on the My Profile page. */}
                 <button type="button" className="header-profile-item"
                   onClick={() => { setProfileMenuOpen(false); selectTab('profile'); }}>

@@ -62,8 +62,8 @@ export function rangePresets(
 ): { key: QuickSelect; label: string; from: string; to: string }[] {
   const r = quickRanges();
   const keys: { key: QuickSelect; i18n: string }[] = [
-    { key: 'today',     i18n: 'analytics.period.today' },
-    { key: 'yesterday', i18n: 'analytics.period.yesterday' },
+    { key: 'today',     i18n: 'common.today' },
+    { key: 'yesterday', i18n: 'common.yesterday' },
     { key: '7d',        i18n: 'analytics.period.last7' },
     { key: '30d',       i18n: 'analytics.period.last30' },
     { key: 'month',     i18n: 'analytics.period.thisMonth' },

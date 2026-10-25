@@ -85,7 +85,7 @@ export function AnalyticsAdherence({ dateRange }: Props) {
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch {
-      setExportError(t('agent.adherence.exportFailed', 'Export failed. Please try again.'));
+      setExportError(t('common.exportFailed', 'Export failed. Please try again.'));
     } finally {
       setExporting(null);
     }
@@ -102,16 +102,16 @@ export function AnalyticsAdherence({ dateRange }: Props) {
 
   type Tip = { text: string; formula?: string };
   const columns: { key: SortKey; label: string; tipKey?: string; tip?: Tip }[] = [
-    { key: 'agent',          label: t('agent.adherence.agent') },
+    { key: 'agent',          label: t('fields.agent') },
     { key: 'logged_in_secs', label: t('agent.adherence.loggedIn'), tipKey: 'analytics.tip.adherence.loggedInTotal',
       tip: { text: 'Total time the agent was active.', formula: 'ready + on call + wrap-up + not ready' } },
-    { key: 'ready_secs',     label: t('agent.adherence.ready'), tipKey: 'analytics.tip.adherence.ready',
+    { key: 'ready_secs',     label: t('agent.state.ready'), tipKey: 'analytics.tip.adherence.ready',
       tip: { text: 'Available: signed in and waiting for a call.' } },
-    { key: 'on_call_secs',   label: t('agent.adherence.onCall'), tipKey: 'analytics.tip.adherence.onCall',
+    { key: 'on_call_secs',   label: t('agent.state.onCall'), tipKey: 'analytics.tip.adherence.onCall',
       tip: { text: 'On a call.' } },
-    { key: 'wrap_secs',      label: t('agent.adherence.wrapUp'), tipKey: 'analytics.tip.adherence.wrapUp',
+    { key: 'wrap_secs',      label: t('agent.state.wrapUp'), tipKey: 'analytics.tip.adherence.wrapUp',
       tip: { text: 'Finishing up after a call.' } },
-    { key: 'not_ready_secs', label: t('agent.adherence.notReady'), tipKey: 'analytics.tip.adherence.notReady',
+    { key: 'not_ready_secs', label: t('agent.state.notReady'), tipKey: 'analytics.tip.adherence.notReady',
       tip: { text: 'On a break or otherwise paused. Hover the number for the reasons.' } },
     { key: 'occupancy_pct',  label: t('agent.adherence.occupancy'), tipKey: 'analytics.tip.adherence.occupancy',
       tip: { text: 'Of the time they were available, how much was spent working. Over 85% for long is a burnout sign.',
@@ -139,7 +139,7 @@ export function AnalyticsAdherence({ dateRange }: Props) {
             disabled={exporting !== null || agents.length === 0}
           >
             <Download size={14} />
-            {exporting === 'csv' ? t('agent.adherence.exporting', 'Exporting…') : t('agent.adherence.exportCsv', 'CSV')}
+            {exporting === 'csv' ? t('common.exporting', 'Exporting…') : t('agent.adherence.exportCsv', 'CSV')}
           </button>
           <button
             type="button"
@@ -148,7 +148,7 @@ export function AnalyticsAdherence({ dateRange }: Props) {
             disabled={exporting !== null || agents.length === 0}
           >
             <FileSpreadsheet size={14} />
-            {exporting === 'xlsx' ? t('agent.adherence.exporting', 'Exporting…') : t('agent.adherence.exportXlsx', 'Excel')}
+            {exporting === 'xlsx' ? t('common.exporting', 'Exporting…') : t('agent.adherence.exportXlsx', 'Excel')}
           </button>
         </>
       )}
@@ -170,7 +170,7 @@ export function AnalyticsAdherence({ dateRange }: Props) {
                   className={['sticky', sortKey === 'agent' ? 'sorted' : ''].filter(Boolean).join(' ')}
                   onClick={() => toggleSort('agent')}
                 >
-                  {t('agent.adherence.agent')} <SortIcon col="agent" />
+                  {t('fields.agent')} <SortIcon col="agent" />
                 </th>
                 <th className="num">
                   {t('agent.adherence.login')}

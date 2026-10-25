@@ -148,7 +148,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
   return (
     <Page
       icon={BookUser}
-      title={t('contacts.title')}
+      title={t('nav.contacts')}
       count={loading ? undefined : contacts.length}
       actions={isAdmin ? (
         <button type="button" className="btn btn-primary" onClick={openCreate}>
@@ -187,7 +187,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
       ) : (
         <Table
           framed
-          caption={t('contacts.title')}
+          caption={t('nav.contacts')}
           rows={filtered}
           rowKey={c => c.id}
           empty={contacts.length > 0 ? (
@@ -205,7 +205,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
           )}
           columns={[
             {
-              key: 'name', header: t('contacts.name'), primary: true,
+              key: 'name', header: t('fields.name'), primary: true,
               cell: c => (
                 <div className="u-min-w-0">
                   <div className="u-semibold">{c.name}</div>
@@ -214,7 +214,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
               ),
             },
             {
-              key: 'phone', header: t('contacts.phone'),
+              key: 'phone', header: t('fields.phoneNumber'),
               cell: c => <span className="u-mono" dir="ltr">{c.phone}</span>,
             },
             {
@@ -282,7 +282,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
           footer={
             <>
               <button type="button" className="btn" onClick={resetForm}>
-                {t('contacts.cancel')}
+                {t('common.cancel')}
               </button>
               <button type="submit" form="contact-form" className="btn btn-primary" disabled={saving}>
                 {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
@@ -298,17 +298,17 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
             <p className="u-fg-muted u-mt-0">{t('contacts.formDesc')}</p>
             <FormSection title={t('contacts.details', 'Details')} first>
               <FormRow>
-                <FormField label={t('contacts.name')} htmlFor="contact-name" required>
+                <FormField label={t('fields.name')} htmlFor="contact-name" required>
                   <input
                     id="contact-name"
                     type="text"
                     className="form-input"
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    placeholder={t('contacts.namePlaceholder')}
+                    placeholder={t('fields.fullName')}
                   />
                 </FormField>
-                <FormField label={t('contacts.phone')} htmlFor="contact-phone" required>
+                <FormField label={t('fields.phoneNumber')} htmlFor="contact-phone" required>
                   <input
                     id="contact-phone"
                     type="text"

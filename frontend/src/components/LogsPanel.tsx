@@ -76,7 +76,7 @@ export function LogsPanel() {
       ]}
       active={tab}
       onChange={(k) => setSearchParams({ tab: k }, { replace: true })}
-      ariaLabel={t('logs.title', 'Logs')}
+      ariaLabel={t('nav.logs', 'Logs')}
     />
   );
 
@@ -288,7 +288,7 @@ function SystemLogsTab({
   return (
     <Page
       icon={ScrollText}
-      title={t('logs.title', 'Logs')}
+      title={t('nav.logs', 'Logs')}
       tabs={tabStrip}
       className="logs-page"
       actions={
@@ -297,7 +297,7 @@ function SystemLogsTab({
             ? t('logs.system.off', 'Off')
             : paused
               ? t('logs.system.paused', 'Paused')
-              : t('logs.system.live', 'Live')}
+              : t('common.live', 'Live')}
         </Badge>
       }
       toolbar={
@@ -342,7 +342,7 @@ function SystemLogsTab({
             <>
               <button type="button" className="btn btn-ghost" onClick={() => setPaused((p) => !p)}>
                 {paused ? <Play size={14} /> : <Pause size={14} />}
-                {paused ? t('logs.system.resume', 'Resume') : t('logs.system.pause', 'Pause')}
+                {paused ? t('common.resume', 'Resume') : t('common.pause', 'Pause')}
               </button>
               <button type="button" className="btn btn-ghost" onClick={exportTxt} disabled={!events.length}>
                 <Download size={14} />
@@ -355,7 +355,7 @@ function SystemLogsTab({
                 disabled={!events.length}
               >
                 <Trash2 size={14} />
-                {t('logs.system.clear', 'Clear')}
+                {t('common.clear', 'Clear')}
               </button>
             </>
           }
@@ -479,7 +479,7 @@ function CopyButton({ text }: { text: string }) {
       }}
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}
-      {copied ? t('logs.deliveries.copied', 'Copied') : t('logs.deliveries.copy', 'Copy')}
+      {copied ? t('common.copied', 'Copied') : t('common.copy', 'Copy')}
     </button>
   );
 }
@@ -488,13 +488,13 @@ function DirectionBadge({ type }: { type?: string | null }) {
   const { t } = useTranslation();
   if (!type) return <>—</>;
   if (type === 'inbound') {
-    return <Badge tone="info" icon={<PhoneIncoming size={14} />}>{t('callLog.type.inbound', 'Inbound')}</Badge>;
+    return <Badge tone="info" icon={<PhoneIncoming size={14} />}>{t('direction.inbound', 'Inbound')}</Badge>;
   }
   if (type === 'outbound') {
-    return <Badge tone="info" icon={<PhoneOutgoing size={14} />}>{t('callLog.type.outbound', 'Outbound')}</Badge>;
+    return <Badge tone="info" icon={<PhoneOutgoing size={14} />}>{t('direction.outbound', 'Outbound')}</Badge>;
   }
   if (type === 'internal') {
-    return <Badge tone="info" icon={<ArrowLeftRight size={14} />}>{t('callLog.type.internal', 'Internal')}</Badge>;
+    return <Badge tone="info" icon={<ArrowLeftRight size={14} />}>{t('direction.internal', 'Internal')}</Badge>;
   }
   return <Badge tone="info">{type}</Badge>;
 }
@@ -604,7 +604,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
       cell: (r) => <span className="u-text-sm u-nowrap">{new Date(r.created_at).toLocaleString()}</span>,
     },
     {
-      key: 'direction', header: t('logs.deliveries.direction', 'Direction'),
+      key: 'direction', header: t('fields.direction', 'Direction'),
       cell: (r) => <DirectionBadge type={r.call_type} />,
     },
     {
@@ -640,7 +640,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
       ),
     },
     {
-      key: 'latency', header: t('logs.deliveries.latency', 'Latency'), align: 'end', hideOnMobile: true,
+      key: 'latency', header: t('common.latency', 'Latency'), align: 'end', hideOnMobile: true,
       cell: (r) => <span className="u-mono u-text-sm">{r.duration_ms != null ? `${r.duration_ms} ms` : '—'}</span>,
     },
     {
@@ -694,7 +694,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
   return (
     <Page
       icon={ScrollText}
-      title={t('logs.title', 'Logs')}
+      title={t('nav.logs', 'Logs')}
       // Only this tab is time-scoped; the System tab's Page has no `scope`, so
       // the header does not offer a range that would do nothing there.
       scope={<PageRange value={dateRange} onChange={setDateRange} />}
@@ -729,12 +729,12 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
                   size="md"
                   value={direction}
                   onChange={setDirection}
-                  ariaLabel={t('callLog.table.direction', 'Direction')}
+                  ariaLabel={t('fields.direction', 'Direction')}
                   options={[
-                    { value: '', label: t('logs.deliveries.allDirections', 'All directions') },
-                    { value: 'inbound', label: t('callLog.type.inbound', 'Inbound'), dot: 'green' },
-                    { value: 'outbound', label: t('callLog.type.outbound', 'Outbound'), dot: 'blue' },
-                    { value: 'internal', label: t('callLog.type.internal', 'Internal'), dot: 'neutral' },
+                    { value: '', label: t('direction.all', 'All directions') },
+                    { value: 'inbound', label: t('direction.inbound', 'Inbound'), dot: 'green' },
+                    { value: 'outbound', label: t('direction.outbound', 'Outbound'), dot: 'blue' },
+                    { value: 'internal', label: t('direction.internal', 'Internal'), dot: 'neutral' },
                   ]}
                 />
               </div>
@@ -840,7 +840,7 @@ function DeliveriesTab({ tabStrip }: { tabStrip: React.ReactNode }) {
                 <span className="crmx-meta-v crmx-num">HTTP {d?.status_code ?? '—'}</span>
               </div>
               <div className="crmx-meta-cell">
-                <span className="crmx-meta-k">{t('logs.deliveries.latency', 'Latency')}</span>
+                <span className="crmx-meta-k">{t('common.latency', 'Latency')}</span>
                 <span className="crmx-meta-v crmx-num">{d?.duration_ms ?? '—'} ms</span>
               </div>
               <div className="crmx-meta-cell">

@@ -35,7 +35,7 @@ export function ChangePasswordModal({ kind, onClose, onSipChanged, onShowQr }: P
       onClose={onClose}
       width="sm"
       icon={sip ? <Phone size={18} /> : <KeyRound size={18} />}
-      title={sip ? t('account.sipPassword', 'Change SIP password') : t('account.loginPassword', 'Change password')}
+      title={sip ? t('account.sipPassword', 'Change SIP password') : t('common.changePassword', 'Change password')}
     >
       {kind && <PasswordForm key={kind} sip={sip} onSipChanged={onSipChanged} onShowQr={onShowQr} />}
     </Modal>
@@ -148,7 +148,7 @@ export function PasswordForm({ sip, onSipChanged, onShowQr }: { sip: boolean; on
       <div className="u-row u-justify-end">
         <button type="submit" className="btn btn-primary" disabled={saving || !current || !next || next !== confirm}>
           {saving ? <Loader2 size={14} className="spinner" /> : <KeyRound size={14} />}
-          {saving ? t('account.saving', 'Saving…') : t('account.save', 'Change password')}
+          {saving ? t('common.saving', 'Saving…') : t('common.changePassword', 'Change password')}
         </button>
       </div>
     </form>

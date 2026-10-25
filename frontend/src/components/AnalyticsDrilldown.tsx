@@ -6,6 +6,7 @@ import type { DateRange } from './analyticsUtils';
 import type { AnalyticsDrilldownRecord } from '../types';
 import { fmtSecs, analyticsGet, useAnalyticsFetch, kpiTip } from './analyticsUtils';
 import { Alert, Badge, Card, Dropdown, EmptyState, Pagination, SearchInput, Toolbar, Tooltip } from './ui';
+import { callStatusLabel } from './callStatus';
 
 type DrilldownResponse = { calls: AnalyticsDrilldownRecord[]; total: number };
 
@@ -100,7 +101,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch {
-      setExportError(t('analytics.drilldown.exportFailed', 'Export failed. Please try again.'));
+      setExportError(t('common.exportFailed', 'Export failed. Please try again.'));
     } finally {
       setExporting(null);
     }
@@ -109,13 +110,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   // The same words the Disposition filter offers; anything else shows as the PBX sent it.
-  const dispositionLabel = (d: string) =>
-    d === 'ANSWERED' ? t('analytics.drilldown.answered', 'Answered')
-      : d === 'NO ANSWER' ? t('analytics.drilldown.noAnswer', 'No Answer')
-      : d === 'BUSY' ? t('analytics.drilldown.busy', 'Busy')
-      : d === 'FAILED' ? t('analytics.drilldown.failed', 'Failed')
-      : d;
-
+  const dispositionLabel = (d: string) => callStatusLabel(t, d);
   const tip = (key: string, label: string, text: string, formula?: string) =>
     <Tooltip {...kpiTip(t, key, label, undefined, { text, formula })} />;
 
@@ -150,12 +145,12 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
                 icon={ArrowUpDown}
                 size="md"
                 minWidth={140}
-                ariaLabel={t('analytics.drilldown.direction', 'Direction')}
+                ariaLabel={t('fields.direction', 'Direction')}
                 options={[
-                  { value: '', label: t('analytics.drilldown.allDirections', 'All Directions') },
-                  { value: 'IN',       label: t('analytics.drilldown.dirIn',       'Inbound'),  dot: 'green'   },
-                  { value: 'OUT',      label: t('analytics.drilldown.dirOut',      'Outbound'), dot: 'blue'    },
-                  { value: 'INTERNAL', label: t('analytics.drilldown.dirInternal', 'Internal'), dot: 'neutral' },
+                  { value: '', label: t('direction.all', 'All Directions') },
+                  { value: 'IN',       label: t('direction.inbound',       'Inbound'),  dot: 'green'   },
+                  { value: 'OUT',      label: t('direction.outbound',      'Outbound'), dot: 'blue'    },
+                  { value: 'INTERNAL', label: t('direction.internal', 'Internal'), dot: 'neutral' },
                 ]}
               />
             </div>
@@ -168,18 +163,18 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
                 minWidth={156}
                 ariaLabel={t('analytics.drilldown.disposition', 'Disposition')}
                 options={[
-                  { value: '',          label: t('analytics.drilldown.allDispositions', 'All Statuses') },
-                  { value: 'ANSWERED',  label: t('analytics.drilldown.answered',  'Answered'),  dot: 'green'  },
-                  { value: 'NO ANSWER', label: t('analytics.drilldown.noAnswer',  'No Answer'), dot: 'orange' },
-                  { value: 'BUSY',      label: t('analytics.drilldown.busy',      'Busy'),      dot: 'orange' },
-                  { value: 'FAILED',    label: t('analytics.drilldown.failed',    'Failed'),    dot: 'red'    },
+                  { value: '',          label: t('common.allStatuses') },
+                  { value: 'ANSWERED',  label: callStatusLabel(t, 'ANSWERED'),  dot: 'green'  },
+                  { value: 'NO ANSWER', label: callStatusLabel(t, 'NO ANSWER'), dot: 'orange' },
+                  { value: 'BUSY',      label: callStatusLabel(t, 'BUSY'),      dot: 'orange' },
+                  { value: 'FAILED',    label: callStatusLabel(t, 'FAILED'),    dot: 'red'    },
                 ]}
               />
             </div>
             {hasFilters && (
               <button type="button" className="btn btn-ghost" onClick={clearFilters}>
                 <X size={14} />
-                {t('analytics.drilldown.clearFilters', 'Clear')}
+                {t('common.clear', 'Clear')}
               </button>
             )}
           </>
@@ -193,7 +188,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
               disabled={exporting !== null || total === 0}
             >
               <Download size={14} />
-              {exporting === 'csv' ? t('analytics.drilldown.exporting') : t('analytics.drilldown.exportCsv')}
+              {exporting === 'csv' ? t('common.exporting') : t('analytics.drilldown.exportCsv')}
             </button>
             <button
               type="button"
@@ -202,7 +197,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
               disabled={exporting !== null || total === 0}
             >
               <FileSpreadsheet size={14} />
-              {exporting === 'xlsx' ? t('analytics.drilldown.exporting') : t('analytics.drilldown.exportXlsx')}
+              {exporting === 'xlsx' ? t('common.exporting') : t('analytics.drilldown.exportXlsx')}
             </button>
           </>
         }
@@ -229,14 +224,14 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
               <thead>
                 <tr>
                   <th className="sticky">{t('analytics.drilldown.date', 'Date')}</th>
-                  <th>{t('analytics.drilldown.direction', 'Direction')}</th>
+                  <th>{t('fields.direction', 'Direction')}</th>
                   <th>{t('analytics.drilldown.src', 'Caller')}</th>
                   <th>{t('analytics.drilldown.dst', 'Destination')}</th>
-                  <th>{t('analytics.drilldown.queue', 'Queue')}</th>
-                  <th>{t('analytics.drilldown.agent', 'Agent')}</th>
+                  <th>{t('fields.queue', 'Queue')}</th>
+                  <th>{t('fields.agent', 'Agent')}</th>
                   <th>
-                    {t('analytics.drilldown.duration', 'Duration')}
-                    {tip('analytics.tip.drilldown.duration', t('analytics.drilldown.duration', 'Duration'),
+                    {t('fields.duration', 'Duration')}
+                    {tip('analytics.tip.drilldown.duration', t('fields.duration', 'Duration'),
                       'How long the whole call lasted, ringing included.')}
                   </th>
                   <th>

@@ -124,8 +124,8 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
     const confirmed = await confirm({
       title: t('agent.codes.deleteTitle', 'Delete reason code?'),
       message: t('notReady.confirmDelete', 'Delete this reason code?'),
-      confirmLabel: t('notReady.delete', 'Delete'),
-      cancelLabel: t('notReady.cancel', 'Cancel'),
+      confirmLabel: t('common.delete', 'Delete'),
+      cancelLabel: t('common.cancel', 'Cancel'),
     });
     if (!confirmed) return;
     const ok = await run(async () => {
@@ -192,12 +192,12 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
             key: 'active', header: t('notReady.active', 'Active'),
             cell: r => (
               <Badge tone={truthy(r.is_active) ? 'success' : 'neutral'}>
-                {truthy(r.is_active) ? t('notReady.enabled', 'Enabled') : t('notReady.disabled', 'Disabled')}
+                {truthy(r.is_active) ? t('common.enabled', 'Enabled') : t('common.disabled', 'Disabled')}
               </Badge>
             ),
           },
           {
-            key: 'actions', header: t('notReady.actions', 'Actions'), align: 'end',
+            key: 'actions', header: t('common.actions', 'Actions'), align: 'end',
             cell: r => (
               <div className="notes-row-actions">
                 {truthy(r.is_system) ? (
@@ -205,9 +205,9 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
                 ) : (
                   <>
                     <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => openEdit(r)}
-                      title={t('notReady.edit', 'Edit')} aria-label={t('notReady.edit', 'Edit')}><Pencil size={14} /></button>
+                      title={t('common.edit', 'Edit')} aria-label={t('common.edit', 'Edit')}><Pencil size={14} /></button>
                     <button type="button" className="btn btn-ghost btn-danger btn-sm btn-icon" onClick={() => remove(r)}
-                      title={t('notReady.delete', 'Delete')} aria-label={t('notReady.delete', 'Delete')}><Trash2 size={14} /></button>
+                      title={t('common.delete', 'Delete')} aria-label={t('common.delete', 'Delete')}><Trash2 size={14} /></button>
                   </>
                 )}
               </div>
@@ -223,10 +223,10 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
         icon={<Pause size={16} />}
         footer={
           <>
-            <button type="button" className="btn" onClick={() => setModal(null)}>{t('notReady.cancel', 'Cancel')}</button>
+            <button type="button" className="btn" onClick={() => setModal(null)}>{t('common.cancel', 'Cancel')}</button>
             <button type="button" className="btn btn-primary" onClick={save} disabled={saving || !canSave}>
               {saving ? <Loader2 size={14} className="spinner" /> : modal === 'create' ? <Plus size={14} /> : <Save size={14} />}
-              {saving ? t('notReady.saving', 'Saving…') : t('notReady.save', 'Save')}
+              {saving ? t('common.saving', 'Saving…') : t('common.save', 'Save')}
             </button>
           </>
         }
@@ -258,7 +258,7 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
           </FormRow>
         </FormSection>
 
-        <FormSection title={t('notReady.status', 'Status')}>
+        <FormSection title={t('common.status', 'Status')}>
           <FormRow single>
             <Toggle checked={form.productive} onChange={(v) => setForm((f) => ({ ...f, productive: v }))}
               label={t('notReady.productive', 'Productive')}
@@ -266,7 +266,7 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
           </FormRow>
           <FormRow single>
             <Toggle checked={form.active} onChange={(v) => setForm((f) => ({ ...f, active: v }))}
-              label={form.active ? t('notReady.enabled', 'Enabled') : t('notReady.disabled', 'Disabled')}
+              label={form.active ? t('common.enabled', 'Enabled') : t('common.disabled', 'Disabled')}
               description={t('notReady.activeHint', 'Inactive codes are hidden from the agent picker.')} />
           </FormRow>
         </FormSection>
