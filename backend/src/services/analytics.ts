@@ -8,7 +8,8 @@
  *   - SLA (% answered within threshold)
  *   - Abandonment rate + short-abandon split
  *   - AHT (Average Handle Time = avg talk time)
- *   - FCR (First Contact Resolution via callback window)
+ *   - FCR (First Contact Resolution via repeat-contact window)
+ *   - Abandoned-caller recovery (callers we rang back after they gave up)
  *   - Answer rate (people) and contact rate (calls)
  *   - Volume / trend data
  *   - Agent adherence (presence segments) and the per-agent state trace
@@ -24,7 +25,7 @@ import { getLogger, pyStr } from '../core/logger';
 import { dateIso, floorDiv, isoformat, mysqlDatetime, pyInt, pyMod, pyRound, sleep, truthy } from '../core/py';
 import { execute, placeholders, query, queryOne, withTransaction, type Params, type Row } from '../db/pool';
 import * as dbm from '../db/db-manager';
-import { BUSY, callStatus, FAILURE, NETWORK_ERROR, UNANSWERED } from './call-outcomes';
+import { ANSWERED, BUSY, callStatus, FAILURE, MISSED, NETWORK_ERROR, UNANSWERED } from './call-outcomes';
 import { callLog, classifyCdrDirection, mapCallOutcome } from './call-log';
 import { shiftResetMinutes } from './agent-state';
 
@@ -176,6 +177,29 @@ function inc<K>(m: Map<K, number>, k: K, by = 1): void {
 /** The answering agent's extension, from the last leg's destination channel. */
 export const AGENT_EXT_EXPR = "SUBSTRING_INDEX(SUBSTRING_INDEX(last_leg.dstchannel, '-', 1), '/', -1)";
 
+// ---------------------------------------------------------------------------
+// What counts as an inbound queue call
+// ---------------------------------------------------------------------------
+//
+// `lastapp = 'Queue'` alone does not mean a customer rang a queue: a Queue() run from a
+// dialplan `s` extension (an IVR branch, a test harness) leaves a first leg whose dst is
+// 's', which then showed up in Queue Performance as a queue named "s". A real queue call's
+// dst is the queue's own extension, so the guard is a numeric destination.
+export const REAL_QUEUE_LEG_SQL = "AND {leg}.dst REGEXP '^[0-9]+$'";
+
+/** The `AND ...` fragment that keeps a queue query to real inbound queue calls. */
+export function realQueueCond(leg = 'first_leg'): string {
+  return REAL_QUEUE_LEG_SQL.split('{leg}').join(leg);
+}
+
+// The SQL twin of the answered rule queue rows use in code (queueRowAnswered): Asterisk can
+// mark a leg ANSWERED that carried no audio, and leave a real conversation under another
+// disposition, so either signal counts. Aggregations done in SQL ask the same question, or a
+// heatmap cell disagrees with the queue's abandoned total for the same period.
+export const ANSWERED_SQL = "(last_leg.disposition = 'ANSWERED' OR last_leg.billsec > 0)";
+// The same rule where there is no joined last_leg to name -- a single-table scan over cdr.
+export const QUEUE_ANSWERED_BARE_SQL = "disposition = 'ANSWERED' OR billsec > 0";
+
 /** A list of extensions/queues a caller may see; null = unrestricted (admin, API key). */
 export type Scope = readonly (string | number)[] | null | undefined;
 
@@ -194,10 +218,14 @@ export function scopeAgentCondition(allowedAgents: Scope, col: string | null = n
   return [`AND ${col} IN (${placeholders(allowedAgents.length)})`, [...allowedAgents]];
 }
 
-/** Fill in the default date range (the last 30 days, ending today) where one is missing. */
+/**
+ * Fill in the default date range where one is missing: the last 30 days, today included --
+ * the same range as the UI's "Last 30 days" preset, which is what the Analytics page opens
+ * on, so an omitted parameter answers the question the page asks.
+ */
 export function defaultDates(dateFrom: string | null | undefined, dateTo: string | null | undefined): [string, string] {
   const today = dateIso(new Date());
-  return [dateFrom || addDaysYmd(today, -30), dateTo || today];
+  return [dateFrom || addDaysYmd(today, -29), dateTo || today];
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +237,15 @@ export type SlaThresholds = Record<string, number>;
 export interface FcrSettings {
   window_days: number;
   short_abandon_secs: number;
+  callback_window_hours: number;
 }
 
 /**
  * Return dict of {queue_extension: threshold_secs}.
  * If a queue has no row, callers should fall back to SLA_DEFAULT_SECS setting.
+ *
+ * A database error propagates: an empty dict here would quietly measure every queue against
+ * the default threshold, a wrong SLA rather than a missing one.
  */
 export async function getSlaThresholds(): Promise<SlaThresholds> {
   try {
@@ -222,8 +254,8 @@ export async function getSlaThresholds(): Promise<SlaThresholds> {
     for (const r of rows) out[r.queue_extension] = r.threshold_secs;
     return out;
   } catch (e) {
-    log.warning('analytics: error loading SLA thresholds: %s', e);
-    return {};
+    log.error('analytics: error loading SLA thresholds: %s', e);
+    throw e;
   }
 }
 
@@ -241,20 +273,50 @@ export async function getSlaDefaultSecs(): Promise<number> {
   return 20;
 }
 
-/** Return FCR/short-abandon config as a dict. */
+// What the settings row means when it cannot be read, and what a fresh install starts on.
+// 7 days is the middle of the 3-14 the industry uses for a repeat contact; 5 seconds is the
+// short-abandon window; 24 hours is how long our own call back to a customer still counts as
+// us returning their call.
+export const FCR_DEFAULTS: Readonly<FcrSettings> = { window_days: 7, short_abandon_secs: 5, callback_window_hours: 24 };
+
+/** Return FCR / short-abandon / callback-window config as a dict. */
 export async function getFcrSettings(): Promise<FcrSettings> {
   try {
-    const row = await queryOne('SELECT window_days, short_abandon_secs FROM analytics_fcr_settings WHERE id=1');
-    if (row) return { window_days: row.window_days, short_abandon_secs: row.short_abandon_secs };
+    const row = await queryOne(
+      'SELECT window_days, short_abandon_secs, callback_window_hours FROM analytics_fcr_settings WHERE id=1',
+    );
+    if (row) {
+      return {
+        window_days: row.window_days,
+        short_abandon_secs: row.short_abandon_secs,
+        callback_window_hours: row.callback_window_hours,
+      };
+    }
   } catch (e) {
+    // A database the migration has not reached yet has no callback_window_hours column; the
+    // defaults are exactly what it behaved as before the column existed.
     log.warning('analytics: error loading FCR settings: %s', e);
   }
-  return { window_days: 7, short_abandon_secs: 5 };
+  return { ...FCR_DEFAULTS };
 }
 
 /**
+ * The accepted range of every analytics setting, inclusive. The save route answers 400 for
+ * anything outside it, so a typo cannot store a negative threshold or a window the
+ * TINYINT/SMALLINT column would clip.
+ */
+export const SETTING_RANGES = {
+  sla_default_secs: [1, 600],
+  sla_threshold_secs: [1, 600],
+  fcr_window_days: [0, 90],
+  short_abandon_secs: [0, 120],
+  callback_window_hours: [0, 168],
+} as const;
+
+/**
  * Upsert per-queue SLA thresholds.
- * thresholds: {queue_extension: threshold_secs}
+ * thresholds: {queue_extension: threshold_secs}; a null threshold removes that queue's
+ * override, so the queue falls back to the default again.
  */
 export async function saveSlaThresholds(thresholds: Record<string, unknown>): Promise<boolean> {
   if (!truthy(thresholds)) return true;
@@ -262,6 +324,10 @@ export async function saveSlaThresholds(thresholds: Record<string, unknown>): Pr
   try {
     await withTransaction(async (conn) => {
       for (const [qext, secs] of entries) {
+        if (secs === null) {
+          await execute('DELETE FROM analytics_sla_settings WHERE queue_extension = ?', [String(qext)], conn);
+          continue;
+        }
         // int(secs) raises inside the loop, outside `except Error`: the route answers 500.
         const n = toInt(secs);
         await execute(
@@ -281,16 +347,29 @@ export async function saveSlaThresholds(thresholds: Record<string, unknown>): Pr
   }
 }
 
-/** Update the singleton FCR settings row. */
-export async function saveFcrSettings(windowDays: unknown, shortAbandonSecs: unknown): Promise<boolean> {
+/**
+ * Update the singleton FCR settings row.
+ *
+ * `callbackWindowHours` omitted keeps whatever is stored, so a caller that only knows about
+ * the older two fields cannot silently reset the third to its default.
+ */
+export async function saveFcrSettings(
+  windowDays: unknown,
+  shortAbandonSecs: unknown,
+  callbackWindowHours: unknown = null,
+): Promise<boolean> {
+  if (callbackWindowHours === null || callbackWindowHours === undefined) {
+    callbackWindowHours = (await getFcrSettings()).callback_window_hours;
+  }
   const wd = toInt(windowDays);
   const sa = toInt(shortAbandonSecs);
+  const cb = toInt(callbackWindowHours);
   try {
     await execute(
-      `INSERT INTO analytics_fcr_settings (id, window_days, short_abandon_secs)
-         VALUES (1, ?, ?)
-         ON DUPLICATE KEY UPDATE window_days=?, short_abandon_secs=?`,
-      [wd, sa, wd, sa],
+      `INSERT INTO analytics_fcr_settings (id, window_days, short_abandon_secs, callback_window_hours)
+         VALUES (1, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE window_days=?, short_abandon_secs=?, callback_window_hours=?`,
+      [wd, sa, cb, wd, sa, cb],
     );
     return true;
   } catch (e) {
@@ -333,6 +412,9 @@ export async function getAgentNames(): Promise<Record<string, string>> {
 // wait_secs = first_leg.duration - last_leg.billsec
 //             (total time in system minus talk time = queue wait)
 // For abandoned calls last_leg.billsec = 0, so wait_secs = first_leg.duration
+// Clamped at 0: a last leg that outlives the queue leg it came from (a transfer, a queue leg
+// that recorded duration 0) makes the difference negative, and a negative wait dragged the
+// average below zero and passed the SLA check for free.
 //
 // Inner subqueries include date filtering (with a 1-day buffer) to avoid full-table scans
 // on large CDR tables. Expects 6 base params: [date_from, date_to] x 3.
@@ -347,11 +429,11 @@ export function queueCdrSql(extraSql = ''): string {
         first_leg.duration              AS total_dur,
         last_leg.billsec                AS billsec,
         last_leg.disposition            AS disposition,
-        CASE
+        GREATEST(CASE
             WHEN last_leg.billsec > 0
             THEN first_leg.duration - last_leg.billsec
             ELSE first_leg.duration
-        END                             AS wait_secs,
+        END, 0)                         AS wait_secs,
         ${AGENT_EXT_EXPR}              AS agent_ext,
         first_leg.linkedid
     FROM
@@ -379,6 +461,7 @@ export function queueCdrSql(extraSql = ''): string {
         ) last_leg ON first_leg.linkedid = last_leg.linkedid
     WHERE
         first_leg.lastapp = 'Queue'
+        ${realQueueCond()}
         AND first_leg.calldate >= ?
         AND first_leg.calldate < DATE_ADD(?, INTERVAL 1 DAY)
         ${extraSql}
@@ -423,13 +506,13 @@ export function allCdrSql(extraSql = ''): string {
         first_leg.duration              AS total_dur,
         last_leg.billsec                AS billsec,
         last_leg.disposition            AS disposition,
-        CASE
+        GREATEST(CASE
             WHEN first_leg.lastapp = 'Queue' AND last_leg.billsec > 0
             THEN first_leg.duration - last_leg.billsec
             WHEN first_leg.lastapp = 'Queue'
             THEN first_leg.duration
             ELSE 0
-        END                             AS wait_secs,
+        END, 0)                         AS wait_secs,
         ${AGENT_EXT_EXPR}              AS agent_ext,
         ${CALLER_EXT_EXPR}             AS caller_ext,
         first_leg.lastapp               AS lastapp,
@@ -555,6 +638,57 @@ export function slaThresholdFor(queueExt: string, thresholds: SlaThresholds, def
   return hasOwn(thresholds, queueExt) ? thresholds[queueExt] : defaultSecs;
 }
 
+/**
+ * Did this call-history row actually enter a queue?
+ *
+ * The single queue test for every call-history-sourced figure. It replaces the old
+ * `call_type == 'IN' and dst is all digits` guess, which treated a direct dial to an
+ * extension as a queue call: a colleague ringing an unattended desk counted as a queue
+ * abandon, and for a supervisor those same calls dropped out of the totals because the
+ * extension was "not one of my queues". `app` comes from the first leg's dcontext in the
+ * call-log query, the same signal Call History shows.
+ */
+export function isQueueCall(row: Row): boolean {
+  return row.call_type === 'IN' && row.app === 'queue';
+}
+
+/**
+ * The answered test for a call-history row: the `status` the call log already derived, so
+ * Analytics, Call History and the drilldown cannot disagree about which calls were answered.
+ */
+export function rowAnswered(row: Row): boolean {
+  return row.status === ANSWERED;
+}
+
+/**
+ * The answered test for a queue CDR row: the same call-outcome rule, fed the last leg's
+ * disposition and whether it carried talk time (ANSWERED_SQL is its SQL twin).
+ */
+export function queueRowAnswered(r: Row): boolean {
+  return mapCallOutcome({
+    disposition: sget(r, 'disposition').toUpperCase(),
+    answered: intOr0(dget(r, 'billsec', null)) > 0,
+  }) === ANSWERED;
+}
+
+/** A queue CDR row's wait, never negative (see queueCdrSql). */
+function queueWait(r: Row): number {
+  return Math.max(0, intOr0(dget(r, 'wait_secs', null)));
+}
+
+/**
+ * Drop queue calls belonging to queues outside the caller's scope.
+ *
+ * Only QUEUE calls are subject to the queue restriction. Direct inbound, outbound and
+ * internal calls stay governed by the extension scope the call log already applied -- the
+ * same scope Call History enforces -- so the two pages show a supervisor the same calls.
+ */
+export function queueScopeFilter(rows: Row[], allowedQueues: Scope): Row[] {
+  if (allowedQueues === null || allowedQueues === undefined) return rows;
+  const allowedQ = new Set(allowedQueues.map(String));
+  return rows.filter((r) => !(isQueueCall(r) && !allowedQ.has(sget(r, 'dst'))));
+}
+
 export interface QueueKpis {
   total_calls: number;
   answered_calls: number;
@@ -574,8 +708,8 @@ export interface DerivedKpis extends QueueKpis {
 }
 
 /**
- * Aggregate KPIs from a flat list of queue rows (raw queue CDR rows or the call-log rows
- * shaped for KPIs): every row that is not ANSWERED is an abandon.
+ * Aggregate KPIs from a flat list of queue CDR rows: every row that is not answered
+ * (queueRowAnswered) is an abandon. Waits are clamped at 0.
  */
 export function computeKpisFromRows(
   rows: Row[],
@@ -593,12 +727,11 @@ export function computeKpisFromRows(
 
   for (const r of rows) {
     total += 1;
-    const disp = sget(r, 'disposition').toUpperCase();
-    const wait = intOr0(dget(r, 'wait_secs', null));
+    const wait = queueWait(r);
     const bsec = intOr0(dget(r, 'billsec', null));
     const threshold = slaThresholdFor(sget(r, 'queue_ext'), thresholds, defaultSecs);
 
-    if (disp === 'ANSWERED') {
+    if (queueRowAnswered(r)) {
       answered += 1;
       sumBillsec += bsec;
       sumWait += wait;
@@ -634,64 +767,8 @@ export function deriveRates(kpis: QueueKpis): DerivedKpis {
   });
 }
 
-/**
- * FCR% for the period: (1 - callbacks / callers answered) * 100.
- *
- * A "callback" is when the same src number places another answered inbound queue call
- * within window_days of its first answered call in the period. None when the window is
- * off, nobody was answered, or the query failed.
- */
-export async function computeFcr(
-  dateFrom: string,
-  dateTo: string,
-  windowDays: number,
-  allowedQueues: Scope = null,
-): Promise<number | null> {
-  if (windowDays <= 0) return null;
-
-  const [queueCond, qparams] = scopeQueueCondition(allowedQueues, 'dst');
-  const windowEnd = addDaysYmd(dateTo, windowDays + 1);
-  let allRows: Row[];
-  try {
-    allRows = await query(
-      `SELECT src, calldate
-         FROM cdr
-        WHERE calldate >= ?
-          AND calldate < ?
-          AND lastapp = 'Queue'
-          AND disposition = 'ANSWERED'
-          ${queueCond}
-        ORDER BY src, calldate`,
-      [dateFrom, windowEnd, ...qparams],
-      'cdr',
-    );
-  } catch (e) {
-    log.warning('analytics: FCR query error: %s', e);
-    return null;
-  }
-
-  const srcCalls = new Map<string, Date[]>();
-  for (const r of allRows) pushTo(srcCalls, pyStr(r.src), r.calldate as Date);
-
-  const periodStart = wall(strptimeYmd(dateFrom));
-  const periodEnd = wall(strptimeYmd(dateTo)) + DAY_SECS * 1000;
-  const inPeriod = (c: Date) => periodStart <= wall(c) && wall(c) < periodEnd;
-
-  let answeredInPeriod = 0;
-  let callbacks = 0;
-  for (const calls of srcCalls.values()) {
-    const first = calls.find(inPeriod);
-    if (!first) continue;
-    answeredInPeriod += 1;
-    const boundary = wall(first) + windowDays * DAY_SECS * 1000;
-    if (calls.some((c) => wall(c) > wall(first) && wall(c) <= boundary)) callbacks += 1;
-  }
-  if (!answeredInPeriod) return null;
-  return pyRound((1 - callbacks / answeredInPeriod) * 100, 1);
-}
-
 // ---------------------------------------------------------------------------
-// Answer rate: people, not calls
+// People: number keys, answer rate, callbacks
 // ---------------------------------------------------------------------------
 //
 // Two rates, deliberately both:
@@ -703,7 +780,8 @@ export async function computeFcr(
 //
 // The same customer is written '01012345678' by one system and '+201012345678' by
 // another, so numbers compare on their last nine digits. Anything shorter than seven
-// digits is an extension or feature code, not an outside line.
+// digits is an extension or feature code, not an outside line -- and an anonymous or empty
+// caller ID is no one at all.
 
 export const NUMBER_KEY_DIGITS = 9;
 export const MIN_EXTERNAL_DIGITS = 7;
@@ -715,111 +793,335 @@ export function numberKey(num: unknown): string {
   return [...digits].slice(-NUMBER_KEY_DIGITS).join('');
 }
 
+/** The outside party on a call-history row: who we dialled on an outbound call, who called us otherwise. */
+export function counterpartyKey(row: Row): string {
+  return numberKey(row.call_type === 'OUT' ? dget(row, 'dst', null) : dget(row, 'src', null));
+}
+
 /** part / whole as a 1-dp percentage, None on an empty whole. */
 export function rate(part: number, whole: number): number | null {
   return whole ? pyRound((part / whole) * 100, 1) : null;
 }
 
-const isAnswered = (r: Row): boolean => sget(r, 'disposition').toUpperCase() === 'ANSWERED';
+/** One call as the people rates see it: answered or not, and who the outside party was. */
+export interface PersonCall {
+  answered: boolean;
+  counterparty: string;
+}
 
-/** answer_rate / contact_rate and the counts behind them, for one slice of rows. */
-export function peopleRates(rows: Row[]): Row {
-  const answeredRows = rows.filter(isAnswered);
-  const customers = new Set(rows.map((r) => r.counterparty).filter((k) => truthy(k)));
-  const reached = new Set(answeredRows.map((r) => r.counterparty).filter((k) => truthy(k)));
+/** answer_rate / contact_rate and the counts behind them, for one slice of calls. */
+export function peopleRates(calls: PersonCall[]): Row {
+  const answered = calls.filter((c) => c.answered);
+  const customers = new Set(calls.map((c) => c.counterparty).filter((k) => truthy(k)));
+  const reached = new Set(answered.map((c) => c.counterparty).filter((k) => truthy(k)));
   return {
     customers: customers.size,
     customers_answered: reached.size,
     answer_rate: rate(reached.size, customers.size),
-    contact_rate: rate(answeredRows.length, rows.length),
+    contact_rate: rate(answered.length, calls.length),
+  };
+}
+
+/** Queue CDR rows as people-rate calls: the caller is always the outside party. */
+function queuePeople(rows: Row[]): PersonCall[] {
+  return rows.map((r) => ({ answered: queueRowAnswered(r), counterparty: numberKey(dget(r, 'src', null)) }));
+}
+
+/** 'YYYY-MM-DD HH:MM:SS' of a wall-clock instant built on the calendar (no DST involved). */
+function wallStamp(ms: number): string {
+  const t = new Date(ms);
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())} `
+    + `${p(t.getUTCHours())}:${p(t.getUTCMinutes())}:${p(t.getUTCSeconds())}`;
+}
+
+/**
+ * Our own outbound calls to outside numbers in the window: {number_key: [calldate, ...]}.
+ *
+ * "We called them back" is a claim about the FIRST leg of an outbound call: the leg an
+ * agent's phone placed, whose `dst` is the customer. Read once and matched here rather than
+ * joined per caller: FCR's callback test and the abandoned-caller recovery count both use
+ * it, and a busy month has hundreds of callers.
+ *
+ * The window is stretched by `hours` past the end of the range, so a call on the last
+ * evening of the period can still be answered by a callback the next morning.
+ */
+export async function outboundCallbacks(dateFrom: string, dateTo: string, hours: number): Promise<Map<string, Date[]>> {
+  const out = new Map<string, Date[]>();
+  if (hours <= 0) return out;
+  const windowEnd = wallStamp((ymdOrdinal(dateTo) + 1) * 86400000 + hours * 3600000);
+  let rows: Row[];
+  try {
+    rows = await query(
+      `
+        SELECT first_leg.dst AS dst, first_leg.calldate AS calldate
+        FROM (
+            SELECT c.*
+            FROM cdr c
+            JOIN (
+                SELECT linkedid, MIN(sequence) AS min_seq
+                FROM cdr
+                WHERE calldate >= ? AND calldate < ?
+                GROUP BY linkedid
+            ) x ON c.linkedid = x.linkedid AND c.sequence = x.min_seq
+        ) first_leg
+        WHERE first_leg.calldate >= ?
+          AND first_leg.calldate < ?
+          AND first_leg.dcontext = 'from-internal'
+          AND CHAR_LENGTH(first_leg.dst) >= ${MIN_EXTERNAL_DIGITS}
+      `,
+      [dateFrom, windowEnd, dateFrom, windowEnd],
+      'cdr',
+    );
+  } catch (e) {
+    // Propagated: without the callbacks FCR and recovery would read better than they are.
+    log.error('analytics: outbound callback query error: %s', e);
+    throw e;
+  }
+  for (const r of rows) {
+    const key = numberKey(r.dst);
+    if (key) pushTo(out, key, r.calldate as Date);
+  }
+  for (const v of out.values()) v.sort((a, b) => wall(a) - wall(b));
+  return out;
+}
+
+/** Did we call this customer back in the `hours` after `after`? */
+export function calledBackWithin(callbacks: Map<string, Date[]>, key: string, after: Date, hours: number): boolean {
+  if (!hours) return false;
+  const a = wall(after);
+  const limit = a + hours * 3600 * 1000;
+  return (callbacks.get(key) ?? []).some((c) => a < wall(c) && wall(c) <= limit);
+}
+
+export interface FcrResult {
+  fcr_pct: number | null;
+  /** Callers whose first answered queue call fell in the period: the denominator. */
+  base: number;
+  /** Of those, the ones with a repeat contact inside the window. */
+  repeat: number;
+  /** The window has not closed on the newest callers yet, so the figure can still fall. */
+  provisional: boolean;
+}
+
+/**
+ * First Contact Resolution for the period.
+ *
+ * FCR = the share of callers whose first answered queue call in the period was the END of
+ * the matter. Anything inside `windowDays` of that call that says it was not makes them a
+ * repeat:
+ *
+ *   * THEY CALLED AGAIN. Any inbound queue call from the same number counts, answered or
+ *     not. Counting only answered repeats scored a customer who rang back twice and gave
+ *     up both times as perfectly resolved -- the worst case reported as the best.
+ *   * WE CALLED THEM. An agent dialling the customer within `callbackHours` of the call is
+ *     us saying the first call left something outstanding.
+ *
+ * Numbers are matched on numberKey, so '+2010...' and '010...' are one caller, and an
+ * anonymous, empty or internal (short) caller ID is no caller at all. Off (fcr_pct null)
+ * when the window is 0. A database error propagates (a 500, not a missing figure).
+ */
+export async function computeFcr(
+  dateFrom: string,
+  dateTo: string,
+  windowDays: number,
+  opts: { callbackHours?: number; allowedQueues?: Scope; callbacks?: Map<string, Date[]> | null } = {},
+): Promise<FcrResult> {
+  const callbackHours = opts.callbackHours ?? 0;
+  const off: FcrResult = { fcr_pct: null, base: 0, repeat: 0, provisional: false };
+  if (windowDays <= 0) return off;
+
+  const [queueCond, qparams] = scopeQueueCondition(opts.allowedQueues ?? null, 'dst');
+  const windowEnd = addDaysYmd(dateTo, windowDays + 1);
+  let rows: Row[];
+  try {
+    // Every real inbound queue call in the period and its follow-on window, answered or
+    // not. `answered` decides which of them can START a case; all of them can end one.
+    rows = await query(
+      `SELECT src, calldate, (${QUEUE_ANSWERED_BARE_SQL}) AS answered
+         FROM cdr
+        WHERE calldate >= ?
+          AND calldate < ?
+          AND lastapp = 'Queue'
+          ${realQueueCond('cdr')}
+          ${queueCond}
+        ORDER BY calldate`,
+      [dateFrom, windowEnd, ...qparams],
+      'cdr',
+    );
+  } catch (e) {
+    log.error('analytics: FCR query error: %s', e);
+    throw e;
+  }
+
+  const byCaller = new Map<string, [Date, boolean][]>();
+  for (const r of rows) {
+    const key = numberKey(r.src);
+    if (key) pushTo(byCaller, key, [r.calldate as Date, truthy(r.answered)]);
+  }
+
+  const callbacks = callbackHours
+    ? opts.callbacks ?? await outboundCallbacks(dateFrom, dateTo, callbackHours)
+    : new Map<string, Date[]>();
+
+  const periodStart = wall(strptimeYmd(dateFrom));
+  const periodEnd = wall(strptimeYmd(dateTo)) + DAY_SECS * 1000;
+  let base = 0;
+  let repeat = 0;
+  for (const [key, calls] of byCaller) {
+    const first = calls.find(([d, answered]) => answered && periodStart <= wall(d) && wall(d) < periodEnd);
+    if (!first) continue; // nobody we answered in this period: not a case this period opened
+    base += 1;
+    const f = wall(first[0]);
+    const boundary = f + windowDays * DAY_SECS * 1000;
+    const rangAgain = calls.some(([d]) => f < wall(d) && wall(d) <= boundary);
+    if (rangAgain || calledBackWithin(callbacks, key, first[0], callbackHours)) repeat += 1;
+  }
+  if (!base) return off;
+  return {
+    fcr_pct: pyRound((1 - repeat / base) * 100, 1),
+    base,
+    repeat,
+    provisional: periodEnd + windowDays * DAY_SECS * 1000 > wall(new Date()),
+  };
+}
+
+export interface RecoveryBlock {
+  abandoned_callers: number;
+  recovered_callers: number;
+  recovery_rate: number | null;
+  net_abandonment_rate: number | null;
+}
+
+/**
+ * Abandoned callers we went back and got: the figure an abandon rate alone cannot show.
+ *
+ * A caller who gave up waiting and whom an agent then rang back within the callback window
+ * is not the same outcome as one nobody ever spoke to, but the abandon rate counts them
+ * identically -- and should, which is why `abandonment_rate` is left exactly as it is. This
+ * adds the second figure beside it. Counted in PEOPLE: someone who gave up three times and
+ * was reached once is one caller recovered.
+ *
+ * `net_abandonment_rate` is the abandon rate with the recovered people's abandoned calls
+ * taken out of the numerator, over the same offered calls.
+ */
+export function recoveryBlock(queueRows: Row[], kpis: QueueKpis, callbacks: Map<string, Date[]>, callbackHours: number): RecoveryBlock {
+  const firstAbandon = new Map<string, Date>();
+  for (const r of queueRows) {
+    if (queueRowAnswered(r)) continue;
+    const key = numberKey(dget(r, 'src', null));
+    const when = truthy(r.calldate) ? (r.calldate as Date) : null;
+    if (!key || !when) continue;
+    const prev = firstAbandon.get(key);
+    if (prev === undefined || wall(when) < wall(prev)) firstAbandon.set(key, when);
+  }
+  const recovered = new Set<string>();
+  if (callbackHours) {
+    for (const [k, when] of firstAbandon) if (calledBackWithin(callbacks, k, when, callbackHours)) recovered.add(k);
+  }
+  // The abandoned CALLS of the recovered people, which is what comes out of the rate.
+  const recoveredCalls = queueRows.filter((r) => !queueRowAnswered(r) && recovered.has(numberKey(dget(r, 'src', null)))).length;
+  return {
+    abandoned_callers: firstAbandon.size,
+    recovered_callers: recovered.size,
+    recovery_rate: callbackHours ? rate(recovered.size, firstAbandon.size) : null,
+    net_abandonment_rate: rate(Math.max(0, kpis.abandoned_calls - recoveredCalls), kpis.total_calls),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Public KPI functions
+// Call-history volume
 // ---------------------------------------------------------------------------
 
-/** KPIs split by direction (inbound queue vs outbound) plus the all-calls block. */
-export function computeDirectionalKpis(
-  rows: Row[],
-  thresholds: SlaThresholds,
-  defaultSecs: number,
-  shortAbandonSecs: number,
-): Row {
-  const inRows = rows.filter((r) => r.direction === 'IN');
-  const outRows = rows.filter((r) => r.direction === 'OUT');
-
-  // Inbound queue KPIs
-  const inKpis: Row = deriveRates(computeKpisFromRows(inRows, thresholds, defaultSecs, shortAbandonSecs));
-  Object.assign(inKpis, peopleRates(inRows));
-
-  // Outbound KPIs. The failure split counts the call status (the vocabulary Call History
-  // shows) rather than raw CDR dispositions, so "No answer" here is UNANSWERED there.
-  const outAnsweredRows = outRows.filter(isAnswered);
-  const outAnswered = outAnsweredRows.length;
-  const outBillsec = outAnsweredRows.reduce((s, r) => s + intOr0(dget(r, 'billsec', null)), 0);
-  const countStatus = (st: string) => outRows.filter((r) => r.status === st).length;
-  const outKpis: Row = {
-    total_calls: outRows.length,
-    answered_calls: outAnswered,
-    failed_calls: countStatus(FAILURE),
-    no_answer_calls: countStatus(UNANSWERED),
-    busy_calls: countStatus(BUSY),
-    aht_secs: outAnswered ? pyRound(outBillsec / outAnswered) : null,
-    sum_billsec: outBillsec,
-    ...peopleRates(outRows),
-  };
-
-  // Combined KPIs (all calls). Every direction on both sides, internal included: the
-  // total always counted internal calls, so the answered count has to as well or the two
-  // disagree.
-  const allAnsweredRows = rows.filter(isAnswered);
-  const allAnswered = allAnsweredRows.length;
-  const allBillsec = allAnsweredRows.reduce((s, r) => s + intOr0(dget(r, 'billsec', null)), 0);
-  const combined: Row = {
-    total_calls: rows.length,
-    // Everything that is neither inbound nor outbound: extension to extension, feature
-    // codes and audio-test calls. Part of the total, so the split adds up.
-    internal_calls: rows.filter((r) => r.direction !== 'IN' && r.direction !== 'OUT').length,
-    answered_calls: allAnswered,
-    aht_secs: allAnswered ? pyRound(allBillsec / allAnswered) : null,
-    ...peopleRates(rows),
-  };
-
-  inKpis.outbound = outKpis;
-  inKpis.combined = combined;
-  return inKpis;
-}
-
-/** Call-history rows for a period, the same data source the Call History page reads. */
-async function periodCallLogRows(dateFrom: string, dateTo: string, allowedAgents: Scope, outcomes = false): Promise<Row[]> {
-  // enrich=false: analytics reuses the call-history data source but never reads recording
-  // paths or supervision flags, so skip that per-row work (no filesystem index walk, no
-  // supervision query) — a real saving when scanning a whole period.
-  return callLog({
+/**
+ * Call-history rows for a period, the same data source the Call History page reads, with
+ * the queue scope applied (queueScopeFilter) on top of the extension scope.
+ *
+ * enrich=false: analytics never reads recording paths or supervision flags, so that per-row
+ * work is skipped -- a real saving when scanning a whole period. The call log answers []
+ * when its CDR read fails, so an empty period is confirmed against the CDR database before
+ * it is reported as one: a dead database is a 500, not "no calls".
+ */
+export async function periodCallLogRows(
+  dateFrom: string,
+  dateTo: string,
+  allowedQueues: Scope,
+  allowedAgents: Scope,
+  outcomes = false,
+): Promise<Row[]> {
+  const rows = await callLog({
     dateFrom,
     dateTo,
     allowedExtensions: allowedAgents != null ? [...allowedAgents] : null,
     enrich: false,
     outcomes,
   });
+  if (!rows.length) await query('SELECT 1 FROM cdr LIMIT 1', [], 'cdr');
+  return queueScopeFilter(rows, allowedQueues);
 }
 
 /**
- * Queue scope on call-history rows: an inbound call to a numeric dst (a queue) outside
- * the caller's queues is dropped; everything else is left to the extension scope.
+ * Volume figures for one slice of call-history rows: the one shape behind every direction
+ * block (inbound, direct inbound, outbound, internal, combined), so a rate never means one
+ * thing on one card and something else on the next. Answered is the row's derived status.
  */
-export function queueScopeFilter(rows: Row[], allowedQueues: Scope): Row[] {
-  if (allowedQueues === null || allowedQueues === undefined) return rows;
-  const allowedQ = new Set(allowedQueues.map(String));
-  return rows.filter((r) => {
-    if (dget<unknown>(r, 'call_type', '') !== 'IN') return true;
-    const dst = sget(r, 'dst');
-    return !(dst && isDigits(dst) && !allowedQ.has(dst));
-  });
+export function volumeBlock(rows: Row[]): Row {
+  const answeredRows = rows.filter(rowAnswered);
+  const answered = answeredRows.length;
+  const talk = answeredRows.reduce((s, r) => s + intOr0(dget(r, 'talk', null)), 0);
+  return {
+    total_calls: rows.length,
+    answered_calls: answered,
+    missed_calls: rows.length - answered,
+    aht_secs: answered ? pyRound(talk / answered) : null,
+    sum_billsec: talk,
+    ...peopleRates(rows.map((r) => ({ answered: rowAnswered(r), counterparty: counterpartyKey(r) }))),
+  };
 }
 
-/** KPIs for one period, inbound + outbound + combined, from the Call History data. */
+/**
+ * The volume blocks of a period, split the way the Dashboard and the Overview show them.
+ * Combined counts every call in scope, internal included, on both sides of every ratio.
+ */
+export function computeVolumeKpis(rows: Row[]): Row {
+  const inRows = rows.filter((r) => r.call_type === 'IN');
+  const outRows = rows.filter((r) => r.call_type === 'OUT');
+  // Everything that is neither inbound nor outbound: extension to extension, feature
+  // codes and audio-test calls. Part of the total, so the split adds up.
+  const internalRows = rows.filter((r) => r.call_type !== 'IN' && r.call_type !== 'OUT');
+
+  // The outbound failure split counts the call status (the vocabulary Call History shows)
+  // rather than raw CDR dispositions, so "No answer" here is UNANSWERED there.
+  const countStatus = (st: string) => outRows.filter((r) => r.status === st).length;
+  const outbound = volumeBlock(outRows);
+  Object.assign(outbound, {
+    failed_calls: countStatus(FAILURE),
+    no_answer_calls: countStatus(UNANSWERED),
+    busy_calls: countStatus(BUSY),
+  });
+  const internal = volumeBlock(internalRows);
+  return {
+    // Every inbound call, queue and direct together: the inbound card's volume.
+    inbound: volumeBlock(inRows),
+    // Inbound that never entered a queue: someone dialled an extension direct. No SLA and
+    // no abandonment apply -- there was no queue to wait in.
+    inbound_direct: volumeBlock(inRows.filter((r) => !isQueueCall(r))),
+    outbound,
+    internal,
+    combined: { ...volumeBlock(rows), internal_calls: internal.total_calls },
+  };
+}
+
+/**
+ * KPIs for one period: queue quality + call volume, each from the data source that owns it.
+ *
+ *   * queue quality (SLA, abandonment, short abandon, wait, queue AHT, FCR, recovery) -- the
+ *     queue CDR run, the same rows and the same wait formula Queue Performance uses, so the
+ *     Overview and the Queues tab cannot report different figures for the same day. A direct
+ *     dial to an extension that rang out is not a queue abandon.
+ *   * volume (inbound, direct inbound, outbound, internal, combined) -- the call log, the
+ *     same source as Call History.
+ */
 export async function computePeriodKpisWithOutbound(
   dateFrom: string,
   dateTo: string,
@@ -829,31 +1131,27 @@ export async function computePeriodKpisWithOutbound(
   defaultSecs: number,
   shortAbandonSecs: number,
   windowDays: number,
+  callbackHours = 0,
 ): Promise<Row> {
-  const allRows = queueScopeFilter(await periodCallLogRows(dateFrom, dateTo, allowedAgents), allowedQueues);
+  const [queueCond, qparams] = scopeQueueCondition(allowedQueues);
+  const queueRows = await runQueueCdr(dateFrom, dateTo, queueCond, qparams);
+  const kpis: Row = deriveRates(computeKpisFromRows(queueRows, thresholds, defaultSecs, shortAbandonSecs));
+  Object.assign(kpis, peopleRates(queuePeople(queueRows)));
 
-  // Rows shaped for the KPI computation
-  const enriched: Row[] = allRows.map((r) => {
-    const callType = dget<unknown>(r, 'call_type', '');
-    const dst = sget(r, 'dst');
-    const duration = intOr0(dget(r, 'duration', null));
-    const talk = intOr0(dget(r, 'talk', null));
-    const qExt = callType === 'IN' && isDigits(dst) ? dst : '';
-    return {
-      direction: callType,
-      // The outside party: who we dialled on an outbound call, who called us otherwise.
-      counterparty: numberKey(callType === 'OUT' ? dget(r, 'dst', null) : dget(r, 'src', null)),
-      disposition: sget(r, 'disposition').toUpperCase(),
-      status: dget(r, 'status', null),
-      queue_ext: qExt,
-      wait_secs: qExt ? Math.max(0, duration - talk) : 0,
-      billsec: talk,
-      total_dur: duration,
-    };
-  });
+  const rows = await periodCallLogRows(dateFrom, dateTo, allowedQueues, allowedAgents);
+  Object.assign(kpis, computeVolumeKpis(rows));
 
-  const kpis = computeDirectionalKpis(enriched, thresholds, defaultSecs, shortAbandonSecs);
-  kpis.fcr_pct = await computeFcr(dateFrom, dateTo, windowDays, allowedQueues);
+  // One read of our outbound calls serves both FCR's callback test and recovery.
+  const callbacks = await outboundCallbacks(dateFrom, dateTo, callbackHours);
+  Object.assign(kpis, recoveryBlock(queueRows, kpis as QueueKpis, callbacks, callbackHours));
+
+  const fcr = await computeFcr(dateFrom, dateTo, windowDays, { callbackHours, allowedQueues, callbacks });
+  kpis.fcr_pct = fcr.fcr_pct;
+  // What the percentage was computed from, so the UI can name the population, and mark a
+  // figure whose window has not closed yet.
+  kpis.fcr_callers = fcr.base;
+  kpis.fcr_repeat_callers = fcr.repeat;
+  kpis.fcr_provisional = fcr.provisional;
   return kpis;
 }
 
@@ -871,8 +1169,16 @@ export function previousPeriod(dateFrom: string, dateTo: string): [string, strin
 }
 
 /**
+ * The widest range that still gets a previous-period comparison. A month covers every
+ * preset read as "how are we doing against last time"; beyond it the comparison doubles a
+ * long scan to decorate the cards with an arrow, and prev_period is null instead.
+ */
+export const COMPARABLE_PERIOD_DAYS = 31;
+
+/**
  * Combined KPIs for the executive overview: the current period plus the previous period of
- * the same length (for deltas), inbound queue metrics with outbound and combined blocks.
+ * the same length (for deltas; null past COMPARABLE_PERIOD_DAYS), queue quality with the
+ * volume blocks, and the settings the figures were computed against.
  */
 export async function computeExecutiveKpis(
   dateFrom: string | null | undefined,
@@ -883,20 +1189,39 @@ export async function computeExecutiveKpis(
   const thresholds = truthy(opts.slaThresholds) ? (opts.slaThresholds as SlaThresholds) : await getSlaThresholds();
   const defaultSecs = await getSlaDefaultSecs();
   const fcr: Partial<FcrSettings> = truthy(opts.fcrCfg) ? (opts.fcrCfg as Partial<FcrSettings>) : await getFcrSettings();
-  const shortAbandonSecs = dget(fcr, 'short_abandon_secs', 5);
-  const windowDays = dget(fcr, 'window_days', 7);
+  const shortAbandonSecs = dget(fcr, 'short_abandon_secs', FCR_DEFAULTS.short_abandon_secs);
+  const windowDays = dget(fcr, 'window_days', FCR_DEFAULTS.window_days);
+  const callbackHours = dget(fcr, 'callback_window_hours', FCR_DEFAULTS.callback_window_hours);
   const allowedQueues = opts.allowedQueues ?? null;
   const allowedAgents = opts.allowedAgents ?? null;
+  const period = (from: string, to: string) => computePeriodKpisWithOutbound(
+    from, to, allowedQueues, allowedAgents, thresholds, defaultSecs, shortAbandonSecs, windowDays, callbackHours,
+  );
 
-  const kpis = await computePeriodKpisWithOutbound(
-    df, dt, allowedQueues, allowedAgents, thresholds, defaultSecs, shortAbandonSecs, windowDays,
-  );
-  const [prevFrom, prevTo] = previousPeriod(df, dt);
-  const prevKpis = await computePeriodKpisWithOutbound(
-    prevFrom, prevTo, allowedQueues, allowedAgents, thresholds, defaultSecs, shortAbandonSecs, windowDays,
-  );
-  return { period: { from: df, to: dt }, current: kpis, prev_period: prevKpis };
+  const kpis = await period(df, dt);
+  let prevKpis: Row | null = null;
+  if (ymdOrdinal(dt) - ymdOrdinal(df) + 1 <= COMPARABLE_PERIOD_DAYS) {
+    const [prevFrom, prevTo] = previousPeriod(df, dt);
+    prevKpis = await period(prevFrom, prevTo);
+  }
+  return {
+    period: { from: df, to: dt },
+    current: kpis,
+    prev_period: prevKpis,
+    // The thresholds these KPIs were computed against, so the UI can state the real numbers
+    // when it explains a KPI. Not sensitive: anyone holding analytics:read already sees the
+    // figures derived from them.
+    settings: {
+      sla_default_secs: defaultSecs,
+      fcr_window_days: windowDays,
+      short_abandon_secs: shortAbandonSecs,
+      callback_window_hours: callbackHours,
+    },
+  };
 }
+
+/** Lower edges of the queue wait-time buckets, in seconds; the last one is open-ended. */
+export const WAIT_BUCKET_EDGES = [0, 10, 20, 30, 60, 120, 300] as const;
 
 /** Per-queue KPI rows, busiest queue first. */
 export async function computeQueuePerformance(
@@ -908,7 +1233,7 @@ export async function computeQueuePerformance(
   const thresholds = truthy(opts.slaThresholds) ? (opts.slaThresholds as SlaThresholds) : await getSlaThresholds();
   const defaultSecs = await getSlaDefaultSecs();
   const fcr: Partial<FcrSettings> = truthy(opts.fcrCfg) ? (opts.fcrCfg as Partial<FcrSettings>) : await getFcrSettings();
-  const shortAbandonSecs = dget(fcr, 'short_abandon_secs', 5);
+  const shortAbandonSecs = dget(fcr, 'short_abandon_secs', FCR_DEFAULTS.short_abandon_secs);
   const queueNames = await getQueueNames();
 
   const [queueCond, qparams] = scopeQueueCondition(opts.allowedQueues ?? null);
@@ -925,11 +1250,48 @@ export async function computeQueuePerformance(
     inc(hc, truthy(r.calldate) ? (r.calldate as Date).getHours() : 0);
   }
 
+  // Each queue's own day-by-day offered / answered / abandoned, for the detail chart. Every
+  // day of the range is present (zeros included) so queues line up on one axis.
+  const dailyOf = (qRows: Row[]): Row[] => {
+    const byDay = new Map<string, { offered: number; answered: number }>();
+    for (const r of qRows) {
+      if (!truthy(r.calldate)) continue;
+      const day = dateIso(r.calldate as Date);
+      const d = byDay.get(day) ?? { offered: 0, answered: 0 };
+      d.offered += 1;
+      if (queueRowAnswered(r)) d.answered += 1;
+      byDay.set(day, d);
+    }
+    const out: Row[] = [];
+    for (let cur = ymdOrdinal(df); cur <= ymdOrdinal(dt); cur++) {
+      const day = ordinalYmd(cur);
+      const d = byDay.get(day) ?? { offered: 0, answered: 0 };
+      out.push({ date: day, offered: d.offered, answered: d.answered, abandoned: d.offered - d.answered });
+    }
+    return out;
+  };
+
+  // How long each queue's callers waited, answered and abandoned, in fixed buckets: the
+  // shape behind the average wait. Wait is the same clamped figure the SLA and the average use.
+  const waitDistOf = (qRows: Row[]): Row[] => {
+    const buckets = WAIT_BUCKET_EDGES.map((from, i) => ({
+      from_secs: from, to_secs: WAIT_BUCKET_EDGES[i + 1] ?? null, answered: 0, abandoned: 0,
+    }));
+    for (const r of qRows) {
+      const wait = queueWait(r);
+      let i = buckets.length - 1;
+      while (i > 0 && wait < buckets[i].from_secs) i--;
+      if (queueRowAnswered(r)) buckets[i].answered += 1;
+      else buckets[i].abandoned += 1;
+    }
+    return buckets;
+  };
+
   const result: Row[] = [];
   for (const [qExt, qRows] of byQueue) {
     const k = deriveRates(computeKpisFromRows(qRows, thresholds, defaultSecs, shortAbandonSecs));
     // The callers behind the calls, for the per-person answer rate (as the overview counts it).
-    const people = peopleRates(qRows.map((r) => ({ disposition: r.disposition, counterparty: numberKey(r.src) })));
+    const people = peopleRates(queuePeople(qRows));
     // max(counts, key=counts.get): the first hour with the highest count
     let peak: number | null = null;
     let best = -1;
@@ -954,6 +1316,11 @@ export async function computeQueuePerformance(
       answer_rate: people.answer_rate,
       talk_secs: k.sum_billsec,
       missed_calls: k.abandoned_calls,
+      // The same derived rates the Overview's queue service shows, per queue.
+      abandonment_rate: k.abandonment_rate,
+      short_abandon_rate: k.short_abandon_rate,
+      daily: dailyOf(qRows),
+      wait_distribution: waitDistOf(qRows),
     });
   }
 
@@ -964,7 +1331,15 @@ export async function computeQueuePerformance(
 
 /**
  * Per-agent KPI rows with a 7-day daily trend (answered calls on each of the last 7 days
- * of the period). Covers ALL calls (inbound, outbound, internal), from Call History data.
+ * of the period), from Call History data.
+ *
+ * Each row is keyed by the extension the call is credited to, and only extensions inside
+ * the caller's agent scope are listed: the call log returns every call that TOUCHED an
+ * in-scope extension, which includes calls credited to colleagues outside it.
+ *
+ * The table ranks people on CUSTOMER work. An extension-to-extension call is a colleague
+ * asking a question: it is not a handled contact and has no SLA, so it is reported in its
+ * own `internal_calls` column and left out of total, answered and the rank.
  */
 export async function computeAgentPerformance(
   dateFrom: string | null | undefined,
@@ -975,48 +1350,56 @@ export async function computeAgentPerformance(
   const thresholds = truthy(opts.slaThresholds) ? (opts.slaThresholds as SlaThresholds) : await getSlaThresholds();
   const defaultSecs = await getSlaDefaultSecs();
   const agentNames = await getAgentNames();
+  const allowedAgents = opts.allowedAgents ?? null;
+  const inScope = allowedAgents === null ? null : new Set(allowedAgents.map(String));
 
-  const allRows = await periodCallLogRows(df, dt, opts.allowedAgents ?? null);
+  const allRows = await periodCallLogRows(df, dt, null, allowedAgents);
 
-  const byAgentTotal = new Map<string, number>(); // total calls handled (also the agent order)
+  const byAgentTotal = new Map<string, number>(); // customer calls handled (inbound + outbound)
   const byAgentAnswered = new Map<string, number>();
   const byAgentBillsec = new Map<string, number>();
   const byAgentSlaMet = new Map<string, number>(); // SLA met (inbound queue only)
   const byAgentInbound = new Map<string, number>();
   const byAgentInboundAnswered = new Map<string, number>(); // SLA denominator
   const byAgentOutbound = new Map<string, number>();
+  const byAgentInternal = new Map<string, number>(); // extension to extension: counted, not ranked
   const dailyTrend = new Map<string, Map<string, number>>(); // agent -> day -> answered
   const byAgentMissed = new Map<string, number>(); // calls that rang the agent, unanswered
-  const byAgentPeople = new Map<string, Row[]>(); // [{disposition, counterparty}] for answer_rate
+  const byAgentPeople = new Map<string, PersonCall[]>(); // for answer_rate
+  const seen: string[] = []; // first-seen order of every listed agent
 
   for (const r of allRows) {
     const ext = sgetOr(r, 'extension');
     if (!ext || !isDigits(ext)) continue;
+    if (inScope && !inScope.has(ext)) continue;
+    if (!byAgentTotal.has(ext) && !byAgentInternal.has(ext)) seen.push(ext);
 
     const callType = dget<unknown>(r, 'call_type', '');
-    const disp = sget(r, 'disposition').toUpperCase();
+    if (callType !== 'IN' && callType !== 'OUT') {
+      inc(byAgentInternal, ext);
+      continue;
+    }
+
+    const answered = rowAnswered(r);
     const duration = intOr0(dget(r, 'duration', null));
     const talk = intOr0(dget(r, 'talk', null));
-    const dst = sget(r, 'dst');
 
     inc(byAgentTotal, ext);
     if (callType === 'IN') inc(byAgentInbound, ext);
-    else if (callType === 'OUT') inc(byAgentOutbound, ext);
-    if (disp !== 'ANSWERED' && callType !== 'OUT') inc(byAgentMissed, ext);
-    pushTo(byAgentPeople, ext, {
-      disposition: disp,
-      counterparty: numberKey(callType === 'OUT' ? dget(r, 'dst', null) : dget(r, 'src', null)),
-    });
+    else inc(byAgentOutbound, ext);
+    if (!answered && callType === 'IN') inc(byAgentMissed, ext);
+    pushTo(byAgentPeople, ext, { answered, counterparty: counterpartyKey(r) });
 
-    if (disp === 'ANSWERED') {
+    if (answered) {
       inc(byAgentAnswered, ext);
       inc(byAgentBillsec, ext, talk);
 
-      // SLA check (only for inbound queue calls)
-      if (callType === 'IN' && dst && isDigits(dst)) {
+      // SLA check: real queue calls only. A direct dial the agent picked up has no queue
+      // threshold to be measured against.
+      if (isQueueCall(r)) {
         inc(byAgentInboundAnswered, ext);
         const wait = Math.max(0, duration - talk);
-        if (wait <= slaThresholdFor(dst, thresholds, defaultSecs)) inc(byAgentSlaMet, ext);
+        if (wait <= slaThresholdFor(sget(r, 'dst'), thresholds, defaultSecs)) inc(byAgentSlaMet, ext);
       }
 
       if (truthy(r.calldate)) {
@@ -1031,31 +1414,35 @@ export async function computeAgentPerformance(
   const trendDays: string[] = [];
   for (let i = 6; i >= 0; i--) trendDays.push(addDaysYmd(dt, -i));
 
+  const g = (m: Map<string, number>, k: string) => m.get(k) ?? 0;
   const result: Row[] = [];
-  for (const [aExt, total] of byAgentTotal) {
-    const answered = byAgentAnswered.get(aExt) ?? 0;
-    const totalBillsec = byAgentBillsec.get(aExt) ?? 0;
-    const inboundAnswered = byAgentInboundAnswered.get(aExt) ?? 0;
+  // An agent who only took internal calls still gets a row, zeroes where the customer work
+  // would be: leaving them out would read as "did not work".
+  for (const aExt of seen) {
+    const answered = g(byAgentAnswered, aExt);
+    const totalBillsec = g(byAgentBillsec, aExt);
+    const inboundAnswered = g(byAgentInboundAnswered, aExt);
     // SLA % = answered inbound queue calls within threshold / answered inbound queue calls
     // (the queue-level definition: sla_met_calls / answered)
-    const slaPct = inboundAnswered ? pyRound(((byAgentSlaMet.get(aExt) ?? 0) / inboundAnswered) * 100, 1) : null;
+    const slaPct = inboundAnswered ? pyRound((g(byAgentSlaMet, aExt) / inboundAnswered) * 100, 1) : null;
     const days = dailyTrend.get(aExt);
     result.push({
       agent_extension: aExt,
       agent_name: dget(agentNames, aExt, aExt),
-      total_calls: total,
+      total_calls: g(byAgentTotal, aExt),
       answered_calls: answered,
-      inbound_calls: byAgentInbound.get(aExt) ?? 0,
-      outbound_calls: byAgentOutbound.get(aExt) ?? 0,
+      inbound_calls: g(byAgentInbound, aExt),
+      outbound_calls: g(byAgentOutbound, aExt),
+      internal_calls: g(byAgentInternal, aExt),
       aht_secs: answered ? pyRound(totalBillsec / answered) : null,
       sla_contribution_pct: slaPct,
       daily_trend: trendDays.map((d) => days?.get(d) ?? 0),
       // Beyond the Python's row, for the agent comparison chart: distinct outside numbers
-      // reached / involved, talk time of the answered calls, and the calls that rang this
-      // agent (anything but their own outbound) and were not answered.
+      // reached / involved, talk time of the answered calls, and the inbound calls that
+      // rang this agent and were not answered.
       answer_rate: peopleRates(byAgentPeople.get(aExt) ?? []).answer_rate,
       talk_secs: totalBillsec,
-      missed_calls: byAgentMissed.get(aExt) ?? 0,
+      missed_calls: g(byAgentMissed, aExt),
     });
   }
 
@@ -1064,6 +1451,136 @@ export async function computeAgentPerformance(
     row.rank = i + 1;
   });
   return result;
+}
+
+/** The directions an agent's calls split into (computeAgentCalls). */
+export const AGENT_CALL_DIRECTIONS = ['IN', 'OUT', 'INTERNAL'] as const;
+export type AgentCallDirection = (typeof AGENT_CALL_DIRECTIONS)[number];
+
+/** One direction's totals in the agent detail. */
+export interface AgentDirectionSummary {
+  direction: AgentCallDirection;
+  calls: number;
+  answered: number;
+  /** Rang this agent and they did not take it -- including calls a colleague answered. */
+  missed: number;
+  /** Everything else: the other end never picked up, was busy, the line failed... */
+  not_connected: number;
+  talk_secs: number;
+}
+
+// The detail re-asks on every page and filter click, and the scan behind it is the whole
+// period's call history for that extension. A minute of reuse covers a supervisor clicking
+// through one agent without serving a figure staler than the live boards would.
+const AGENT_CALLS_TTL_MS = 60_000;
+const AGENT_CALLS_CACHE_MAX = 20;
+const agentCallsCache = new Map<string, { at: number; rows: Promise<Row[]> }>();
+
+function agentCallRows(agent: string, df: string, dt: string): Promise<Row[]> {
+  const key = `${agent}|${df}|${dt}`;
+  const now = Date.now();
+  const hit = agentCallsCache.get(key);
+  if (hit && now - hit.at < AGENT_CALLS_TTL_MS) return hit.rows;
+  for (const [k, entry] of agentCallsCache) if (now - entry.at >= AGENT_CALLS_TTL_MS) agentCallsCache.delete(k);
+  if (agentCallsCache.size >= AGENT_CALLS_CACHE_MAX) agentCallsCache.delete(agentCallsCache.keys().next().value as string);
+  // outcomes=true: the list shows each call's status as Call History does (CEL facts).
+  const rows = periodCallLogRows(df, dt, null, [agent], true);
+  agentCallsCache.set(key, { at: now, rows });
+  // A failed scan must not be served for the next minute.
+  rows.catch(() => agentCallsCache.delete(key));
+  return rows;
+}
+
+/** Test hook: forget every cached agent-calls scan. */
+export function clearAgentCallsCache(): void {
+  agentCallsCache.clear();
+}
+
+/**
+ * Agent Performance row click: one agent's calls for the period, split by direction, with
+ * the paginated call list behind it (newest first).
+ *
+ * The rows are Call History's, for every call that touched this extension on any leg -- the
+ * same match the history scope uses. That reaches calls the table does not credit to the
+ * agent: a queue call that rang them while a colleague answered, or nobody did. Those read
+ * as MISSED here (`agent_status`), because from this agent's side that is what they were;
+ * the row's own `status` still says how the call itself ended. `is_handled` is whether the
+ * call is the agent's: the extension the row credits, or for an internal call either end.
+ *
+ * The caller must already have checked that `agent` is inside the requester's scope. A page
+ * past the end is clamped to the last page.
+ */
+export async function computeAgentCalls(
+  agent: string,
+  dateFrom: string | null | undefined,
+  dateTo: string | null | undefined,
+  opts: { direction?: string | null; status?: string | null; page?: number; pageSize?: number } = {},
+): Promise<Row> {
+  const [df, dt] = defaultDates(dateFrom, dateTo);
+  const pageSize = Math.max(1, opts.pageSize ?? 50);
+  const wantDir = opts.direction ? opts.direction.toUpperCase() : null;
+  const wantStatus = opts.status ? drilldownStatusFilter(opts.status) : null;
+  const agentNames = await getAgentNames();
+  const rows = await agentCallRows(agent, df, dt);
+
+  const byDirection = new Map<string, AgentDirectionSummary>(AGENT_CALL_DIRECTIONS.map((d) => [d, {
+    direction: d, calls: 0, answered: 0, missed: 0, not_connected: 0, talk_secs: 0,
+  }]));
+  const statusCounts: Record<string, number> = {};
+  const listed: Row[] = [];
+  for (const r of rows) {
+    const ct = pyStr(dget(r, 'call_type', ''));
+    const direction: AgentCallDirection = ct === 'IN' || ct === 'OUT' ? ct : 'INTERNAL';
+    const isHandled = sgetOr(r, 'extension') === agent || (direction === 'INTERNAL' && sget(r, 'src') === agent);
+    const status = pyStr(dget(r, 'status', '') ?? '');
+    const agentStatus = isHandled ? status : MISSED;
+
+    const sum = byDirection.get(direction) as AgentDirectionSummary;
+    sum.calls += 1;
+    if (agentStatus === ANSWERED) {
+      sum.answered += 1;
+      sum.talk_secs += intOr0(dget(r, 'talk', null));
+    } else if (agentStatus === MISSED) {
+      sum.missed += 1;
+    } else {
+      sum.not_connected += 1;
+    }
+
+    if (wantDir && direction !== wantDir) continue;
+    // A facet ignores its own selection, so the other statuses stay pickable.
+    if (agentStatus) statusCounts[agentStatus] = (statusCounts[agentStatus] ?? 0) + 1;
+    if (wantStatus && agentStatus !== wantStatus) continue;
+    listed.push({
+      calldate: truthy(r.calldate) ? isoformat(r.calldate as Date) : null,
+      direction,
+      src: sget(r, 'src'),
+      dst: sget(r, 'dst'),
+      queue_extension: isQueueCall(r) ? sget(r, 'dst') : '',
+      agent_extension: sgetOr(r, 'extension'),
+      duration: intOr0(dget(r, 'duration', null)),
+      talk: intOr0(dget(r, 'talk', null)),
+      status,
+      agent_status: agentStatus,
+      is_handled: isHandled,
+      linkedid: sget(r, 'linkedid'),
+    });
+  }
+
+  // Newest first, as Call History lists them (ISO stamps sort as text).
+  listed.sort((a, b) => pyStr(b.calldate ?? '').localeCompare(pyStr(a.calldate ?? '')));
+  const lastPage = Math.max(1, Math.ceil(listed.length / pageSize));
+  const page = Math.min(Math.max(1, opts.page ?? 1), lastPage);
+  const start = (page - 1) * pageSize;
+  return {
+    agent,
+    agent_name: dget(agentNames, agent, agent),
+    directions: [...byDirection.values()],
+    status_counts: statusCounts,
+    calls: listed.slice(start, start + pageSize),
+    total: listed.length,
+    page,
+    page_size: pageSize,
+  };
 }
 
 export const HEATMAP_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -1089,7 +1606,9 @@ export async function computeHourlyHeatmap(
             DAYOFWEEK(first_leg.calldate) AS dow,
             HOUR(first_leg.calldate)      AS hr,
             COUNT(*)                      AS cnt,
-            SUM(CASE WHEN last_leg.disposition='ANSWERED' THEN 1 ELSE 0 END) AS answered_cnt
+            -- Same answered rule as the KPIs, so a cell's abandon count agrees with the
+            -- queue's abandoned total for that period.
+            SUM(CASE WHEN ${ANSWERED_SQL} THEN 1 ELSE 0 END) AS answered_cnt
         FROM
             (
                 SELECT c.*
@@ -1114,6 +1633,7 @@ export async function computeHourlyHeatmap(
                 ) x ON c.linkedid=x.linkedid AND c.sequence=x.max_seq
             ) last_leg ON first_leg.linkedid=last_leg.linkedid
         WHERE first_leg.lastapp='Queue'
+          ${realQueueCond()}
           AND first_leg.calldate >= ?
           AND first_leg.calldate < DATE_ADD(?, INTERVAL 1 DAY)
           ${queueCond}
@@ -1149,12 +1669,15 @@ export async function computeHourlyHeatmap(
 }
 
 /**
- * Per-value counts for the drilldown's Direction and Status filters, keyed by value
- * (IN / OUT / INTERNAL; the call-status vocabulary). Only values that occur appear.
+ * Per-value counts for the drilldown's filters, keyed by value: direction (IN / OUT /
+ * INTERNAL), status (the call-status vocabulary), queue (queue calls by queue extension) and
+ * agent (by the extension a call is credited to). Only values that occur appear.
  */
 export interface DrilldownFacets {
   direction: Record<string, number>;
   status: Record<string, number>;
+  queue: Record<string, number>;
+  agent: Record<string, number>;
 }
 
 /** The CDR disposition words callStatus() does not know, as the status they read as. */
@@ -1184,7 +1707,7 @@ export interface DrilldownOptions {
   allowedQueues?: Scope;
   allowedAgents?: Scope;
   slaThresholds?: SlaThresholds | null;
-  /** Also count each direction and status under the other filters (see DrilldownFacets). */
+  /** Also count each filter's values under the other filters (see DrilldownFacets). */
   facets?: boolean;
 }
 
@@ -1192,17 +1715,18 @@ export interface DrilldownOptions {
  * Paginated call records with analytics fields (wait_secs, sla_met), from the same data
  * source as Call History so a call reads the same in both.
  *
- * `dispositionFilter` (the wire's `disposition` param) names a call status and matches the
- * status the row shows; a raw CDR disposition (NO ANSWER, FAILED, ...) is accepted in any
- * spelling callStatus() knows.
+ * `queueExt` and `agentExt` match exactly: the queue a QUEUE call entered, and the extension
+ * a call is credited to. `dispositionFilter` (the wire's `disposition` param) names a call
+ * status and matches the status the row shows; a raw CDR disposition (NO ANSWER, FAILED,
+ * ...) is accepted in any spelling callStatus() knows.
  */
 export async function computeDrilldown(
   dateFrom: string | null | undefined,
   dateTo: string | null | undefined,
   opts: DrilldownOptions = {},
 ): Promise<Row> {
-  const queueExt = opts.queueExt ?? null;
-  const agentExt = opts.agentExt ?? null;
+  const queueExt = opts.queueExt ? opts.queueExt.trim() : null;
+  const agentExt = opts.agentExt ? opts.agentExt.trim() : null;
   const direction = opts.direction ?? null;
   const dispositionFilter = opts.dispositionFilter ?? null;
   const page = opts.page ?? 1;
@@ -1215,31 +1739,34 @@ export async function computeDrilldown(
   // outcomes=true: the drilldown shows and filters by call status, so it reads the CEL
   // hangup facts Call History does -- a call is MISSED in both, never MISSED in one and
   // UNANSWERED in the other.
-  const allRows = queueScopeFilter(await periodCallLogRows(df, dt, opts.allowedAgents ?? null, true), opts.allowedQueues ?? null);
+  const allRows = await periodCallLogRows(df, dt, opts.allowedQueues ?? null, opts.allowedAgents ?? null, true);
 
   const wantDir = direction && ['IN', 'OUT', 'INTERNAL'].includes(direction.toUpperCase()) ? direction.toUpperCase() : null;
   const wantStatus = dispositionFilter ? drilldownStatusFilter(dispositionFilter) : null;
 
-  // With `facets`, the same pass also counts each direction and status under every OTHER
-  // filter -- a facet ignores its own selection, so the choices beside the picked one
-  // stay visible. It costs nothing extra: the period is scanned anyway.
+  // With `facets`, the same pass also counts each filter's values under every OTHER filter
+  // -- a facet ignores its own selection, so the choices beside the picked one stay
+  // visible. It costs nothing extra: the period is scanned anyway.
   const filtered: Row[] = [];
-  const facets: DrilldownFacets = { direction: {}, status: {} };
+  const facets: DrilldownFacets = { direction: {}, status: {}, queue: {}, agent: {} };
+  const bump = (m: Record<string, number>, k: unknown) => {
+    if (typeof k === 'string' && k) m[k] = (m[k] ?? 0) + 1;
+  };
   for (const r of allRows) {
     const callType = dget<unknown>(r, 'call_type', '');
     const rowStatus = dget<unknown>(r, 'status', null);
-    const queueOk = !(queueExt && sget(r, 'dst') !== queueExt);
-    const agentOk = !(agentExt && sgetOr(r, 'extension') !== agentExt);
+    const rowQueue = isQueueCall(r) ? sget(r, 'dst') : '';
+    const rowAgent = sgetOr(r, 'extension');
+    const queueOk = !(queueExt && rowQueue !== queueExt);
+    const agentOk = !(agentExt && rowAgent !== agentExt);
     const directionOk = !(wantDir && callType !== wantDir);
     const statusOk = !(wantStatus && rowStatus !== wantStatus);
 
-    if (opts.facets && queueOk && agentOk) {
-      if (statusOk && typeof callType === 'string' && callType) {
-        facets.direction[callType] = (facets.direction[callType] ?? 0) + 1;
-      }
-      if (directionOk && typeof rowStatus === 'string' && rowStatus) {
-        facets.status[rowStatus] = (facets.status[rowStatus] ?? 0) + 1;
-      }
+    if (opts.facets) {
+      if (queueOk && agentOk && statusOk) bump(facets.direction, callType);
+      if (queueOk && agentOk && directionOk) bump(facets.status, rowStatus);
+      if (agentOk && directionOk && statusOk) bump(facets.queue, rowQueue);
+      if (queueOk && directionOk && statusOk) bump(facets.agent, rowAgent);
     }
     if (queueOk && agentOk && directionOk && statusOk) filtered.push(r);
   }
@@ -1259,13 +1786,14 @@ export async function computeDrilldown(
     const disp = sget(r, 'disposition').toUpperCase();
     const dst = sget(r, 'dst');
     const ct = dget<unknown>(r, 'call_type', '');
-    // For queue inbound calls, dst is the queue extension
-    const qExt = ct === 'IN' && isDigits(dst) ? dst : '';
+    // For queue calls, dst is the queue extension
+    const qExt = isQueueCall(r) ? dst : '';
     const threshold = slaThresholdFor(qExt, thresholds, defaultSecs);
     // Wait time: only meaningful for queue calls
     const duration = intOr0(dget(r, 'duration', null));
     const talk = intOr0(dget(r, 'talk', null));
     const wait = qExt ? Math.max(0, duration - talk) : 0;
+    const status = dget(r, 'status', null) || mapCallOutcome({ disposition: disp, answered: talk > 0 });
     return {
       calldate: truthy(r.calldate) ? isoformat(r.calldate as Date) : null,
       src: sget(r, 'src'),
@@ -1276,9 +1804,9 @@ export async function computeDrilldown(
       talk,
       disposition: disp,
       // The call status, as Call History shows it; `disposition` is the raw CDR value.
-      status: dget(r, 'status', null) || mapCallOutcome({ disposition: disp, answered: talk > 0 }),
+      status,
       wait_secs: wait,
-      sla_met: Boolean(qExt) && disp === 'ANSWERED' && wait <= threshold,
+      sla_met: Boolean(qExt) && status === ANSWERED && wait <= threshold,
       linkedid: sget(r, 'linkedid'),
       direction: ct,
     };
@@ -1293,55 +1821,105 @@ export async function computeDrilldown(
 // Volume trend (daily call counts for the period)
 // ---------------------------------------------------------------------------
 
+/** Calls in one hour of the day across the range, by direction. */
+export interface HourVolume {
+  hour: number;
+  inbound: number;
+  outbound: number;
+  internal: number;
+}
+
 /**
- * One {date, total_calls, answered_calls, abandoned_calls, outbound_total,
- * outbound_answered} per calendar day of the range, no gaps. The inbound figures cover
- * ALL inbound calls (abandoned = inbound with no answer); direction classification goes
- * through the single classifier in call-log.ts, as the executive KPIs do.
+ * The daily trend and, from the same rows, the period's calls by hour of day.
+ *
+ * trend: one {date, total_calls, answered_calls, abandoned_calls, outbound_total,
+ * outbound_answered, internal_total, customers, customers_answered} per calendar day of the
+ * range, no gaps. The inbound figures cover ALL inbound calls (abandoned = inbound with no
+ * answer, which is why the chart says "unanswered"; queue abandonment is the narrower KPI).
+ * customers / customers_answered are that day's distinct inbound callers and how many got
+ * through, for the per-person answer rate. Answered is the row's derived status.
+ *
+ * hourly: 24 {hour, inbound, outbound, internal}; summed, they equal the trend's totals.
  */
-export async function computeVolumeTrend(
+export async function computeVolumeSeries(
   dateFrom: string | null | undefined,
   dateTo: string | null | undefined,
   allowedQueues: Scope = null,
   allowedAgents: Scope = null,
-): Promise<Row[]> {
+): Promise<{ trend: Row[]; hourly: HourVolume[] }> {
   const [df, dt] = defaultDates(dateFrom, dateTo);
-  const allRows = queueScopeFilter(await periodCallLogRows(df, dt, allowedAgents), allowedQueues);
+  const allRows = await periodCallLogRows(df, dt, allowedQueues, allowedAgents);
 
-  interface DayStats { in_total: number; in_answered: number; in_abandoned: number; out_total: number; out_answered: number }
+  interface DayStats {
+    in_total: number; in_answered: number; in_abandoned: number;
+    out_total: number; out_answered: number; internal_total: number;
+    people: Set<string>; people_answered: Set<string>;
+  }
+  const hourly: HourVolume[] = Array.from({ length: 24 }, (_, hour) => ({ hour, inbound: 0, outbound: 0, internal: 0 }));
   const dayStats = new Map<string, DayStats>();
   for (const r of allRows) {
     const callType = dget<unknown>(r, 'call_type', '');
-    const disp = sget(r, 'disposition').toUpperCase().trim();
-    const day = sget(r, 'calldate').slice(0, 10);
+    const calldate = sget(r, 'calldate');
+    const day = calldate.slice(0, 10);
     if (!day || day.length < 10) continue;
     let s = dayStats.get(day);
-    if (!s) dayStats.set(day, (s = { in_total: 0, in_answered: 0, in_abandoned: 0, out_total: 0, out_answered: 0 }));
+    if (!s) {
+      dayStats.set(day, (s = {
+        in_total: 0, in_answered: 0, in_abandoned: 0, out_total: 0, out_answered: 0, internal_total: 0,
+        people: new Set(), people_answered: new Set(),
+      }));
+    }
+    const answered = rowAnswered(r);
+    const hour = Number(calldate.slice(11, 13));
+    const h = calldate.length >= 13 && Number.isInteger(hour) && hour >= 0 && hour < 24 ? hourly[hour] : null;
     if (callType === 'IN') {
       s.in_total += 1;
-      if (disp === 'ANSWERED') s.in_answered += 1;
+      if (h) h.inbound += 1;
+      const key = counterpartyKey(r);
+      if (key) {
+        s.people.add(key);
+        if (answered) s.people_answered.add(key);
+      }
+      if (answered) s.in_answered += 1;
       else s.in_abandoned += 1;
     } else if (callType === 'OUT') {
       s.out_total += 1;
-      if (disp === 'ANSWERED') s.out_answered += 1;
+      if (h) h.outbound += 1;
+      if (answered) s.out_answered += 1;
+    } else {
+      s.internal_total += 1;
+      if (h) h.internal += 1;
     }
   }
 
-  const result: Row[] = [];
+  const trend: Row[] = [];
   const end = ymdOrdinal(dt);
   for (let d = ymdOrdinal(df); d <= end; d++) {
     const dayStr = ordinalYmd(d);
     const s = dayStats.get(dayStr);
-    result.push({
+    trend.push({
       date: dayStr,
       total_calls: s?.in_total ?? 0,
       answered_calls: s?.in_answered ?? 0,
       abandoned_calls: s?.in_abandoned ?? 0,
       outbound_total: s?.out_total ?? 0,
       outbound_answered: s?.out_answered ?? 0,
+      internal_total: s?.internal_total ?? 0,
+      customers: s?.people.size ?? 0,
+      customers_answered: s?.people_answered.size ?? 0,
     });
   }
-  return result;
+  return { trend, hourly };
+}
+
+/** The daily trend alone (computeVolumeSeries without the hourly series). */
+export async function computeVolumeTrend(
+  dateFrom: string | null | undefined,
+  dateTo: string | null | undefined,
+  allowedQueues: Scope = null,
+  allowedAgents: Scope = null,
+): Promise<Row[]> {
+  return (await computeVolumeSeries(dateFrom, dateTo, allowedQueues, allowedAgents)).trend;
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,9 +1943,9 @@ export async function refreshHourlyBucket(
         SELECT
             first_leg.dst            AS queue_ext,
             last_leg.disposition,
-            CASE WHEN last_leg.billsec>0
+            GREATEST(CASE WHEN last_leg.billsec>0
                  THEN first_leg.duration - last_leg.billsec
-                 ELSE first_leg.duration END AS wait_secs,
+                 ELSE first_leg.duration END, 0) AS wait_secs,
             last_leg.billsec
         FROM
             (SELECT c.* FROM cdr c
@@ -1387,6 +1965,7 @@ export async function refreshHourlyBucket(
               ) x ON c.linkedid=x.linkedid AND c.sequence=x.ms
              ) last_leg ON first_leg.linkedid=last_leg.linkedid
         WHERE first_leg.lastapp='Queue'
+          ${realQueueCond()}
           AND first_leg.calldate >= ?
           AND first_leg.calldate < ?
       `,

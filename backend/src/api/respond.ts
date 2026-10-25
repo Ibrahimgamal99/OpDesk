@@ -206,14 +206,25 @@ export class RedirectResponse {
 // CSV
 // ---------------------------------------------------------------------------
 
+/**
+ * A text cell a spreadsheet would run as a formula -- one starting with = + - @, a tab or a
+ * carriage return -- prefixed with a single quote, so Excel and LibreOffice show it as text
+ * (CSV / formula injection: a caller ID or a contact name is outside data). A plain number
+ * keeps its sign: '+201012345678' and '-5' are data, and no formula is digits alone. Every
+ * spreadsheet export writes its text cells through here, CSV and XLSX alike.
+ */
+export function spreadsheetSafe(s: string): string {
+  return /^[=+\-@\t\r]/.test(s) && !/^[+-]?\d+(\.\d+)?$/.test(s) ? `'${s}` : s;
+}
+
 function csvCell(v: unknown): string {
   let s: string;
   if (v === null || v === undefined) s = '';
   else if (v instanceof Date) s = pyDatetimeStr(v);
   else if (typeof v === 'boolean') s = v ? 'True' : 'False';
   else if (typeof v === 'number') s = Number.isFinite(v) ? String(v) : '';
-  else if (typeof v === 'object') s = pyStr(v);
-  else s = String(v);
+  else if (typeof v === 'object') s = spreadsheetSafe(pyStr(v));
+  else s = spreadsheetSafe(String(v));
   return `"${s.replace(/"/g, '""')}"`;
 }
 

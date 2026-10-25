@@ -24,7 +24,7 @@ import {
   resolveRecordingRequest,
 } from '../../services/recording';
 import { HttpError } from '../http-error';
-import { FileResponse, RawResponse } from '../respond';
+import { FileResponse, RawResponse, spreadsheetSafe } from '../respond';
 import { Auth, Delete, Get, Patch, principal } from '../routing';
 import { parseBody, pInt, pStr, qBool, qInt, qList, qStr, QueryParams, REQUIRED, v } from '../validation';
 import * as fs from 'fs';
@@ -63,12 +63,11 @@ const CSV_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 
 /**
  * One CSV cell: quoted when it holds a separator, quote or newline. A cell a spreadsheet
- * would run as a formula (=, @, or +/- not followed by a digit, i.e. not a phone number) is
- * prefixed with a quote character.
+ * would run as a formula is prefixed with a quote character (respond.spreadsheetSafe).
  */
 export function csvCell(value: unknown): string {
   let s = value === null || value === undefined ? '' : value instanceof Date ? dateTime(value) : String(value);
-  if (/^[=@\t\r]/.test(s) || /^[+-](?![0-9])/.test(s)) s = `'${s}`;
+  s = spreadsheetSafe(s);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

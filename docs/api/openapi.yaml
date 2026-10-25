@@ -1400,6 +1400,37 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/analytics/agent-calls:
+    get:
+      tags: [Analytics]
+      summary: One agent's calls, split by direction, with the call list
+      description: 'Scope: `analytics:read`. Backs the Agent Performance row click. `403` when the agent is outside the caller''s scope. A page past the end is clamped to the last page.'
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string, example: "1001" }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [IN, OUT, INTERNAL] }
+        - name: status
+          in: query
+          description: A call status; filters the list on the status from this agent's side (a call that only rang them is MISSED).
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200': { description: "OK: {agent, agent_name, directions[], status_counts, calls[], total, page, page_size}" }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/analytics/agent-adherence:
     get:
       tags: [Analytics]
@@ -1496,10 +1527,13 @@ paths:
     get:
       tags: [Analytics]
       summary: Call volume by hour and weekday
-      description: 'Scope: `analytics:read`'
+      description: 'Scope: `analytics:read`. `queue` narrows to one queue inside the caller''s scope; a queue outside it reads as an empty heatmap.'
       parameters:
         - $ref: '#/components/parameters/DateFrom'
         - $ref: '#/components/parameters/DateTo'
+        - name: queue
+          in: query
+          schema: { type: string, example: "800" }
       responses:
         '200': { description: "OK" }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -1508,8 +1542,8 @@ paths:
   /api/analytics/trend:
     get:
       tags: [Analytics]
-      summary: Daily totals over the period
-      description: 'Scope: `analytics:read`'
+      summary: Daily totals over the period, and calls by hour of day
+      description: 'Scope: `analytics:read`. `{trend: [...], hourly: [{hour, inbound, outbound, internal}]}`; the hourly series sums to the trend.'
       parameters:
         - $ref: '#/components/parameters/DateFrom'
         - $ref: '#/components/parameters/DateTo'

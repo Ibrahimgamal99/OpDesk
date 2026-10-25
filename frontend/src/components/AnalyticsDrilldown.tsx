@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, FileSpreadsheet, X, ArrowUpDown, Activity, PhoneCall, PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
+import {
+  Download, FileSpreadsheet, X, ArrowUpDown, Activity, PhoneCall, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, Layers, User,
+} from 'lucide-react';
 import type { DateRange } from './analyticsUtils';
 import type { AnalyticsDrilldownFacets, AnalyticsDrilldownRecord } from '../types';
 import { fmtSecs, analyticsGet, useAnalyticsFetch, kpiTip } from './analyticsUtils';
-import { Alert, Badge, Card, Dropdown, EmptyState, Pagination, SearchInput, Toolbar, Tooltip, type DropdownOption } from './ui';
+import { Alert, Badge, Card, Dropdown, EmptyState, Pagination, Toolbar, Tooltip, type DropdownOption } from './ui';
 import { CALL_STATUS_ORDER, callStatusColor, callStatusLabel } from './callStatus';
 import { CallStatusBadge } from './CallStatusBadge';
 import { presentOptions } from '../lib/filters';
@@ -13,6 +15,8 @@ import { downloadWithAuth } from '../lib/download';
 type DrilldownResponse = { calls: AnalyticsDrilldownRecord[]; total: number; facets?: AnalyticsDrilldownFacets };
 
 const PAGE_SIZE = 50;
+/** The most rows the server writes into one export (DRILLDOWN_EXPORT_CAP). */
+const EXPORT_CAP = 100000;
 
 function fmtDate(d: string | null): string {
   if (!d) return '—';
@@ -92,6 +96,15 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
   const allStatuses: DropdownOption[] = [...new Set([...CALL_STATUS_ORDER, ...Object.keys(facets?.status ?? {})])]
     .map(s => ({ value: s, label: callStatusLabel(t, s), dotColor: callStatusColor(s) }));
   const statusOptions = facets?.status ? presentOptions(allStatuses, facets.status, disposition) : allStatuses;
+  // Queue and agent are exact matches, picked from the values the period holds (in scope,
+  // under the other filters), so "80" can never mean every queue that contains it.
+  const valueOptions = (counts: Record<string, number> | undefined, selected: string): DropdownOption[] => {
+    const values = [...new Set([...Object.keys(counts ?? {}), ...(selected ? [selected] : [])])]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return values.map(v => ({ value: v, label: v, count: counts?.[v] ?? 0 }));
+  };
+  const queueOptions = valueOptions(facets?.queue, queue);
+  const agentOptions = valueOptions(facets?.agent, agent);
 
   // Both CSV and XLSX go through the backend export endpoint so the export covers
   // ALL filtered records, not just the current page that the table is showing.
@@ -124,27 +137,32 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
   return (
     <div className="u-col u-gap-4">
       {/* The Page's toolbar band is shared by every tab, so this tab's filters sit at the
-          top of its body in the same Toolbar. Queue and agent each keep their own search,
-          as before, so both can narrow the list at once. */}
+          top of its body in the same Toolbar. */}
       <Toolbar
-        search={
-          <SearchInput
-            value={queue}
-            onChange={setQueue}
-            label={t('analytics.drilldown.filterQueue')}
-            placeholder={t('analytics.drilldown.filterQueue')}
-            urlSync={false}
-          />
-        }
         filters={
           <>
-            <SearchInput
-              value={agent}
-              onChange={setAgent}
-              label={t('analytics.drilldown.filterAgent')}
-              placeholder={t('analytics.drilldown.filterAgent')}
-              urlSync={false}
-            />
+            <div data-active={queue || undefined}>
+              <Dropdown
+                value={queue}
+                onChange={setQueue}
+                icon={Layers}
+                size="md"
+                minWidth={140}
+                ariaLabel={t('fields.queue', 'Queue')}
+                options={[{ value: '', label: t('analytics.drilldown.allQueues', 'All queues') }, ...queueOptions]}
+              />
+            </div>
+            <div data-active={agent || undefined}>
+              <Dropdown
+                value={agent}
+                onChange={setAgent}
+                icon={User}
+                size="md"
+                minWidth={140}
+                ariaLabel={t('fields.agent', 'Agent')}
+                options={[{ value: '', label: t('analytics.drilldown.allAgents', 'All agents') }, ...agentOptions]}
+              />
+            </div>
             <div data-active={direction || undefined}>
               <Dropdown
                 value={direction}
@@ -200,6 +218,14 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
       />
 
       {exportError && <Alert onDismiss={() => setExportError(null)}>{exportError}</Alert>}
+      {total > EXPORT_CAP && (
+        <Alert tone="info">
+          {t('analytics.drilldown.exportCapped', {
+            cap: EXPORT_CAP.toLocaleString(), total: total.toLocaleString(),
+            defaultValue: 'An export holds the first {{cap}} of these {{total}} calls. Narrow the range or the filters to export the rest.',
+          })}
+        </Alert>
+      )}
 
       <Card
         icon={PhoneCall}
@@ -274,7 +300,8 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
                       <CallStatusBadge status={r.status || r.disposition} />
                     </td>
                     <td>
-                      {r.status === 'ANSWERED' ? (
+                      {/* The SLA applies to an answered queue call and nothing else. */}
+                      {r.queue_extension && r.status === 'ANSWERED' ? (
                         <Badge tone={r.sla_met ? 'success' : 'danger'}>
                           {r.sla_met ? t('analytics.drilldown.slaMet') : t('analytics.drilldown.slaFailed')}
                         </Badge>

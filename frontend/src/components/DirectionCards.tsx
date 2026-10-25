@@ -54,6 +54,9 @@ export interface PeriodFigures {
    *  audio loopback tests. Part of `all`, so in + out + internal is the total. */
   internal: number;
   inbound: DirectionFigures;
+  /** Inbound split into calls that entered a queue and direct dials to an extension, where
+   *  the source tells them apart (the overview does; an agent's own call log does not). */
+  inboundSplit?: { queue: number; direct: number };
   outbound: DirectionFigures;
   queue: QueueFigures | null;
 }
@@ -62,12 +65,16 @@ const rate = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 
 
 /** The overview endpoint's response as figures. The All row is the COMBINED block (every
  *  direction, internal included); both rates come from the backend so the dashboard and
- *  Analytics never disagree. */
+ *  Analytics never disagree. Inbound volume is the call history's `inbound` block (queue
+ *  and direct calls); the top level is the queue's own figures, which feed `queue`. */
 export function figuresFromKpis(cur: KpiSummary): PeriodFigures {
   const all = cur.combined;
   const out = cur.outbound;
+  // A backend without the volume blocks reported every inbound call at the top level.
+  const inb = cur.inbound ?? cur;
   const allTotal = all?.total_calls ?? cur.total_calls;
   const allAnswered = all?.answered_calls ?? cur.answered_calls;
+  const direct = cur.inbound_direct?.total_calls;
   return {
     all: {
       calls: allTotal, answered: allAnswered,
@@ -76,14 +83,16 @@ export function figuresFromKpis(cur: KpiSummary): PeriodFigures {
       contactRate: all?.contact_rate ?? rate(allAnswered, allTotal),
       ahtSecs: all?.aht_secs ?? cur.aht_secs, talkSecs: null,
     },
-    internal: all?.internal_calls ?? Math.max(0, allTotal - cur.total_calls - (out?.total_calls ?? 0)),
+    internal: all?.internal_calls ?? cur.internal?.total_calls
+      ?? Math.max(0, allTotal - inb.total_calls - (out?.total_calls ?? 0)),
     inbound: {
-      calls: cur.total_calls, answered: cur.answered_calls,
-      people: cur.customers ?? 0, reached: cur.customers_answered ?? 0,
-      answerRate: cur.answer_rate ?? null,
-      contactRate: cur.contact_rate ?? rate(cur.answered_calls, cur.total_calls),
-      ahtSecs: cur.aht_secs, talkSecs: null,
+      calls: inb.total_calls, answered: inb.answered_calls,
+      people: inb.customers ?? 0, reached: inb.customers_answered ?? 0,
+      answerRate: inb.answer_rate ?? null,
+      contactRate: inb.contact_rate ?? rate(inb.answered_calls, inb.total_calls),
+      ahtSecs: inb.aht_secs, talkSecs: null,
     },
+    inboundSplit: direct === undefined ? undefined : { queue: Math.max(0, inb.total_calls - direct), direct },
     outbound: {
       calls: out?.total_calls ?? 0, answered: out?.answered_calls ?? 0,
       people: out?.customers ?? 0, reached: out?.customers_answered ?? 0,
@@ -278,6 +287,10 @@ export function DirectionCards({ figures: f, previous: p, periodLabel }: Omit<Ca
         periodLabel={periodLabel}
         period={f.inbound.calls}
         periodDelta={change(f.inbound.calls, p?.inbound.calls)}
+        periodParts={f.inboundSplit ? [
+          { label: t('analytics.overview.viaQueue', 'Queue'), n: f.inboundSplit.queue },
+          { label: t('analytics.overview.direct', 'Direct'), n: f.inboundSplit.direct },
+        ] : []}
         metrics={inboundMetrics}
       />
       <FigureCard

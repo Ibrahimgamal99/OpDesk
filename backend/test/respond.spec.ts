@@ -14,6 +14,7 @@ import {
   respond,
   respondList,
   RawResponse,
+  spreadsheetSafe,
   toJsonable,
 } from '../src/api/respond';
 import { Auth, Get, Post } from '../src/api/routing';
@@ -181,6 +182,12 @@ describe('envelopes and encoding', () => {
 
   it('csv: BOM, every cell quoted, CRLF', () => {
     expect(csvText(['a', 'b'], [[1, null], [true, 'q"']])).toBe('﻿"a","b"\r\n"1",""\r\n"True","q"""\r\n');
+  });
+
+  it('a text cell a spreadsheet would run as a formula is written as text', () => {
+    for (const s of ['=1+1', '+cmd|x', '-2+3+cmd|x', '@SUM(A1)', '\tx', '\rx', '+1-1']) expect(spreadsheetSafe(s)).toBe(`'${s}`);
+    for (const s of ['+201012345678', '-15', '3.5', '-0.25', 'Mona', '', '0101']) expect(spreadsheetSafe(s)).toBe(s);
+    expect(csvText(['h'], [['=HYPERLINK("x")'], [-5]], { bom: false })).toBe('"h"\r\n"\'=HYPERLINK(""x"")"\r\n"-5"\r\n');
   });
 });
 

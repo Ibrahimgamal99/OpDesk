@@ -2,14 +2,14 @@ import { Fragment, useMemo, useState } from 'react';
 import type React from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid, LabelList, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid, Legend, LabelList, ResponsiveContainer,
 } from 'recharts';
-import { BarChart3, Grid3x3, ListOrdered } from 'lucide-react';
+import { BarChart3, CalendarRange, Grid3x3, Hourglass, ListOrdered } from 'lucide-react';
 import type { DateRange } from './analyticsUtils';
 import type { QueueKPIRow, HeatmapData } from '../types';
 import {
   fmtSecs, fmtPct, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip, metricTips, pctOf, rangeLabel,
-  slaVerdict, abandonVerdict, targetVerdict,
+  slaVerdict, abandonVerdict, targetVerdict, rankBest, waitBucketLabel,
 } from './analyticsUtils';
 import { Alert, Badge, Card, Dropdown, EmptyState, Tooltip } from './ui';
 import { FigureCard, VERDICT_TONE, type Metric } from './FigureCards';
@@ -73,8 +73,8 @@ function Heatmap({ data }: HeatmapProps) {
 /** What the comparison chart ranks the queues by. */
 type CompareKey = 'sla' | 'answerRate' | 'contactRate' | 'abandonRate' | 'avgWait' | 'offered';
 
-/** A queue row, plus the per-person answer rate a backend may add (absent: not offered). */
-type QueueRow = QueueKPIRow & { answer_rate?: number | null };
+/** Every queue in the scope, all together: the detail section's default. */
+const ALL = '';
 
 interface Props { dateRange: DateRange }
 
@@ -82,27 +82,66 @@ interface Props { dateRange: DateRange }
  * Analytics → Queues, for the chosen range:
  *
  *   1. one card per queue: offered, answered, abandoned and the queue's quality figures;
- *   2. the queues side by side on one figure at a time;
- *   3. when the queue calls arrive, by weekday and hour.
+ *   2. the queues side by side on one figure at a time, best first;
+ *   3. one queue (or all) in detail: answered and abandoned per day, how long callers
+ *      waited before being answered or giving up, and when the calls arrive.
  */
 export function AnalyticsQueues({ dateRange }: Props) {
   const { t } = useTranslation();
   const [compareBy, setCompareBy] = useState<CompareKey>('sla');
+  const [detailQueue, setDetailQueue] = useState<string>(ALL);
 
   const { data, loading, error } = useAnalyticsFetch(
     async () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
-      const [queueResp, heatmap] = await Promise.all([
-        analyticsGet<{ queues: QueueKPIRow[] }>(`/api/analytics/queue-performance?${params}`),
-        analyticsGet<HeatmapData>(`/api/analytics/heatmap?${params}`),
-      ]);
-      return { queues: queueResp.queues || [], heatmap };
+      const r = await analyticsGet<{ queues: QueueKPIRow[]; short_abandon_secs?: number }>(
+        `/api/analytics/queue-performance?${params}`);
+      return { queues: r.queues || [], shortAbandonSecs: r.short_abandon_secs ?? 5 };
     },
     [dateRange],
   );
+  // The heatmap follows the detail section's queue, so it has its own request.
+  const heat = useAnalyticsFetch(
+    () => {
+      const params = buildDateParams(dateRange.from, dateRange.to);
+      if (detailQueue) params.set('queue', detailQueue);
+      return analyticsGet<HeatmapData>(`/api/analytics/heatmap?${params}`);
+    },
+    [dateRange, detailQueue],
+  );
 
   const queues = useMemo(() => data?.queues ?? [], [data]);
-  const heatmap = data?.heatmap ?? null;
+
+  // ── Detail: one queue, or every queue summed ─────────────────────────────────
+  const picked = useMemo(
+    () => (detailQueue ? queues.filter((q) => q.queue_extension === detailQueue) : queues),
+    [queues, detailQueue],
+  );
+  const days = useMemo(() => {
+    const byDate = new Map<string, { date: string; answered: number; abandoned: number }>();
+    for (const q of picked) {
+      for (const d of q.daily ?? []) {
+        const row = byDate.get(d.date) ?? { date: d.date, answered: 0, abandoned: 0 };
+        row.answered += d.answered;
+        row.abandoned += d.abandoned;
+        byDate.set(d.date, row);
+      }
+    }
+    return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => ({ ...d, label: d.date.slice(5) }));
+  }, [picked]);
+  // Every queue reports the same buckets, so summing is bucket by bucket.
+  const waits = useMemo(() => {
+    const out: { label: string; answered: number; abandoned: number }[] = [];
+    for (const q of picked) {
+      (q.wait_distribution ?? []).forEach((b, i) => {
+        out[i] ??= { label: waitBucketLabel(b.from_secs, b.to_secs), answered: 0, abandoned: 0 };
+        out[i].answered += b.answered;
+        out[i].abandoned += b.abandoned;
+      });
+    }
+    return out;
+  }, [picked]);
 
   if (loading) {
     return <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>;
@@ -118,7 +157,8 @@ export function AnalyticsQueues({ dateRange }: Props) {
     q.queue_name && q.queue_name !== q.queue_extension ? `${q.queue_extension} · ${q.queue_name}` : q.queue_extension;
   // Answered ÷ offered counts calls, so on the shared definitions it is the contact rate.
   const contactRate = (q: QueueKPIRow) => pctOf(q.answered_calls, q.total_calls);
-  const abandonRate = (q: QueueKPIRow) => pctOf(q.abandoned_calls, q.total_calls);
+  const abandonRate = (q: QueueKPIRow) => q.abandonment_rate ?? pctOf(q.abandoned_calls, q.total_calls);
+  const shortSecs = data?.shortAbandonSecs ?? 5;
 
   const shared = metricTips(t);
   const tips = {
@@ -131,6 +171,8 @@ export function AnalyticsQueues({ dateRange }: Props) {
     aht: shared.aht,
     peak: kpiTip(t, 'analytics.tip.queues.peakHour', t('analytics.queues.peakHour'), undefined,
       { text: 'The busiest hour of the day, across the whole date range.' }),
+    short: kpiTip(t, 'analytics.tip.kpi.shortAbandonShare', t('analytics.kpi.shortAbandon'), { secs: shortSecs },
+      { text: 'Inbound callers who hung up within the short-abandon threshold — usually misdials.', formula: 'quick hang-ups ÷ offered' }),
   };
 
   const metricsOf = (q: QueueKPIRow): Metric[] => [
@@ -140,6 +182,9 @@ export function AnalyticsQueues({ dateRange }: Props) {
       tone: VERDICT_TONE[targetVerdict(contactRate(q), 80)], tip: tips.contactRate },
     { key: 'abandon', label: t('metrics.abandonRate'), value: fmtPct(abandonRate(q)),
       tone: VERDICT_TONE[abandonVerdict(abandonRate(q))], tip: tips.abandon },
+    ...(q.short_abandon_rate !== undefined ? [{
+      key: 'short', label: t('analytics.kpi.shortAbandon'), value: fmtPct(q.short_abandon_rate), tip: tips.short,
+    }] : []),
     { key: 'wait', label: t('metrics.avgWait'), value: fmtSecs(q.avg_wait_secs), tip: tips.avgWait },
     { key: 'aht', label: t('metrics.aht'), value: fmtSecs(q.aht_secs), tip: tips.aht },
     { key: 'peak', label: t('analytics.queues.peakHour'),
@@ -149,24 +194,25 @@ export function AnalyticsQueues({ dateRange }: Props) {
   // ── Comparison: one figure across every queue ──────────────────────────────
   // Answer rate counts people (metrics.tip.answerRate), so it is offered only when the
   // server sends it per queue; answered ÷ offered is the contact rate, always computable.
-  const hasAnswerRate = queues.some((q: QueueRow) => q.answer_rate !== undefined && q.answer_rate !== null);
-  const compareOptions: { value: CompareKey; label: string; pct: boolean; pick: (q: QueueRow) => number | null }[] = [
+  // Best first for every figure: highest for SLA and the rates, LOWEST for abandon rate and
+  // wait, where less is the good direction.
+  const hasAnswerRate = queues.some((q) => q.answer_rate !== undefined && q.answer_rate !== null);
+  const compareOptions: {
+    value: CompareKey; label: string; pct: boolean; lowerIsBetter?: boolean; pick: (q: QueueKPIRow) => number | null;
+  }[] = [
     { value: 'sla', label: t('metrics.sla'), pct: true, pick: (q) => q.sla_pct },
     ...(hasAnswerRate
-      ? [{ value: 'answerRate' as const, label: t('metrics.answerRate'), pct: true, pick: (q: QueueRow) => q.answer_rate ?? null }]
+      ? [{ value: 'answerRate' as const, label: t('metrics.answerRate'), pct: true, pick: (q: QueueKPIRow) => q.answer_rate ?? null }]
       : []),
     { value: 'contactRate', label: t('metrics.contactRate'), pct: true, pick: contactRate },
-    { value: 'abandonRate', label: t('metrics.abandonRate'), pct: true, pick: abandonRate },
-    { value: 'avgWait', label: t('metrics.avgWait'), pct: false, pick: (q) => q.avg_wait_secs },
+    { value: 'abandonRate', label: t('metrics.abandonRate'), pct: true, lowerIsBetter: true, pick: abandonRate },
+    { value: 'avgWait', label: t('metrics.avgWait'), pct: false, lowerIsBetter: true, pick: (q) => q.avg_wait_secs },
     { value: 'offered', label: t('analytics.queues.offered', 'Offered'), pct: false, pick: (q) => q.total_calls },
   ];
   const compare = compareOptions.find((o) => o.value === compareBy) ?? compareOptions[0];
   const fmtCompare = (v: number) =>
     compare.pct ? fmtPct(v) : compareBy === 'avgWait' ? fmtSecs(v) : v.toLocaleString();
-  const compareRows = queues
-    .map((q) => ({ name: queueName(q), value: compare.pick(q) }))
-    .filter((r): r is { name: string; value: number } => r.value !== null)
-    .sort((a, b) => b.value - a.value);
+  const compareRows = rankBest(queues.map((q) => ({ name: queueName(q), value: compare.pick(q) })), compare.lowerIsBetter);
 
   const period = rangeLabel(dateRange);
   const tooltipStyle = {
@@ -177,6 +223,8 @@ export function AnalyticsQueues({ dateRange }: Props) {
     boxShadow: 'var(--shadow-lg)',
   };
   const axisTick = { fontSize: 11, fill: 'var(--text-muted)' };
+  // Stacked segments sit on a 2px surface gap, and only the top segment rounds its end.
+  const seg = { stroke: 'var(--bg-card)', strokeWidth: 2 } as const;
   const title = (label: string, tip: ReturnType<typeof kpiTip>) => (
     <span className="u-inline-row u-gap-1h">
       {label}
@@ -218,7 +266,7 @@ export function AnalyticsQueues({ dateRange }: Props) {
           icon={BarChart3}
           title={title(t('analytics.queues.compareTitle', 'Compare queues'),
             kpiTip(t, 'analytics.tip.queues.compare', t('analytics.queues.compareTitle', 'Compare queues'), undefined,
-              { text: 'Every queue on one figure at a time, best first. Pick the figure from the menu.' }))}
+              { text: 'Every queue on one figure at a time, best first: highest for SLA and the rates, lowest for abandon rate and wait. Pick the figure from the menu.' }))}
           description={period}
           actions={
             <Dropdown
@@ -250,20 +298,88 @@ export function AnalyticsQueues({ dateRange }: Props) {
         </Card>
       )}
 
-      {/* ── 3. When the calls arrive ── */}
-      {heatmap && (
-        <Card
-          icon={Grid3x3}
-          title={title(t('analytics.queues.heatmapTitle'),
-            kpiTip(t, 'analytics.tip.queues.heatmap', t('analytics.queues.heatmapTitle'), undefined,
-              { text: 'When your calls come in, by day and hour. Darker means busier.' }))}
-          description={period}
-          actions={<AnalyticsExportButton report="heatmap" dateRange={dateRange}
-            title={t('analytics.export.heatmapTitle', 'Calls by weekday and hour as a CSV file')} />}
-        >
-          <Heatmap data={heatmap} />
-        </Card>
-      )}
+      {/* ── 3. One queue (or all) in detail ── */}
+      <Card
+        icon={CalendarRange}
+        title={title(t('analytics.queues.detailTitle', 'Queue detail'),
+          kpiTip(t, 'analytics.tip.queues.detail', t('analytics.queues.detailTitle', 'Queue detail'), undefined,
+            { text: 'One queue, or all of them together: answered and abandoned calls per day, how long callers waited, and when the calls arrive.' }))}
+        description={period}
+        actions={queues.length > 1 && (
+          <Dropdown
+            value={detailQueue}
+            onChange={setDetailQueue}
+            options={[
+              { value: ALL, label: t('analytics.queues.allQueues', 'All queues') },
+              ...queues.map((q) => ({ value: q.queue_extension, label: queueName(q) })),
+            ]}
+            ariaLabel={t('analytics.queues.queue')}
+            size="sm"
+          />
+        )}
+      >
+        <div className="u-col u-gap-4">
+          {days.length > 1 && (
+            <div className="an-chart-wrap" dir="ltr">
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={days} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                  <CartesianGrid stroke="var(--border-subtle)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                  <YAxis tick={axisTick} width={40} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <ChartTooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--bg-tertiary)' }} />
+                  <Legend wrapperStyle={{ fontSize: 'var(--text-xs)', paddingTop: 8 }} iconType="circle" iconSize={8} />
+                  <Bar dataKey="answered" name={t('metrics.answered')} stackId="q" fill="var(--chart-inbound)" {...seg} />
+                  <Bar dataKey="abandoned" name={t('metrics.abandoned')} stackId="q" fill="var(--accent-danger)"
+                       radius={[4, 4, 0, 0]} {...seg} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {waits.some((w) => w.answered + w.abandoned > 0) && (
+            <div className="u-col u-gap-2">
+              <div className="u-inline-row u-gap-1h u-text-sm u-semibold">
+                <Hourglass size={14} />
+                {t('analytics.queues.waitTitle', 'How long callers waited')}
+                <Tooltip {...kpiTip(t, 'analytics.tip.queues.wait', t('analytics.queues.waitTitle', 'How long callers waited'), undefined,
+                  { text: 'Calls by how long the caller waited in the queue: the answered ones, and the ones who gave up.' })} />
+              </div>
+              <div className="an-chart-wrap" dir="ltr">
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={waits} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke="var(--border-subtle)" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis tick={axisTick} width={40} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <ChartTooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--bg-tertiary)' }} />
+                    <Legend wrapperStyle={{ fontSize: 'var(--text-xs)', paddingTop: 8 }} iconType="circle" iconSize={8} />
+                    <Bar dataKey="answered" name={t('metrics.answered')} stackId="w" fill="var(--chart-inbound)" {...seg} />
+                    <Bar dataKey="abandoned" name={t('metrics.abandoned')} stackId="w" fill="var(--accent-danger)"
+                         radius={[4, 4, 0, 0]} {...seg} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          <div className="u-col u-gap-2">
+            <div className="u-inline-row u-gap-1h u-text-sm u-semibold">
+              <Grid3x3 size={14} />
+              {t('analytics.queues.heatmapTitle')}
+              <Tooltip {...kpiTip(t, 'analytics.tip.queues.heatmap', t('analytics.queues.heatmapTitle'), undefined,
+                { text: 'When your calls come in, by day and hour. Darker means busier.' })} />
+              <AnalyticsExportButton report="heatmap" dateRange={dateRange} params={{ queue: detailQueue }}
+                title={t('analytics.export.heatmapTitle', 'Calls by weekday and hour as a CSV file')} />
+            </div>
+            {heat.loading ? (
+              <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>
+            ) : heat.error || !heat.data ? (
+              <Alert>{t('analytics.error')}</Alert>
+            ) : (
+              <Heatmap data={heat.data} />
+            )}
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

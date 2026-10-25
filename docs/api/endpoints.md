@@ -323,30 +323,47 @@ by older versions in other spellings are converted on read.
 ## Analytics
 
 All of these are **Auth:** JWT (supervisor+) · **Key:** `analytics:read`, and accept
-`date_from` / `date_to`. Agents get `403`. A supervisor sees the queues and agents of
-their groups.
+`date_from` / `date_to` (default: the last 30 days, today included). Agents get `403`. A
+supervisor sees the queues and agents of their groups. A database error is a `500`, never
+an empty report.
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/analytics/overview` | Headline KPI cards for the period and the previous one |
-| `GET /api/analytics/queue-performance` | Per-queue volumes, answer rate, SLA, abandons |
-| `GET /api/analytics/agent-performance` | Per-agent handled calls, talk time, SLA contribution |
+| `GET /api/analytics/overview` | Headline KPI cards for the period and the previous one (`prev_period` is `null` past 31 days) |
+| `GET /api/analytics/queue-performance` | Per-queue volumes, answer rate, SLA, abandons, per-day series and wait buckets |
+| `GET /api/analytics/agent-performance` | Per-agent handled calls, talk time, SLA contribution, internal calls |
+| `GET /api/analytics/agent-calls` | One agent's calls by direction, with the call list (`?agent=`) |
 | `GET /api/analytics/agent-adherence` | Logged-in, ready, on-call, wrap-up, break and DND time per agent |
 | `GET /api/analytics/agent-adherence/timeline` | One agent's sessions and state changes (`?agent=`) |
 | `GET /api/analytics/agent-adherence/export` | The adherence report as CSV/XLSX |
-| `GET /api/analytics/heatmap` | Call volume by hour and weekday |
-| `GET /api/analytics/trend` | Daily totals over the period |
+| `GET /api/analytics/heatmap` | Call volume by hour and weekday (`?queue=` narrows within scope) |
+| `GET /api/analytics/trend` | Daily totals over the period, and calls by hour of day |
 | `GET /api/analytics/drilldown` | The individual calls behind a KPI |
 | `GET /api/analytics/export` | The drill-down rows as CSV/XLSX |
 | `GET /api/analytics/export/{report}` | One report tab as CSV |
 
-`GET|POST /api/analytics/settings` (SLA thresholds, FCR window) is **admin JWT only** —
-it is configuration, not reporting.
+`GET|POST /api/analytics/settings` (SLA thresholds, FCR window, callback window) is
+**admin JWT only** — it is configuration, not reporting. A value outside its range
+(`sla_default_secs` and per-queue thresholds 1–600, `fcr_window_days` 0–90,
+`short_abandon_secs` 0–120, `callback_window_hours` 0–168) is a `400` and nothing is
+saved; a per-queue threshold of `null` removes that queue's override.
+
+### `GET /api/analytics/overview`
+
+`current` (and `prev_period`) carry the queue's own quality figures at the top level —
+`total_calls`, `answered_calls`, `abandoned_calls`, `sla_pct`, `abandonment_rate`,
+`short_abandon_rate`, `avg_wait_secs`, `aht_secs`, from the queue CDR exactly as
+`/queue-performance` counts them — plus FCR (`fcr_pct`, `fcr_callers`,
+`fcr_repeat_callers`, `fcr_provisional`), abandoned-caller recovery
+(`abandoned_callers`, `recovered_callers`, `recovery_rate`, `net_abandonment_rate`) and
+the call-history volume blocks `inbound`, `inbound_direct`, `outbound`, `internal` and
+`combined`. `settings` repeats the thresholds the figures were computed against.
 
 ### `GET /api/analytics/drilldown`
 
 Query: `queue`, `agent`, `direction`, `disposition`, `page` (from 1), `page_size`
-(1–200, default 50), `facets`.
+(1–200, default 50), `facets`. `queue` and `agent` match exactly: the queue a queue call
+entered, and the extension a call is credited to.
 
 `disposition` names a call **status** — one of the 10
 [outcome values](webhooks.md#outcome-values); raw CDR spellings such as `NO ANSWER` are
@@ -360,11 +377,17 @@ menus:
 {
   "calls": [ … ], "total": 312, "page": 1, "page_size": 50,
   "facets": {
-    "direction": { "inbound": 250, "outbound": 62 },
-    "status": { "ANSWERED": 270, "MISSED": 21, "ABANDONED": 12, "BUSY": 9 }
+    "direction": { "IN": 250, "OUT": 62 },
+    "status": { "ANSWERED": 270, "MISSED": 21, "ABANDONED": 12, "BUSY": 9 },
+    "queue": { "800": 180, "801": 40 },
+    "agent": { "1001": 120, "1002": 98 }
   }
 }
 ```
+
+`GET /api/analytics/export` writes the same rows (Status as the table shows it, and
+Direction) up to 100,000; a cut file ends with a line saying so and carries an
+`X-Export-Truncated: <total>` header.
 
 ### `GET /api/analytics/agent-adherence`
 
