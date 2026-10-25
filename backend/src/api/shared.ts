@@ -38,6 +38,16 @@ export function isMasked(value: unknown): boolean {
 }
 
 // Plain-SIP ports. Asterisk binds UDP + TCP on 5060 and TLS on 5061 (see /api/sip-tls).
+// What a SIP secret may contain: no spaces or quotes, which break dial strings and configs.
+const SIP_SECRET_RE = /^[A-Za-z0-9!#$%*+\-.=?@^_~]{8,64}$/;
+
+export const SIP_SECRET_RULE = 'The SIP password needs 8 to 64 characters, with letters and digits, and no spaces or quotes';
+
+/** True when `pw` may become an extension's SIP secret (the extension is reachable from the internet). */
+export function isValidSipSecret(pw: string): boolean {
+  return SIP_SECRET_RE.test(pw) && /[A-Za-z]/.test(pw) && /\d/.test(pw);
+}
+
 export const SIP_PLAIN_PORT = 5060;
 export const SIP_TLS_PORT = 5061;
 

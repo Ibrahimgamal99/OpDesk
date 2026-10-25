@@ -79,12 +79,16 @@ async function startAggregation(): Promise<void> {
 /**
  * State of the daily shift reset: the shift day the last reset belonged to. A restart is
  * not a missed boundary: the current shift day is adopted, so a backend that comes up at
- * 09:00 does not log the floor out for a boundary that passed at 00:00.
+ * 09:00 does not log the floor out for a boundary that passed at 00:00. Neither is a new
+ * reset time: moving 00:00 to 15:00 at 14:00 puts "now" in a shift day that started at
+ * 15:00 yesterday, which is not a boundary passing; the clock re-anchors without firing.
  */
 export class ShiftResetClock {
   lastResetDay: string | null = null;
+  private minutes: number | null;
 
   constructor(minutes: number | null, now = new Date()) {
+    this.minutes = minutes;
     if (minutes !== null) this.lastResetDay = dateIso(shiftDayStart(now, minutes));
   }
 
@@ -92,9 +96,15 @@ export class ShiftResetClock {
   due(minutes: number | null, now = new Date()): boolean {
     if (minutes === null) {
       this.lastResetDay = null; // turned off: re-arm cleanly when turned back on
+      this.minutes = null;
       return false;
     }
     const day = dateIso(shiftDayStart(now, minutes));
+    if (minutes !== this.minutes) {
+      this.minutes = minutes;
+      this.lastResetDay = day;
+      return false;
+    }
     if (this.lastResetDay === null) {
       this.lastResetDay = day;
       return false;

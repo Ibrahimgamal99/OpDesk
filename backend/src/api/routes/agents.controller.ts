@@ -23,6 +23,7 @@ import {
   LOGGED_OUT,
   NOT_READY_REASON_ERROR,
   parseShiftResetTime,
+  SHIFT_RESET_OFF,
   SHIFT_RESET_SETTING,
   shiftResetMinutes,
   WRAPUP_MAX_SECS_MAX,
@@ -285,7 +286,7 @@ export class AgentsController {
     const minutes = parseShiftResetTime(raw);
     if (raw && minutes === null) throw new HttpError(400, 'Time must be HH:MM (24-hour), or empty to turn the reset off');
     const value = formatShiftResetTime(minutes);
-    if (!(await dbm.setSetting(SHIFT_RESET_SETTING, value))) throw new HttpError(500, 'Failed to save the shift reset setting');
+    if (!(await dbm.setSetting(SHIFT_RESET_SETTING, value || SHIFT_RESET_OFF))) throw new HttpError(500, 'Failed to save the shift reset setting');
     return {
       time: value,
       message: minutes === null

@@ -16,7 +16,7 @@ import { reloadAsteriskSip } from '../../services/dialplan';
 import { publicHost } from '../../services/sip-push';
 import { HttpError } from '../http-error';
 import { respond } from '../respond';
-import { publicPortSuffix, SIP_PLAIN_PORT, SIP_TLS_PORT } from '../shared';
+import { isValidSipSecret, publicPortSuffix, SIP_PLAIN_PORT, SIP_SECRET_RULE, SIP_TLS_PORT } from '../shared';
 import { Auth, Get, Post, Put, principal } from '../routing';
 import { parseBody, pInt, pStr, qStr, QueryParams, RequestValidationError, v } from '../validation';
 
@@ -352,9 +352,6 @@ export const ChangePasswordBody = v.model({
 /** `enabled: bool = Body(..., embed=True)` */
 export const EnabledBody = v.model({ enabled: v.bool() });
 
-// What a SIP secret may contain: no spaces or quotes, which break dial strings and configs.
-const SIP_SECRET_RE = /^[A-Za-z0-9!#$%*+\-.=?@^_~]{8,64}$/;
-
 /** True when `password` is the caller's current OpDesk sign-in password. */
 async function checkCurrentPassword(currentUser: Principal, password: string): Promise<Row> {
   const user = await dbm.getUserByUsername(currentUser.username || '');
@@ -430,9 +427,7 @@ export class SoftphoneController {
     const ext = String(currentUser.extension ?? '').trim();
     if (!ext) throw new HttpError(400, 'You have no extension');
     const pw = body.new_password || '';
-    if (!SIP_SECRET_RE.test(pw) || !/[A-Za-z]/.test(pw) || !/\d/.test(pw)) {
-      throw new HttpError(400, 'The SIP password needs 8 to 64 characters, with letters and digits, and no spaces or quotes');
-    }
+    if (!isValidSipSecret(pw)) throw new HttpError(400, SIP_SECRET_RULE);
     if (!(await dbm.setExtensionSecretInPbx(ext, pw))) throw new HttpError(500, 'Could not save the SIP password');
     await reloadAsteriskSip();
     return respond({ message: 'SIP password changed. Sign your phones in again.' });

@@ -79,6 +79,11 @@ export async function wrapupMaxSecs(): Promise<number> {
 // open does not run into the next one. "HH:MM"; blank turns it off.
 export const SHIFT_RESET_SETTING = 'SHIFT_RESET_TIME';
 export const DEFAULT_SHIFT_RESET_TIME = '00:00';
+/**
+ * What "turned off" is stored as. Not '': getSetting reads an empty value back as the
+ * fallback, so an empty setting came back as the 00:00 default and the reset never stopped.
+ */
+export const SHIFT_RESET_OFF = 'off';
 
 /** "HH:MM" -> minutes after local midnight; null (reset off) for blank or unparseable. */
 export function parseShiftResetTime(value: unknown): number | null {
