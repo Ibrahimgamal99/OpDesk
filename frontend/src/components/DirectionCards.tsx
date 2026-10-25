@@ -2,19 +2,18 @@ import { useTranslation } from 'react-i18next';
 import {
   CheckCircle2, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Timer, UserCheck,
 } from 'lucide-react';
-import type { CallLogRecord, ExecutiveKPIResponse } from '../types';
+import type { CallLogRecord, ExecutiveKPIResponse, KpiSummary } from '../types';
 import {
-  abandonVerdict, fcrVerdict, fmtPct, fmtSecs, kpiTip, metricTips, perCallRateVerdict, perPersonRateVerdict, slaVerdict,
+  abandonVerdict, fcrVerdict, fmtPct, fmtSecs, metricTips, perCallRateVerdict, perPersonRateVerdict, slaVerdict,
 } from './analyticsUtils';
-import {
-  FigureCard, StatCard, StatRow, VERDICT_TONE, type Metric, type StatCardProps, type Tip, type Tone,
-} from './FigureCards';
+import { FigureCard, StatCard, StatRow, VERDICT_TONE, type Metric, type StatCardProps } from './FigureCards';
 
 /**
- * Today's traffic, modelled on echo's dashboard: a row of headline figures for all calls
- * (TodayKpis), then one figure card each for inbound and outbound (DirectionCards). Built
- * from /api/analytics/overview for supervisors and admins, and from the agent's own call
- * log for agents.
+ * A period's traffic as cards, the same on the Dashboard (today) and on Analytics (any
+ * range): SummaryStats is the headline row for all calls, DirectionCards one card each for
+ * inbound and outbound. Figures come from /api/analytics/overview (figuresFromKpis), or for
+ * an agent's dashboard from their own call log (figuresFromCalls). Analytics passes the
+ * previous period too, for the deltas.
  *
  * Two rates, as echo draws them. ANSWER RATE counts people: distinct outside numbers that
  * were answered over distinct outside numbers involved, so ten tries to one person who
@@ -35,6 +34,8 @@ export interface DirectionFigures {
   ahtSecs: number | null;
   /** Talk time summed over answered calls (outbound only). */
   talkSecs: number | null;
+  /** How the unanswered ones ended (outbound only). */
+  outcomes?: { noAnswer: number; busy: number; failed: number };
 }
 
 /** The queue's own quality figures, where the viewer has them (never an agent's). */
@@ -61,8 +62,7 @@ const rate = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 
 /** The overview endpoint's response as figures. The All row is the COMBINED block (every
  *  direction, internal included); both rates come from the backend so the dashboard and
  *  Analytics never disagree. */
-export function figuresFromOverview(data: ExecutiveKPIResponse): PeriodFigures {
-  const cur = data.current;
+export function figuresFromKpis(cur: KpiSummary): PeriodFigures {
   const all = cur.combined;
   const out = cur.outbound;
   const allTotal = all?.total_calls ?? cur.total_calls;
@@ -89,12 +89,17 @@ export function figuresFromOverview(data: ExecutiveKPIResponse): PeriodFigures {
       answerRate: out?.answer_rate ?? null,
       contactRate: out?.contact_rate ?? rate(out?.answered_calls ?? 0, out?.total_calls ?? 0),
       ahtSecs: out?.aht_secs ?? null, talkSecs: out?.sum_billsec ?? null,
+      outcomes: out ? { noAnswer: out.no_answer_calls, busy: out.busy_calls, failed: out.failed_calls } : undefined,
     },
     queue: {
       abandoned: cur.abandoned_calls, abandonRate: cur.abandonment_rate, slaPct: cur.sla_pct,
       fcrPct: cur.fcr_pct, avgWaitSecs: cur.avg_wait_secs,
     },
   };
+}
+
+export function figuresFromOverview(data: ExecutiveKPIResponse): PeriodFigures {
+  return figuresFromKpis(data.current);
 }
 
 /** How many trailing digits identify the person on a number, and the floor below which a
@@ -133,6 +138,11 @@ function directionFromCalls(calls: CallLogRecord[], withTalk = false): Direction
     contactRate: rate(answeredRows.length, calls.length),
     ahtSecs: talk.length ? Math.round(talkSum / talk.length) : null,
     talkSecs: withTalk ? talkSum : null,
+    outcomes: withTalk ? {
+      noAnswer: calls.filter((c) => (c.disposition || '').toUpperCase() === 'NO ANSWER').length,
+      busy: calls.filter((c) => (c.disposition || '').toUpperCase() === 'BUSY').length,
+      failed: calls.filter((c) => (c.disposition || '').toUpperCase() === 'FAILED').length,
+    } : undefined,
   };
 }
 
@@ -147,14 +157,22 @@ export function figuresFromCalls(calls: CallLogRecord[]): PeriodFigures {
   };
 }
 
-interface TodayKpisProps {
+interface CardsProps {
   figures: PeriodFigures;
+  /** The period before, of the same length: shown as deltas (Analytics). */
+  previous?: PeriodFigures | null;
   /** Agents have no queue figures, so their Abandoned card counts their missed calls. */
   isAgent?: boolean;
 }
 
-/** Today's headline figures for every call, in and out: the row above the direction cards. */
-export function TodayKpis({ figures: f, isAgent }: TodayKpisProps) {
+/** previous → current change, or null when there is nothing to compare. */
+function change(cur: number | null | undefined, prev: number | null | undefined): number | null {
+  if (cur === null || cur === undefined || prev === null || prev === undefined) return null;
+  return Math.round((cur - prev) * 10) / 10;
+}
+
+/** The headline row for every call in the period, in and out. */
+export function SummaryStats({ figures: f, previous: p, isAgent }: CardsProps) {
   const { t } = useTranslation();
   const tips = metricTips(t);
   const q = f.queue;
@@ -162,77 +180,52 @@ export function TodayKpis({ figures: f, isAgent }: TodayKpisProps) {
 
   const cards: StatCardProps[] = [
     {
-      icon: <PhoneCall size={16} />,
-      label: t('metrics.totalCalls'),
-      value: f.all.calls.toLocaleString(),
-      tip: kpiTip(t, 'dashboard.tip.totalCalls', t('metrics.totalCalls'), undefined,
-        { text: 'Every call today — inbound, outbound and between extensions, echo tests and feature codes included.' }),
-      desc: t('dashboard.kpi.totalSplitInternal', '{{in}} in · {{out}} out · {{internal}} internal',
-        { in: f.inbound.calls.toLocaleString(), out: f.outbound.calls.toLocaleString(), internal: f.internal.toLocaleString() }),
+      icon: <PhoneCall size={16} />, label: t('metrics.totalCalls'), value: f.all.calls.toLocaleString(),
+      tip: tips.totalCalls, delta: change(f.all.calls, p?.all.calls),
+      desc: t('dashboard.kpi.totalSplitInternal', {
+        in: f.inbound.calls.toLocaleString(), out: f.outbound.calls.toLocaleString(), internal: f.internal.toLocaleString(),
+      }),
     },
     {
-      icon: <CheckCircle2 size={16} />,
-      label: t('metrics.answered'),
-      value: f.all.answered.toLocaleString(),
-      tip: kpiTip(t, 'dashboard.tip.answered', t('metrics.answered'), undefined,
-        { text: 'Calls that actually connected and had talk time.' }),
+      icon: <CheckCircle2 size={16} />, label: t('metrics.answered'), value: f.all.answered.toLocaleString(),
+      tip: tips.answered, delta: change(f.all.answered, p?.all.answered), good: 'up',
       desc: t('metrics.contactRateOf', { rate: fmtPct(f.all.contactRate) }),
     },
     {
-      icon: <UserCheck size={16} />,
-      label: t('metrics.answerRate'),
-      value: fmtPct(f.all.answerRate),
-      tip: tips.answerRate,
-      desc: t('dashboard.kpi.peopleReached', '{{reached}} of {{people}} numbers reached',
-        { reached: f.all.reached, people: f.all.people }),
+      icon: <UserCheck size={16} />, label: t('metrics.answerRate'), value: fmtPct(f.all.answerRate),
+      tip: tips.answerRate, delta: change(f.all.answerRate, p?.all.answerRate), good: 'up',
+      desc: t('dashboard.kpi.peopleReached', { reached: f.all.reached.toLocaleString(), people: f.all.people.toLocaleString() }),
       tone: VERDICT_TONE[perPersonRateVerdict(f.all.answerRate)],
     },
     isAgent || !q ? {
-      icon: <PhoneMissed size={16} />,
-      label: t('dashboard.kpi.missed', 'Missed'),
-      value: missed.toLocaleString(),
-      tip: kpiTip(t, 'dashboard.tip.missed', t('dashboard.kpi.missed', 'Missed'), undefined,
-        { text: 'Your calls today that did not connect.', formula: 'calls − answered' }),
-      tone: missed > 0 ? 'danger' : '',
+      icon: <PhoneMissed size={16} />, label: t('metrics.missed'), value: missed.toLocaleString(),
+      tip: tips.missed, tone: missed > 0 ? 'danger' : '',
     } : {
-      icon: <PhoneMissed size={16} />,
-      label: t('metrics.abandoned'),
-      value: q.abandoned.toLocaleString(),
-      tip: kpiTip(t, 'dashboard.tip.abandoned', t('metrics.abandoned'), undefined,
-        { text: 'Inbound callers who hung up before anyone answered.', formula: 'inbound calls not answered' }),
+      icon: <PhoneMissed size={16} />, label: t('metrics.abandoned'), value: q.abandoned.toLocaleString(),
+      tip: tips.abandoned, delta: change(q.abandoned, p?.queue?.abandoned), good: 'down',
       desc: t('metrics.abandonRateOf', { rate: fmtPct(q.abandonRate) }),
       tone: VERDICT_TONE[abandonVerdict(q.abandonRate)],
     },
     {
-      icon: <Timer size={16} />,
-      label: t('metrics.aht'),
-      value: fmtSecs(f.all.ahtSecs),
-      tip: tips.aht,
+      icon: <Timer size={16} />, label: t('metrics.aht'), value: fmtSecs(f.all.ahtSecs),
+      tip: tips.aht, delta: change(f.all.ahtSecs, p?.all.ahtSecs), good: 'down',
     },
   ];
 
   return <StatRow>{cards.map((c) => <StatCard key={c.label} {...c} />)}</StatRow>;
 }
 
-interface DirectionCardsProps {
-  /** The period's figures; null while they load or when they are out of reach. */
-  figures: PeriodFigures | null;
-  /** What the period is called on the card, e.g. "Today so far". */
+/** Inbound and outbound, one figure card each. */
+export function DirectionCards({ figures: f, previous: p, periodLabel }: Omit<CardsProps, 'isAgent'> & {
+  /** What the period is called on the card: "Today so far", "2026-09-26 → 2026-10-25". */
   periodLabel: string;
-}
-
-/** Inbound and outbound, one figure card each (all calls are the TodayKpis row above). */
-export function DirectionCards({ figures: f, periodLabel }: DirectionCardsProps) {
+}) {
   const { t } = useTranslation();
   const tips = metricTips(t);
+  const q = f.queue;
 
-  const answeredTip = (label: string): Tip => ({
-    content: t('dashboard.tip.answered.text', 'Calls that actually connected and had talk time.'), label,
-  });
-  const answered = (d: DirectionFigures): Metric => {
-    const label = t('metrics.answered');
-    return { key: 'answered', label, value: d.answered.toLocaleString(), tip: answeredTip(label) };
-  };
+  const answered = (d: DirectionFigures): Metric =>
+    ({ key: 'answered', label: t('metrics.answered'), value: d.answered.toLocaleString(), tip: tips.answered });
   const answerRate = (d: DirectionFigures): Metric => ({
     key: 'answerRate', label: t('metrics.answerRate'), value: fmtPct(d.answerRate),
     tone: VERDICT_TONE[perPersonRateVerdict(d.answerRate)], tip: tips.answerRate,
@@ -241,58 +234,54 @@ export function DirectionCards({ figures: f, periodLabel }: DirectionCardsProps)
     key: 'contactRate', label: t('metrics.contactRate'), value: fmtPct(d.contactRate),
     tone: VERDICT_TONE[perCallRateVerdict(d.contactRate)], tip: tips.contactRate,
   });
-  const aht = (d: DirectionFigures): Metric => ({
-    key: 'aht', label: t('metrics.aht'), value: fmtSecs(d.ahtSecs),
-  });
+  const aht = (d: DirectionFigures): Metric =>
+    ({ key: 'aht', label: t('metrics.aht'), value: fmtSecs(d.ahtSecs), tip: tips.aht });
 
-  const q = f?.queue ?? null;
-  const inboundMetrics: Metric[] = f ? [
+  const inboundMetrics: Metric[] = [
     answered(f.inbound),
     answerRate(f.inbound),
     contactRate(f.inbound),
     ...(q ? [
-      { key: 'sla', label: t('metrics.sla'), value: fmtPct(q.slaPct), tone: VERDICT_TONE[slaVerdict(q.slaPct)] },
-      {
-        key: 'abandoned', label: t('metrics.abandoned'), value: q.abandoned.toLocaleString(),
-        tone: (q.abandoned > 0 ? 'danger' : '') as Tone,
-      },
-      {
-        key: 'abandonRate', label: t('metrics.abandonRate'), value: fmtPct(q.abandonRate),
-        tone: VERDICT_TONE[abandonVerdict(q.abandonRate)],
-      },
-      { key: 'fcr', label: t('metrics.fcr'), value: fmtPct(q.fcrPct), tone: VERDICT_TONE[fcrVerdict(q.fcrPct)] },
-      { key: 'avgWait', label: t('metrics.avgWait'), value: fmtSecs(q.avgWaitSecs) },
+      { key: 'sla', label: t('metrics.sla'), value: fmtPct(q.slaPct), tone: VERDICT_TONE[slaVerdict(q.slaPct)], tip: tips.sla },
+      { key: 'abandoned', label: t('metrics.abandoned'), value: q.abandoned.toLocaleString(), tip: tips.abandoned,
+        tone: VERDICT_TONE[abandonVerdict(q.abandonRate)] },
+      { key: 'abandonRate', label: t('metrics.abandonRate'), value: fmtPct(q.abandonRate),
+        tone: VERDICT_TONE[abandonVerdict(q.abandonRate)], tip: tips.abandonRate },
+      { key: 'fcr', label: t('metrics.fcr'), value: fmtPct(q.fcrPct), tone: VERDICT_TONE[fcrVerdict(q.fcrPct)], tip: tips.fcr },
+      { key: 'avgWait', label: t('metrics.avgWait'), value: fmtSecs(q.avgWaitSecs), tip: tips.avgWait },
     ] : []),
     aht(f.inbound),
-  ] : [];
-  const talkLabel = t('dashboard.kpi.talkTime', 'Talk time');
-  const outboundMetrics: Metric[] = f ? [
+  ];
+  const outboundMetrics: Metric[] = [
     answered(f.outbound),
     answerRate(f.outbound),
     contactRate(f.outbound),
     aht(f.outbound),
-    ...(f.outbound.talkSecs !== null ? [{
-      key: 'talk', label: talkLabel, value: fmtSecs(f.outbound.talkSecs),
-      tip: {
-        content: t('dashboard.tip.talkTime.text', 'Total time outbound calls spent with a customer on the line, wrap-up excluded.'),
-        formula: t('dashboard.tip.talkTime.formula', 'sum of talk time'),
-        label: talkLabel,
-      },
-    }] : []),
-  ] : [];
+    ...(f.outbound.talkSecs !== null
+      ? [{ key: 'talk', label: t('metrics.talkTime'), value: fmtSecs(f.outbound.talkSecs), tip: tips.talkTime }]
+      : []),
+  ];
+  const o = f.outbound.outcomes;
 
   return (
     <div className="dcards">
       <FigureCard
         icon={<PhoneIncoming size={18} />} title={t('dashboard.direction.inbound', 'Inbound')}
         periodLabel={periodLabel}
-        period={f ? f.inbound.calls : null}
+        period={f.inbound.calls}
+        periodDelta={change(f.inbound.calls, p?.inbound.calls)}
         metrics={inboundMetrics}
       />
       <FigureCard
         icon={<PhoneOutgoing size={18} />} title={t('dashboard.direction.outbound', 'Outbound')}
         periodLabel={periodLabel}
-        period={f ? f.outbound.calls : null}
+        period={f.outbound.calls}
+        periodDelta={change(f.outbound.calls, p?.outbound.calls)}
+        periodParts={o ? [
+          { label: t('analytics.drilldown.noAnswer', 'No Answer'), n: o.noAnswer },
+          { label: t('analytics.drilldown.busy', 'Busy'), n: o.busy },
+          { label: t('analytics.drilldown.failed', 'Failed'), n: o.failed },
+        ] : []}
         metrics={outboundMetrics}
       />
     </div>

@@ -983,15 +983,11 @@
       "na": "N/D",
       "outboundCalls": "Sainte",
       "outboundVolume": "Chamadas saintes",
-      "outboundAnswerRate": "Taxa de atendimento sainte",
-      "outboundAht": "TMA sainte",
       "outboundTrend": "Sainte",
-      "inboundAnswerRate": "Taxa de atendimento entrante",
       "inboundAnswerRateDesc": "Chamadas entrantes atendidas",
       "avgWaitDesc": "Tempo médio de espera na fila",
       "shortAbandon": "Abandono rápido",
       "shortAbandonDesc": "Abandonadas antes do limite",
-      "market": "Tempo de mercado",
       "marketDesc": "Tempo total de chamadas saintes",
       "unansweredCalls": "Não atendidas"
     },
@@ -1084,57 +1080,17 @@
         }
       },
       "kpi": {
-        "abandonRate": {
-          "formula": "não atendidas ÷ oferecidas",
-          "text": "Quantos chamadores de entrada desligaram antes de alguém atender."
-        },
-        "avgWait": {
-          "formula": "espera total ÷ chamadores",
-          "text": "Quanto tempo os chamadores da fila esperam até alguém atender."
-        },
-        "delta": {
-          "formula": "este período − anterior",
-          "text": "Variação em relação ao período imediatamente anterior."
-        },
-        "fcrRepeat": {
-          "formula": "chamadores sem nova chamada ÷ chamadores atendidos",
-          "text": "Chamadores de fila atendidos que não ligaram novamente para uma fila dentro da janela de FCR."
-        },
-        "market": {
-          "text": "Tempo total de conversa nas chamadas de saída atendidas."
-        },
         "shortAbandonShare": {
           "formula": "desligamentos rápidos ÷ oferecidas",
           "text": "Chamadores de entrada que desligaram dentro do limite de abandono rápido — geralmente engano de discagem."
-        },
-        "slaAnswered": {
-          "formula": "atendidas a tempo ÷ atendidas",
-          "text": "Com que frequência as chamadas de entrada atendidas foram atendidas dentro do limite de SLA da fila."
-        },
-        "volume": {
-          "text": "Todas as chamadas deste período — de entrada, de saída e internas."
-        },
-        "inboundPeopleRate": {
-          "text": "Proporção dos números distintos que ligaram e tiveram a chamada atendida — independentemente de quantas vezes cada um ligou.",
-          "formula": "chamadores atendidos ÷ chamadores distintos"
-        },
-        "outboundPeopleRate": {
-          "text": "Proporção dos números distintos discados que atenderam pelo menos uma vez — independentemente de quantas tentativas cada um levou.",
-          "formula": "números que atenderam ÷ números distintos discados"
         }
       },
       "overview": {
         "byDirectionInOut": {
           "text": "Chamadas de entrada e de saída por dia."
         },
-        "inbound": {
-          "text": "Chamadas recebidas de fora no período e como foram tratadas."
-        },
         "inboundOutcomes": {
           "text": "Chamadas de entrada por dia: atendidas e as que ninguém atendeu — abandonos de fila e chamadas diretas perdidas juntos."
-        },
-        "outbound": {
-          "text": "Chamadas feitas para números externos no período e quantas foram atendidas."
         },
         "queueService": {
           "text": "Como as filas trataram as pessoas que esperaram nelas: com que rapidez foram atendidas, quantas desistiram e se precisaram ligar de novo."
@@ -1486,7 +1442,6 @@
   },
   "dashboard": {
     "direction": {
-      "all": "Todas as chamadas",
       "inbound": "Entrada",
       "outbound": "Saída"
     },
@@ -1494,10 +1449,8 @@
       "activeCalls": "Chamadas ativas",
       "available": "Disponíveis",
       "longestWait": "Maior espera",
-      "missed": "Perdidas",
       "onCall": "Em chamada",
       "ringing": "Tocando",
-      "talkTime": "Tempo de conversa",
       "waiting": "Chamadas em espera",
       "peopleReached": "{{reached}} de {{people}} números alcançados",
       "totalSplitInternal": "{{in}} de entrada · {{out}} de saída · {{internal}} internas"
@@ -1518,9 +1471,6 @@
       "activeCalls": {
         "text": "Chamadas em andamento neste momento."
       },
-      "answered": {
-        "text": "Chamadas que realmente se conectaram e tiveram tempo de conversa."
-      },
       "queueAgents": {
         "text": "Agentes desta fila e o que estão fazendo."
       },
@@ -1533,26 +1483,11 @@
       "ringing": {
         "text": "Telefones tocando neste momento."
       },
-      "talkTime": {
-        "formula": "soma do tempo de conversa",
-        "text": "Tempo total que as chamadas de saída passaram com um cliente na linha, sem o pós-atendimento."
-      },
       "waiting": {
         "text": "Chamadores em espera aguardando que alguém atenda."
       },
       "longestWaitLive": {
         "text": "Há quanto tempo a pessoa que espera há mais tempo está aguardando. Fica vermelho após um minuto."
-      },
-      "totalCalls": {
-        "text": "Todas as chamadas de hoje — de entrada, de saída e entre ramais, incluindo testes de eco e códigos de recurso."
-      },
-      "abandoned": {
-        "text": "Chamadores de entrada que desligaram antes de alguém atender.",
-        "formula": "chamadas de entrada não atendidas"
-      },
-      "missed": {
-        "text": "Suas chamadas de hoje que não conectaram.",
-        "formula": "chamadas − atendidas"
       }
     },
     "title": "Painel",
@@ -1596,7 +1531,43 @@
       "aht": {
         "text": "Tempo médio de conversa de uma chamada atendida.",
         "formula": "tempo de conversa ÷ atendidas"
+      },
+      "totalCalls": {
+        "text": "Todas as chamadas deste período — de entrada, de saída e internas."
+      },
+      "answered": {
+        "text": "Chamadas que realmente se conectaram e tiveram tempo de conversa."
+      },
+      "abandoned": {
+        "text": "Chamadores de entrada que desligaram antes de alguém atender.",
+        "formula": "chamadas de entrada não atendidas"
+      },
+      "abandonRate": {
+        "formula": "não atendidas ÷ oferecidas",
+        "text": "Quantos chamadores de entrada desligaram antes de alguém atender."
+      },
+      "missed": {
+        "text": "Suas chamadas de hoje que não conectaram.",
+        "formula": "chamadas − atendidas"
+      },
+      "sla": {
+        "formula": "atendidas a tempo ÷ atendidas",
+        "text": "Com que frequência as chamadas de entrada atendidas foram atendidas dentro do limite de SLA da fila."
+      },
+      "fcr": {
+        "formula": "chamadores sem nova chamada ÷ chamadores atendidos",
+        "text": "Chamadores de fila atendidos que não ligaram novamente para uma fila dentro da janela de FCR."
+      },
+      "avgWait": {
+        "formula": "espera total ÷ chamadores",
+        "text": "Quanto tempo os chamadores da fila esperam até alguém atender."
+      },
+      "talkTime": {
+        "formula": "soma do tempo de conversa",
+        "text": "Tempo total que as chamadas de saída passaram com um cliente na linha, sem o pós-atendimento."
       }
-    }
+    },
+    "missed": "Perdidas",
+    "talkTime": "Tempo de conversa"
   }
 }

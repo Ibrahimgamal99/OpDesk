@@ -983,15 +983,11 @@
       "na": "N/D",
       "outboundCalls": "Saliente",
       "outboundVolume": "Llamadas salientes",
-      "outboundAnswerRate": "Tasa de respuesta saliente",
-      "outboundAht": "TMO saliente",
       "outboundTrend": "Saliente",
-      "inboundAnswerRate": "Tasa de respuesta entrante",
       "inboundAnswerRateDesc": "Llamadas entrantes respondidas",
       "avgWaitDesc": "Tiempo medio de espera en cola",
       "shortAbandon": "Abandono rápido",
       "shortAbandonDesc": "Abandonadas antes del umbral",
-      "market": "Tiempo de mercado",
       "marketDesc": "Tiempo total de llamadas salientes",
       "unansweredCalls": "No respondidas"
     },
@@ -1084,57 +1080,17 @@
         }
       },
       "kpi": {
-        "abandonRate": {
-          "formula": "no respondidas ÷ ofrecidas",
-          "text": "Cuántos llamantes entrantes colgaron antes de que alguien contestara."
-        },
-        "avgWait": {
-          "formula": "espera total ÷ llamantes",
-          "text": "Cuánto esperan los llamantes en cola hasta que alguien contesta."
-        },
-        "delta": {
-          "formula": "este período − anterior",
-          "text": "Cambio respecto al período inmediatamente anterior."
-        },
-        "fcrRepeat": {
-          "formula": "llamantes sin rellamada ÷ llamantes respondidos",
-          "text": "Llamantes de cola respondidos que no volvieron a llamar a una cola dentro de la ventana de FCR."
-        },
-        "market": {
-          "text": "Tiempo total de conversación en llamadas salientes respondidas."
-        },
         "shortAbandonShare": {
           "formula": "cuelgues rápidos ÷ ofrecidas",
           "text": "Llamantes entrantes que colgaron dentro del umbral de abandono corto; suelen ser errores de marcación."
-        },
-        "slaAnswered": {
-          "formula": "respondidas a tiempo ÷ respondidas",
-          "text": "Con qué frecuencia las llamadas entrantes respondidas se contestaron dentro del umbral de SLA de la cola."
-        },
-        "volume": {
-          "text": "Todas las llamadas del período: entrantes, salientes e internas."
-        },
-        "inboundPeopleRate": {
-          "text": "Proporción de los números distintos que llamaron y cuya llamada fue contestada, sin importar cuántas veces llamó cada uno.",
-          "formula": "llamantes contestados ÷ llamantes distintos"
-        },
-        "outboundPeopleRate": {
-          "text": "Proporción de los números distintos marcados que contestaron al menos una vez, sin importar cuántos intentos tomó cada uno.",
-          "formula": "números que contestaron ÷ números distintos marcados"
         }
       },
       "overview": {
         "byDirectionInOut": {
           "text": "Llamadas entrantes y salientes por día."
         },
-        "inbound": {
-          "text": "Llamadas que entraron desde el exterior durante el período y cómo se atendieron."
-        },
         "inboundOutcomes": {
           "text": "Llamadas entrantes por día: las respondidas y las que nadie contestó (abandonos de cola y llamadas directas perdidas, en conjunto)."
-        },
-        "outbound": {
-          "text": "Llamadas realizadas a números externos durante el período y cuántas fueron respondidas."
         },
         "queueService": {
           "text": "Cómo atendieron las colas a las personas que esperaron en ellas: qué tan rápido se les contestó, cuántas abandonaron y si tuvieron que volver a llamar."
@@ -1486,7 +1442,6 @@
   },
   "dashboard": {
     "direction": {
-      "all": "Todas las llamadas",
       "inbound": "Entrantes",
       "outbound": "Salientes"
     },
@@ -1494,10 +1449,8 @@
       "activeCalls": "Llamadas activas",
       "available": "Libres",
       "longestWait": "Espera más larga",
-      "missed": "Perdidas",
       "onCall": "En llamada",
       "ringing": "Sonando",
-      "talkTime": "Tiempo de conversación",
       "waiting": "Llamadas en espera",
       "peopleReached": "{{reached}} de {{people}} números contactados",
       "totalSplitInternal": "{{in}} entrantes · {{out}} salientes · {{internal}} internas"
@@ -1518,9 +1471,6 @@
       "activeCalls": {
         "text": "Llamadas en curso ahora mismo."
       },
-      "answered": {
-        "text": "Llamadas que realmente se conectaron y tuvieron tiempo de conversación."
-      },
       "queueAgents": {
         "text": "Agentes de esta cola y lo que están haciendo."
       },
@@ -1533,26 +1483,11 @@
       "ringing": {
         "text": "Teléfonos sonando ahora mismo."
       },
-      "talkTime": {
-        "formula": "suma del tiempo de conversación",
-        "text": "Tiempo total que las llamadas salientes pasaron con un cliente en línea, sin contar la post-llamada."
-      },
       "waiting": {
         "text": "Llamantes en espera de que alguien conteste."
       },
       "longestWaitLive": {
         "text": "Cuánto tiempo lleva esperando la persona que más ha esperado. Se pone en rojo pasado un minuto."
-      },
-      "totalCalls": {
-        "text": "Todas las llamadas de hoy: entrantes, salientes y entre extensiones, incluidas las pruebas de eco y los códigos de función."
-      },
-      "abandoned": {
-        "text": "Llamantes entrantes que colgaron antes de que alguien contestara.",
-        "formula": "llamadas entrantes no contestadas"
-      },
-      "missed": {
-        "text": "Tus llamadas de hoy que no conectaron.",
-        "formula": "llamadas − contestadas"
       }
     },
     "title": "Panel",
@@ -1596,7 +1531,43 @@
       "aht": {
         "text": "Tiempo medio de conversación de una llamada contestada.",
         "formula": "tiempo de conversación ÷ contestadas"
+      },
+      "totalCalls": {
+        "text": "Todas las llamadas del período: entrantes, salientes e internas."
+      },
+      "answered": {
+        "text": "Llamadas que realmente se conectaron y tuvieron tiempo de conversación."
+      },
+      "abandoned": {
+        "text": "Llamantes entrantes que colgaron antes de que alguien contestara.",
+        "formula": "llamadas entrantes no contestadas"
+      },
+      "abandonRate": {
+        "formula": "no respondidas ÷ ofrecidas",
+        "text": "Cuántos llamantes entrantes colgaron antes de que alguien contestara."
+      },
+      "missed": {
+        "text": "Tus llamadas de hoy que no conectaron.",
+        "formula": "llamadas − contestadas"
+      },
+      "sla": {
+        "formula": "respondidas a tiempo ÷ respondidas",
+        "text": "Con qué frecuencia las llamadas entrantes respondidas se contestaron dentro del umbral de SLA de la cola."
+      },
+      "fcr": {
+        "formula": "llamantes sin rellamada ÷ llamantes respondidos",
+        "text": "Llamantes de cola respondidos que no volvieron a llamar a una cola dentro de la ventana de FCR."
+      },
+      "avgWait": {
+        "formula": "espera total ÷ llamantes",
+        "text": "Cuánto esperan los llamantes en cola hasta que alguien contesta."
+      },
+      "talkTime": {
+        "formula": "suma del tiempo de conversación",
+        "text": "Tiempo total que las llamadas salientes pasaron con un cliente en línea, sin contar la post-llamada."
       }
-    }
+    },
+    "missed": "Perdidas",
+    "talkTime": "Tiempo de conversación"
   }
 }

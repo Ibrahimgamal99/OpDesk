@@ -111,16 +111,19 @@ export function kpiTip(
   };
 }
 
-/**
- * The tooltips of the metrics the Dashboard and Analytics both show, so a figure is
- * explained in the same words wherever it appears. Labels live under `metrics.*` too.
- */
-export function metricTips(t: TFunction) {
-  return {
-    answerRate: kpiTip(t, 'metrics.tip.answerRate', t('metrics.answerRate')),
-    contactRate: kpiTip(t, 'metrics.tip.contactRate', t('metrics.contactRate')),
-    aht: kpiTip(t, 'metrics.tip.aht', t('metrics.aht')),
-  };
+/** The metrics the Dashboard and Analytics both show. Each has one label
+ *  (`metrics.<key>`) and one tooltip (`metrics.tip.<key>`), so a figure is named and
+ *  explained in the same words wherever it appears. */
+export const METRIC_KEYS = [
+  'totalCalls', 'answered', 'answerRate', 'contactRate', 'abandoned', 'abandonRate', 'missed',
+  'aht', 'sla', 'fcr', 'avgWait', 'talkTime',
+] as const;
+export type MetricKey = typeof METRIC_KEYS[number];
+
+export function metricTips(t: TFunction): Record<MetricKey, ReturnType<typeof kpiTip>> {
+  return Object.fromEntries(
+    METRIC_KEYS.map((k) => [k, kpiTip(t, `metrics.tip.${k}`, t(`metrics.${k}`))]),
+  ) as Record<MetricKey, ReturnType<typeof kpiTip>>;
 }
 
 /** A rate's verdict: drives the good/warn/bad tone of a KPI card or metric. */

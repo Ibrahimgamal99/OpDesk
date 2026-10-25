@@ -8,7 +8,7 @@ import { fmtTimer, parseClock } from '../lib/format';
 import { Alert, Badge, EmptyState, Loading, Page, SegmentedBar, Tooltip } from './ui';
 import { todayStr } from './analyticsUtils';
 import { memberState } from './queueMemberState';
-import { DirectionCards, TodayKpis, figuresFromCalls, figuresFromOverview, type PeriodFigures } from './DirectionCards';
+import { DirectionCards, SummaryStats, figuresFromCalls, figuresFromOverview, type PeriodFigures } from './DirectionCards';
 import '../styles/dashboard.css';
 import '../styles/live.css';
 
@@ -44,7 +44,8 @@ function HeroStat({
 /**
  * The Dashboard: the whole system on one screen, live and for today.
  *   * the live strip -- calls in progress, callers waiting, the longest wait, ringing, workforce;
- *   * today's figures: an all-calls headline row (TodayKpis), then inbound and outbound (DirectionCards);
+ *   * today's figures: the all-calls row (SummaryStats), then inbound and outbound (DirectionCards),
+ *     the same components Analytics shows a date range with;
  *   * the 7-day volume trend and the live queue board (supervisors and admins).
  * Live figures move with the WebSocket state; today's are polled every minute.
  */
@@ -241,11 +242,12 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
             {!todayUnavailable && (
               <>
                 <div className="dash-section-label"><CalendarDays size={14} />{t('dashboard.today', 'Today')}</div>
-                {today && <TodayKpis figures={today} isAgent={isAgent} />}
-                <DirectionCards
-                  figures={today}
-                  periodLabel={t('dashboard.todaySoFar', 'Today so far')}
-                />
+                {today ? (
+                  <>
+                    <SummaryStats figures={today} isAgent={isAgent} />
+                    <DirectionCards figures={today} periodLabel={t('dashboard.todaySoFar', 'Today so far')} />
+                  </>
+                ) : <Loading />}
               </>
             )}
 

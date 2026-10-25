@@ -983,15 +983,11 @@
       "na": "N/A",
       "outboundCalls": "Outbound",
       "outboundVolume": "Outbound Calls",
-      "outboundAnswerRate": "Outbound answer rate",
-      "outboundAht": "Outbound AHT",
       "outboundTrend": "Outbound",
-      "inboundAnswerRate": "Inbound answer rate",
       "inboundAnswerRateDesc": "Inbound calls answered",
       "avgWaitDesc": "Average queue wait time",
       "shortAbandon": "Short abandon",
       "shortAbandonDesc": "Abandoned before wait threshold",
-      "market": "Market talk time",
       "marketDesc": "Total outbound talk time",
       "unansweredCalls": "Unanswered"
     },
@@ -1084,57 +1080,17 @@
         }
       },
       "kpi": {
-        "abandonRate": {
-          "formula": "not answered ÷ offered",
-          "text": "How many inbound callers hung up before anyone answered."
-        },
-        "avgWait": {
-          "formula": "total wait ÷ callers",
-          "text": "How long queue callers wait before someone picks up."
-        },
-        "delta": {
-          "formula": "this period − previous",
-          "text": "Change from the period just before this one."
-        },
-        "fcrRepeat": {
-          "formula": "callers with no repeat call ÷ answered callers",
-          "text": "Answered queue callers who did not call a queue again within the FCR window."
-        },
-        "market": {
-          "text": "Total talk time on answered outbound calls."
-        },
         "shortAbandonShare": {
           "formula": "quick hang-ups ÷ offered",
           "text": "Inbound callers who hung up within the short-abandon threshold — usually misdials."
-        },
-        "slaAnswered": {
-          "formula": "answered in time ÷ answered",
-          "text": "How often answered inbound calls were picked up within the queue’s SLA threshold."
-        },
-        "volume": {
-          "text": "Every call in this period — in, out and internal."
-        },
-        "inboundPeopleRate": {
-          "text": "Share of the distinct numbers that called in whose call was answered — however many times each called.",
-          "formula": "callers answered ÷ distinct callers"
-        },
-        "outboundPeopleRate": {
-          "text": "Share of the distinct numbers dialled that picked up at least once — however many tries each took.",
-          "formula": "numbers that answered ÷ distinct numbers dialled"
         }
       },
       "overview": {
         "byDirectionInOut": {
           "text": "Inbound and outbound calls per day."
         },
-        "inbound": {
-          "text": "Calls that came in from outside over the period, and how they were handled."
-        },
         "inboundOutcomes": {
           "text": "Inbound calls per day: answered, and the ones nobody answered — queue abandons and missed direct calls together."
-        },
-        "outbound": {
-          "text": "Calls placed to outside numbers over the period, and how many were answered."
         },
         "queueService": {
           "text": "How the queues treated the people who waited in them: how fast they were answered, how many gave up, and whether they had to call again."
@@ -1486,7 +1442,6 @@
   },
   "dashboard": {
     "direction": {
-      "all": "All calls",
       "inbound": "Inbound",
       "outbound": "Outbound"
     },
@@ -1494,10 +1449,8 @@
       "activeCalls": "Active Calls",
       "available": "Available",
       "longestWait": "Longest Wait",
-      "missed": "Missed",
       "onCall": "On Call",
       "ringing": "Ringing",
-      "talkTime": "Talk time",
       "waiting": "Calls Waiting",
       "peopleReached": "{{reached}} of {{people}} numbers reached",
       "totalSplitInternal": "{{in}} in · {{out}} out · {{internal}} internal"
@@ -1518,9 +1471,6 @@
       "activeCalls": {
         "text": "Calls happening right now."
       },
-      "answered": {
-        "text": "Calls that actually connected and had talk time."
-      },
       "queueAgents": {
         "text": "Agents on this queue and what they're doing."
       },
@@ -1533,26 +1483,11 @@
       "ringing": {
         "text": "Phones ringing right now."
       },
-      "talkTime": {
-        "formula": "sum of talk time",
-        "text": "Total time outbound calls spent with a customer on the line, wrap-up excluded."
-      },
       "waiting": {
         "text": "Callers on hold waiting for someone to pick up."
       },
       "longestWaitLive": {
         "text": "How long the person who has been waiting longest has been holding. Turns red past one minute."
-      },
-      "totalCalls": {
-        "text": "Every call today — inbound, outbound and between extensions, echo tests and feature codes included."
-      },
-      "abandoned": {
-        "text": "Inbound callers who hung up before anyone answered.",
-        "formula": "inbound calls not answered"
-      },
-      "missed": {
-        "text": "Your calls today that did not connect.",
-        "formula": "calls − answered"
       }
     },
     "title": "Dashboard",
@@ -1596,7 +1531,43 @@
       "aht": {
         "text": "Average handle time: the average talk time of an answered call.",
         "formula": "talk time ÷ answered"
+      },
+      "totalCalls": {
+        "text": "Every call in this period — in, out and internal."
+      },
+      "answered": {
+        "text": "Calls that actually connected and had talk time."
+      },
+      "abandoned": {
+        "text": "Inbound callers who hung up before anyone answered.",
+        "formula": "inbound calls not answered"
+      },
+      "abandonRate": {
+        "formula": "not answered ÷ offered",
+        "text": "How many inbound callers hung up before anyone answered."
+      },
+      "missed": {
+        "text": "Your calls today that did not connect.",
+        "formula": "calls − answered"
+      },
+      "sla": {
+        "formula": "answered in time ÷ answered",
+        "text": "How often answered inbound calls were picked up within the queue’s SLA threshold."
+      },
+      "fcr": {
+        "formula": "callers with no repeat call ÷ answered callers",
+        "text": "Answered queue callers who did not call a queue again within the FCR window."
+      },
+      "avgWait": {
+        "formula": "total wait ÷ callers",
+        "text": "How long queue callers wait before someone picks up."
+      },
+      "talkTime": {
+        "formula": "sum of talk time",
+        "text": "Total time outbound calls spent with a customer on the line, wrap-up excluded."
       }
-    }
+    },
+    "missed": "Missed",
+    "talkTime": "Talk time"
   }
 }
