@@ -22,6 +22,15 @@ jest.mock(
       settings[key] = value ?? '';
       return true;
     }),
+    setSettings: jest.fn(async (values: Record<string, string>) => {
+      Object.assign(settings, values);
+      return true;
+    }),
+    getAllSettings: jest.fn(async () => ({ ...settings })),
+    replaceVapidKeys: jest.fn(async (values: Record<string, string>) => {
+      Object.assign(settings, values);
+      return 3;
+    }),
     getDeviceTokensForExtension: jest.fn(async (ext: string, type: string | null = null) =>
       (tokens[ext] ?? []).filter((t) => type === null || t.token_type === type),
     ),
@@ -469,6 +478,7 @@ describe('push routes', () => {
 
   test('PUT /api/push/config validates, stores, and applies the wake only when on (or was on)', async () => {
     await expect(ctl.putPushConfig(req({ body: { enabled: true, hold_seconds: 5 } }))).rejects.toMatchObject({
+      status: 422,
       message: 'Hold time must be 8 to 30 seconds',
     });
     await expect(ctl.putPushConfig(req({ body: { enabled: true, apns_team_id: 'short' } }))).rejects.toMatchObject({
@@ -480,10 +490,11 @@ describe('push routes', () => {
     await expect(ctl.putPushConfig(req({ body: { enabled: true, apns_auth_key: 'x' } }))).rejects.toMatchObject({
       message: 'APNs auth key: not a .p8 key (no BEGIN PRIVATE KEY block)',
     });
+    const account = JSON.stringify({ ...JSON.parse(SERVICE_ACCOUNT), project_id: 'proj-push' });
     const res = (await ctl.putPushConfig(
-      req({ body: { enabled: false, hold_seconds: 12, fcm_service_account: SERVICE_ACCOUNT, apns_key_id: 'abcde12345', client_marker: ' Medut ' } }),
+      req({ body: { enabled: false, hold_seconds: 12, fcm_service_account: account, apns_key_id: 'abcde12345', client_marker: ' Medut ' } }),
     )) as { data: Record<string, unknown> };
-    expect(settings.PUSH_FCM_PROJECT_ID).toBe('proj');
+    expect(settings.PUSH_FCM_PROJECT_ID).toBe('proj-push');
     expect(JSON.parse(settings.PUSH_FCM_SERVICE_ACCOUNT).client_email).toBe('push@proj.iam.gserviceaccount.com');
     expect(settings.PUSH_APNS_KEY_ID).toBe('ABCDE12345');
     expect(settings.MOBILE_CLIENT_MARKER).toBe('Medut');
@@ -493,7 +504,7 @@ describe('push routes', () => {
   });
 
   test('VAPID rotate and binding delete are enveloped', async () => {
-    const rot = (await ctl.rotateVapidKeys()) as { data: { public_key: string; removed_subscriptions: number } };
+    const rot = (await ctl.rotateVapidKeys(req())) as { data: { public_key: string; removed_subscriptions: number } };
     expect(rot.data.removed_subscriptions).toBe(3);
     expect(settings.PUSH_VAPID_PUBLIC_KEY).toBe(rot.data.public_key);
     expect(await ctl.deletePushBinding(req({ params: { binding_id: '4' } }))).toEqual({ data: { deleted: 4 } });

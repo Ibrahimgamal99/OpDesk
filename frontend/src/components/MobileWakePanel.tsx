@@ -60,6 +60,8 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  /** The server's per-field errors from the last save (path → message). */
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const [enabled, setEnabled] = useState(false);
   const [hold, setHold] = useState(10);
@@ -120,6 +122,7 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
   const save = async () => {
     setSaving(true);
     setMessage(null);
+    setFieldErrors({});
     try {
       const body: Record<string, unknown> = {
         enabled, hold_seconds: hold, settle_seconds: settle, client_marker: marker,
@@ -131,7 +134,10 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
       apply(await api<PushConfig>('/api/push/config', { method: 'PUT', body }));
       setMessage({ type: 'success', text: t('mobileWake.saved', 'Saved. Asterisk dialplan reloaded.') });
     } catch (e) {
-      setMessage({ type: 'error', text: toApiError(e).message });
+      // A 422 names every wrong field: each shows under its control, the summary below.
+      const err = toApiError(e);
+      setFieldErrors(err.fieldErrors());
+      setMessage({ type: 'error', text: err.message });
     } finally {
       setSaving(false);
     }
@@ -330,21 +336,21 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
             label={t('common.enabled', 'Enabled')}
             description={t('mobileWake.enabledHint', 'Before an extension with a push binding is dialed, push it and hold the call while the app wakes up.')} />
           <FormRow>
-            <FormField label={t('mobileWake.hold', 'Hold time (seconds)')} htmlFor="mw-hold"
+            <FormField label={t('mobileWake.hold', 'Hold time (seconds)')} htmlFor="mw-hold" error={fieldErrors.hold_seconds}
               hint={t('mobileWake.holdHint', 'Longest the caller waits for the phone to wake and re-register. 8 to 30.')}>
-              <input id="mw-hold" type="number" className="form-input" dir="ltr" min={8} max={30} value={hold}
+              <input id="mw-hold" aria-invalid={!!fieldErrors.hold_seconds || undefined} type="number" className="form-input" dir="ltr" min={8} max={30} value={hold}
                 onChange={(e) => setHold(Number(e.target.value))} />
             </FormField>
-            <FormField label={t('mobileWake.settle', 'Settle window (seconds)')} htmlFor="mw-settle"
+            <FormField label={t('mobileWake.settle', 'Settle window (seconds)')} htmlFor="mw-settle" error={fieldErrors.settle_seconds}
               hint={t('mobileWake.settleHint', 'Extra wait after the re-registration so the app is ready to ring. 0 to 10.')}>
-              <input id="mw-settle" type="number" className="form-input" dir="ltr" min={0} max={10} value={settle}
+              <input id="mw-settle" aria-invalid={!!fieldErrors.settle_seconds || undefined} type="number" className="form-input" dir="ltr" min={0} max={10} value={settle}
                 onChange={(e) => setSettle(Number(e.target.value))} />
             </FormField>
           </FormRow>
           <FormRow single>
-            <FormField label={t('mobileWake.marker', 'Mobile client marker')} htmlFor="mw-marker"
+            <FormField label={t('mobileWake.marker', 'Mobile client marker')} htmlFor="mw-marker" error={fieldErrors.client_marker}
               hint={t('mobileWake.markerHint', 'Text in the SIP User-Agent that marks a mobile client, so a desk phone on the same extension does not count as the phone waking up. Contacts with RFC 8599 pn-* parameters always count.')}>
-              <input id="mw-marker" className="form-input" dir="ltr" value={marker} onChange={(e) => setMarker(e.target.value)} spellCheck={false} />
+              <input id="mw-marker" aria-invalid={!!fieldErrors.client_marker || undefined} className="form-input" dir="ltr" value={marker} onChange={(e) => setMarker(e.target.value)} spellCheck={false} />
             </FormField>
           </FormRow>
         </div>
@@ -355,11 +361,11 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
           <FormSection title={t('mobileWake.fcm.title', 'Android (FCM)')} first>
             <div className="u-mb-3">{readyBadge(config.fcm.ready)}</div>
             <FormRow>
-              <FormField label={t('mobileWake.fcm.project', 'FCM project ID')} htmlFor="mw-fcm-project"
+              <FormField label={t('mobileWake.fcm.project', 'FCM project ID')} htmlFor="mw-fcm-project" error={fieldErrors.fcm_project_id}
                 hint={t('mobileWake.fcm.projectHint', 'Must match pn-param in the phone\'s REGISTER.')}>
-                <input id="mw-fcm-project" className="form-input" dir="ltr" value={fcmProject} onChange={(e) => setFcmProject(e.target.value)} spellCheck={false} />
+                <input id="mw-fcm-project" aria-invalid={!!fieldErrors.fcm_project_id || undefined} className="form-input" dir="ltr" value={fcmProject} onChange={(e) => setFcmProject(e.target.value)} spellCheck={false} />
               </FormField>
-              <FormField label={t('mobileWake.fcm.serviceAccount', 'Service account JSON')}
+              <FormField label={t('mobileWake.fcm.serviceAccount', 'Service account JSON')} error={fieldErrors.fcm_service_account}
                 hint={t('mobileWake.fcm.serviceAccountHint', 'Firebase console → Project settings → Service accounts → Generate new private key.')}>
                 {keyFileRow(saFile, setSaFile, config.fcm.has_service_account, config.fcm.service_account_email,
                   config.fcm.source, 'application/json,.json', pickServiceAccount)}
@@ -370,19 +376,19 @@ export function MobileWakePanel({ card, onLoaded }: MobileWakePanelProps) {
           <FormSection title={t('mobileWake.apns.title', 'iOS (APNs)')}>
             <div className="u-mb-3">{readyBadge(config.apns.ready)}</div>
             <FormRow>
-              <FormField label={t('mobileWake.apns.keyId', 'Key ID')} htmlFor="mw-key-id">
-                <input id="mw-key-id" className="form-input" dir="ltr" maxLength={10} value={keyId} onChange={(e) => setKeyId(e.target.value.toUpperCase())} spellCheck={false} />
+              <FormField label={t('mobileWake.apns.keyId', 'Key ID')} htmlFor="mw-key-id" error={fieldErrors.apns_key_id}>
+                <input id="mw-key-id" aria-invalid={!!fieldErrors.apns_key_id || undefined} className="form-input" dir="ltr" maxLength={10} value={keyId} onChange={(e) => setKeyId(e.target.value.toUpperCase())} spellCheck={false} />
               </FormField>
-              <FormField label={t('mobileWake.apns.teamId', 'Team ID')} htmlFor="mw-team-id">
-                <input id="mw-team-id" className="form-input" dir="ltr" maxLength={10} value={teamId} onChange={(e) => setTeamId(e.target.value.toUpperCase())} spellCheck={false} />
+              <FormField label={t('mobileWake.apns.teamId', 'Team ID')} htmlFor="mw-team-id" error={fieldErrors.apns_team_id}>
+                <input id="mw-team-id" aria-invalid={!!fieldErrors.apns_team_id || undefined} className="form-input" dir="ltr" maxLength={10} value={teamId} onChange={(e) => setTeamId(e.target.value.toUpperCase())} spellCheck={false} />
               </FormField>
             </FormRow>
             <FormRow>
-              <FormField label={t('mobileWake.apns.bundleId', 'Bundle ID')} htmlFor="mw-bundle"
+              <FormField label={t('mobileWake.apns.bundleId', 'Bundle ID')} htmlFor="mw-bundle" error={fieldErrors.apns_bundle_id}
                 hint={t('mobileWake.apns.bundleHint', 'VoIP pushes go to <bundle ID>.voip unless the phone\'s pn-param names a topic.')}>
-                <input id="mw-bundle" className="form-input" dir="ltr" value={bundleId} onChange={(e) => setBundleId(e.target.value)} spellCheck={false} />
+                <input id="mw-bundle" aria-invalid={!!fieldErrors.apns_bundle_id || undefined} className="form-input" dir="ltr" value={bundleId} onChange={(e) => setBundleId(e.target.value)} spellCheck={false} />
               </FormField>
-              <FormField label={t('mobileWake.apns.authKey', 'Auth key (.p8)')}
+              <FormField label={t('mobileWake.apns.authKey', 'Auth key (.p8)')} error={fieldErrors.apns_auth_key}
                 hint={t('mobileWake.apns.authKeyHint', 'Apple Developer → Keys, with Apple Push Notifications service.')}>
                 {keyFileRow(p8File, setP8File, config.apns.has_auth_key, t('mobileWake.apns.keyStored', 'Key stored'),
                   config.apns.source, '.p8', pickP8)}

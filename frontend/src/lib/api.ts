@@ -221,22 +221,27 @@ export async function api<T>(path: string, opts?: RequestOptions): Promise<T> {
   return unwrap<T>(await request(path, opts));
 }
 
-/** Collection. Returns items plus the `page` envelope for cursor pagination. */
+/**
+ * Collection. Returns items plus the `page` envelope for cursor pagination, and `meta`:
+ * whatever else the collection sent next to them (e.g. per-status counts).
+ */
 export async function apiList<T>(
   path: string,
   opts?: RequestOptions
-): Promise<{ items: T[]; page: PageState }> {
+): Promise<{ items: T[]; page: PageState; meta: Record<string, unknown> }> {
   const body = (await request(path, opts)) as
-    { data?: T[]; page?: PageState } | T[] | null;
+    ({ data?: T[]; page?: PageState } & Record<string, unknown>) | T[] | null;
 
   if (Array.isArray(body)) {
     // Un-migrated endpoint returning a bare array.
-    return { items: body, page: { cursor: null, next_cursor: null, limit: body.length } };
+    return { items: body, page: { cursor: null, next_cursor: null, limit: body.length }, meta: {} };
   }
-  const items = body?.data ?? [];
+  const { data, page, ...meta } = body ?? {};
+  const items = data ?? [];
   return {
     items,
-    page: body?.page ?? { cursor: null, next_cursor: null, limit: items.length },
+    page: page ?? { cursor: null, next_cursor: null, limit: items.length },
+    meta,
   };
 }
 

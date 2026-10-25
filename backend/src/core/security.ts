@@ -558,6 +558,8 @@ export const ALL_PERMISSIONS = [
   'cdr:read', // call history, journey, VAD, recordings
   'analytics:read', // dashboards, KPIs, CSV/XLSX export
   'extension-config:read', // key only: any user's SIP account (POST /api/extension-config/lookup)
+  'contacts:read', // the phonebook (GET /api/contacts, /api/contacts/{id})
+  'contacts:write', // push contacts in (POST /api/contacts, /api/contacts/bulk); never edit or delete
 ];
 
 /** SHA-256 hex digest of a plaintext key (what is stored and looked up by). */

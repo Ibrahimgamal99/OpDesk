@@ -147,11 +147,19 @@ describe('bcrypt', () => {
 });
 
 describe('API keys', () => {
-  it('opd_ + 40 hex, SHA-256 hex hash, extension-config:read offered', () => {
+  it('opd_ + 40 hex, SHA-256 hex hash, extension-config:read and the contacts scopes offered', () => {
     const k = generateApiKey();
     expect(k).toMatch(/^opd_[0-9a-f]{40}$/);
     expect(hashApiKey('opd_x')).toBe(crypto.createHash('sha256').update('opd_x').digest('hex'));
-    expect(ALL_PERMISSIONS).toEqual(['calls:read', 'calls:write', 'cdr:read', 'analytics:read', 'extension-config:read']);
+    expect(ALL_PERMISSIONS).toEqual([
+      'calls:read',
+      'calls:write',
+      'cdr:read',
+      'analytics:read',
+      'extension-config:read',
+      'contacts:read',
+      'contacts:write',
+    ]);
   });
 
   it('is read from X-API-Key or a Bearer opd_ token', () => {

@@ -8,6 +8,7 @@
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import {
   checkLoginRateLimit,
@@ -122,6 +123,7 @@ export class AuthController {
     if (!(await dbm.updateUser(user.id, { password: fresh }))) {
       throw new HttpError(500, 'Could not save the new password');
     }
+    setRedactedAuditDetail(req, { user_id: user.id, password: 'changed' });
     return respond({ message: 'Password changed.' });
   }
 }

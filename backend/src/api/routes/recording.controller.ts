@@ -14,6 +14,7 @@
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { env } from '../../core/config';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import * as dbm from '../../db/db-manager';
 import {
@@ -111,13 +112,14 @@ export class RecordingController {
     if (!ok) throw new HttpError(500, 'Failed to enable call recording. Check server logs.');
     await dbm.setSetting('RECORDING_ENABLED', 'true');
     await dbm.setSetting('RECORDING_FORMAT', fmt);
+    setRedactedAuditDetail(req, { recording: true, format: fmt });
     return respond({ message: `Call recording enabled (format=${fmt}). Asterisk dialplan reloaded.` });
   }
 
   /** Turn the recorder off (the predial hooks become no-ops). */
   @Post('/api/recording/disable')
   @Auth('admin')
-  async disableRecordingEndpoint() {
+  async disableRecordingEndpoint(@Req() req: Request) {
     let ok: boolean;
     try {
       ok = await disableRecording(await pbxSetting());
@@ -127,6 +129,7 @@ export class RecordingController {
     }
     if (!ok) throw new HttpError(500, 'Failed to disable call recording. Check server logs.');
     await dbm.setSetting('RECORDING_ENABLED', 'false');
+    setRedactedAuditDetail(req, { recording: false });
     return respond({ message: 'Call recording disabled. Asterisk dialplan reloaded.' });
   }
 
@@ -139,7 +142,10 @@ export class RecordingController {
     if (!['inbound', 'outbound', 'internal'].includes(direction)) {
       throw new HttpError(400, 'direction must be inbound, outbound or internal');
     }
-    if (await setRecordingDirection(direction, body.enabled)) return { direction, enabled: body.enabled };
+    if (await setRecordingDirection(direction, body.enabled)) {
+      setRedactedAuditDetail(req, { direction, enabled: body.enabled });
+      return { direction, enabled: body.enabled };
+    }
     throw new HttpError(500, 'Failed to update direction recording');
   }
 
@@ -150,7 +156,10 @@ export class RecordingController {
     const ext = pStr(req.params.ext);
     const body = parseBody(ExtensionRecordingBody, req.body);
     if (!/^[0-9A-Za-z_*#+.-]{1,40}$/.test(ext)) throw new HttpError(400, 'Invalid extension');
-    if (await setRecordingExtension(ext, body.recording)) return { extension: ext, recording: body.recording };
+    if (await setRecordingExtension(ext, body.recording)) {
+      setRedactedAuditDetail(req, { extension: ext, recording: body.recording });
+      return { extension: ext, recording: body.recording };
+    }
     throw new HttpError(500, 'Failed to update extension recording');
   }
 
@@ -167,6 +176,7 @@ export class RecordingController {
       if (!(await setRecordingExtension(e, body.recording))) failed.push(String(e));
     }
     if (failed.length) throw new HttpError(500, `Failed to update: ${failed.join(', ')}`);
+    setRedactedAuditDetail(req, { recording: body.recording, extensions: targets.map(String) });
     return { updated: targets.map(String) };
   }
 
@@ -225,14 +235,22 @@ export class RecordingController {
         log.info('Recordings directory changed to %s', newRoot);
       }
     }
+    setRedactedAuditDetail(req, {
+      local_days: body.local_days ?? null,
+      local_max_bytes: body.local_max_bytes ?? null,
+      vad_delete_legs: body.vad_delete_legs ?? null,
+      root_dir: newRoot,
+    });
     return {};
   }
 
   /** "Clean up now": the sweep the daily background job runs. {local_deleted, remote_deleted}. */
   @Post('/api/recording/retention/run')
   @Auth('admin')
-  async runRecordingRetentionEndpoint() {
-    return runRecordingRetention();
+  async runRecordingRetentionEndpoint(@Req() req: Request) {
+    const result = await runRecordingRetention();
+    setRedactedAuditDetail(req, result);
+    return result;
   }
 
   /** {total_recordings, local{used_bytes, disk_free_bytes, disk_total_bytes, ...}}. */

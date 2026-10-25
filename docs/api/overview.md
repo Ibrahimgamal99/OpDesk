@@ -99,8 +99,10 @@ credential.
 | Recordings | `GET /api/recordings/{path}` | `cdr:read` |
 | Analytics | `GET /api/analytics/{overview,queue-performance,agent-performance,agent-adherence,agent-adherence/timeline,agent-adherence/export,heatmap,trend,drilldown,export,export/{report}}` | `analytics:read` |
 | SIP account lookup | `POST /api/extension-config/lookup` (**API key only**: a JWT is refused) | `extension-config:read` |
+| Contacts (read) | `GET /api/contacts`, `/api/contacts/{id}` | `contacts:read` |
+| Contacts (push in) | `POST /api/contacts`, `/api/contacts/bulk` (upsert; never edit or delete) | `contacts:write` |
 
-Those five tokens are the complete set — `GET /api/api-keys/permissions` returns them,
+Those seven tokens are the complete set — `GET /api/api-keys/permissions` returns them,
 and the Settings scope picker is rendered from that response. OpDesk deliberately does
 not advertise scopes that gate nothing.
 

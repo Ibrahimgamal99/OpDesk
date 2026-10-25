@@ -36,12 +36,14 @@ interface FormFieldProps {
   /** Inline after the label text, e.g. an info popover explaining the field. */
   labelExtra?: React.ReactNode;
   hint?: string;
+  /** A server-side field error for this control (an ApiError's fieldErrors() entry). */
+  error?: string;
   required?: boolean;
   children: React.ReactNode;
   htmlFor?: string;
 }
 
-export function FormField({ label, labelExtra, hint, required, children, htmlFor }: FormFieldProps) {
+export function FormField({ label, labelExtra, hint, error, required, children, htmlFor }: FormFieldProps) {
   return (
     <div className="up-form-group">
       <label htmlFor={htmlFor}>
@@ -49,6 +51,7 @@ export function FormField({ label, labelExtra, hint, required, children, htmlFor
       </label>
       {children}
       {hint && <span className="up-hint">{hint}</span>}
+      {error && <span className="up-field-error" role="alert">{error}</span>}
     </div>
   );
 }

@@ -42,6 +42,8 @@ tags:
     description: SIP account provisioning
   - name: CDR
     description: Call history and recordings
+  - name: Contacts
+    description: The shared phonebook, readable and fillable by an integration
   - name: Recording
     description: Recording policy, retention and storage (admin, JWT only)
   - name: Agents
@@ -496,10 +498,16 @@ components:
         summary: { type: string, nullable: true }
         ip: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+        detail:
+          nullable: true
+          description: >-
+            What the change carried, when the route recorded it: any JSON value, built from
+            an explicit field list. Secret-named fields (password, api_key, *_SECRET, *_PASS,
+            ...) read "********". null when the route recorded nothing.
 
     ApiScope:
       type: string
-      enum: [calls:read, calls:write, cdr:read, analytics:read, extension-config:read]
+      enum: [calls:read, calls:write, cdr:read, analytics:read, extension-config:read, contacts:read, contacts:write]
 
     ApiKey:
       type: object
@@ -569,7 +577,7 @@ components:
 
     WebhookDelivery:
       type: object
-      description: One CRM push attempt. Bodies are omitted from list responses.
+      description: One CRM push and its retries. Bodies are omitted from list responses.
       properties:
         id: { type: integer }
         created_at: { type: string, format: date-time }
@@ -589,6 +597,23 @@ components:
         parent_id: { type: integer, nullable: true, description: "The delivery this resend derives from." }
         resent_by: { type: integer, nullable: true }
         truncated: { type: boolean, description: "Request body was clipped when logged, so it cannot be resent." }
+        status:
+          type: string
+          enum: [pending, delivered, failed, abandoned]
+          description: >-
+            pending = not delivered yet, sent again at next_attempt_at; delivered = the CRM
+            answered 2xx; failed = rejected (a non-retryable 4xx) or retries off; abandoned =
+            retryable failures used up max_attempts.
+        attempts: { type: integer, description: "Sends of this delivery so far." }
+        max_attempts: { type: integer, description: "Its retry budget, the first attempt included." }
+        next_attempt_at: { type: string, format: date-time, nullable: true }
+        delivered_at: { type: string, format: date-time, nullable: true }
+        trigger_kind: { type: string, enum: [hangup, wrapup, resend] }
+        endpoint_path: { type: string, nullable: true, description: "The push path retries reuse." }
+        delivery_uuid:
+          type: string
+          nullable: true
+          description: The Idempotency-Key (and X-OpDesk-Delivery-Id) every attempt of this delivery carried.
 
     WebhookDeliveryDetail:
       allOf:
@@ -597,6 +622,42 @@ components:
           properties:
             request_body: { type: string, nullable: true, description: "The JSON actually sent." }
             response_body: { type: string, nullable: true, description: "Raw response text; may not be JSON." }
+
+    Contact:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phone: { type: string, description: "Display form, as entered or pushed." }
+        phone_key: { type: string, description: "Digits, reduced to the configured last N: the match key." }
+        company: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        source:
+          type: string
+          enum: [manual, api, crm]
+          description: Precedence manual > api > crm; a lower source never overwrites a higher one.
+        external_id: { type: string, nullable: true, description: "The pushing system's id for this contact." }
+        source_system: { type: string, nullable: true, description: "Which system pushed it." }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    ContactInput:
+      type: object
+      required: [name, phone]
+      properties:
+        name: { type: string }
+        phone: { type: string, description: "Any format; only the digits are matched." }
+        company: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        external_id: { type: string, nullable: true, maxLength: 128 }
+        source_system: { type: string, nullable: true, maxLength: 48 }
+
+    ContactWriteResult:
+      type: object
+      properties:
+        id: { type: integer, nullable: true }
+        action: { type: string, enum: [created, updated, skipped] }
+        reason: { type: string, nullable: true, description: "Why it was skipped, e.g. existing contact is source 'manual'." }
 
 paths:
   /api/auth/login:
@@ -1822,6 +1883,129 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/contacts:
+    get:
+      tags: [Contacts]
+      summary: A page of the phonebook
+      description: Alphabetical, keyset-paged. Any signed-in user, or an API key with `contacts:read`.
+      security: [{ bearerAuth: [] }, { apiKey: [contacts:read] }]
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Name, company or number (any prefix form of the number matches).
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: The previous page's next_cursor.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contacts:
+                    type: array
+                    items: { $ref: '#/components/schemas/Contact' }
+                  next_cursor: { type: string, nullable: true, description: "null on the last page." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Contacts]
+      summary: Add a contact
+      description: |
+        From an admin: a manual contact (`400` when the number already exists). From an API
+        key with `contacts:write`: an upsert as source `api` — matched by
+        (source_system, external_id), then by number; a `manual` match is skipped (200),
+        not failed. A signed-in non-admin gets `403`.
+      security: [{ bearerAuth: [] }, { apiKey: [contacts:write] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContactInput' }
+      responses:
+        '200':
+          description: Written or skipped
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContactWriteResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/contacts/bulk:
+    post:
+      tags: [Contacts]
+      summary: Upsert up to 500 contacts
+      description: |
+        Per-item results rather than all-or-nothing. Precedence manual > api > crm: an
+        item matching a higher-source contact is skipped with a reason. More than 500
+        items is a `400`.
+      security: [{ bearerAuth: [] }, { apiKey: [contacts:write] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contacts]
+              properties:
+                contacts:
+                  type: array
+                  maxItems: 500
+                  items: { $ref: '#/components/schemas/ContactInput' }
+      responses:
+        '200':
+          description: Per-item results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/ContactWriteResult'
+                        - type: object
+                          properties:
+                            index: { type: integer, description: "Position in the request." }
+                  counts:
+                    type: object
+                    properties:
+                      created: { type: integer }
+                      updated: { type: integer }
+                      skipped: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/contacts/{contact_id}:
+    get:
+      tags: [Contacts]
+      summary: One contact
+      security: [{ bearerAuth: [] }, { apiKey: [contacts:read] }]
+      parameters:
+        - name: contact_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/logs/deliveries:
     get:
       tags: [Logs]
@@ -1832,10 +2016,18 @@ paths:
         both would be hundreds of KB.
       security: [{ bearerAuth: [] }]
       parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, delivered, failed, abandoned, unresolved] }
+          description: One status, or unresolved (pending, failed and abandoned together).
         - name: success
           in: query
           schema: { type: boolean }
-          description: Filter to delivered (true) or failed (false).
+          description: Filter to delivered (true) or not (false).
+        - name: facets
+          in: query
+          schema: { type: boolean, default: false }
+          description: Add `facets` — per-value counts of the status and call_type filters under the other filters.
         - name: call_id
           in: query
           schema: { type: string }
@@ -1864,6 +2056,21 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/WebhookDelivery' }
                   page: { $ref: '#/components/schemas/Page' }
+                  counts:
+                    type: object
+                    description: Every status's total over the whole log.
+                    properties:
+                      pending: { type: integer }
+                      delivered: { type: integer }
+                      failed: { type: integer }
+                      abandoned: { type: integer }
+                  facets:
+                    type: object
+                    nullable: true
+                    description: Only with facets=1; null when the counts could not be read.
+                    properties:
+                      status: { type: object, additionalProperties: { type: integer } }
+                      call_type: { type: object, additionalProperties: { type: integer } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1888,6 +2095,41 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/logs/deliveries/{delivery_id}/retry:
+    post:
+      tags: [Logs]
+      summary: Retry a delivery now
+      description: |
+        Makes a pending, failed or abandoned delivery due at once (with up to 3 more
+        attempts when its budget is spent) and sends it immediately, with the same
+        idempotency key. Answers with the row as it stands after the attempt. A delivered
+        row is never re-sent — use resend for a deliberate second copy.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: delivery_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Retried
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  delivery:
+                    allOf: [{ $ref: '#/components/schemas/WebhookDelivery' }]
+                    nullable: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Not found, already delivered, or its body was truncated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /api/logs/deliveries/{delivery_id}/resend:
     post:
       tags: [Logs]
@@ -1896,8 +2138,8 @@ paths:
         Re-sends the **stored request body** verbatim through the CRM configuration
         currently in effect. The payload is not rebuilt — the body is the historical
         fact worth replaying, while credentials and endpoint are re-read because a
-        wrong endpoint is usually why the original failed. The retry is inserted as a
-        new row with `parent_id` set.
+        wrong endpoint is usually why the original failed. The resend is a new
+        delivery (new idempotency key) with `parent_id` set.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: delivery_id
