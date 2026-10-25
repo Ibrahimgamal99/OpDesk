@@ -844,7 +844,11 @@
     "home": {
       "allSettings": "All settings",
       "cat": {
-        "contactCenter": "Contact Center"
+        "contactCenter": "Contact Center",
+        "telephony": "Telephony & Network",
+        "recording": "Recording & Compliance",
+        "access": "Integrations & Access",
+        "analytics": "Analytics"
       },
       "desc": {
         "analytics": "SLA target, FCR window and short-abandon threshold.",
@@ -1490,7 +1494,6 @@
     "sipDesc": "The password your phones and softphones register with.",
     "qrDesc": "Scan with Medut Softphone to add your extension."
   },
-  "access": "Integrations & Access",
   "callStatus": {
     "ABANDONED": "Abandoned",
     "ANSWERED": "Answered",
@@ -1590,7 +1593,5 @@
       "title": "Agent Availability",
       "total": "{{count}} agents"
     }
-  },
-  "recording": "Recording & Compliance",
-  "telephony": "Telephony & Network"
+  }
 }
