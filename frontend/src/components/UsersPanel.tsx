@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Save, Loader2, CheckCircle2, AlertCircle, Users, UserPlus, Pencil, Trash2, Shield, Group, Plus, Phone, Eye, EyeOff, Radio,
-  QrCode,
+  Save, Users, UserPlus, Pencil, Trash2, Shield, Plus, Phone, Eye, EyeOff, Radio, QrCode,
 } from 'lucide-react';
 import { MobileSetupQR } from './MobileSetupQR';
-import { FilterSelect } from './FilterSelect';
-import { MultiSelectDropdown } from './MultiSelectDropdown';
-import { Toggle } from './ui/Toggle';
-import { SearchInput } from './ui';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
 import { raiseFor } from '../lib/api';
+import {
+  Dropdown, SearchInput, matches, prepareQuery, Alert, Page, Toolbar, EmptyState, Badge, Table, Modal, Loading,
+  FormSection, FormRow, FormField, Toggle, useConfirm,
+} from './ui';
+import type { BadgeTone } from './ui';
 
 export interface OpDeskUser {
   id: number;
@@ -40,17 +40,39 @@ interface AgentOption {
   name: string;
 }
 
+type Role = 'admin' | 'supervisor' | 'agent';
+
 export interface UsersPanelProps {
   /** Restored form when returning from Groups tab (create new group flow). */
   pendingUserForm?: PendingUserFormSnapshot | null;
   onClearPendingUserForm?: () => void;
   /** Open Groups tab with create form; pass current form snapshot and optional group name to pre-fill. */
   onOpenCreateGroup?: (formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => void;
+  /** The Teams page's Users/Groups tab bar, from App. */
+  tabs?: React.ReactNode;
 }
+
+const ROLE_TONE: Record<string, BadgeTone> = {
+  admin: 'purple',
+  supervisor: 'primary',
+  agent: 'success',
+};
+
+const EMPTY_FORM = {
+  username: '',
+  password: '',
+  name: '',
+  extension: '',
+  role: 'supervisor' as Role,
+  monitor_modes: ['listen'] as string[],
+  group_ids: [] as string[],
+  webrtc: false,
+};
 
 export function UsersPanel(props: UsersPanelProps = {}) {
   const { t } = useTranslation();
-  const { pendingUserForm = null, onClearPendingUserForm, onOpenCreateGroup } = props;
+  const [confirm, confirmDialog] = useConfirm();
+  const { pendingUserForm = null, onClearPendingUserForm, onOpenCreateGroup, tabs } = props;
   const currentUser = getUser();
   const isAdmin = currentUser?.role === 'admin';
   const [users, setUsers] = useState<OpDeskUser[]>([]);
@@ -59,22 +81,14 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingUser, setEditingUser] = useState<OpDeskUser | null>(null);
-  const [usersSubTab, setUsersSubTab] = useState<'create' | 'list'>('list');
+  /** The add/edit form is a Modal over the list, which is always the page. */
+  const [formOpen, setFormOpen] = useState(false);
   const [qrUser, setQrUser] = useState<OpDeskUser | null>(null);
   const [expandedAccessUserId, setExpandedAccessUserId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [newGroupNameForCreate, setNewGroupNameForCreate] = useState('');
-  const [form, setForm] = useState({
-    username: '',
-    password: '',
-    name: '',
-    extension: '',
-    role: 'supervisor' as 'admin' | 'supervisor' | 'agent',
-    monitor_modes: ['listen'] as string[],
-    group_ids: [] as string[],
-    webrtc: false,
-  });
+  const [form, setForm] = useState(EMPTY_FORM);
 
   const handleExtensionSelect = useCallback(async (ext: string) => {
     setForm(f => ({ ...f, extension: ext, webrtc: ext ? f.webrtc : false }));
@@ -106,13 +120,15 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       group_ids: pendingUserForm.group_ids,
       webrtc: false,
     });
-    setUsersSubTab('create');
+    setFormOpen(true);
     onClearPendingUserForm();
   }, [pendingUserForm, onClearPendingUserForm]);
 
-  const loadData = useCallback(async () => {
+  // `keepMessage` for the refresh after a save/delete: clearing here wiped the
+  // "User created/deleted" notice the instant it was set.
+  const loadData = useCallback(async ({ keepMessage = false }: { keepMessage?: boolean } = {}) => {
     setLoading(true);
-    setMessage(null);
+    if (!keepMessage) setMessage(null);
     try {
       const [usersRes, groupsRes, agentsRes] = await Promise.all([
         fetchWithAuth('/api/settings/users'),
@@ -148,21 +164,21 @@ export function UsersPanel(props: UsersPanelProps = {}) {
 
   const resetForm = useCallback(() => {
     setEditingUser(null);
-    setForm({
-      username: '',
-      password: '',
-      name: '',
-      extension: '',
-      role: 'supervisor',
-      monitor_modes: ['listen'],
-      group_ids: [],
-      webrtc: false,
-    });
-    setUsersSubTab('list');
+    setShowPassword(false);
+    setForm(EMPTY_FORM);
+    setFormOpen(false);
   }, []);
 
+  const openCreate = () => {
+    resetForm();
+    setMessage(null);
+    setFormOpen(true);
+  };
+
   const startEdit = (u: OpDeskUser) => {
+    setMessage(null);
     setEditingUser(u);
+    setShowPassword(false);
     let modes = u.monitor_modes;
     if (!modes || !modes.length) {
       const single = u.monitor_mode || 'listen';
@@ -173,12 +189,12 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       password: '',
       name: u.name || '',
       extension: u.extension || '',
-      role: (u.role as 'admin' | 'supervisor' | 'agent') || 'supervisor',
+      role: (u.role as Role) || 'supervisor',
       monitor_modes: [...modes],
       group_ids: (u.group_ids || []).map(String),
       webrtc: false,
     });
-    setUsersSubTab('create');
+    setFormOpen(true);
     // Load the current WebRTC state for this user's extension (async).
     if (u.extension) {
       fetchWithAuth(`/api/settings/extensions/${u.extension}/credentials`)
@@ -200,6 +216,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       return;
     }
     try {
+      let saved: string;
       if (editingUser) {
         const res = await fetchWithAuth(`/api/settings/users/${editingUser.id}`, {
           method: 'PUT',
@@ -214,7 +231,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           }),
         });
         if (!res.ok) await raiseFor(res);
-        setMessage({ type: 'success', text: t('users.userUpdated') });
+        saved = t('users.userUpdated');
       } else {
         const res = await fetchWithAuth('/api/settings/users', {
           method: 'POST',
@@ -230,9 +247,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           }),
         });
         if (!res.ok) await raiseFor(res);
-        setMessage({ type: 'success', text: t('users.userCreated') });
+        saved = t('users.userCreated');
       }
       // Persist WebRTC toggle for the linked extension (best-effort; user save already succeeded).
+      let webrtcFailed = false;
       if (form.extension) {
         try {
           const wr = await fetchWithAuth(`/api/settings/extensions/${form.extension}/webrtc`, {
@@ -240,18 +258,18 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: form.webrtc }),
           });
-          if (!wr.ok) {
-            setMessage({ type: 'error', text: t('users.webrtcSaveFailed') });
-          }
+          if (!wr.ok) webrtcFailed = true;
         } catch {
-          setMessage({ type: 'error', text: t('users.webrtcSaveFailed') });
+          webrtcFailed = true;
         }
       }
       resetForm();
-      loadData();
-      setUsersSubTab('list');
+      loadData({ keepMessage: true });
+      setMessage(webrtcFailed
+        ? { type: 'error', text: t('users.webrtcSaveFailed') }
+        : { type: 'success', text: saved });
     } catch (err: unknown) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Request failed' });
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : t('common.requestFailed', 'Request failed') });
     }
   };
 
@@ -260,7 +278,13 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       setMessage({ type: 'error', text: t('users.cannotDeleteSelf') });
       return;
     }
-    if (!window.confirm(t('users.deleteConfirm', { username: user.username }))) return;
+    const ok = await confirm({
+      title: t('users.deleteTitle', 'Delete user?'),
+      message: t('users.deleteConfirm', { username: user.username }),
+      confirmLabel: t('common.delete', 'Delete'),
+      cancelLabel: t('common.cancel', 'Cancel'),
+    });
+    if (!ok) return;
     setMessage(null);
     try {
       const res = await fetchWithAuth(`/api/settings/users/${user.id}`, {
@@ -269,52 +293,44 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       if (!res.ok) await raiseFor(res);
       setMessage({ type: 'success', text: t('users.userDeleted') });
       resetForm();
-      loadData();
+      loadData({ keepMessage: true });
     } catch (err: unknown) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Delete failed' });
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : t('common.deleteFailed', 'Delete failed') });
     }
   };
 
   // Above the early returns: hooks cannot live after one.
   //
-  // Searches everything the card actually shows — username, name, extension,
+  // Searches everything the row actually shows — username, name, extension,
   // role, and group names — because a field you can read but cannot search reads
-  // as broken. Group names are the reason this is not a one-line filter: the card
+  // as broken. Group names are the reason this is not a one-line filter: the row
   // shows "3 groups", so "who is in Sales" is the question people bring here.
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = prepareQuery(search);
     if (!q) return users;
     const groupName = (id: number) => groups.find(g => g.id === id)?.name ?? '';
-    return users.filter(u => [
+    return users.filter(u => matches(q,
       u.username,
       u.name,
       u.extension,
       t(`users.roles.${u.role}`, { defaultValue: u.role }),
       ...(u.group_ids || []).map(groupName),
-    ].some(v => (v || '').toLowerCase().includes(q)));
+    ));
   }, [users, groups, search, t]);
 
   if (!isAdmin) {
     return (
-      <div className="panel">
-        <div className="panel-content">
-          <div className="settings-section" style={{ textAlign: 'center', padding: 48 }}>
-            <Shield size={48} style={{ marginBottom: 20, opacity: 0.6, color: 'var(--text-muted)' }} />
-            <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>{t('users.adminOnly')}</p>
-          </div>
-        </div>
-      </div>
+      <Page icon={Users} title={t('nav.teams', 'Teams')} tabs={tabs}>
+        <EmptyState icon={Shield} title={t('users.adminOnly')} />
+      </Page>
     );
   }
 
   if (loading) {
     return (
-      <div className="panel">
-        <div className="panel-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 64 }}>
-          <Loader2 size={32} className="spinner" />
-          <p style={{ marginTop: 20, color: 'var(--text-secondary)', fontSize: 14 }}>{t('users.loading')}</p>
-        </div>
-      </div>
+      <Page icon={Users} title={t('nav.teams', 'Teams')} tabs={tabs}>
+        <Loading label={t('users.loading')} />
+      </Page>
     );
   }
 
@@ -331,118 +347,218 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     return { short, title, full };
   };
 
-  const initial = (u: OpDeskUser) =>
-    (u.username?.[0] || u.name?.[0] || '?').toUpperCase();
-
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2 className="panel-title">
-          <Users size={16} className="panel-title-icon" />
-          {t('users.title')}
-        </h2>
-        <div className="panel-header-actions">
-          <div className="up-tabs up-tabs-inline">
-            <button
-              type="button"
-              className={`up-tab ${usersSubTab === 'create' ? 'active' : ''}`}
-              onClick={() => setUsersSubTab('create')}
-            >
-              <UserPlus size={14} />
-              {t('users.createEdit')}
+    <Page
+      icon={Users}
+      title={t('nav.teams', 'Teams')}
+      tabs={tabs}
+      count={users.length}
+      actions={
+        <button type="button" className="btn btn-primary" onClick={openCreate}>
+          <Plus size={14} />
+          {t('users.addUser')}
+        </button>
+      }
+      toolbar={
+        // Only when there is a list to narrow. A search box above an empty list
+        // is a control that cannot do anything.
+        users.length > 0 ? (
+          <Toolbar
+            search={
+              <SearchInput
+                value={search}
+                onChange={setSearch}
+                label={t('users.searchLabel', 'Search users')}
+                placeholder={t('users.searchPlaceholder', 'Username, name, extension, group…')}
+                // Filters a list already in memory: nothing to coalesce, and no
+                // deep link worth writing to the address bar from an admin screen.
+                debounceMs={0}
+                urlSync={false}
+              />
+            }
+          />
+        ) : undefined
+      }
+    >
+      {/* Messages land on the list once the Modal is closed; while it is open
+          they belong to the form and show at the top of its body. */}
+      {!formOpen && <Alert tone={message?.type === 'success' ? 'success' : 'error'}>{message?.text}</Alert>}
+
+      <Table
+        framed
+        caption={t('users.title')}
+        rows={filtered}
+        rowKey={u => u.id}
+        empty={users.length === 0
+          ? <EmptyState icon={Users} title={t('users.noUsers')} />
+          : <EmptyState icon={Users} title={t('users.noMatches', 'No users match "{{query}}"', { query: search })} />}
+        columns={[
+          {
+            key: 'name', header: t('users.username'), primary: true,
+            cell: u => {
+              const metaParts = [u.name, u.extension].filter(Boolean);
+              return (
+                <div className="u-min-w-0">
+                  <div className="u-semibold u-truncate">{u.username}</div>
+                  {metaParts.length > 0 && (
+                    <div className="u-fg-muted u-text-sm u-truncate">{metaParts.join(' · ')}</div>
+                  )}
+                </div>
+              );
+            },
+          },
+          {
+            key: 'role', header: t('users.role'),
+            cell: u => (
+              <Badge tone={ROLE_TONE[u.role] ?? 'neutral'}>
+                {t(`users.roles.${u.role}`, { defaultValue: u.role })}
+              </Badge>
+            ),
+          },
+          {
+            key: 'access', header: t('users.access'),
+            cell: u => {
+              const access = accessSummary(u);
+              const expanded = expandedAccessUserId === u.id && access.full.length > 0;
+              return (
+                <div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    title={access.title}
+                    aria-expanded={expanded}
+                    onClick={() => setExpandedAccessUserId(prev => (prev === u.id ? null : u.id))}
+                  >
+                    {access.short}
+                  </button>
+                  {expanded && (
+                    <div className="u-col u-gap-1 u-mt-1 u-text-sm u-fg-secondary">
+                      {access.full.map((line, i) => <div key={i}>{line}</div>)}
+                    </div>
+                  )}
+                </div>
+              );
+            },
+          },
+          {
+            key: 'actions', header: t('common.actions', 'Actions'), align: 'end',
+            cell: u => (
+              <div className="u-row u-justify-end u-gap-1">
+                {u.extension && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm btn-icon"
+                    onClick={() => setQrUser(u)}
+                    title={t('mobileSetup.button', 'Mobile app QR')}
+                    aria-label={t('mobileSetup.button', 'Mobile app QR')}
+                  >
+                    <QrCode size={14} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm btn-icon"
+                  onClick={() => startEdit(u)}
+                  title={t('users.editUser')}
+                  aria-label={t('users.editUser')}
+                >
+                  <Pencil size={14} />
+                </button>
+                {u.id !== currentUser?.id && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-danger btn-sm btn-icon"
+                    onClick={() => handleDelete(u)}
+                    title={t('users.deleteConfirm', { username: u.username })}
+                    aria-label={t('common.delete', 'Delete')}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            ),
+          },
+        ]}
+      />
+
+      <Modal
+        open={formOpen}
+        onClose={resetForm}
+        title={editingUser ? t('users.editUser') : t('users.addNewUser')}
+        icon={editingUser ? <Pencil size={16} /> : <UserPlus size={16} />}
+        width="xl"
+        footer={
+          <>
+            <button type="button" className="btn" onClick={resetForm}>
+              {t('users.cancel')}
             </button>
-            <button
-              type="button"
-              className={`up-tab ${usersSubTab === 'list' ? 'active' : ''}`}
-              onClick={() => setUsersSubTab('list')}
-            >
-              <Users size={14} />
-              {t('users.title')}
+            <button type="submit" form="user-form" className="btn btn-primary">
+              <Save size={14} />
+              {editingUser ? t('users.updateUser') : t('users.addUser')}
             </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel-content">
-        {message && (
-          <div className={`up-alert ${message.type === 'success' ? 'success' : 'error'}`}>
-            {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-            <span>{message.text}</span>
-          </div>
-        )}
-
-        {usersSubTab === 'create' && (
-        <div className="up-add-card">
-          <div className="up-add-header">
-            <div className="up-add-icon">
-              {editingUser ? <Pencil size={24} /> : <UserPlus size={24} />}
-            </div>
-            <div>
-              <h2 className="up-add-title">{editingUser ? t('users.editUser') : t('users.addNewUser')}</h2>
-              <p className="up-add-desc">
-                {t('users.adminMonitorDesc')}
-              </p>
-            </div>
-          </div>
-
-          <form onSubmit={handleCreateOrUpdate} className="up-add-body">
-            <div className="up-form-divider">{t('users.account')}</div>
-            <div className="up-form-row">
-              <div className="up-form-group">
-                <label>{t('users.username')}</label>
+          </>
+        }
+      >
+        <form id="user-form" onSubmit={handleCreateOrUpdate}>
+          <Alert tone={message?.type === 'success' ? 'success' : 'error'} className="u-mb-4">{message?.text}</Alert>
+          <FormSection title={t('users.account')} first>
+            <FormRow>
+              <FormField label={t('users.username')} htmlFor="up-user-username" required>
                 <input
+                  id="up-user-username"
                   type="text"
+                  autoComplete="off"
                   className="form-input"
                   value={form.username}
                   onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
                   placeholder={t('users.username')}
                 />
-              </div>
-              <div className="up-form-group">
-                <label>{editingUser ? t('users.newPassword') : t('users.password')}</label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              </FormField>
+              <FormField label={editingUser ? t('users.newPassword') : t('users.password')} htmlFor="up-user-password" required={!editingUser}>
+                <div className="u-row u-gap-2">
                   <input
+                    id="up-user-password"
                     type={showPassword ? 'text' : 'password'}
-                    className="form-input"
-                    style={{ paddingRight: 36 }}
+                    autoComplete="new-password"
+                    className="form-input u-flex-1 u-min-w-0"
                     value={form.password}
                     onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                     placeholder={editingUser ? t('users.keepBlank') : t('users.password')}
                   />
                   <button
                     type="button"
+                    className="btn btn-icon"
                     onClick={() => setShowPassword(v => !v)}
-                    style={{ position: 'absolute', right: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}
-                    tabIndex={-1}
+                    title={showPassword ? t('account.hide', 'Hide') : t('account.show', 'Show')}
+                    aria-label={showPassword ? t('account.hide', 'Hide') : t('account.show', 'Show')}
+                    aria-pressed={showPassword}
                   >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
                 </div>
-              </div>
-            </div>
+              </FormField>
+            </FormRow>
+          </FormSection>
 
-            <div className="up-form-divider">{t('users.profile')}</div>
-            <div className="up-form-row">
-              <div className="up-form-group">
-                <label>{t('users.displayName')}</label>
+          <FormSection title={t('users.profile')}>
+            <FormRow>
+              <FormField label={t('users.displayName')} htmlFor="up-user-name">
                 <input
+                  id="up-user-name"
                   type="text"
                   className="form-input"
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   placeholder={t('users.fullName')}
                 />
-              </div>
-              <div className="up-form-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Phone size={14} />
-                  {t('users.extension')}
-                </label>
-                <FilterSelect
+              </FormField>
+              <FormField label={t('users.extension')}>
+                <Dropdown
                   size="md"
                   value={form.extension ?? ''}
                   onChange={handleExtensionSelect}
                   icon={Phone}
+                  ariaLabel={t('users.extension')}
                   searchPlaceholder={t('users.searchExtension', 'Search extension…')}
                   options={[
                     { value: '', label: t('users.none', 'None') },
@@ -453,42 +569,42 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   ]}
                 />
                 {agents.length === 0 && (
-                  <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>{t('users.noExtensions')}</p>
+                  <p className="u-fg-muted u-text-sm u-mt-1">{t('users.noExtensions')}</p>
                 )}
-              </div>
-            </div>
+              </FormField>
+            </FormRow>
             {form.extension && (
-              <div className="up-form-row single">
-                <div className="up-form-group">
-                  <Toggle
-                    checked={form.webrtc}
-                    onChange={webrtc => setForm(f => ({ ...f, webrtc }))}
-                    label={t('users.webrtcLabel')}
-                    description={t('users.webrtcHint')}
-                    icon={<Radio size={11} />}
-                  />
-                </div>
-              </div>
+              <FormRow single>
+                <Toggle
+                  checked={form.webrtc}
+                  onChange={webrtc => setForm(f => ({ ...f, webrtc }))}
+                  label={t('users.webrtcLabel')}
+                  description={t('users.webrtcHint')}
+                  icon={<Radio size={14} />}
+                />
+              </FormRow>
             )}
-            <div className="up-form-row">
-              <div className="up-form-group">
-                <label>{t('users.role')}</label>
-                <FilterSelect
+            <FormRow>
+              <FormField
+                label={t('users.role')}
+                hint={form.role === 'admin' ? t('users.adminMonitorDesc') : form.role === 'agent' ? t('users.agentDesc') : undefined}
+              >
+                <Dropdown
                   size="md"
                   value={form.role}
-                  onChange={v => setForm(f => ({ ...f, role: v as 'admin' | 'supervisor' | 'agent' }))}
+                  onChange={v => setForm(f => ({ ...f, role: v as Role }))}
                   icon={Shield}
+                  ariaLabel={t('users.role')}
                   options={[
                     { value: 'supervisor', label: t('users.roles.supervisor'), dot: 'blue'    },
                     { value: 'agent',      label: t('users.roles.agent'),      dot: 'green'   },
                     { value: 'admin',      label: t('users.roles.admin'),      dot: 'orange'  },
                   ]}
                 />
-              </div>
+              </FormField>
               {form.role === 'supervisor' && (
-                <div className="up-form-group">
-                  <label>{t('users.monitorModes')}</label>
-                  <MultiSelectDropdown
+                <FormField label={t('users.monitorModes')}>
+                  <Dropdown multiple size="md"
                     options={[
                       { value: 'listen', label: t('users.monitor.listen') },
                       { value: 'whisper', label: t('users.monitor.whisper') },
@@ -498,172 +614,66 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                     onChange={monitor_modes => setForm(f => ({ ...f, monitor_modes: monitor_modes.length ? monitor_modes : ['listen'] }))}
                     placeholder={t('users.selectModes')}
                     emptyMessage={t('users.selectAtLeastOne')}
+                    ariaLabel={t('users.monitorModes')}
                   />
-                </div>
+                </FormField>
               )}
-              {form.role === 'admin' && (
-                <div className="up-form-group">
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>{t('users.adminMonitorDesc')}</p>
-                </div>
-              )}
-              {form.role === 'agent' && (
-                <div className="up-form-group">
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>{t('users.agentDesc')}</p>
-                </div>
-              )}
-            </div>
+            </FormRow>
+          </FormSection>
 
-            {form.role !== 'agent' && (
-            <>
-            <div className="up-form-divider">{t('users.access')}</div>
-            <div className="up-form-row single">
-              <div className="up-form-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Users size={14} />
-                  {t('users.groupsLabel')}
-                </label>
-                <MultiSelectDropdown
-                  options={groups.map(g => ({ value: String(g.id), label: g.name }))}
-                  value={form.group_ids}
-                  onChange={group_ids => setForm(f => ({ ...f, group_ids }))}
-                  placeholder={t('users.selectGroups')}
-                  emptyMessage={t('users.noGroupsMessage')}
-                />
-                {onOpenCreateGroup && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={newGroupNameForCreate}
-                      onChange={e => setNewGroupNameForCreate(e.target.value)}
-                      placeholder={t('users.newGroupNamePlaceholder')}
-                      style={{ width: 200, flex: '0 0 auto' }}
-                    />
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => {
-                        onOpenCreateGroup(
-                          {
-                            username: form.username,
-                            password: form.password,
-                            name: form.name,
-                            extension: form.extension,
-                            role: form.role,
-                            monitor_modes: form.role === 'admin' ? ['listen', 'whisper', 'barge'] : form.monitor_modes,
-                            group_ids: form.group_ids,
-                          },
-                          newGroupNameForCreate.trim() || undefined
-                        );
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                    >
-                      <Plus size={14} />
-                      <Group size={14} />
-                      {t('users.createNewGroup')}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-            </>
-            )}
-
-            <div className="up-actions">
-              <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Save size={16} />
-                {editingUser ? t('users.updateUser') : t('users.addUser')}
-              </button>
-              {editingUser && (
-                <button type="button" className="btn" onClick={resetForm}>
-                  {t('users.cancel')}
-                </button>
-              )}
-            </div>
-          </form>
-        </div>
-        )}
-
-        {usersSubTab === 'list' && (
-        <>
-        {/* Only when there is a list to narrow. A search box above an empty list
-            is a control that cannot do anything. */}
-        {users.length > 0 && (
-          <div className="up-search">
-            <SearchInput
-              value={search}
-              onChange={setSearch}
-              label={t('users.searchLabel', 'Search users')}
-              placeholder={t('users.searchPlaceholder', 'Username, name, extension, group…')}
-              // Filters a list already in memory: nothing to coalesce, and no
-              // deep link worth writing to the address bar from an admin screen.
-              debounceMs={0}
-              urlSync={false}
-            />
-          </div>
-        )}
-
-        {users.length === 0 ? (
-          <div className="up-empty">{t('users.noUsers')}</div>
-        ) : filtered.length === 0 ? (
-          <div className="up-empty">{t('users.noMatches', 'No users match "{{query}}"', { query: search })}</div>
-        ) : (
-          <div className="up-users-list">
-            {filtered.map(u => {
-              const access = accessSummary(u);
-              return (
-              <div key={u.id} className="up-user-card">
-                <div className="up-user-avatar">{initial(u)}</div>
-                <div className="up-user-info">
-                  <div className="up-user-name">{u.username}</div>
-                  {(u.name || u.extension) && (
-                    <div className="up-user-meta">{[u.name, u.extension].filter(Boolean).join(' · ')}</div>
-                  )}
-                  <div className="up-user-badges">
-                    <span className={`up-role-badge ${u.role}`}>{t(`users.roles.${u.role}`, { defaultValue: u.role })}</span>
-                    <button
-                      type="button"
-                      className="up-access-tag up-access-tag-btn"
-                      title="Click to show full list"
-                      onClick={() => setExpandedAccessUserId(prev => (prev === u.id ? null : u.id))}
-                    >
-                      {access.short}
-                    </button>
-                  </div>
-                  {expandedAccessUserId === u.id && access.full.length > 0 && (
-                    <div className="up-access-expanded">
-                      {access.full.map((line, i) => (
-                        <div key={i} className="up-access-expanded-line">
-                          {line}
-                        </div>
-                      ))}
+          {form.role !== 'agent' && (
+            <FormSection title={t('users.access')}>
+              <FormRow single>
+                <FormField label={t('users.groupsLabel')}>
+                  <Dropdown multiple size="md"
+                    options={groups.map(g => ({ value: String(g.id), label: g.name }))}
+                    value={form.group_ids}
+                    onChange={group_ids => setForm(f => ({ ...f, group_ids }))}
+                    placeholder={t('users.selectGroups')}
+                    emptyMessage={t('users.noGroupsMessage')}
+                    ariaLabel={t('users.groupsLabel')}
+                  />
+                  {onOpenCreateGroup && (
+                    <div className="u-row u-gap-2 u-mt-2h u-wrap">
+                      <input
+                        type="text"
+                        className="form-input u-flex-1 u-min-w-0"
+                        value={newGroupNameForCreate}
+                        onChange={e => setNewGroupNameForCreate(e.target.value)}
+                        placeholder={t('users.newGroupNamePlaceholder')}
+                        aria-label={t('users.newGroupNamePlaceholder')}
+                      />
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => {
+                          onOpenCreateGroup(
+                            {
+                              username: form.username,
+                              password: form.password,
+                              name: form.name,
+                              extension: form.extension,
+                              role: form.role,
+                              monitor_modes: form.role === 'admin' ? ['listen', 'whisper', 'barge'] : form.monitor_modes,
+                              group_ids: form.group_ids,
+                            },
+                            newGroupNameForCreate.trim() || undefined
+                          );
+                        }}
+                      >
+                        <Plus size={14} />
+                        {t('users.createNewGroup')}
+                      </button>
                     </div>
                   )}
-                </div>
-                <div className="up-user-actions">
-                  {isAdmin && u.extension && (
-                    <button type="button" className="btn btn-edit" onClick={() => setQrUser(u)} title={t('mobileSetup.button', 'Mobile app QR')}>
-                      <QrCode size={14} />
-                    </button>
-                  )}
-                  <button type="button" className="btn btn-edit" onClick={() => startEdit(u)} title={t('users.editUser')}>
-                    <Pencil size={14} />
-                  </button>
-                  {u.id !== currentUser?.id && (
-                    <button type="button" className="btn btn-delete" onClick={() => handleDelete(u)} title={t('users.deleteConfirm', { username: u.username })}>
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-              );
-            })}
-          </div>
-        )}
-        </>
-        )}
-      </div>
+                </FormField>
+              </FormRow>
+            </FormSection>
+          )}
+        </form>
+      </Modal>
+      {confirmDialog}
       <MobileSetupQR open={qrUser !== null} onClose={() => setQrUser(null)} userId={qrUser?.id} label={qrUser?.username} />
-    </div>
+    </Page>
   );
 }
