@@ -1,0 +1,173 @@
+/* ════════════════════════════════════════════════════════════════════
+   Token utilities
+   --------------------------------------------------------------------
+   Single-purpose classes, every value read from variables.css. These exist so a
+   component can express "a centred row with an 8px gap and muted 12px text"
+   without an inline style object, which is what the standard bans: an inline
+   style is invisible to the theme, cannot carry a :hover or a media query, and
+   hardcodes a pixel value that then drifts from the scale.
+
+   Scope: layout, spacing, type role and colour role. Anything with a genuine
+   component identity (a card, a badge, a table) keeps its own named class in
+   index.css -- these are not a substitute for that.
+
+   Runtime values: a computed number cannot be a static class, so it comes in
+   through a custom property and is consumed by a class here. See .u-fill-x.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ─── Flex layout ──────────────────────────────────────────────────── */
+.u-row          { display: flex; align-items: center; }
+.u-row-top      { display: flex; align-items: flex-start; }
+.u-row-bottom   { display: flex; align-items: flex-end; }
+.u-row-stretch  { display: flex; }
+.u-col          { display: flex; flex-direction: column; }
+.u-inline-row   { display: inline-flex; align-items: center; }
+.u-grid         { display: grid; }
+.u-block        { display: block; }
+.u-inline-block { display: inline-block; }
+.u-hidden       { display: none; }
+.u-contents     { display: contents; }
+
+.u-between  { justify-content: space-between; }
+.u-justify-center { justify-content: center; }
+.u-justify-end    { justify-content: flex-end; }
+.u-wrap     { flex-wrap: wrap; }
+.u-nowrap   { white-space: nowrap; }
+.u-flex-1   { flex: 1; }
+.u-flex-none { flex: 0 0 auto; }
+.u-w-full   { width: 100%; }
+.u-h-full   { height: 100%; }
+
+/* ─── Gap ──────────────────────────────────────────────────────────── */
+.u-gap-1  { gap: var(--space-1); }
+.u-gap-1h { gap: var(--space-1h); }
+.u-gap-2  { gap: var(--space-2); }
+.u-gap-2h { gap: var(--space-2h); }
+.u-gap-3  { gap: var(--space-3); }
+.u-gap-3h { gap: var(--space-3h); }
+.u-gap-4  { gap: var(--space-4); }
+.u-gap-5  { gap: var(--space-5); }
+.u-gap-6  { gap: var(--space-6); }
+
+/* ─── Margin (block axis) ─────────────────────────────────────────── */
+.u-mb-0  { margin-bottom: 0; }
+.u-mb-1  { margin-bottom: var(--space-1); }
+.u-mb-1h { margin-bottom: var(--space-1h); }
+.u-mb-2  { margin-bottom: var(--space-2); }
+.u-mb-2h { margin-bottom: var(--space-2h); }
+.u-mb-3  { margin-bottom: var(--space-3); }
+.u-mb-4  { margin-bottom: var(--space-4); }
+.u-mb-5  { margin-bottom: var(--space-5); }
+.u-mb-6  { margin-bottom: var(--space-6); }
+
+.u-mt-0  { margin-top: 0; }
+.u-mt-1  { margin-top: var(--space-1); }
+.u-mt-1h { margin-top: var(--space-1h); }
+.u-mt-2  { margin-top: var(--space-2); }
+.u-mt-2h { margin-top: var(--space-2h); }
+.u-mt-3  { margin-top: var(--space-3); }
+.u-mt-4  { margin-top: var(--space-4); }
+.u-mt-5  { margin-top: var(--space-5); }
+.u-mt-6  { margin-top: var(--space-6); }
+
+/* Block-axis on both sides, for a banner that sits between two stacked blocks. */
+.u-my-3  { margin-block: var(--space-3); }
+
+/* Inline-axis auto push: the logical equivalent of an auto start-side margin. */
+.u-push-end { margin-inline-start: auto; }
+
+/* Inline-start margin. Logical, so it follows text direction — the physical
+   `marginLeft` these replaced put badges on the wrong side under Arabic. */
+.u-ms-1  { margin-inline-start: var(--space-1); }
+.u-ms-1h { margin-inline-start: var(--space-1h); }
+.u-ms-2  { margin-inline-start: var(--space-2); }
+
+/* Inline-axis on both sides: keeps a full-width banner off the viewport edges. */
+.u-mx-3  { margin-inline: var(--space-3); }
+
+/* ─── Padding ─────────────────────────────────────────────────────── */
+.u-p-0  { padding: 0; }
+.u-p-1  { padding: var(--space-1); }
+.u-p-2  { padding: var(--space-2); }
+.u-p-3  { padding: var(--space-3); }
+.u-p-4  { padding: var(--space-4); }
+.u-py-1 { padding-block: var(--space-1); }
+.u-py-2 { padding-block: var(--space-2); }
+.u-py-3 { padding-block: var(--space-3); }
+.u-px-2 { padding-inline: var(--space-2); }
+.u-px-3 { padding-inline: var(--space-3); }
+.u-px-4 { padding-inline: var(--space-4); }
+/* The two chip paddings that appear repeatedly. */
+.u-pad-chip     { padding: var(--space-1) var(--space-2); }
+.u-pad-chip-lg  { padding: var(--space-1) var(--space-2h); }
+.u-pad-cell     { padding: var(--space-2) var(--space-3); }
+.u-pad-empty    { padding: var(--space-8) var(--space-6); }
+
+/* ─── Type role ───────────────────────────────────────────────────── */
+.u-text-xs   { font-size: var(--text-xs); }
+.u-text-sm   { font-size: var(--text-sm); }
+.u-text-md   { font-size: var(--text-md); }
+.u-text-base { font-size: var(--text-base); }
+.u-text-lg   { font-size: var(--text-lg); }
+.u-text-xl   { font-size: var(--text-xl); }
+
+.u-normal    { font-weight: var(--weight-normal); }
+.u-medium    { font-weight: var(--weight-medium); }
+.u-semibold  { font-weight: var(--weight-semibold); }
+.u-bold      { font-weight: var(--weight-bold); }
+
+.u-mono      { font-family: var(--font-mono); }
+.u-upper     { text-transform: uppercase; letter-spacing: 0.06em; }
+.u-tight     { line-height: var(--leading-tight); }
+.u-relaxed   { line-height: var(--leading-normal); }
+
+/* text-align uses the LOGICAL keywords: `right` would stay on the right in an
+   RTL locale, and this app ships Arabic. */
+.u-center { text-align: center; }
+.u-start  { text-align: start; }
+.u-end    { text-align: end; }
+
+/* ─── Colour role ─────────────────────────────────────────────────── */
+.u-fg          { color: var(--text-primary); }
+.u-fg-secondary { color: var(--text-secondary); }
+.u-fg-muted    { color: var(--text-muted); }
+.u-fg-accent   { color: var(--accent-primary); }
+.u-fg-success  { color: var(--accent-success); }
+.u-fg-warning  { color: var(--accent-warning); }
+.u-fg-danger   { color: var(--accent-danger); }
+.u-fg-on-accent { color: var(--text-on-accent); }
+.u-fg-inherit  { color: inherit; }
+
+/* ─── Misc ────────────────────────────────────────────────────────── */
+.u-pointer   { cursor: pointer; }
+.u-dim       { opacity: 0.6; }
+.u-dimmer    { opacity: 0.3; }
+.u-disabled  { opacity: 0.5; cursor: not-allowed; }
+.u-relative  { position: relative; }
+.u-truncate  { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A flex child that may shrink below its content, so a .u-truncate inside it can clip. */
+.u-min-w-0   { min-width: 0; }
+
+/* ─── Runtime-valued fills ────────────────────────────────────────── */
+/* A progress/meter fill whose length is computed at render time. The component
+   sets only --u-fill (e.g. style={{ '--u-fill': `${pct}%` }}); the visual
+   decisions -- which axis, what colour, how it animates -- stay here. */
+.u-fill-x {
+  inline-size: var(--u-fill, 0%);
+  block-size: 100%;
+  transition: inline-size var(--transition);
+}
+.u-fill-y {
+  block-size: var(--u-fill, 0%);
+  inline-size: 100%;
+  transition: block-size var(--transition);
+}
+/* Same idea for a data-driven colour: the palette entry is chosen in TS, the
+   property it paints is fixed here. */
+.u-fg-var { color: var(--u-color, inherit); }
+.u-bg-var { background: var(--u-color, transparent); }
+
+/* Cross-axis alignment on its own, for a column that also needs to centre. */
+.u-align-center { align-items: center; }
+.u-align-top    { align-items: flex-start; }
+.u-align-bottom { align-items: flex-end; }

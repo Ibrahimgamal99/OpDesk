@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWebPhone } from './hooks/useWebPhone';
@@ -17,7 +17,7 @@ import { AnalyticsPanel } from './components/AnalyticsPanel';
 import { UsersPanel } from './components/UsersPanel';
 import { GroupsPanel } from './components/GroupsPanel';
 import { SupervisorModal } from './components/SupervisorModal';
-import { SettingsPanel, type SettingsTab } from './components/CRMSettingsModal';
+import { SettingsPanel } from './components/CRMSettingsModal';
 import { ContactsPanel } from './components/ContactsPanel';
 import { FloatingSoftphone } from './components/FloatingSoftphone';
 import { ProfilePanel } from './components/ProfilePanel';
@@ -27,7 +27,7 @@ import {
   User,
   Users,
   Radio,
-  Activity,
+  LayoutDashboard,
   Wifi,
   WifiOff,
   Settings,
@@ -37,7 +37,6 @@ import {
   Monitor,
   Group,
   Bell,
-  PhoneMissed,
   Clock,
   Check,
   CheckCheck,
@@ -50,17 +49,14 @@ import {
   Sun,
   Menu,
   X,
-  Plug,
-  Signal,
-  ShieldCheck,
-  Smartphone,
-  Disc,
-  PauseCircle,
-  Terminal,
-  KeyRound,
+  ScrollText,
   BookUser,
   UserCircle,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Badge, EmptyState, Tabs } from './components/ui';
+import { CallStatusBadge } from './components/CallStatusBadge';
+import { callStatusMeta } from './components/callStatus';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
 import { raiseFor } from './lib/api';
 
@@ -109,6 +105,17 @@ export interface PendingUserFormSnapshot {
 }
 
 type AppProps = { onLogout: () => void };
+
+interface NavItem {
+  tab: TabType;
+  /** Other routes that light this item up (Teams covers /users and /groups). */
+  also?: TabType[];
+  label: string;
+  Icon: LucideIcon;
+  badge?: number;
+  badgeTone?: 'call' | 'ringing';
+}
+interface NavGroup { key: string; label: string; items: NavItem[] }
 
 function App({ onLogout }: AppProps) {
   const { t } = useTranslation();
@@ -169,9 +176,7 @@ function App({ onLogout }: AppProps) {
   });
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams] = useSearchParams();
   const activeTab = pathToTab(location.pathname);
-  const settingsSubTab = activeTab === 'settings' ? (searchParams.get('tab') || 'integrations') : 'integrations';
   // Theme. Default follows the device (prefers-color-scheme) until the user makes an
   // explicit choice, which is then persisted in localStorage and wins from then on.
   // Initial value is applied to <html data-theme> synchronously so there's no flash.
@@ -215,8 +220,6 @@ function App({ onLogout }: AppProps) {
   }, []);
   const [dateRange, setDateRange] = useState<DateRange>(() => quickRanges()['30d']);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [teamExpanded, setTeamExpanded] = useState(true);
-  const [settingsExpanded, setSettingsExpanded] = useState(() => activeTab === 'settings');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
   /** User form preserved when switching to Groups to create a new group (no API call). */
@@ -488,13 +491,6 @@ function App({ onLogout }: AppProps) {
     setMobileNavOpen(false);
   }, [navigate]);
 
-  // Open the Settings screen on a specific sub-tab (driven from the sidebar dropdown).
-  const selectSettingsTab = useCallback((tab: string) => {
-    navigate(`/settings?tab=${tab}`);
-    setSettingsExpanded(true);
-    setMobileNavOpen(false);
-  }, [navigate]);
-
   const handleSupervisorAction = useCallback((
     mode: 'listen' | 'whisper' | 'barge',
     target: string
@@ -553,7 +549,45 @@ function App({ onLogout }: AppProps) {
       onCall: e?.status === 'in_call' || e?.status === 'dialing' || e?.status === 'on_hold',
     };
   })() : null;
+  const role = getUser()?.role;
+  const isAgentRole = role === 'agent';
+  const isAdminRole = role === 'admin';
+  const navGroups: NavGroup[] = ([
+    { key: 'live', label: t('nav.group.live', 'Live'), items: [
+      { tab: 'dashboard', label: t('nav.dashboard', 'Dashboard'), Icon: LayoutDashboard },
+      { tab: 'extensions', label: t('nav.extensions'), Icon: Phone },
+      { tab: 'calls', label: t('nav.activeCalls'), Icon: PhoneCall, badge: stats.active_calls_count, badgeTone: 'call' },
+      !isAgentRole && { tab: 'queues', label: t('nav.queues'), Icon: Users, badge: stats.total_waiting, badgeTone: 'ringing' },
+    ] },
+    { key: 'work', label: t('nav.group.work', 'Work'), items: [
+      { tab: 'call-log', label: t('nav.callHistory'), Icon: History },
+      { tab: 'contacts', label: t('nav.contacts', 'Contacts'), Icon: BookUser },
+    ] },
+    { key: 'reports', label: t('nav.group.reports', 'Reports'), items: [
+      !isAgentRole && { tab: 'analytics', label: t('nav.analytics'), Icon: BarChart3 },
+    ] },
+    { key: 'admin', label: t('nav.admin', 'Admin'), items: [
+      isAdminRole && { tab: 'users', also: ['groups'], label: t('nav.teams', 'Teams'), Icon: Users },
+      (isAdminRole || role === 'supervisor') && { tab: 'settings', label: t('header.settings', 'Settings'), Icon: Settings },
+      isAdminRole && { tab: 'logs', label: t('nav.logs', 'Logs'), Icon: ScrollText },
+    ] },
+  ] as { key: string; label: string; items: (NavItem | false)[] }[])
+    .map((g) => ({ ...g, items: g.items.filter((i): i is NavItem => !!i) }))
+    .filter((g) => g.items.length > 0);
 
+  // Users and Groups are one "Teams" page with two tabs. They stay two routes so
+  // /users and /groups links keep working.
+  const teamsTabs = (
+    <Tabs
+      ariaLabel={t('nav.teams', 'Teams')}
+      tabs={[
+        { key: 'users', label: t('nav.users'), icon: <UserCog size={14} /> },
+        { key: 'groups', label: t('nav.groups'), icon: <Group size={14} /> },
+      ]}
+      active={activeTab}
+      onChange={(k) => selectTab(k as TabType)}
+    />
+  );
 
   return (
     <WebPhoneProvider value={webPhone}>
@@ -569,9 +603,9 @@ function App({ onLogout }: AppProps) {
             aria-label={mobileNavOpen ? t('nav.closeMenu') : t('nav.openMenu')}
             aria-expanded={mobileNavOpen}
           >
-            {mobileNavOpen ? <X size={20} /> : <Menu size={20} />}
+            {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
-          <div className="header-logo"><Radio size={20} /></div>
+          <div className="header-logo"><Radio size={16} /></div>
           <div>
             <h1 className="header-title">{t('app.title')}</h1>
             <p className="header-subtitle">{t('app.subtitle')}</p>
@@ -583,7 +617,7 @@ function App({ onLogout }: AppProps) {
           <div className="header-bell-wrap" ref={notifDropdownRef}>
             <button
               type="button"
-              className="btn header-bell-btn"
+              className="btn btn-ghost btn-icon header-bell-btn"
               onClick={() => setNotifDropdownOpen((o) => !o)}
               title={t('header.callNotifications')}
               aria-label={newNotifCount ? t('header.newNotifications', { count: newNotifCount }) : t('header.notifications')}
@@ -594,64 +628,75 @@ function App({ onLogout }: AppProps) {
             {notifDropdownOpen && (
               <div className="header-bell-dropdown">
                 <div className="header-bell-dropdown-header">
-                  <PhoneMissed size={16} />
+                  <Bell size={16} />
                   <span>{t('header.missedBusyCalls')}</span>
-                  {newNotifCount > 0 && <span className="header-bell-dropdown-count">{newNotifCount}</span>}
+                  {newNotifCount > 0 && <Badge tone="warning">{newNotifCount}</Badge>}
                   {notifList.length > 0 && (
-                    <button type="button" className="btn btn-sm header-bell-action-btn header-bell-mark-all-btn" onClick={markAllRead} title={t('header.markAllRead')}>
-                      <CheckCheck size={14} /><span>{t('header.markAllRead')}</span>
+                    <button type="button" className="btn btn-ghost btn-sm u-push-end" onClick={markAllRead} title={t('header.markAllRead')}>
+                      <CheckCheck size={14} />{t('header.markAllRead')}
                     </button>
                   )}
                 </div>
                 {notifList.length === 0 ? (
-                  <div className="header-bell-dropdown-empty">
-                    <Phone size={20} />
-                    <span>{t('header.noNewNotifications')}</span>
-                  </div>
+                  <EmptyState size="sm" icon={Bell} title={t('header.noNewNotifications')} />
                 ) : (
                   <ul className="header-bell-list">
-                    {notifList.map((n) => (
+                    {notifList.map((n) => {
+                      // "Omar · 1001" / "+2011…": the caller's name when it is a known extension, then the number.
+                      const callerName = n.caller_from ? (state?.extensions?.[n.caller_from]?.name || '') : '';
+                      const callerText = callerName && callerName !== n.caller_from
+                        ? `${callerName} · ${n.caller_from}`
+                        : n.caller_from || '';
+                      return (
                       <li key={n.id} className="header-bell-item" role="listitem">
                         <div className="header-bell-item-details">
-                          <div className="header-bell-item-row">
-                            <Phone size={12} className="header-bell-item-icon" aria-hidden />
-                            <span className="header-bell-item-label">{t('header.ext')}</span>
-                            <span className="header-bell-item-value" title={n.extension}>{n.extension}</span>
-                          </div>
-                          {n.caller_from != null && n.caller_from !== '' && (
+                          {/* Your own extension on every row says nothing; show it only when the list spans several. */}
+                          {n.extension !== String(getUser()?.extension ?? '') && (
                             <div className="header-bell-item-row">
-                              <User size={12} className="header-bell-item-icon" aria-hidden />
+                              <Phone size={14} className="header-bell-item-icon" aria-hidden />
+                              <span className="header-bell-item-label">{t('header.ext')}</span>
+                              <span className="header-bell-item-value" title={n.extension}>{n.extension}</span>
+                            </div>
+                          )}
+                          {callerText !== '' && (
+                            <div className="header-bell-item-row">
+                              <User size={14} className="header-bell-item-icon" aria-hidden />
                               <span className="header-bell-item-label">{t('header.from')}</span>
-                              <span className="header-bell-item-value" title={n.caller_from}>{n.caller_from}</span>
+                              <span className="header-bell-item-value" title={callerText}>{callerText}</span>
                             </div>
                           )}
                           {n.queue != null && n.queue !== '' && (
                             <div className="header-bell-item-row">
-                              <Users size={12} className="header-bell-item-icon" aria-hidden />
+                              <Users size={14} className="header-bell-item-icon" aria-hidden />
                               <span className="header-bell-item-label">{t('header.queue')}</span>
                               <span className="header-bell-item-value" title={n.queue}>{n.queue}</span>
                             </div>
                           )}
                           <div className="header-bell-item-row header-bell-item-meta">
-                            <Clock size={12} className="header-bell-item-icon" aria-hidden />
+                            <Clock size={14} className="header-bell-item-icon" aria-hidden />
                             <span className="header-bell-item-time">{formatNotifTime(n.event_time, t)}</span>
+                            {/* A call status wears the badge its call-history row has; the few
+                                reasons that are not call statuses get a plain one. */}
                             {n.reason && (
-                              <span className={`header-bell-reason header-bell-reason-${String(n.reason).replace(/\s+/g, '_')}`} title={reasonLabel(n.reason, t)}>
-                                {reasonLabel(n.reason, t)}
+                              <span className="u-push-end">
+                                {callStatusMeta(n.reason)
+                                  ? <CallStatusBadge status={n.reason} />
+                                  : <Badge tone="neutral">{reasonLabel(n.reason, t)}</Badge>}
                               </span>
                             )}
                           </div>
                         </div>
                         <div className="header-bell-item-actions">
-                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'read')} disabled={notifUpdatingId === n.id} title={t('header.markRead')}>
-                            <Check size={14} /><span>{t('header.read')}</span>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => updateNotifStatus(n.id, 'read')} disabled={notifUpdatingId === n.id} title={t('header.markRead')}>
+                            <Check size={14} />{t('header.read')}
                           </button>
-                          <button type="button" className="btn btn-sm header-bell-action-btn" onClick={() => updateNotifStatus(n.id, 'archived')} disabled={notifUpdatingId === n.id} title={t('header.archive')}>
-                            <Archive size={14} /><span>{t('header.archive')}</span>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => updateNotifStatus(n.id, 'archived')} disabled={notifUpdatingId === n.id} title={t('header.archive')}>
+                            <Archive size={14} />{t('header.archive')}
                           </button>
                         </div>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 )}
               </div>
@@ -749,179 +794,41 @@ function App({ onLogout }: AppProps) {
 
         {/* ── Sidebar ── */}
         <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileNavOpen ? ' open' : ''}`}>
-          <nav className="sidebar-nav">
-
-            <button className={`sidebar-item${activeTab === 'dashboard' ? ' active' : ''}`} onClick={() => selectTab('dashboard')} title={sidebarCollapsed ? t('nav.dashboard', 'Dashboard') : undefined}>
-              <Activity size={16} />{!sidebarCollapsed && t('nav.dashboard', 'Dashboard')}
-            </button>
-
-            <button className={`sidebar-item${activeTab === 'extensions' ? ' active' : ''}`} onClick={() => selectTab('extensions')} title={sidebarCollapsed ? t('nav.extensions') : undefined}>
-              <Phone size={16} />{!sidebarCollapsed && t('nav.extensions')}
-            </button>
-
-            <button className={`sidebar-item${activeTab === 'calls' ? ' active' : ''}`} onClick={() => selectTab('calls')} title={sidebarCollapsed ? t('nav.activeCalls') : undefined}>
-              <PhoneCall size={16} />{!sidebarCollapsed && t('nav.activeCalls')}
-              {stats.active_calls_count > 0 && (
-                <span className="sidebar-badge" style={{ background: 'var(--status-call)', color: 'var(--text-on-accent)' }}>{stats.active_calls_count}</span>
-              )}
-            </button>
-
-            {getUser()?.role !== 'agent' && (
-              <button className={`sidebar-item${activeTab === 'queues' ? ' active' : ''}`} onClick={() => selectTab('queues')} title={sidebarCollapsed ? t('nav.queues') : undefined}>
-                <Users size={16} />{!sidebarCollapsed && t('nav.queues')}
-                {stats.total_waiting > 0 && (
-                  <span className="sidebar-badge" style={{ background: 'var(--status-ringing)', color: 'var(--text-on-accent)' }}>{stats.total_waiting}</span>
-                )}
-              </button>
-            )}
-
-            <button className={`sidebar-item${activeTab === 'call-log' ? ' active' : ''}`} onClick={() => selectTab('call-log')} title={sidebarCollapsed ? t('nav.callHistory') : undefined}>
-              <History size={16} />{!sidebarCollapsed && t('nav.callHistory')}
-            </button>
-
-            {/* Contacts — everyone can browse; editing is admin-only inside the panel */}
-            <button className={`sidebar-item${activeTab === 'contacts' ? ' active' : ''}`} onClick={() => selectTab('contacts')} title={sidebarCollapsed ? t('nav.contacts', 'Contacts') : undefined}>
-              <BookUser size={16} />{!sidebarCollapsed && t('nav.contacts', 'Contacts')}
-            </button>
-
-            {getUser()?.role !== 'agent' && (
-              <button className={`sidebar-item${activeTab === 'analytics' ? ' active' : ''}`} onClick={() => selectTab('analytics')} title={sidebarCollapsed ? t('nav.analytics') : undefined}>
-                <BarChart3 size={16} />{!sidebarCollapsed && t('nav.analytics')}
-              </button>
-            )}
-
-            {getUser()?.role === 'admin' && (
-              <>
-                <div className="sidebar-divider" />
-
-                {/* Team collapsible group — admin only */}
-                {!sidebarCollapsed ? (
-                  <div className="sidebar-group">
+          <nav className="sidebar-nav" aria-label={t('nav.main', 'Main navigation')}>
+            {navGroups.map((g, gi) => (
+              <div key={g.key} className="sidebar-section">
+                {sidebarCollapsed
+                  ? gi > 0 && <div className="sidebar-divider" />
+                  : <span className="sidebar-section-label">{g.label}</span>}
+                {g.items.map((it) => {
+                  const active = activeTab === it.tab || !!it.also?.includes(activeTab);
+                  return (
                     <button
-                      className={`sidebar-group-header${(activeTab === 'groups' || activeTab === 'users') ? ' has-active' : ''}`}
-                      onClick={() => setTeamExpanded(e => !e)}
+                      key={it.tab}
+                      type="button"
+                      className={`sidebar-item${active ? ' active' : ''}`}
+                      aria-current={active ? 'page' : undefined}
+                      onClick={() => selectTab(it.tab)}
+                      title={sidebarCollapsed ? it.label : undefined}
                     >
-                      <Users size={16} />
-                      <span>{t('nav.team', 'Team')}</span>
-                      <ChevronRight size={12} className={`sidebar-group-chevron${teamExpanded ? ' open' : ''}`} />
+                      <it.Icon size={16} />{!sidebarCollapsed && it.label}
+                      {!!it.badge && <span className={`sidebar-badge sidebar-badge--${it.badgeTone}`}>{it.badge}</span>}
                     </button>
-                    {teamExpanded && (
-                      <>
-                        <button className={`sidebar-subitem${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')}>
-                          <Group size={14} />{t('nav.groups')}
-                        </button>
-                        <button className={`sidebar-subitem${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')}>
-                          <UserCog size={14} />{t('nav.users')}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <button className={`sidebar-item${activeTab === 'groups' ? ' active' : ''}`} onClick={() => selectTab('groups')} title={t('nav.groups')}>
-                      <Group size={16} />
-                    </button>
-                    <button className={`sidebar-item${activeTab === 'users' ? ' active' : ''}`} onClick={() => selectTab('users')} title={t('nav.users')}>
-                      <UserCog size={16} />
-                    </button>
-                  </>
-                )}
-
-                {/* Logs — one route with in-panel tabs, so a flat item rather than a
-                    collapsible group (Team/Settings are groups because they fan out
-                    to several routes). */}
-                <button
-                  className={`sidebar-item${activeTab === 'logs' ? ' active' : ''}`}
-                  onClick={() => selectTab('logs')}
-                  title={sidebarCollapsed ? t('nav.logs', 'Logs') : undefined}
-                >
-                  <Terminal size={16} />{!sidebarCollapsed && t('nav.logs', 'Logs')}
-                </button>
-              </>
-            )}
-
-            {/* Settings — admin and supervisor. Collapsible dropdown of sub-tabs (echo-style). */}
-            {(getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && (
-              <>
-                {getUser()?.role === 'supervisor' && <div className="sidebar-divider" />}
-                {sidebarCollapsed ? (
-                  <button
-                    className={`sidebar-item${activeTab === 'settings' ? ' active' : ''}`}
-                    onClick={() => selectSettingsTab('integrations')}
-                    title={t('header.settings', 'Settings')}
-                  >
-                    <Settings size={16} />
-                  </button>
-                ) : (
-                  <div className="sidebar-group">
-                    <button
-                      className={`sidebar-group-header${activeTab === 'settings' ? ' has-active' : ''}`}
-                      onClick={() => setSettingsExpanded(e => !e)}
-                    >
-                      <Settings size={16} />
-                      <span>{t('header.settings', 'Settings')}</span>
-                      <ChevronRight size={12} className={`sidebar-group-chevron${settingsExpanded ? ' open' : ''}`} />
-                    </button>
-                    {settingsExpanded && (
-                      <>
-                        {[
-                          { key: 'integrations', icon: Plug, label: t('settings.tabs.integrations', 'Integrations / CRM') },
-                          { key: 'api-keys', icon: KeyRound, label: t('settings.tabs.apiKeys', 'API Keys'), adminOnly: true },
-                          { key: 'qos', icon: Signal, label: t('settings.tabs.qos', 'QoS') },
-                          { key: 'analytics', icon: BarChart3, label: t('settings.tabs.analytics', 'Analytics') },
-                          { key: 'sip-tls', icon: ShieldCheck, label: t('settings.tabs.sipTls', 'SIP TLS') },
-                          { key: 'mobile-wake', icon: Smartphone, label: t('settings.tabs.mobileWake', 'Mobile Wake') },
-                          { key: 'recording', icon: Disc, label: t('settings.tabs.recording', 'Recording') },
-                          { key: 'not-ready-codes', icon: PauseCircle, label: t('notReady.title', 'Not-Ready Codes') },
-                        ].filter(x => !(x as { adminOnly?: boolean }).adminOnly || getUser()?.role === 'admin')
-                         .map(({ key, icon: Icon, label }) => (
-                          <button
-                            key={key}
-                            className={`sidebar-subitem${activeTab === 'settings' && settingsSubTab === key ? ' active' : ''}`}
-                            onClick={() => selectSettingsTab(key)}
-                          >
-                            <Icon size={14} />{label}
-                          </button>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
+                  );
+                })}
+              </div>
+            ))}
           </nav>
 
-          {/* ── Sidebar bottom: stats + connection + toggle ── */}
+          {/* ── Sidebar bottom: connection + toggle ── */}
           <div className="sidebar-bottom">
-            <div className="sidebar-stats">
-              <div className="sidebar-stat-item" title={sidebarCollapsed ? t('stats.extensions') : undefined}>
-                <Phone size={14} className="sidebar-stat-icon" />
-                {!sidebarCollapsed && <div><div className="sidebar-stat-value">{stats.total_extensions}</div><div className="sidebar-stat-label">{t('stats.extensions')}</div></div>}
-                {sidebarCollapsed && <div className="sidebar-stat-value">{stats.total_extensions}</div>}
-              </div>
-              <div className="sidebar-stat-item" title={sidebarCollapsed ? t('stats.activeCalls') : undefined}>
-                <PhoneCall size={14} className="sidebar-stat-icon" />
-                {!sidebarCollapsed && <div><div className="sidebar-stat-value">{stats.active_calls_count}</div><div className="sidebar-stat-label">{t('stats.activeCalls')}</div></div>}
-                {sidebarCollapsed && <div className="sidebar-stat-value">{stats.active_calls_count}</div>}
-              </div>
-              <div className="sidebar-stat-item" title={sidebarCollapsed ? t('stats.waiting') : undefined}>
-                <Users size={14} className="sidebar-stat-icon" />
-                {!sidebarCollapsed && <div><div className="sidebar-stat-value">{stats.total_waiting}</div><div className="sidebar-stat-label">{t('stats.waiting')}</div></div>}
-                {sidebarCollapsed && <div className="sidebar-stat-value">{stats.total_waiting}</div>}
-              </div>
-            </div>
             <div className={`sidebar-connection${connected ? ' connected' : ''}`} title={sidebarCollapsed ? (connected ? t('header.connected') : t('header.disconnected')) : undefined}>
               {connected ? <Wifi size={14} /> : <WifiOff size={14} />}
               {!sidebarCollapsed && <span>{connected ? t('header.connected') : t('header.disconnected')}</span>}
             </div>
-            {!sidebarCollapsed && lastUpdate && (
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5, padding: '0 2px' }}>
-                <Activity size={10} />
-                {lastUpdate.toLocaleTimeString()}
-              </div>
-            )}
             {/* Toggle button */}
             <button
+              type="button"
               className="sidebar-toggle"
               onClick={() => setSidebarCollapsed(c => !c)}
               title={sidebarCollapsed ? t('nav.expandSidebar', 'Expand sidebar') : t('nav.collapseSidebar', 'Collapse sidebar')}
@@ -988,12 +895,14 @@ function App({ onLogout }: AppProps) {
           {activeTab === 'analytics' && <AnalyticsPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
           {activeTab === 'groups' && (
             <GroupsPanel
+              tabs={teamsTabs}
               initialGroupName={groupsTabIntent?.prefillGroupName ?? undefined}
               onConsumeIntent={groupsTabIntent ? () => setGroupsTabIntent(null) : undefined}
             />
           )}
           {activeTab === 'users' && (
             <UsersPanel
+              tabs={teamsTabs}
               pendingUserForm={pendingUserForm}
               onClearPendingUserForm={() => setPendingUserForm(null)}
               onOpenCreateGroup={(formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => {
@@ -1005,7 +914,7 @@ function App({ onLogout }: AppProps) {
           )}
           {activeTab === 'logs' && getUser()?.role === 'admin' && <LogsPanel />}
           {activeTab === 'profile' && <ProfilePanel />}
-          {activeTab === 'settings' && (getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && <SettingsPanel tab={settingsSubTab as SettingsTab} onTabChange={selectSettingsTab} />}
+          {activeTab === 'settings' && (getUser()?.role === 'admin' || getUser()?.role === 'supervisor') && <SettingsPanel />}
         </main>
       </div>
 

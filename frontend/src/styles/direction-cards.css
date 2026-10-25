@@ -1,0 +1,136 @@
+/* ════════════════════════════════════════════════════════════════════
+   Direction cards — inbound, outbound, internal (DirectionCards.tsx).
+   Each reads top to bottom: what is live now (Dashboard only), then the
+   period and its quality figures. Shared by the Dashboard and Analytics.
+   ════════════════════════════════════════════════════════════════════ */
+.dcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-3);
+}
+.dcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-block-start: 3px solid var(--border-accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+}
+.dcard.live { border-block-start-color: var(--accent-primary); }
+.dcard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.dcard-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--control-h);
+  block-size: var(--control-h);
+  border-radius: var(--radius-md);
+  background: var(--accent-light);
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+.dcard-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+.dcard-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcard-badge { margin-inline-start: auto; flex-shrink: 0; }
+.dcard-block { display: flex; flex-direction: column; gap: var(--space-1); }
+.dcard-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.dcard-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.dcard-kicker.live { color: var(--accent-primary); }
+.dcard-kicker.live svg { animation: dcard-pulse 2s ease-in-out infinite; }
+.dcard-value {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.dcard-value.now { color: var(--accent-primary); }
+.dcard-value.idle { color: var(--text-muted); }
+.dcard-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dcard-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.dcard-parts b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.dcard-divider { block-size: 1px; background: var(--border-subtle, var(--border-primary)); }
+.dcard-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 7rem), 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+.dcard-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  min-width: 0;
+}
+.dcard-metric dt {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.dcard-metric dd {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.dcard-metric.success dd { color: var(--accent-success); }
+.dcard-metric.warn dd    { color: var(--accent-warning); }
+.dcard-metric.danger dd  { color: var(--accent-danger); }
+
+@keyframes dcard-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dcard-kicker.live svg { animation: none; }
+}
+@media (min-width: 1800px) {
+  .dcards { gap: var(--space-4); }
+}
