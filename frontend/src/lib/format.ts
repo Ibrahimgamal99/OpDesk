@@ -16,6 +16,17 @@ export function fmtTimer(secs: number | null | undefined): string {
   return h > 0 ? `${pad(h)}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
 }
 
+/** A file size: `512 B`, `1.2 MB`. The Recordings page and the recording storage card. */
+export function fmtBytes(n: number | null | undefined): string {
+  if (n == null) return '—';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(1)} ${units[i]}`;
+}
+
 /**
  * The reverse of fmtTimer: "HH:MM:SS" or "MM:SS" (the backend's live wait/duration
  * clocks) back to seconds, so a live figure can be compared, summed or re-rendered

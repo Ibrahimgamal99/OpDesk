@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Disc, HardDrive, Loader2, Power, PowerOff, Save, Search, Trash2, Database } from 'lucide-react';
 import { api, messageOf, toApiError } from '../lib/api';
+import { fmtBytes } from '../lib/format';
 import {
   Alert, Card, Dropdown, EmptyState, FormField, FormRow, FormSection, Loading, Pagination, SearchInput, Table, Tabs,
   Toggle, Toolbar, matches, prepareQuery,
@@ -65,16 +66,6 @@ const GB = 1024 * 1024 * 1024;
 type RecTabKey = 'policy' | 'local';
 type Message = { type: 'success' | 'error'; text: string } | null;
 
-function formatBytes(n: number | null | undefined): string {
-  if (n == null) return '—';
-  if (n < 1024) return `${n} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(1)} ${units[i]}`;
-}
-
 export interface RecordingSettingsProps {
   card: SectionCard;
   isAdmin: boolean;
@@ -100,10 +91,10 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
   const [localDays, setLocalDays] = useState('');
   const [localMaxGb, setLocalMaxGb] = useState('');
   const [vadDeleteLegs, setVadDeleteLegs] = useState(true);
-  // Where Asterisk writes recordings; `recDirSaved` is the stored value, so Save sends the
-  // directory only when it changed (the server validates it against the filesystem).
+  // Where the recorder writes. Shown, not edited: the dialplan always records to the PBX's
+  // monitor directory, so another directory would only hide every recording from
+  // playback and point retention at a tree OpDesk does not write.
   const [recDir, setRecDir] = useState('');
-  const [recDirSaved, setRecDirSaved] = useState('');
   const [retentionSaving, setRetentionSaving] = useState(false);
   const [cleanupRunning, setCleanupRunning] = useState(false);
   const [stats, setStats] = useState<StorageStats | null>(null);
@@ -150,7 +141,6 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
       setLocalMaxGb(data.local_max_bytes ? String(Math.round(data.local_max_bytes / GB)) : '');
       setVadDeleteLegs(data.vad_delete_legs !== false);
       setRecDir(data.root_dir || '');
-      setRecDirSaved(data.root_dir || '');
     } catch (e) {
       setStorageMessage({ type: 'error', text: messageOf(e, t('settings.recording.retentionLoadFailed', 'Could not read the retention settings.')) });
     }
@@ -267,9 +257,6 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
           local_days: localDays.trim() ? parseInt(localDays, 10) : 0,
           local_max_bytes: localMaxGb.trim() ? Math.round(parseFloat(localMaxGb) * GB) : 0,
           vad_delete_legs: vadDeleteLegs,
-          // Only a changed directory is sent: the server validates it against the filesystem,
-          // and a bad path must not fail a save that only changed a retention number.
-          ...(recDir.trim() && recDir.trim() !== recDirSaved ? { root_dir: recDir.trim() } : {}),
         },
       });
       setStorageMessage({ type: 'success', text: t('settings.recording.retentionSaved', 'Retention settings saved.') });
@@ -506,16 +493,16 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
                 <StatCard
                   label={t('settings.recording.storageUsed', 'Storage used')}
                   icon={<HardDrive size={14} />}
-                  value={formatBytes(stats?.local.used_bytes)}
+                  value={fmtBytes(stats?.local.used_bytes)}
                   desc={localMaxGb ? t('settings.recording.ofGb', { defaultValue: 'of {{n}} GB', n: localMaxGb }) : undefined}
                 />
                 <StatCard
                   label={t('settings.recording.diskFree', 'Disk free')}
                   icon={<HardDrive size={14} />}
                   iconTone="muted"
-                  value={formatBytes(stats?.local.disk_free_bytes)}
+                  value={fmtBytes(stats?.local.disk_free_bytes)}
                   desc={stats?.local.disk_total_bytes
-                    ? t('settings.recording.ofSize', { defaultValue: 'of {{size}}', size: formatBytes(stats.local.disk_total_bytes) })
+                    ? t('settings.recording.ofSize', { defaultValue: 'of {{size}}', size: fmtBytes(stats.local.disk_total_bytes) })
                     : undefined}
                 />
                 <StatCard
@@ -531,7 +518,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
                   <FormField
                     label={t('settings.recording.directory', 'Recordings directory')}
                     htmlFor="rec-root"
-                    hint={t('settings.recording.directoryHint', 'Absolute path on the PBX where Asterisk writes recordings. Retention deletes from this tree.')}
+                    hint={t('settings.recording.directoryFixedHint')}
                   >
                     <input
                       id="rec-root"
@@ -539,8 +526,7 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
                       className="form-input"
                       dir="ltr"
                       value={recDir}
-                      onChange={e => setRecDir(e.target.value)}
-                      placeholder="/var/spool/asterisk/monitor/"
+                      readOnly
                     />
                   </FormField>
                 </FormRow>

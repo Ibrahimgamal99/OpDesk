@@ -127,6 +127,16 @@ export class ContactResolver {
   }
 
   /**
+   * Memory-only name for a number, and no CRM fetch on a miss: Call History names a whole
+   * page of (often old) calls through this, which must not fan out into CRM lookups.
+   */
+  nameFor(rawNumber: string | null | undefined): string | null {
+    if (skipNumber(rawNumber)) return null;
+    const key = this.key(String(rawNumber));
+    return key ? (this.contacts.get(key) ?? null) : null;
+  }
+
+  /**
    * Awaitable resolution for the REST endpoint: joins the in-flight fetch (or starts one)
    * instead of waiting for the next broadcast tick.
    */
