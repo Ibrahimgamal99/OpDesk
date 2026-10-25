@@ -1,21 +1,30 @@
 import { useState } from 'react';
-import { Phone, PhoneOff, ArrowRightLeft, User } from 'lucide-react';
+import { Phone, PhoneOff, ArrowRightLeft, User, PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CallInfo, ExtensionStatus } from '../types';
 import { StatusBadge, DEVICE_STATUS_META } from './statusBadge';
 import { getUser } from '../auth';
 import { SuperviseActions, type SuperviseMode } from './SuperviseActions';
+import { ROUTE_TONE, routeGroup, routeLabel, type RouteGroup } from './liveRoute';
 import { Badge, Dropdown, EmptyState, Table } from './ui';
 import type { Column } from './ui';
 import '../styles/live.css';
 
+/**
+ * `ext` is the row's extension: the server authorises a transfer / take-over against it, and
+ * checks that `source` is that extension or the party its call is talking to.
+ */
 export interface ActiveCallsTableProps {
   calls: CallInfo[];
   onSupervisorAction: (mode: SuperviseMode, target: string) => void;
   onHangup?: (target: string) => void;
-  onTransfer?: (source: string, destination: string) => void;
-  onTakeOver?: (source: string) => void;
+  onTransfer?: (source: string, destination: string, ext: string) => void;
+  onTakeOver?: (source: string, ext: string) => void;
 }
+
+const ROUTE_ICON: Record<RouteGroup, typeof PhoneIncoming> = {
+  inbound: PhoneIncoming, outbound: PhoneOutgoing, internal: ArrowLeftRight,
+};
 
 /** Asterisk channel state as the device status Extensions shows for the same call, so a
  *  ringing or connected call wears the same translated pill on both pages. States with no
@@ -49,6 +58,14 @@ export function ActiveCallsTable({
         if (!status) return <Badge tone="neutral">{call.state || '—'}</Badge>;
         const meta = DEVICE_STATUS_META[status];
         return <StatusBadge meta={meta} label={t(meta.key, meta.fallback)} />;
+      },
+    },
+    {
+      key: 'route', header: t('activeCalls.table.direction'),
+      cell: call => {
+        if (!call.route) return <span className="u-fg-muted">—</span>;
+        const Icon = ROUTE_ICON[routeGroup(call.route)];
+        return <Badge tone={ROUTE_TONE[routeGroup(call.route)]} icon={<Icon size={14} />}>{routeLabel(t, call.route)}</Badge>;
       },
     },
     {
@@ -95,8 +112,8 @@ interface CallActionsProps {
   call: CallInfo;
   onSupervisorAction: (mode: SuperviseMode, target: string) => void;
   onHangup?: (target: string) => void;
-  onTransfer?: (source: string, destination: string) => void;
-  onTakeOver?: (source: string) => void;
+  onTransfer?: (source: string, destination: string, ext: string) => void;
+  onTakeOver?: (source: string, ext: string) => void;
 }
 
 /** The supervisor controls for one call, with its own transfer form. A component rather
@@ -185,7 +202,7 @@ function CallActions({ call, onSupervisorAction, onHangup, onTransfer, onTakeOve
               onClick={() => {
                 const dest = transferDest.trim();
                 if (!dest) return;
-                onTransfer(transferSource, dest);
+                onTransfer(transferSource, dest, call.extension);
                 closeTransfer();
               }}>
               {t('common.transfer')}
@@ -198,7 +215,7 @@ function CallActions({ call, onSupervisorAction, onHangup, onTransfer, onTakeOve
                 type="button"
                 className="btn btn-sm"
                 onClick={() => {
-                  onTakeOver(call.talking_to!.trim());
+                  onTakeOver(call.talking_to!.trim(), call.extension);
                   closeTransfer();
                 }}
                 title={t('activeCalls.transfer.takeOverTitle', 'Transfer caller ({{caller}}) to your extension ({{ext}})', { caller: call.talking_to?.trim(), ext: getUser()?.extension })}>

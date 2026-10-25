@@ -118,7 +118,14 @@
     "table": {
       "state": "Estado",
       "talkingTo": "Falando com",
-      "talkTime": "Tempo de conversa"
+      "talkTime": "Tempo de conversa",
+      "direction": "Direção"
+    },
+    "route": {
+      "inbound_queue": "Entrada · Fila",
+      "inbound_direct": "Entrada · Direta",
+      "internal": "Interna",
+      "outbound": "Saída"
     },
     "actions": {
       "listen": "Ouvir (silencioso)",
@@ -166,6 +173,7 @@
       "waiting": "Com chamadores em espera"
     },
     "memberUnavailable": "Indisponível",
+    "memberUnknown": "Desconhecido",
     "noMatches": "Nenhuma fila corresponde a estes filtros.",
     "noMatchesTitle": "Nenhuma fila correspondente",
     "removeMember": "Remover membro",
@@ -176,6 +184,17 @@
     "pickReason": "Escolha um motivo",
     "pauseTitle": "Colocar {{member}} como Indisponível",
     "pauseHint": "Indisponível é sempre registrado com um motivo, para que a aderência distinga trabalho de pausas."
+  },
+  "agentBoard": {
+    "tab": "Agentes",
+    "search": "Pesquisar agentes",
+    "searchPlaceholder": "Pesquisar por nome ou ramal",
+    "empty": "Nenhum agente no seu escopo",
+    "noMatches": "Nenhum agente corresponde a esta pesquisa",
+    "setReady": "Definir Pronto",
+    "setNotReady": "Definir Não pronto",
+    "logoutTitle": "Encerrar a sessão de {{agent}}?",
+    "logoutConfirm": "{{agent}} sai de todas as filas e deixa de receber as chamadas delas."
   },
   "callLog": {
     "viewManage": "Visualize e gerencie registros de chamadas",
@@ -1458,6 +1477,10 @@
   },
   "dashboard": {
     "direction": {},
+    "alert": {
+      "understaffed": "{{queue}}: {{waiting}} aguardando e nenhum agente pronto para atender.",
+      "pastTarget": "{{queue}}: uma pessoa está aguardando há {{wait}}, acima da meta de {{target}}."
+    },
     "kpi": {
       "available": "Disponíveis",
       "longestWait": "Maior espera",
