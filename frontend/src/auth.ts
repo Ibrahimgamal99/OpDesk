@@ -72,9 +72,12 @@ export function getMonitorModesLabel(modes: string[] | undefined): string {
   return labels.length ? labels.join(', ') : 'Listen';
 }
 
-/** Which supervisor action buttons to show based on monitor_modes from DB. */
+/** Which supervisor action buttons to show based on monitor_modes from DB. Agents never
+ *  supervise (the server refuses it), so they get none. */
 export function getAllowedMonitorModes(): ('listen' | 'whisper' | 'barge')[] {
-  const modes = getUser()?.monitor_modes;
+  const user = getUser();
+  if (!user || user.role === 'agent') return [];
+  const modes = user.monitor_modes;
   if (Array.isArray(modes) && modes.length > 0) return modes as ('listen' | 'whisper' | 'barge')[];
   return ['listen'];
 }

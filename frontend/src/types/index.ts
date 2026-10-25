@@ -7,6 +7,9 @@ export type ExtensionStatus =
   | 'unavailable' 
   | 'on_hold';
 
+/** Which way a call in progress runs, from its extension's side (null until something marks it). */
+export type LiveRoute = 'inbound_queue' | 'inbound_direct' | 'internal' | 'outbound';
+
 export interface CallInfo {
   extension: string;
   state: string;
@@ -20,6 +23,7 @@ export interface CallInfo {
   callerid: string;
   destination: string;
   original_destination: string;
+  route?: LiveRoute | null;
 }
 
 export interface Extension {
@@ -55,6 +59,8 @@ export interface Queue {
   name: string;
   members: Record<string, { status: string; paused: boolean; membername: string }>;
   calls_waiting: number;
+  /** The queue's service-level target in seconds (analytics settings): a wait past it is late. */
+  sla_secs?: number;
 }
 
 export interface Stats {

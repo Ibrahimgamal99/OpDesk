@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import { Ear, MicVocal, UserPlus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { getUser } from '../auth';
 import { FormField, Modal } from './ui';
 
 interface SupervisorModalProps {
@@ -21,7 +22,13 @@ const MODE_ICONS = {
 
 export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorModalProps) {
   const { t } = useTranslation();
-  const [supervisor, setSupervisor] = useState('');
+  // The spy leg rings the user's own extension; the server refuses any other, except that
+  // an admin may ring another extension of the PBX. So the field starts on it and only an
+  // admin can change it.
+  const user = getUser();
+  const ownExt = user?.extension ? String(user.extension) : '';
+  const canChoose = user?.role === 'admin' || !ownExt;
+  const [supervisor, setSupervisor] = useState(ownExt);
   const formId = useId();
   const Icon = MODE_ICONS[mode];
 
@@ -80,7 +87,8 @@ export function SupervisorModal({ mode, target, onClose, onSubmit }: SupervisorM
             placeholder={t('supervisor.extensionPlaceholder')}
             value={supervisor}
             onChange={(e) => setSupervisor(e.target.value)}
-            data-autofocus
+            readOnly={!canChoose}
+            {...(canChoose ? { 'data-autofocus': true } : {})}
           />
         </FormField>
       </form>

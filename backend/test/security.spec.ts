@@ -24,6 +24,7 @@ import {
   getUserScope,
   hashApiKey,
   hashPassword,
+  principalFromScope,
   recordLoginFailure,
   requireScope,
   resetJwtSecretCache,
@@ -226,6 +227,15 @@ describe('getUserScope', () => {
     fakeDb({ id: 1, username: 'admin', extension: null, name: null, role: 'admin', is_active: 1 });
     const s = await getUserScope(1);
     expect([s.allowed_agent_extensions, s.allowed_queue_names, s.live_agent_extensions, s.live_queue_names]).toEqual([null, null, null, null]);
+  });
+
+  it('the principal of an agent has no supervision modes; a supervisor with none granted can listen', async () => {
+    fakeDb({ id: 5, username: 'ag', extension: '101', name: null, role: 'agent', is_active: 1 }, { extGroups: [2], agents: ['101'], queues: [] });
+    expect(principalFromScope(await getUserScope(5)).monitor_modes).toEqual([]);
+    fakeDb({ id: 6, username: 'sup', extension: '200', name: 'S', role: 'supervisor', is_active: 1 }, { userGroups: [1], agents: ['101'], queues: [] });
+    const sup = await getUserScope(6);
+    expect(principalFromScope(sup).monitor_modes).toEqual(['listen', 'whisper']);
+    expect(principalFromScope({ ...sup, monitor_modes: [] }).monitor_modes).toEqual(['listen']);
   });
 
   it('missing user: the Python fallback, flagged as not existing', async () => {

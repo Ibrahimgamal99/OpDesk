@@ -7,7 +7,8 @@ import { fetchWithAuth, getUser } from '../auth';
 import { fmtTimer, parseClock } from '../lib/format';
 import { Alert, Badge, EmptyState, Loading, Page, SegmentedBar, Tooltip } from './ui';
 import { todayStr } from './analyticsUtils';
-import { memberState } from './queueMemberState';
+import { memberBucket } from './queueMemberState';
+import { splitByDirection } from './liveRoute';
 import { DirectionCards, SummaryStats, figuresFromCalls, figuresFromOverview, type PeriodFigures } from './DirectionCards';
 import '../styles/dashboard.css';
 import '../styles/live.css';
@@ -19,6 +20,9 @@ interface DashboardPanelProps {
 }
 
 type Tone = '' | 'accent' | 'success' | 'warn' | 'danger';
+
+/** The service-level target when the queue has none of its own (the backend default). */
+const DEFAULT_SLA_SECS = 20;
 
 /** Tooltip props: the sentence and the icon's name. */
 interface Tip { content: string; label: string }
@@ -56,17 +60,47 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
   // ── Live figures derived from the WebSocket state ──
   const live = useMemo(() => {
     const exts = Object.values(state?.extensions ?? {});
-    const available = exts.filter((e) => e.status === 'idle').length;
-    const onCall = exts.filter((e) => ['in_call', 'dialing', 'on_hold'].includes(e.status)).length;
     const ringing = exts.filter((e) => e.status === 'ringing').length;
-    const total = exts.length;
-    const offline = Math.max(0, total - available - onCall - ringing);
     const entries = Object.values(state?.queue_entries ?? {});
     const longestWait = entries.reduce((max, e) => Math.max(max, parseClock(e.wait_time)), 0);
-    return {
+    const base = {
       activeCalls: state?.stats.active_calls_count ?? 0,
       waiting: state?.stats.total_waiting ?? 0,
-      available, onCall, ringing, offline, total, longestWait,
+      direction: splitByDirection(Object.values(state?.active_calls ?? {})),
+      ringing, longestWait,
+    };
+
+    // Who can take a call, from the agents' own presence rather than from their handsets: an
+    // agent on DND, Not Ready or in wrap-up has an idle phone but is not available. Only queue
+    // agents count; with no presence at all (contact-centre mode unused) the device states
+    // stand in.
+    const agents = Object.values(state?.agent_states ?? {}).filter((a) => a.is_agent !== false);
+    if (agents.length > 0) {
+      const byState = (...wanted: string[]) => agents.filter((a) => wanted.includes(a.state)).length;
+      const ready = byState('ready');
+      return {
+        ...base,
+        // Ringing is a device fact, not a presence: the agent being offered a call is still
+        // Ready, so take them out of Available rather than count them twice.
+        available: ready - Math.min(ringing, ready),
+        onCall: byState('on_call'),
+        wrapUp: byState('wrap_up'),
+        notReady: byState('not_ready'),
+        dnd: byState('dnd'),
+        offline: byState('logged_out'),
+        total: agents.length,
+        fromPresence: true,
+      };
+    }
+    const available = exts.filter((e) => e.status === 'idle').length;
+    const onCall = exts.filter((e) => ['in_call', 'dialing', 'on_hold'].includes(e.status)).length;
+    const total = exts.length;
+    return {
+      ...base,
+      available, onCall, wrapUp: 0, notReady: 0, dnd: 0,
+      offline: Math.max(0, total - available - onCall - ringing),
+      total,
+      fromPresence: false,
     };
   }, [state]);
 
@@ -80,17 +114,23 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
         const ext = q.extension ?? q.name;
         const qMembers = members.filter((m) => m.queue === ext);
         const buckets = qMembers.reduce(
-          (acc, m) => { acc[memberState(m)]++; return acc; },
+          (acc, m) => { acc[memberBucket(m)]++; return acc; },
           { available: 0, busy: 0, paused: 0, unavailable: 0 } as Record<string, number>,
         );
         const qEntries = entries.filter((e) => e.queue === ext);
         const longest = qEntries.reduce((max, e) => Math.max(max, parseClock(e.wait_time)), 0);
+        const waiting = q.calls_waiting ?? 0;
+        // The service-level target the queue is held to (Analytics settings), default 20 s.
+        const slaSecs = q.sla_secs ?? DEFAULT_SLA_SECS;
         return {
           ext,
           name: q.extension != null && q.extension !== q.name ? `${q.extension} · ${q.name}` : q.name,
-          waiting: q.calls_waiting ?? 0,
-          longest, total: qMembers.length,
+          waiting,
+          longest, total: qMembers.length, slaSecs,
           available: buckets.available, busy: buckets.busy, paused: buckets.paused, unavailable: buckets.unavailable,
+          // Callers holding and nobody ready to take them; someone holding past the target.
+          understaffed: waiting > 0 && buckets.available === 0,
+          pastTarget: waiting > 0 && longest > slaSecs,
         };
       })
       .sort((a, b) => (b.waiting - a.waiting) || a.name.localeCompare(b.name));
@@ -160,8 +200,15 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
     { key: 'available', n: live.available, label: t('dashboard.kpi.available', 'Available') },
     { key: 'busy', n: live.onCall, label: t('agent.state.onCall', 'On call') },
     { key: 'ringing', n: live.ringing, label: t('dashboard.kpi.ringing', 'Ringing') },
+    ...(live.fromPresence ? [
+      { key: 'wrapup', n: live.wrapUp, label: t('agent.state.wrapUp', 'Wrap-up') },
+      { key: 'notready', n: live.notReady, label: t('agent.state.notReady', 'Not ready') },
+      { key: 'dnd', n: live.dnd, label: t('agent.state.dnd', 'Do not disturb') },
+    ] : []),
     { key: 'offline', n: live.offline, label: t('dashboard.workforce.offline', 'Offline') },
   ];
+
+  const alerts = queueRows.filter((q) => q.understaffed || q.pastTarget);
 
   const liveBadge = (
     <Badge tone={connected ? 'live' : 'neutral'} dot>
@@ -190,10 +237,15 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
                     <Tooltip {...tip('activeCalls', t('nav.activeCalls', 'Active calls'), 'Calls happening right now.')} />
                   </span>
                 </div>
+                <div className="u-text-sm u-fg-muted">
+                  {t('dashboard.kpi.totalSplitInternal', {
+                    in: live.direction.inbound, out: live.direction.outbound, internal: live.direction.internal,
+                  })}
+                </div>
                 <div className="dash-hero-stats">
                   <HeroStat
                     icon={<Hourglass size={16} />} label={t('dashboard.kpi.waiting', 'Waiting')} value={live.waiting}
-                    tone={live.waiting > 0 ? 'warn' : ''}
+                    tone={alerts.some((q) => q.understaffed) ? 'danger' : live.waiting > 0 ? 'warn' : ''}
                     tip={tip('waiting', t('dashboard.kpi.waiting', 'Waiting'), 'Callers on hold waiting for someone to pick up.')}
                   />
                   <HeroStat
@@ -234,6 +286,19 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
                 </div>
               </div>
             </div>
+
+            {/* ── Alerts: the queues a supervisor has to act on now ── */}
+            {alerts.length > 0 && (
+              <div className="u-col u-gap-2">
+                {alerts.map((q) => (
+                  <Alert key={q.ext} tone={q.understaffed ? 'error' : 'warning'}>
+                    {q.understaffed
+                      ? t('dashboard.alert.understaffed', { queue: q.name, waiting: q.waiting })
+                      : t('dashboard.alert.pastTarget', { queue: q.name, wait: fmtTimer(q.longest), target: fmtTimer(q.slaSecs) })}
+                  </Alert>
+                ))}
+              </div>
+            )}
 
             {/* ── Today ── */}
             {todayUnavailable && (
@@ -305,7 +370,7 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
                         { key: 'unavailable', n: q.unavailable },
                       ];
                       return (
-                        <div key={q.ext} className={`dash-queue-card${q.waiting > 0 ? ' has-waiting' : ''}`}>
+                        <div key={q.ext} className={`dash-queue-card${q.understaffed || q.pastTarget ? ' has-alert' : q.waiting > 0 ? ' has-waiting' : ''}`}>
                           <div className="dash-queue-head">
                             <span className="dash-queue-name" title={q.name}>{q.name}</span>
                             <Tooltip
@@ -328,7 +393,7 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
                                 {t('dashboard.queues.longestWait', 'Longest wait')}
                                 <Tooltip {...tip('queueLongest', t('dashboard.queues.longestWait', 'Longest wait'), 'The longest anyone has been holding in this queue.')} />
                               </span>
-                              <span className={`dash-queue-metric-val u-mono${q.longest >= 60 ? ' danger' : q.longest > 0 ? ' warn' : ''}`}>
+                              <span className={`dash-queue-metric-val u-mono${q.longest > q.slaSecs ? ' danger' : q.longest > 0 ? ' warn' : ''}`}>
                                 {fmtTimer(q.longest)}
                               </span>
                             </div>

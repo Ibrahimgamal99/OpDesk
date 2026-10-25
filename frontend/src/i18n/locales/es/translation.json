@@ -118,7 +118,14 @@
     "table": {
       "state": "Estado",
       "talkingTo": "Hablando con",
-      "talkTime": "Tiempo de conversación"
+      "talkTime": "Tiempo de conversación",
+      "direction": "Dirección"
+    },
+    "route": {
+      "inbound_queue": "Entrante · Cola",
+      "inbound_direct": "Entrante · Directa",
+      "internal": "Interna",
+      "outbound": "Saliente"
     },
     "actions": {
       "listen": "Escuchar (silencio)",
@@ -166,6 +173,7 @@
       "waiting": "Con llamantes en espera"
     },
     "memberUnavailable": "No disponible",
+    "memberUnknown": "Desconocido",
     "noMatches": "Ninguna cola coincide con estos filtros.",
     "noMatchesTitle": "No hay colas coincidentes",
     "removeMember": "Eliminar miembro",
@@ -176,6 +184,17 @@
     "pickReason": "Elija un motivo",
     "pauseTitle": "Poner a {{member}} en No disponible",
     "pauseHint": "No disponible siempre se registra con un motivo, para que la adherencia distinga el trabajo de los descansos."
+  },
+  "agentBoard": {
+    "tab": "Agentes",
+    "search": "Buscar agentes",
+    "searchPlaceholder": "Buscar por nombre o extensión",
+    "empty": "No hay agentes en tu ámbito",
+    "noMatches": "Ningún agente coincide con esta búsqueda",
+    "setReady": "Poner Disponible",
+    "setNotReady": "Poner No disponible",
+    "logoutTitle": "¿Cerrar la sesión de {{agent}}?",
+    "logoutConfirm": "{{agent}} sale de todas las colas y deja de recibir sus llamadas."
   },
   "callLog": {
     "viewManage": "Ver y gestionar registros de llamadas",
@@ -1458,6 +1477,10 @@
   },
   "dashboard": {
     "direction": {},
+    "alert": {
+      "understaffed": "{{queue}}: {{waiting}} en espera y ningún agente disponible para atender.",
+      "pastTarget": "{{queue}}: una persona lleva {{wait}} esperando, más que el objetivo de {{target}}."
+    },
     "kpi": {
       "available": "Libres",
       "longestWait": "Espera más larga",

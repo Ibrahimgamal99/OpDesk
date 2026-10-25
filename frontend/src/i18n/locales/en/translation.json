@@ -118,7 +118,14 @@
     "table": {
       "state": "State",
       "talkingTo": "Talking to",
-      "talkTime": "Talk time"
+      "talkTime": "Talk time",
+      "direction": "Direction"
+    },
+    "route": {
+      "inbound_queue": "Inbound · Queue",
+      "inbound_direct": "Inbound · Direct",
+      "internal": "Internal",
+      "outbound": "Outbound"
     },
     "actions": {
       "listen": "Listen (silent)",
@@ -166,6 +173,7 @@
       "waiting": "Has callers waiting"
     },
     "memberUnavailable": "Unavailable",
+    "memberUnknown": "Unknown",
     "noMatches": "No queues match these filters.",
     "noMatchesTitle": "No matching queues",
     "removeMember": "Remove member",
@@ -176,6 +184,17 @@
     "pickReason": "Pick a reason",
     "pauseTitle": "Set {{member}} Not Ready",
     "pauseHint": "Not Ready is always recorded with a reason, so adherence can tell work from breaks."
+  },
+  "agentBoard": {
+    "tab": "Agents",
+    "search": "Search agents",
+    "searchPlaceholder": "Search by name or extension",
+    "empty": "No agents in your scope",
+    "noMatches": "No agents match this search",
+    "setReady": "Set Ready",
+    "setNotReady": "Set Not Ready",
+    "logoutTitle": "Log {{agent}} out?",
+    "logoutConfirm": "{{agent}} leaves every queue and stops receiving queue calls."
   },
   "callLog": {
     "viewManage": "View and manage call records",
@@ -1458,6 +1477,10 @@
   },
   "dashboard": {
     "direction": {},
+    "alert": {
+      "understaffed": "{{queue}}: {{waiting}} waiting and no agent ready to answer.",
+      "pastTarget": "{{queue}}: a caller has waited {{wait}}, past the {{target}} target."
+    },
     "kpi": {
       "available": "Available",
       "longestWait": "Longest wait",
