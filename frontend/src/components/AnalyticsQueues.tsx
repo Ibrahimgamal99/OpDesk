@@ -1,28 +1,18 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
+import type React from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronUp, ChevronDown } from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid, LabelList, ResponsiveContainer,
+} from 'recharts';
+import { BarChart3, Grid3x3, ListOrdered } from 'lucide-react';
 import type { DateRange } from './analyticsUtils';
 import type { QueueKPIRow, HeatmapData } from '../types';
-import { fmtSecs, fmtPct, slaProgressClass, buildDateParams, analyticsGet, useAnalyticsFetch } from './analyticsUtils';
-
-function slaClass(v: number | null): string {
-  if (v === null) return 'neutral';
-  if (v >= 80) return 'sla-met';
-  return 'sla-fail';
-}
-
-type SortKey = keyof QueueKPIRow;
-type SortDir = 'asc' | 'desc';
-
-function sortRows(rows: QueueKPIRow[], key: SortKey, dir: SortDir): QueueKPIRow[] {
-  return [...rows].sort((a, b) => {
-    const va = a[key] ?? -Infinity;
-    const vb = b[key] ?? -Infinity;
-    if (va < vb) return dir === 'asc' ? -1 : 1;
-    if (va > vb) return dir === 'asc' ? 1 : -1;
-    return 0;
-  });
-}
+import {
+  fmtSecs, fmtPct, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip, pctOf, rangeLabel,
+  slaVerdict, abandonVerdict, targetVerdict,
+} from './analyticsUtils';
+import { Alert, Badge, Card, Dropdown, EmptyState, Tooltip } from './ui';
+import { FigureCard, VERDICT_TONE, type Metric } from './AnalyticsFigureCard';
 
 interface HeatmapProps { data: HeatmapData }
 
@@ -53,17 +43,16 @@ function Heatmap({ data }: HeatmapProps) {
               const count = matrix[dayIdx]?.[hr] ?? 0;
               const abandoned = abandoned_matrix[dayIdx]?.[hr] ?? 0;
               const intensity = count / maxVal;
-              const tip = `${day} ${labels.hours[hr]}: ${count} calls (${abandoned} abandoned)`;
+              const tip = t('analytics.queues.heatmapCell', '{{day}} {{hour}}: {{count}} calls ({{abandoned}} abandoned)',
+                { day, hour: labels.hours[hr], count, abandoned });
               return (
+                // The cell's tint is data, so only its alpha travels inline; the colour
+                // itself stays in analytics.css (.an-heatmap-cell).
                 <div
                   key={`cell-${dayIdx}-${hr}`}
                   className="an-heatmap-cell"
                   data-tip={tip}
-                  style={{
-                    background: count === 0
-                      ? 'rgba(88,166,255,0.04)'
-                      : `rgba(88,166,255,${(0.08 + intensity * 0.72).toFixed(2)})`
-                  }}
+                  style={{ '--an-heat': count === 0 ? 0.04 : (0.08 + intensity * 0.72).toFixed(2) } as React.CSSProperties}
                 />
               );
             })}
@@ -80,12 +69,22 @@ function Heatmap({ data }: HeatmapProps) {
   );
 }
 
+/** What the comparison chart ranks the queues by. */
+type CompareKey = 'sla' | 'answerRate' | 'abandonRate' | 'avgWait' | 'offered';
+
 interface Props { dateRange: DateRange }
 
+/**
+ * Analytics → Queues, for the chosen range:
+ *
+ *   1. one card per queue: offered, answered, abandoned and the queue's quality figures;
+ *   2. the queues side by side on one figure at a time;
+ *   3. when the queue calls arrive, by weekday and hour.
+ */
 export function AnalyticsQueues({ dateRange }: Props) {
   const { t } = useTranslation();
-  const [sortKey, setSortKey] = useState<SortKey>('total_calls');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [compareBy, setCompareBy] = useState<CompareKey>('sla');
+
   const { data, loading, error } = useAnalyticsFetch(
     async () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
@@ -97,139 +96,158 @@ export function AnalyticsQueues({ dateRange }: Props) {
     },
     [dateRange],
   );
-  const queues = data?.queues ?? [];
+
+  const queues = useMemo(() => data?.queues ?? [], [data]);
   const heatmap = data?.heatmap ?? null;
-
-  function toggleSort(key: SortKey) {
-    if (sortKey === key) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortKey(key);
-      setSortDir('desc');
-    }
-  }
-
-  function SortIcon({ col }: { col: SortKey }) {
-    if (sortKey !== col) return null;
-    return sortDir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />;
-  }
 
   if (loading) {
     return <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>;
   }
   if (error) {
-    return <div className="an-empty">{t('analytics.error')}</div>;
+    return <Alert>{t('analytics.error')}</Alert>;
+  }
+  if (queues.length === 0) {
+    return <EmptyState icon={ListOrdered} title={t('analytics.empty', 'No data for this period')} />;
   }
 
-  const sorted = sortRows(queues, sortKey, sortDir);
-  const columns: { key: SortKey; label: string }[] = [
-    { key: 'queue_name',     label: t('analytics.queues.queue') },
-    { key: 'total_calls',    label: t('analytics.queues.total') },
-    { key: 'answered_calls', label: t('analytics.queues.answered') },
-    { key: 'abandoned_calls',label: t('analytics.queues.abandoned') },
-    { key: 'sla_pct',        label: t('analytics.queues.sla') },
-    { key: 'aht_secs',       label: t('analytics.queues.aht') },
-    { key: 'avg_wait_secs',  label: t('analytics.queues.avgWait') },
-    { key: 'peak_hour',      label: t('analytics.queues.peakHour') },
+  const queueName = (q: QueueKPIRow) =>
+    q.queue_name && q.queue_name !== q.queue_extension ? `${q.queue_extension} · ${q.queue_name}` : q.queue_extension;
+  const answerRate = (q: QueueKPIRow) => pctOf(q.answered_calls, q.total_calls);
+  const abandonRate = (q: QueueKPIRow) => pctOf(q.abandoned_calls, q.total_calls);
+
+  const tips = {
+    sla: kpiTip(t, 'analytics.tip.queues.slaAnswered', t('analytics.queues.sla'), undefined,
+      { text: 'How often this queue’s answered calls were picked up within its SLA threshold. The goal is 80%.', formula: 'answered in time ÷ answered' }),
+    answerRate: kpiTip(t, 'analytics.tip.queues.callAnswerRate', t('analytics.kpi.answerRate'), undefined,
+      { text: 'Share of the calls offered to this queue that an agent answered.', formula: 'answered ÷ offered' }),
+    abandon: kpiTip(t, 'analytics.tip.kpi.abandonRate', t('analytics.kpi.abandonment'), undefined,
+      { text: 'How many inbound callers hung up before anyone answered.', formula: 'not answered ÷ offered' }),
+    avgWait: kpiTip(t, 'analytics.tip.queues.avgWait', t('analytics.queues.avgWait'), undefined,
+      { text: 'How long callers wait in this queue, including those who gave up.', formula: 'total wait ÷ callers' }),
+    aht: kpiTip(t, 'analytics.tip.kpi.ahtTalk', t('analytics.queues.aht'), undefined,
+      { text: 'Average talk time of an answered call.', formula: 'talk time ÷ answered' }),
+    peak: kpiTip(t, 'analytics.tip.queues.peakHour', t('analytics.queues.peakHour'), undefined,
+      { text: 'The busiest hour of the day, across the whole date range.' }),
+  };
+
+  const metricsOf = (q: QueueKPIRow): Metric[] => [
+    { key: 'sla', label: t('analytics.queues.sla'), value: fmtPct(q.sla_pct),
+      tone: VERDICT_TONE[slaVerdict(q.sla_pct)], tip: tips.sla },
+    { key: 'answerRate', label: t('analytics.kpi.answerRate'), value: fmtPct(answerRate(q)),
+      tone: VERDICT_TONE[targetVerdict(answerRate(q), 80)], tip: tips.answerRate },
+    { key: 'abandon', label: t('analytics.kpi.abandonment'), value: fmtPct(abandonRate(q)),
+      tone: VERDICT_TONE[abandonVerdict(abandonRate(q))], tip: tips.abandon },
+    { key: 'wait', label: t('analytics.queues.avgWait'), value: fmtSecs(q.avg_wait_secs), tip: tips.avgWait },
+    { key: 'aht', label: t('analytics.queues.aht'), value: fmtSecs(q.aht_secs), tip: tips.aht },
+    { key: 'peak', label: t('analytics.queues.peakHour'),
+      value: q.peak_hour !== null ? `${String(q.peak_hour).padStart(2, '0')}:00` : '—', tip: tips.peak },
   ];
 
+  // ── Comparison: one figure across every queue ──────────────────────────────
+  const compareOptions: { value: CompareKey; label: string; pct: boolean; pick: (q: QueueKPIRow) => number | null }[] = [
+    { value: 'sla', label: t('analytics.queues.sla'), pct: true, pick: (q) => q.sla_pct },
+    { value: 'answerRate', label: t('analytics.kpi.answerRate'), pct: true, pick: answerRate },
+    { value: 'abandonRate', label: t('analytics.kpi.abandonment'), pct: true, pick: abandonRate },
+    { value: 'avgWait', label: t('analytics.queues.avgWait'), pct: false, pick: (q) => q.avg_wait_secs },
+    { value: 'offered', label: t('analytics.queues.offered', 'Offered'), pct: false, pick: (q) => q.total_calls },
+  ];
+  const compare = compareOptions.find((o) => o.value === compareBy) ?? compareOptions[0];
+  const fmtCompare = (v: number) =>
+    compare.pct ? fmtPct(v) : compareBy === 'avgWait' ? fmtSecs(v) : v.toLocaleString();
+  const compareRows = queues
+    .map((q) => ({ name: queueName(q), value: compare.pick(q) }))
+    .filter((r): r is { name: string; value: number } => r.value !== null)
+    .sort((a, b) => b.value - a.value);
+
+  const period = rangeLabel(dateRange);
+  const tooltipStyle = {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-accent)',
+    borderRadius: 'var(--radius-md)',
+    fontSize: 'var(--text-xs)',
+    boxShadow: 'var(--shadow-lg)',
+  };
+  const axisTick = { fontSize: 11, fill: 'var(--text-muted)' };
+  const title = (label: string, tip: ReturnType<typeof kpiTip>) => (
+    <span className="u-inline-row u-gap-1h">
+      {label}
+      <Tooltip {...tip} />
+    </span>
+  );
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="an-section">
-        <div className="an-section-header">
-          <div className="an-section-title">{t('analytics.queues.title')}</div>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            {queues.length} {t('analytics.queues.queues', 'queues')}
-          </span>
-        </div>
-        {queues.length === 0 ? (
-          <div className="an-empty">{t('analytics.empty', 'No data for this period')}</div>
-        ) : (
-          <div className="an-table-wrap">
-            <table className="an-table">
-              <thead>
-                <tr>
-                  {columns.map(({ key, label }) => (
-                    <th
-                      key={key}
-                      className={[
-                        sortKey === key ? 'sorted' : '',
-                        key === 'queue_name' ? 'sticky' : '',
-                        key !== 'queue_name' ? 'num' : '',
-                      ].filter(Boolean).join(' ')}
-                      onClick={() => toggleSort(key)}
-                    >
-                      {label} <SortIcon col={key} />
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map(q => {
-                  const answerRate = q.total_calls > 0
-                    ? (q.answered_calls / q.total_calls) * 100
-                    : 0;
-                  return (
-                    <tr key={q.queue_extension}>
-                      <td className="sticky" style={{ fontWeight: 500 }}>
-                        <div>{q.queue_name}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                          {q.queue_extension}
-                        </div>
-                      </td>
-                      <td className="num" style={{ fontWeight: 600 }}>
-                        {q.total_calls.toLocaleString()}
-                      </td>
-                      <td className="num">
-                        <div>{q.answered_calls.toLocaleString()}</div>
-                        <div className="an-progress" style={{ width: 48, marginLeft: 'auto' }}>
-                          <div
-                            className={`an-progress-fill${answerRate >= 80 ? ' good' : answerRate >= 60 ? ' warn' : ' bad'}`}
-                            style={{ width: `${answerRate}%` }}
-                          />
-                        </div>
-                      </td>
-                      <td className="num">
-                        <span style={{ color: q.abandoned_calls > 0 ? 'var(--accent-danger)' : 'inherit' }}>
-                          {q.abandoned_calls.toLocaleString()}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="an-sla-cell">
-                          <span className={`an-badge ${slaClass(q.sla_pct)}`}>
-                            {fmtPct(q.sla_pct)}
-                          </span>
-                          <div className="an-progress">
-                            <div
-                              className={`an-progress-fill ${slaProgressClass(q.sla_pct)}`}
-                              style={{ width: `${q.sla_pct ?? 0}%` }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-                      <td className="num">{fmtSecs(q.aht_secs)}</td>
-                      <td className="num">{fmtSecs(q.avg_wait_secs)}</td>
-                      <td className="num muted">
-                        {q.peak_hour !== null
-                          ? `${String(q.peak_hour).padStart(2, '0')}:00`
-                          : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+    <div className="u-col u-gap-4">
+      {/* ── 1. One card per queue ── */}
+      <div className="dcards">
+        {queues.map((q) => (
+          <FigureCard
+            key={q.queue_extension}
+            icon={<ListOrdered size={18} />}
+            title={queueName(q)}
+            tip={kpiTip(t, 'analytics.tip.queues.card', queueName(q), undefined,
+              { text: 'This queue over the period: calls offered to it, how many an agent answered and how many gave up, and how well it served them.' })}
+            badge={slaVerdict(q.sla_pct) === 'bad'
+              ? <Badge tone="danger">{t('analytics.queues.belowTarget', 'Below SLA target')}</Badge> : undefined}
+            periodLabel={t('analytics.queues.offered', 'Offered')}
+            period={q.total_calls}
+            periodParts={[
+              { label: t('analytics.queues.answered'), n: q.answered_calls },
+              { label: t('analytics.queues.abandoned'), n: q.abandoned_calls },
+            ]}
+            metrics={metricsOf(q)}
+          />
+        ))}
       </div>
 
-      {heatmap && (
-        <div className="an-section">
-          <div className="an-section-header">
-            <div className="an-section-title">{t('analytics.queues.heatmapTitle')}</div>
+      {/* ── 2. The queues side by side ── */}
+      {queues.length > 1 && (
+        <Card
+          icon={BarChart3}
+          title={title(t('analytics.queues.compareTitle', 'Compare queues'),
+            kpiTip(t, 'analytics.tip.queues.compare', t('analytics.queues.compareTitle', 'Compare queues'), undefined,
+              { text: 'Every queue on one figure at a time, best first. Pick the figure from the menu.' }))}
+          description={period}
+          actions={
+            <Dropdown
+              value={compareBy}
+              onChange={(v) => setCompareBy(v as CompareKey)}
+              options={compareOptions.map(({ value, label }) => ({ value, label }))}
+              ariaLabel={t('analytics.queues.compareBy', 'Compare by')}
+              size="sm"
+            />
+          }
+        >
+          <div className="an-chart-wrap" dir="ltr">
+            <ResponsiveContainer width="100%" height={Math.max(120, 32 + compareRows.length * 36)}>
+              <BarChart data={compareRows} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 8 }}>
+                <CartesianGrid stroke="var(--border-subtle)" strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false}
+                       domain={compare.pct ? [0, 100] : [0, 'auto']}
+                       tickFormatter={(v) => (compare.pct ? `${v}%` : compareBy === 'avgWait' ? fmtSecs(v) : String(v))} />
+                <YAxis type="category" dataKey="name" tick={axisTick} width={140} axisLine={false} tickLine={false} />
+                <ChartTooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--bg-tertiary)' }}
+                              formatter={(v) => [fmtCompare(Number(v)), compare.label]} />
+                <Bar dataKey="value" name={compare.label} fill="var(--chart-inbound)" radius={[0, 4, 4, 0]} barSize={18}>
+                  <LabelList dataKey="value" position="right" formatter={(v: unknown) => fmtCompare(Number(v))}
+                             className="an-bar-label" />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
+        </Card>
+      )}
+
+      {/* ── 3. When the calls arrive ── */}
+      {heatmap && (
+        <Card
+          icon={Grid3x3}
+          title={title(t('analytics.queues.heatmapTitle'),
+            kpiTip(t, 'analytics.tip.queues.heatmap', t('analytics.queues.heatmapTitle'), undefined,
+              { text: 'When your calls come in, by day and hour. Darker means busier.' }))}
+          description={period}
+        >
           <Heatmap data={heatmap} />
-        </div>
+        </Card>
       )}
     </div>
   );
