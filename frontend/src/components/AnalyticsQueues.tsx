@@ -8,7 +8,7 @@ import { BarChart3, Grid3x3, ListOrdered } from 'lucide-react';
 import type { DateRange } from './analyticsUtils';
 import type { QueueKPIRow, HeatmapData } from '../types';
 import {
-  fmtSecs, fmtPct, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip, pctOf, rangeLabel,
+  fmtSecs, fmtPct, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip, metricTips, pctOf, rangeLabel,
   slaVerdict, abandonVerdict, targetVerdict,
 } from './analyticsUtils';
 import { Alert, Badge, Card, Dropdown, EmptyState, Tooltip } from './ui';
@@ -70,7 +70,7 @@ function Heatmap({ data }: HeatmapProps) {
 }
 
 /** What the comparison chart ranks the queues by. */
-type CompareKey = 'sla' | 'answerRate' | 'abandonRate' | 'avgWait' | 'offered';
+type CompareKey = 'sla' | 'contactRate' | 'abandonRate' | 'avgWait' | 'offered';
 
 interface Props { dateRange: DateRange }
 
@@ -112,43 +112,43 @@ export function AnalyticsQueues({ dateRange }: Props) {
 
   const queueName = (q: QueueKPIRow) =>
     q.queue_name && q.queue_name !== q.queue_extension ? `${q.queue_extension} · ${q.queue_name}` : q.queue_extension;
-  const answerRate = (q: QueueKPIRow) => pctOf(q.answered_calls, q.total_calls);
+  // Answered ÷ offered counts calls, so on the shared definitions it is the contact rate.
+  const contactRate = (q: QueueKPIRow) => pctOf(q.answered_calls, q.total_calls);
   const abandonRate = (q: QueueKPIRow) => pctOf(q.abandoned_calls, q.total_calls);
 
+  const shared = metricTips(t);
   const tips = {
-    sla: kpiTip(t, 'analytics.tip.queues.slaAnswered', t('analytics.queues.sla'), undefined,
+    sla: kpiTip(t, 'analytics.tip.queues.slaAnswered', t('metrics.sla'), undefined,
       { text: 'How often this queue’s answered calls were picked up within its SLA threshold. The goal is 80%.', formula: 'answered in time ÷ answered' }),
-    answerRate: kpiTip(t, 'analytics.tip.queues.callAnswerRate', t('analytics.kpi.answerRate'), undefined,
-      { text: 'Share of the calls offered to this queue that an agent answered.', formula: 'answered ÷ offered' }),
-    abandon: kpiTip(t, 'analytics.tip.kpi.abandonRate', t('analytics.kpi.abandonment'), undefined,
+    contactRate: shared.contactRate,
+    abandon: kpiTip(t, 'analytics.tip.kpi.abandonRate', t('metrics.abandonRate'), undefined,
       { text: 'How many inbound callers hung up before anyone answered.', formula: 'not answered ÷ offered' }),
-    avgWait: kpiTip(t, 'analytics.tip.queues.avgWait', t('analytics.queues.avgWait'), undefined,
+    avgWait: kpiTip(t, 'analytics.tip.queues.avgWait', t('metrics.avgWait'), undefined,
       { text: 'How long callers wait in this queue, including those who gave up.', formula: 'total wait ÷ callers' }),
-    aht: kpiTip(t, 'analytics.tip.kpi.ahtTalk', t('analytics.queues.aht'), undefined,
-      { text: 'Average talk time of an answered call.', formula: 'talk time ÷ answered' }),
+    aht: shared.aht,
     peak: kpiTip(t, 'analytics.tip.queues.peakHour', t('analytics.queues.peakHour'), undefined,
       { text: 'The busiest hour of the day, across the whole date range.' }),
   };
 
   const metricsOf = (q: QueueKPIRow): Metric[] => [
-    { key: 'sla', label: t('analytics.queues.sla'), value: fmtPct(q.sla_pct),
+    { key: 'sla', label: t('metrics.sla'), value: fmtPct(q.sla_pct),
       tone: VERDICT_TONE[slaVerdict(q.sla_pct)], tip: tips.sla },
-    { key: 'answerRate', label: t('analytics.kpi.answerRate'), value: fmtPct(answerRate(q)),
-      tone: VERDICT_TONE[targetVerdict(answerRate(q), 80)], tip: tips.answerRate },
-    { key: 'abandon', label: t('analytics.kpi.abandonment'), value: fmtPct(abandonRate(q)),
+    { key: 'contactRate', label: t('metrics.contactRate'), value: fmtPct(contactRate(q)),
+      tone: VERDICT_TONE[targetVerdict(contactRate(q), 80)], tip: tips.contactRate },
+    { key: 'abandon', label: t('metrics.abandonRate'), value: fmtPct(abandonRate(q)),
       tone: VERDICT_TONE[abandonVerdict(abandonRate(q))], tip: tips.abandon },
-    { key: 'wait', label: t('analytics.queues.avgWait'), value: fmtSecs(q.avg_wait_secs), tip: tips.avgWait },
-    { key: 'aht', label: t('analytics.queues.aht'), value: fmtSecs(q.aht_secs), tip: tips.aht },
+    { key: 'wait', label: t('metrics.avgWait'), value: fmtSecs(q.avg_wait_secs), tip: tips.avgWait },
+    { key: 'aht', label: t('metrics.aht'), value: fmtSecs(q.aht_secs), tip: tips.aht },
     { key: 'peak', label: t('analytics.queues.peakHour'),
       value: q.peak_hour !== null ? `${String(q.peak_hour).padStart(2, '0')}:00` : '—', tip: tips.peak },
   ];
 
   // ── Comparison: one figure across every queue ──────────────────────────────
   const compareOptions: { value: CompareKey; label: string; pct: boolean; pick: (q: QueueKPIRow) => number | null }[] = [
-    { value: 'sla', label: t('analytics.queues.sla'), pct: true, pick: (q) => q.sla_pct },
-    { value: 'answerRate', label: t('analytics.kpi.answerRate'), pct: true, pick: answerRate },
-    { value: 'abandonRate', label: t('analytics.kpi.abandonment'), pct: true, pick: abandonRate },
-    { value: 'avgWait', label: t('analytics.queues.avgWait'), pct: false, pick: (q) => q.avg_wait_secs },
+    { value: 'sla', label: t('metrics.sla'), pct: true, pick: (q) => q.sla_pct },
+    { value: 'contactRate', label: t('metrics.contactRate'), pct: true, pick: contactRate },
+    { value: 'abandonRate', label: t('metrics.abandonRate'), pct: true, pick: abandonRate },
+    { value: 'avgWait', label: t('metrics.avgWait'), pct: false, pick: (q) => q.avg_wait_secs },
     { value: 'offered', label: t('analytics.queues.offered', 'Offered'), pct: false, pick: (q) => q.total_calls },
   ];
   const compare = compareOptions.find((o) => o.value === compareBy) ?? compareOptions[0];
@@ -191,8 +191,8 @@ export function AnalyticsQueues({ dateRange }: Props) {
             periodLabel={t('analytics.queues.offered', 'Offered')}
             period={q.total_calls}
             periodParts={[
-              { label: t('analytics.queues.answered'), n: q.answered_calls },
-              { label: t('analytics.queues.abandoned'), n: q.abandoned_calls },
+              { label: t('metrics.answered'), n: q.answered_calls },
+              { label: t('metrics.abandoned'), n: q.abandoned_calls },
             ]}
             metrics={metricsOf(q)}
           />

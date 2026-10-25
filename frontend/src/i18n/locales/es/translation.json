@@ -976,19 +976,10 @@
       "label": "Rango de fechas"
     },
     "kpi": {
-      "sla": "SLA",
       "slaDesc": "Llamadas respondidas dentro del umbral",
-      "fcr": "FCR",
       "fcrDesc": "Resolución en el primer contacto",
-      "abandonment": "Abandono",
       "abandonmentDesc": "Tasa de llamadas abandonadas",
-      "aht": "TMO",
       "ahtDesc": "Tiempo medio de operación",
-      "volume": "Total llamadas",
-      "answeredCalls": "Respondidas",
-      "abandonedCalls": "Abandonadas",
-      "answerRate": "Tasa de respuesta",
-      "avgWait": "Espera media",
       "na": "N/D",
       "outboundCalls": "Saliente",
       "outboundVolume": "Llamadas salientes",
@@ -997,15 +988,12 @@
       "outboundTrend": "Saliente",
       "inboundAnswerRate": "Tasa de respuesta entrante",
       "inboundAnswerRateDesc": "Llamadas entrantes respondidas",
-      "avgWaitKpi": "Espera media",
       "avgWaitDesc": "Tiempo medio de espera en cola",
       "shortAbandon": "Abandono rápido",
       "shortAbandonDesc": "Abandonadas antes del umbral",
       "market": "Tiempo de mercado",
       "marketDesc": "Tiempo total de llamadas salientes",
-      "unansweredCalls": "No respondidas",
-      "contactRate": "Tasa de contacto",
-      "contactRateOf": "Tasa de contacto {{rate}}"
+      "unansweredCalls": "No respondidas"
     },
     "delta": {
       "vsPrevPeriod": "vs período anterior"
@@ -1014,11 +1002,6 @@
       "title": "Rendimiento de colas",
       "queue": "Cola",
       "total": "Total",
-      "answered": "Respondidas",
-      "abandoned": "Abandonadas",
-      "sla": "SLA %",
-      "aht": "TMO",
-      "avgWait": "Espera media",
       "peakHour": "Hora pico",
       "heatmapLow": "Bajo",
       "heatmapHigh": "Alto",
@@ -1034,8 +1017,6 @@
       "title": "Rendimiento de agentes",
       "rank": "#",
       "agent": "Agente",
-      "answered": "Respondidas",
-      "aht": "TMO",
       "slaContrib": "SLA %",
       "trend7d": "Tendencia 7d",
       "agents": "agentes"
@@ -1107,10 +1088,6 @@
           "formula": "no respondidas ÷ ofrecidas",
           "text": "Cuántos llamantes entrantes colgaron antes de que alguien contestara."
         },
-        "ahtTalk": {
-          "formula": "tiempo de conversación ÷ respondidas",
-          "text": "Tiempo medio de conversación de una llamada respondida."
-        },
         "avgWait": {
           "formula": "espera total ÷ llamantes",
           "text": "Cuánto esperan los llamantes en cola hasta que alguien contesta."
@@ -1136,14 +1113,6 @@
         },
         "volume": {
           "text": "Todas las llamadas del período: entrantes, salientes e internas."
-        },
-        "answerRate": {
-          "text": "Proporción de los números externos distintos del período con los que realmente se habló, entrantes y salientes juntos, sin importar cuántas llamadas tomó cada uno. Cuenta personas, no llamadas.",
-          "formula": "números que contestaron ÷ números distintos"
-        },
-        "contactRate": {
-          "text": "Proporción de llamadas que conectaron: cuenta cada llamada, reintentos incluidos. La tasa de respuesta cuenta en cambio a las personas detrás de las llamadas.",
-          "formula": "contestadas ÷ llamadas"
         },
         "inboundPeopleRate": {
           "text": "Proporción de los números distintos que llamaron y cuya llamada fue contestada, sin importar cuántas veces llamó cada uno.",
@@ -1175,10 +1144,6 @@
         "avgWait": {
           "formula": "espera total ÷ llamantes",
           "text": "Cuánto esperan los llamantes en esta cola, incluidos los que abandonaron."
-        },
-        "callAnswerRate": {
-          "formula": "respondidas ÷ ofrecidas",
-          "text": "Proporción de las llamadas ofrecidas a esta cola que respondió un agente."
         },
         "card": {
           "text": "Esta cola durante el período: llamadas ofrecidas, cuántas respondió un agente y cuántas se abandonaron, y qué tan bien las atendió."
@@ -1526,27 +1491,15 @@
       "outbound": "Salientes"
     },
     "kpi": {
-      "abandonRate": "Tasa de abandono",
-      "abandoned": "Abandonadas",
       "activeCalls": "Llamadas activas",
-      "aht": "TMO",
-      "answerRate": "Tasa de respuesta",
-      "answered": "Respondidas",
       "available": "Libres",
-      "avgWait": "Espera media",
-      "fcr": "FCR",
       "longestWait": "Espera más larga",
       "missed": "Perdidas",
       "onCall": "En llamada",
       "ringing": "Sonando",
-      "sla": "SLA",
       "talkTime": "Tiempo de conversación",
       "waiting": "Llamadas en espera",
-      "totalCalls": "Total de llamadas",
-      "contactRate": "Tasa de contacto",
-      "contactRateOf": "Tasa de contacto {{rate}}",
       "peopleReached": "{{reached}} de {{people}} números contactados",
-      "abandonRateOf": "Tasa de abandono {{rate}}",
       "totalSplitInternal": "{{in}} entrantes · {{out}} salientes · {{internal}} internas"
     },
     "live": "En vivo",
@@ -1600,18 +1553,6 @@
       "missed": {
         "text": "Tus llamadas de hoy que no conectaron.",
         "formula": "llamadas − contestadas"
-      },
-      "aht": {
-        "text": "Tiempo medio de conversación de una llamada contestada.",
-        "formula": "tiempo de conversación ÷ contestadas"
-      },
-      "answerRate": {
-        "text": "Proporción de los números externos distintos con los que realmente se habló, sin importar cuántas llamadas tomó cada uno. Cuenta personas: diez intentos a una persona que al final contesta cuentan como una persona contactada. Las llamadas internas entre extensiones quedan fuera.",
-        "formula": "números que contestaron ÷ números distintos"
-      },
-      "contactRate": {
-        "text": "Proporción de llamadas que conectaron: cuenta cada llamada, así que un número intentado cinco veces cuenta cinco veces. La tasa de respuesta cuenta en cambio a las personas.",
-        "formula": "contestadas ÷ llamadas"
       }
     },
     "title": "Panel",
@@ -1629,5 +1570,33 @@
       "total": "{{count}} agentes"
     },
     "today": "Hoy"
+  },
+  "metrics": {
+    "totalCalls": "Total de llamadas",
+    "answered": "Respondidas",
+    "answerRate": "Tasa de respuesta",
+    "contactRate": "Tasa de contacto",
+    "contactRateOf": "Tasa de contacto {{rate}}",
+    "abandoned": "Abandonadas",
+    "abandonRate": "Tasa de abandono",
+    "abandonRateOf": "Tasa de abandono {{rate}}",
+    "aht": "TMO",
+    "sla": "SLA",
+    "fcr": "FCR",
+    "avgWait": "Espera media",
+    "tip": {
+      "answerRate": {
+        "text": "Proporción de los números externos distintos con los que realmente se habló, sin importar cuántas llamadas tomó cada uno. Cuenta personas: diez intentos a una persona que al final contesta cuentan como una persona contactada. Las llamadas internas entre extensiones quedan fuera.",
+        "formula": "números que contestaron ÷ números distintos"
+      },
+      "contactRate": {
+        "text": "Proporción de llamadas que conectaron: cuenta cada llamada, así que un número intentado cinco veces cuenta cinco veces. La tasa de respuesta cuenta en cambio a las personas.",
+        "formula": "contestadas ÷ llamadas"
+      },
+      "aht": {
+        "text": "Tiempo medio de conversación de una llamada contestada.",
+        "formula": "tiempo de conversación ÷ contestadas"
+      }
+    }
   }
 }

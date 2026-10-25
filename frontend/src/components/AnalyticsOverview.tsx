@@ -9,7 +9,7 @@ import {
 import type { DateRange } from './analyticsUtils';
 import type { ExecutiveKPIResponse, VolumeTrendPoint } from '../types';
 import {
-  fmtSecs, fmtPct, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip, pctOf, rangeLabel,
+  fmtSecs, fmtPct, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip, metricTips, pctOf, rangeLabel,
   slaVerdict, abandonVerdict, fcrVerdict, perCallRateVerdict, perPersonRateVerdict,
 } from './analyticsUtils';
 import { Alert, Card, Tooltip } from './ui';
@@ -80,24 +80,20 @@ export function AnalyticsOverview({ dateRange }: Props) {
   const outContact = out ? out.contact_rate ?? pctOf(out.answered_calls, out.total_calls) : null;
 
   // ── Tips. OpDesk's own formulas, so they carry their own English. ───────────
+  const shared = metricTips(t);
   const tips = {
-    volume: kpiTip(t, 'analytics.tip.kpi.volume', t('analytics.kpi.volume'), undefined,
+    volume: kpiTip(t, 'analytics.tip.kpi.volume', t('metrics.totalCalls'), undefined,
       { text: 'Every call in this period — in, out and internal.' }),
-    answerRate: kpiTip(t, 'analytics.tip.kpi.answerRate', t('analytics.kpi.answerRate'), undefined,
-      { text: 'Share of the distinct outside numbers in the period that were actually spoken to, in and out together — however many calls each took. It counts people, not calls.', formula: 'numbers that answered ÷ distinct numbers' }),
-    contactRate: kpiTip(t, 'analytics.tip.kpi.contactRate', t('analytics.kpi.contactRate', 'Contact rate'), undefined,
-      { text: 'Share of the calls that connected — every call counted, retries included. Answer rate counts the people behind the calls instead.', formula: 'answered ÷ calls' }),
-    sla: kpiTip(t, 'analytics.tip.kpi.slaAnswered', t('analytics.kpi.sla'), undefined,
+    ...shared,
+    sla: kpiTip(t, 'analytics.tip.kpi.slaAnswered', t('metrics.sla'), undefined,
       { text: 'How often answered inbound calls were picked up within the queue’s SLA threshold.', formula: 'answered in time ÷ answered' }),
-    aht: kpiTip(t, 'analytics.tip.kpi.ahtTalk', t('analytics.kpi.aht'), undefined,
-      { text: 'Average talk time of an answered call.', formula: 'talk time ÷ answered' }),
-    abandonment: kpiTip(t, 'analytics.tip.kpi.abandonRate', t('analytics.kpi.abandonment'), undefined,
+    abandonment: kpiTip(t, 'analytics.tip.kpi.abandonRate', t('metrics.abandonRate'), undefined,
       { text: 'How many inbound callers hung up before anyone answered.', formula: 'not answered ÷ offered' }),
     shortAbandon: kpiTip(t, 'analytics.tip.kpi.shortAbandonShare', t('analytics.kpi.shortAbandon'), undefined,
       { text: 'Inbound callers who hung up within the short-abandon threshold — usually misdials.', formula: 'quick hang-ups ÷ offered' }),
-    avgWait: kpiTip(t, 'analytics.tip.kpi.avgWait', t('analytics.kpi.avgWait'), undefined,
+    avgWait: kpiTip(t, 'analytics.tip.kpi.avgWait', t('metrics.avgWait'), undefined,
       { text: 'How long queue callers wait before someone picks up.', formula: 'total wait ÷ callers' }),
-    fcr: kpiTip(t, 'analytics.tip.kpi.fcrRepeat', t('analytics.kpi.fcr'), undefined,
+    fcr: kpiTip(t, 'analytics.tip.kpi.fcrRepeat', t('metrics.fcr'), undefined,
       { text: 'Answered queue callers who did not call a queue again within the FCR window.', formula: 'callers with no repeat call ÷ answered callers' }),
     inboundRate: kpiTip(t, 'analytics.tip.kpi.inboundPeopleRate', t('analytics.kpi.inboundAnswerRate'), undefined,
       { text: 'Share of the distinct numbers that called in whose call was answered — however many times each called.', formula: 'callers answered ÷ distinct callers' }),
@@ -111,7 +107,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
   const headline: StatCardProps[] = [
     {
       icon: <PhoneCall size={16} />,
-      label: t('analytics.kpi.volume'),
+      label: t('metrics.totalCalls'),
       value: allTotal.toLocaleString(),
       tip: tips.volume,
       desc: t('dashboard.kpi.totalSplitInternal', '{{in}} in · {{out}} out · {{internal}} internal', {
@@ -122,17 +118,17 @@ export function AnalyticsOverview({ dateRange }: Props) {
     },
     {
       icon: <UserCheck size={16} />,
-      label: t('analytics.kpi.answerRate'),
+      label: t('metrics.answerRate'),
       value: fmtPct(allRate),
       tip: tips.answerRate,
-      desc: t('analytics.kpi.contactRateOf', 'Contact rate {{rate}}', { rate: fmtPct(allContact) }),
+      desc: t('metrics.contactRateOf', { rate: fmtPct(allContact) }),
       delta: delta(allRate, prevAllRate),
       good: 'up',
       tone: VERDICT_TONE[perPersonRateVerdict(allRate)],
     },
     {
       icon: <Gauge size={16} />,
-      label: t('analytics.kpi.sla'),
+      label: t('metrics.sla'),
       value: fmtPct(cur.sla_pct),
       tip: tips.sla,
       delta: delta(cur.sla_pct, prev?.sla_pct),
@@ -141,7 +137,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
     },
     {
       icon: <Timer size={16} />,
-      label: t('analytics.kpi.aht'),
+      label: t('metrics.aht'),
       value: fmtSecs(all?.aht_secs ?? cur.aht_secs),
       tip: tips.aht,
       delta: delta(all?.aht_secs ?? cur.aht_secs, prevAll?.aht_secs ?? prev?.aht_secs),
@@ -154,19 +150,19 @@ export function AnalyticsOverview({ dateRange }: Props) {
   const inboundMetrics: Metric[] = [
     { key: 'answerRate', label: t('analytics.kpi.inboundAnswerRate'), value: fmtPct(inRate),
       tone: VERDICT_TONE[perPersonRateVerdict(inRate)], tip: tips.inboundRate },
-    { key: 'contactRate', label: t('analytics.kpi.contactRate', 'Contact rate'), value: fmtPct(inContact),
+    { key: 'contactRate', label: t('metrics.contactRate'), value: fmtPct(inContact),
       tone: VERDICT_TONE[perCallRateVerdict(inContact)], tip: tips.contactRate },
-    { key: 'sla', label: t('analytics.kpi.sla'), value: fmtPct(cur.sla_pct),
+    { key: 'sla', label: t('metrics.sla'), value: fmtPct(cur.sla_pct),
       tone: VERDICT_TONE[slaVerdict(cur.sla_pct)], tip: tips.sla },
-    { key: 'abandon', label: t('analytics.kpi.abandonment'), value: fmtPct(cur.abandonment_rate),
+    { key: 'abandon', label: t('metrics.abandonRate'), value: fmtPct(cur.abandonment_rate),
       tone: VERDICT_TONE[abandonVerdict(cur.abandonment_rate)], tip: tips.abandonment },
-    { key: 'aht', label: t('analytics.kpi.aht'), value: fmtSecs(cur.aht_secs), tip: tips.aht },
-    { key: 'wait', label: t('analytics.kpi.avgWait'), value: fmtSecs(cur.avg_wait_secs), tip: tips.avgWait },
+    { key: 'aht', label: t('metrics.aht'), value: fmtSecs(cur.aht_secs), tip: tips.aht },
+    { key: 'wait', label: t('metrics.avgWait'), value: fmtSecs(cur.avg_wait_secs), tip: tips.avgWait },
   ];
   const outboundMetrics: Metric[] = out ? [
     { key: 'answerRate', label: t('analytics.kpi.outboundAnswerRate'), value: fmtPct(out.answer_rate),
       tone: VERDICT_TONE[perPersonRateVerdict(out.answer_rate)], tip: tips.outboundRate },
-    { key: 'contactRate', label: t('analytics.kpi.contactRate', 'Contact rate'), value: fmtPct(outContact),
+    { key: 'contactRate', label: t('metrics.contactRate'), value: fmtPct(outContact),
       tone: VERDICT_TONE[perCallRateVerdict(outContact)], tip: tips.contactRate },
     { key: 'aht', label: t('analytics.kpi.outboundAht'), value: fmtSecs(out.aht_secs), tip: tips.aht },
     { key: 'talk', label: t('analytics.kpi.market'), value: fmtSecs(out.sum_billsec), tip: tips.market },
@@ -176,7 +172,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
   const queueService: StatCardProps[] = [
     {
       icon: <Gauge size={16} />,
-      label: t('analytics.kpi.sla'),
+      label: t('metrics.sla'),
       value: fmtPct(cur.sla_pct),
       tip: tips.sla,
       desc: t('analytics.kpi.slaDesc'),
@@ -186,7 +182,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
     },
     {
       icon: <PhoneMissed size={16} />,
-      label: t('analytics.kpi.abandonment'),
+      label: t('metrics.abandonRate'),
       value: fmtPct(cur.abandonment_rate),
       tip: tips.abandonment,
       desc: t('analytics.kpi.abandonmentDesc'),
@@ -206,7 +202,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
     },
     {
       icon: <Hourglass size={16} />,
-      label: t('analytics.kpi.avgWaitKpi'),
+      label: t('metrics.avgWait'),
       value: fmtSecs(cur.avg_wait_secs),
       tip: tips.avgWait,
       desc: t('analytics.kpi.avgWaitDesc'),
@@ -215,7 +211,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
     },
     {
       icon: <RefreshCcw size={16} />,
-      label: t('analytics.kpi.fcr'),
+      label: t('metrics.fcr'),
       value: fmtPct(cur.fcr_pct),
       tip: tips.fcr,
       desc: t('analytics.kpi.fcrDesc'),
@@ -270,8 +266,8 @@ export function AnalyticsOverview({ dateRange }: Props) {
           period={cur.total_calls}
           periodDelta={prev ? cur.total_calls - prev.total_calls : null}
           periodParts={[
-            { label: t('analytics.kpi.answeredCalls'), n: cur.answered_calls },
-            { label: t('analytics.kpi.abandonedCalls'), n: cur.abandoned_calls },
+            { label: t('metrics.answered'), n: cur.answered_calls },
+            { label: t('metrics.abandoned'), n: cur.abandoned_calls },
           ]}
           metrics={inboundMetrics}
         />
@@ -284,7 +280,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
           period={out ? out.total_calls : null}
           periodDelta={out && prevOut ? out.total_calls - prevOut.total_calls : null}
           periodParts={out ? [
-            { label: t('analytics.kpi.answeredCalls'), n: out.answered_calls },
+            { label: t('metrics.answered'), n: out.answered_calls },
             { label: t('analytics.drilldown.noAnswer', 'No Answer'), n: out.no_answer_calls },
             { label: t('analytics.drilldown.busy', 'Busy'), n: out.busy_calls },
             { label: t('analytics.drilldown.failed', 'Failed'), n: out.failed_calls },
@@ -334,7 +330,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
                   <YAxis tick={axisTick} width={40} axisLine={false} tickLine={false} allowDecimals={false} />
                   <ChartTooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--bg-tertiary)' }} />
                   <Legend wrapperStyle={{ fontSize: 'var(--text-xs)', paddingTop: 8 }} iconType="circle" iconSize={8} />
-                  <Bar dataKey="answered" name={t('analytics.kpi.answeredCalls')} stackId="o" fill="var(--chart-inbound)" {...seg} />
+                  <Bar dataKey="answered" name={t('metrics.answered')} stackId="o" fill="var(--chart-inbound)" {...seg} />
                   <Bar dataKey="abandoned" name={t('analytics.kpi.unansweredCalls', 'Unanswered')} stackId="o" fill="var(--accent-danger)" radius={top} {...seg} />
                 </BarChart>
               </ResponsiveContainer>
