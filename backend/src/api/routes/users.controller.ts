@@ -8,6 +8,7 @@ import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
 import { reloadAsteriskSip } from '../../services/dialplan';
 import { HttpError } from '../http-error';
+import { isValidSipSecret, SIP_SECRET_RULE } from '../shared';
 import { Auth, Delete, Get, Post, Put, principal } from '../routing';
 import { parseBody, pInt, v } from '../validation';
 import { refreshLiveScopes } from './groups.controller';
@@ -44,6 +45,15 @@ export const UpdateUserBody = v.model({
 export const ALL_MONITOR_MODES = ['listen', 'whisper', 'barge'];
 
 const CONFLICT = 'Username or extension already in use';
+
+/**
+ * A password that is about to become an extension's SIP secret must pass the same rule as
+ * POST /api/me/sip-password: the secret is reachable from the internet, and spaces or
+ * quotes break the PJSIP config. Checked before anything is written.
+ */
+function assertSipSecretFor(ext: string | null | undefined, password: string | null | undefined): void {
+  if (ext && password && !isValidSipSecret(password)) throw new HttpError(400, SIP_SECRET_RULE);
+}
 
 /**
  * A users row as the Users panel reads it: the row (with monitor_modes) plus the agents,
@@ -133,6 +143,7 @@ export class UsersController {
     let monitorModes = modeList(body.monitor_modes);
     if (monitorModes === null && body.monitor_mode) monitorModes = [body.monitor_mode];
     if (role === 'admin') monitorModes = [...ALL_MONITOR_MODES];
+    assertSipSecretFor((body.extension ?? '').trim(), body.password);
     const userId = await dbm.createUser(username, body.password, {
       name: body.name ?? null,
       extension: body.extension ?? null,
@@ -175,6 +186,11 @@ export class UsersController {
       if (holder && holder.id !== userId) throw new HttpError(409, CONFLICT);
     }
 
+    // The extension the save leaves the user with: an explicit '' unlinks it, so nothing
+    // may be written to the extension they had.
+    const effectiveExt = body.extension === null || body.extension === undefined ? user.extension : wantedExt;
+    assertSipSecretFor(effectiveExt, body.password);
+
     const effectiveRole = body.role !== null && body.role !== undefined ? body.role : user.role;
     let monitorModes = modeList(body.monitor_modes);
     if (effectiveRole === 'admin') monitorModes = [...ALL_MONITOR_MODES];
@@ -190,7 +206,7 @@ export class UsersController {
     });
     if (!ok) throw new HttpError(500, { code: 'user.record.update_failed', message: 'Failed to update user' });
     if (body.group_ids !== null && body.group_ids !== undefined) await dbm.setUserGroups(userId, body.group_ids);
-    await syncPbxExtension(body.extension || user.extension, body.password, body.name);
+    await syncPbxExtension(effectiveExt, body.password, body.name);
     await refreshLiveScopes();
     const updated = await dbm.getUserById(userId);
     if (!updated) throw new HttpError(404, 'User not found');

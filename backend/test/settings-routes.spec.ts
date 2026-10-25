@@ -82,6 +82,19 @@ describe('POST /api/settings', () => {
     expect(dbm.setSetting).toHaveBeenCalledWith('PBX', SECRET_MASK);
   });
 
+  test.each([
+    [{ JWT_SECRET: 'x' }, 'JWT_SECRET'],
+    [{ PBX: 'FreePBX', VAPID_PRIVATE_KEY: 'k' }, 'VAPID_PRIVATE_KEY'],
+    [{ 'bad key': '1' }, 'bad key'],
+    [{ lower_case: '1' }, 'lower_case'],
+  ])('%j is refused whole, nothing written', async (body, key) => {
+    const err = await ctl.saveSettings(req({ body })).catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err).toMatchObject({ status: 400 });
+    expect(err.message).toContain(key);
+    expect(dbm.setSetting).not.toHaveBeenCalled();
+  });
+
   test('a non-object body is a validation error', async () => {
     await expect(ctl.saveSettings(req({ body: [1, 2] }))).rejects.toMatchObject({ name: 'RequestValidationError' });
   });

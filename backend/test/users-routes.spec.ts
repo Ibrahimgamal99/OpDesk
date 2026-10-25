@@ -118,6 +118,37 @@ describe('update', () => {
     expect(reloadAsteriskSip).toHaveBeenCalledTimes(1);
   });
 
+  test.each(['1234', 'onlyletters', '12345678', 'has space1', 'quote"d12'])(
+    'a weak or unsafe SIP secret (%s) is a 400 before anything is written',
+    async (password) => {
+      const err = await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { password } })).catch((e) => e);
+      expect(err).toMatchObject({ status: 400 });
+      expect(dbm.updateUser).not.toHaveBeenCalled();
+      expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
+      expect(reloadAsteriskSip).not.toHaveBeenCalled();
+    },
+  );
+
+  test('an account without an extension keeps the sign-in password rule only', async () => {
+    mocked(dbm.getUserById).mockResolvedValue({ ...USER, extension: null });
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { password: '1234' } }));
+    expect(dbm.updateUser).toHaveBeenCalled();
+    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
+  });
+
+  test('unlinking the extension writes nothing to the old one', async () => {
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { extension: '', password: 'newpass1', name: 'Bob' } }));
+    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
+    expect(dbm.setExtensionNameInPbx).not.toHaveBeenCalled();
+    expect(reloadAsteriskSip).not.toHaveBeenCalled();
+  });
+
+  test('create with an extension refuses a weak SIP secret', async () => {
+    const err = await ctl.apiCreateUser(req({ body: { username: 'bo', password: '1234', extension: '101' } })).catch((e) => e);
+    expect(err).toMatchObject({ status: 400 });
+    expect(dbm.createUser).not.toHaveBeenCalled();
+  });
+
   test("another user's username or extension is a 409", async () => {
     mocked(dbm.getUserByUsername).mockResolvedValue({ id: 9 });
     await expect(ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { username: 'bob' } }))).rejects.toMatchObject({ status: 409 });

@@ -94,6 +94,27 @@ export function pyStrValue(value: unknown): string {
 /** `settings_data: dict` (a bare dict body). */
 const SettingsDataBody = v.dict();
 
+/** A settings key as the app writes them: upper-case words joined by underscores. */
+const SETTING_KEY_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+/**
+ * Keys this generic route must never write. JWT_SECRET in the DB overrides the installer's
+ * .env secret, so writing it here let any value (even one character) sign every session;
+ * the VAPID pair is replaced only as a pair by POST /api/push/vapid/rotate.
+ */
+const PROTECTED_SETTING_KEYS = new Set(['JWT_SECRET', 'VAPID_PRIVATE_KEY', 'VAPID_PUBLIC_KEY']);
+
+/**
+ * The keys of a settings body this route refuses: malformed ones, and protected ones sent
+ * with a value. A protected key sent back as SECRET_MASK is the read-modify-write round trip
+ * ("keep what is stored") and stays allowed.
+ */
+export function refusedSettingKeys(body: Record<string, unknown>): string[] {
+  return Object.entries(body)
+    .filter(([k, value]) => !SETTING_KEY_RE.test(k) || (PROTECTED_SETTING_KEYS.has(k) && !isMasked(value)))
+    .map(([k]) => k);
+}
+
 @Controller()
 export class SettingsController {
   /**
@@ -105,6 +126,9 @@ export class SettingsController {
   @Auth('admin')
   async saveSettings(@Req() req: Request) {
     const settingsData = parseBody(SettingsDataBody, req.body);
+    // All or nothing: one refused key rejects the body before anything is written.
+    const refused = refusedSettingKeys(settingsData);
+    if (refused.length) throw new HttpError(400, `These settings cannot be changed here: ${refused.join(', ')}`);
     try {
       const saved: string[] = [];
       const failed: string[] = [];

@@ -33,7 +33,7 @@ jest.mock('../src/db/db-manager', () => ({
 }));
 jest.mock('../src/services/vad-runner', () => ({ schedule: jest.fn() }));
 
-import { AgentStateManager, NOT_READY_REASON_ERROR, shiftDayStart, parseShiftResetTime, formatShiftResetTime } from '../src/services/agent-state';
+import { AgentStateManager, NOT_READY_REASON_ERROR, shiftDayStart, parseShiftResetTime, formatShiftResetTime, SHIFT_RESET_OFF } from '../src/services/agent-state';
 import { AMIExtensionsMonitor } from '../src/services/ami';
 import { ShiftResetClock } from '../src/services/background';
 
@@ -265,5 +265,21 @@ describe('DND, hydrate, shift reset', () => {
     expect(clock.due(390, new Date(2026, 9, 25, 23, 0))).toBe(false);
     expect(clock.due(390, new Date(2026, 9, 26, 6, 31))).toBe(true);
     expect(clock.due(390, new Date(2026, 9, 26, 7, 0))).toBe(false);
+  });
+
+  it('a new reset time re-anchors the clock instead of firing', () => {
+    const clock = new ShiftResetClock(0, new Date(2026, 9, 25, 9, 0));
+    // 00:00 -> 15:00 at 14:00: no reset now; the next one is today's 15:00.
+    expect(clock.due(900, new Date(2026, 9, 25, 14, 0))).toBe(false);
+    expect(clock.due(900, new Date(2026, 9, 25, 14, 55))).toBe(false);
+    expect(clock.due(900, new Date(2026, 9, 25, 15, 1))).toBe(true);
+    // Off, then on again: re-armed, no burst.
+    expect(clock.due(null, new Date(2026, 9, 25, 16, 0))).toBe(false);
+    expect(clock.due(900, new Date(2026, 9, 26, 16, 0))).toBe(false);
+    expect(clock.due(900, new Date(2026, 9, 27, 15, 1))).toBe(true);
+  });
+
+  it("'off' is how the turned-off reset is stored and read", () => {
+    expect(parseShiftResetTime(SHIFT_RESET_OFF)).toBeNull();
   });
 });
