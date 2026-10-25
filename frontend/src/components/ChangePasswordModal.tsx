@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import { KeyRound, Phone, Loader2, CheckCircle2, AlertCircle, Eye, EyeOff, Wand2, QrCode } from 'lucide-react';
+import { KeyRound, Phone, Loader2, Eye, EyeOff, Wand2, QrCode } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Modal } from './ui/Modal';
-import { FormField } from './ui/Form';
+import { Alert, FormField, FormRow, Modal } from './ui';
 import { api, toApiError } from '../lib/api';
+import '../styles/account.css';
 
 export type PasswordKind = 'login' | 'sip';
 
@@ -54,6 +54,8 @@ export function PasswordForm({ sip, onSipChanged, onShowQr }: { sip: boolean; on
   const [done, setDone] = useState<string | null>(null);
 
   const mismatch = confirm !== '' && confirm !== next;
+  // Distinct ids per kind: My Profile renders both forms on one page.
+  const idp = sip ? 'acct-sip' : 'acct-login';
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -76,10 +78,10 @@ export function PasswordForm({ sip, onSipChanged, onShowQr }: { sip: boolean; on
 
   if (done) {
     return (
-      <div>
-        <div className="up-alert success"><CheckCircle2 size={18} /><span>{done}</span></div>
+      <div className="u-col u-gap-3">
+        <Alert tone="success">{done}</Alert>
         {sip && onShowQr && (
-          <button type="button" className="btn btn-primary acct-wide-btn" onClick={onShowQr}>
+          <button type="button" className="btn btn-primary u-w-full" onClick={onShowQr}>
             <QrCode size={14} /> {t('account.showNewQr', 'Show the new mobile QR')}
           </button>
         )}
@@ -90,44 +92,65 @@ export function PasswordForm({ sip, onSipChanged, onShowQr }: { sip: boolean; on
   return (
     <form onSubmit={submit} className="acct-form">
       {sip && (
-        <p className="up-hint acct-note">
+        <Alert tone="info" className="u-mb-4">
           {t('account.sipNote', 'Every phone and softphone on your extension signs out and has to sign in again with the new password (scan the new QR).')}
-        </p>
+        </Alert>
       )}
-      <FormField label={t('account.current', 'Current OpDesk password')} htmlFor="acct-current"
-        hint={sip ? t('account.currentSipHint', 'Your sign-in password, to confirm it is you.') : undefined}>
-        <input id="acct-current" className="form-input" type="password" autoComplete="current-password"
-          value={current} onChange={(e) => setCurrent(e.target.value)} required />
-      </FormField>
-      <FormField label={sip ? t('account.newSip', 'New SIP password') : t('account.new', 'New password')} htmlFor="acct-new"
-        hint={sip
-          ? t('account.sipRule', '8 to 64 characters, letters and digits, no spaces or quotes.')
-          : t('account.loginRule', 'At least 8 characters.')}>
-        <div className="acct-input-row">
-          <input id="acct-new" className="form-input" type={show ? 'text' : 'password'} autoComplete="new-password"
-            value={next} onChange={(e) => setNext(e.target.value)} required minLength={8} />
-          <button type="button" className="btn" onClick={() => setShow((s) => !s)}
-            title={show ? t('account.hide', 'Hide') : t('account.show', 'Show')}>
-            {show ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-          {sip && (
-            <button type="button" className="btn" title={t('account.generate', 'Generate')}
-              onClick={() => { const p = generateSipPassword(); setNext(p); setConfirm(p); setShow(true); }}>
-              <Wand2 size={14} />
+      <FormRow single>
+        <FormField
+          label={t('account.current', 'Current OpDesk password')}
+          htmlFor={`${idp}-current`}
+          hint={sip ? t('account.currentSipHint', 'Your sign-in password, to confirm it is you.') : undefined}
+          required
+        >
+          <input id={`${idp}-current`} className="form-input" type="password" autoComplete="current-password"
+            value={current} onChange={(e) => setCurrent(e.target.value)} required />
+        </FormField>
+      </FormRow>
+      <FormRow single>
+        <FormField
+          label={sip ? t('account.newSip', 'New SIP password') : t('account.new', 'New password')}
+          htmlFor={`${idp}-new`}
+          hint={sip
+            ? t('account.sipRule', '8 to 64 characters, letters and digits, no spaces or quotes.')
+            : t('account.loginRule', 'At least 8 characters.')}
+          required
+        >
+          <div className="acct-input-row">
+            <input id={`${idp}-new`} className="form-input" type={show ? 'text' : 'password'} autoComplete="new-password"
+              value={next} onChange={(e) => setNext(e.target.value)} required minLength={8} />
+            <button type="button" className="btn btn-icon" onClick={() => setShow((s) => !s)}
+              title={show ? t('account.hide', 'Hide') : t('account.show', 'Show')}
+              aria-label={show ? t('account.hide', 'Hide') : t('account.show', 'Show')}
+              aria-pressed={show}>
+              {show ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
+            {sip && (
+              <button type="button" className="btn btn-icon"
+                title={t('account.generate', 'Generate')} aria-label={t('account.generate', 'Generate')}
+                onClick={() => { const p = generateSipPassword(); setNext(p); setConfirm(p); setShow(true); }}>
+                <Wand2 size={14} />
+              </button>
+            )}
+          </div>
+        </FormField>
+      </FormRow>
+      <FormRow single>
+        <FormField label={t('account.confirm', 'Confirm new password')} htmlFor={`${idp}-confirm`} required>
+          <input id={`${idp}-confirm`} className="form-input" type={show ? 'text' : 'password'} autoComplete="new-password"
+            value={confirm} onChange={(e) => setConfirm(e.target.value)} required aria-invalid={mismatch || undefined} />
+          {mismatch && (
+            <Alert variant="inline" className="u-mt-1h">{t('account.mismatch', 'The passwords do not match.')}</Alert>
           )}
-        </div>
-      </FormField>
-      <FormField label={t('account.confirm', 'Confirm new password')} htmlFor="acct-confirm"
-        hint={mismatch ? t('account.mismatch', 'The passwords do not match.') : undefined}>
-        <input id="acct-confirm" className="form-input" type={show ? 'text' : 'password'} autoComplete="new-password"
-          value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
-      </FormField>
-      {error && <div className="up-alert error"><AlertCircle size={18} /><span>{error}</span></div>}
-      <button type="submit" className="btn btn-primary acct-wide-btn" disabled={saving || !current || !next || next !== confirm}>
-        {saving ? <Loader2 size={14} className="spinner" /> : <KeyRound size={14} />}
-        {saving ? t('account.saving', 'Saving…') : t('account.save', 'Change password')}
-      </button>
+        </FormField>
+      </FormRow>
+      <Alert className="u-mb-4">{error}</Alert>
+      <div className="u-row u-justify-end">
+        <button type="submit" className="btn btn-primary" disabled={saving || !current || !next || next !== confirm}>
+          {saving ? <Loader2 size={14} className="spinner" /> : <KeyRound size={14} />}
+          {saving ? t('account.saving', 'Saving…') : t('account.save', 'Change password')}
+        </button>
+      </div>
     </form>
   );
 }

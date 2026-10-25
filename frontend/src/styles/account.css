@@ -1,0 +1,56 @@
+/* ════════════════════════════════════════════════════════════════════
+   Account: My Profile, the change-password form and the mobile-app QR.
+   Only what echo's shared sheets have no class for; tokens only.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── My Profile: two columns of cards, one on a phone ── */
+.acct-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.acct-profile-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+/* The account facts reuse .crmx-meta; inside a card it needs no outer margin. */
+.acct-facts { margin-block: 0; }
+
+/* ── Change-password form ── */
+.acct-form .up-hint { display: block; margin-top: var(--space-1h); }
+
+/* Input with trailing show / generate buttons. */
+.acct-input-row { display: flex; gap: var(--space-1h); }
+.acct-input-row .form-input { flex: 1; min-inline-size: 0; }
+
+/* ── Mobile-app QR ── */
+.acct-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+.acct-link:hover { text-decoration: underline; }
+
+/* A QR code must be dark-on-light to scan, so its tile does not invert with the theme. */
+.acct-qr-code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: min(220px, 100%);
+  aspect-ratio: 1;
+  margin-inline: auto;
+  padding: var(--space-1h);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--on-scrim-rgb));
+}
+.acct-qr-code img { inline-size: 100%; block-size: auto; image-rendering: pixelated; }
+
+.acct-qr-json { max-block-size: 200px; }
