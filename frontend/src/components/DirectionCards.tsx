@@ -1,13 +1,14 @@
-import type React from 'react';
 import { useTranslation } from 'react-i18next';
-import { CalendarDays, Minus, PhoneIncoming, PhoneOutgoing, Radio, TrendingDown, TrendingUp } from 'lucide-react';
-import type { CallLogRecord, ExecutiveKPIResponse } from '../types';
-import { Tooltip } from './ui';
-import { KpiCard, type KpiCardProps } from './KpiCard';
 import {
-  abandonVerdict, fmtPct, fmtSecs, kpiTip, perCallRateVerdict, perPersonRateVerdict, type RateVerdict,
+  CheckCircle2, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Timer, UserCheck,
+} from 'lucide-react';
+import type { CallLogRecord, ExecutiveKPIResponse } from '../types';
+import {
+  abandonVerdict, fcrVerdict, fmtPct, fmtSecs, kpiTip, perCallRateVerdict, perPersonRateVerdict, slaVerdict,
 } from './analyticsUtils';
-import '../styles/direction-cards.css';
+import {
+  FigureCard, StatCard, StatRow, VERDICT_TONE, type Metric, type StatCardProps, type Tip, type Tone,
+} from './FigureCards';
 
 /**
  * Today's traffic, modelled on echo's dashboard: a row of headline figures for all calls
@@ -47,6 +48,9 @@ export interface QueueFigures {
 
 export interface PeriodFigures {
   all: DirectionFigures;
+  /** Calls that are neither inbound nor outbound: extension to extension, feature codes and
+   *  echo tests. Part of `all`, so in + out + internal is the total. */
+  internal: number;
   inbound: DirectionFigures;
   outbound: DirectionFigures;
   queue: QueueFigures | null;
@@ -71,6 +75,7 @@ export function figuresFromOverview(data: ExecutiveKPIResponse): PeriodFigures {
       contactRate: all?.contact_rate ?? rate(allAnswered, allTotal),
       ahtSecs: all?.aht_secs ?? cur.aht_secs, talkSecs: null,
     },
+    internal: all?.internal_calls ?? Math.max(0, allTotal - cur.total_calls - (out?.total_calls ?? 0)),
     inbound: {
       calls: cur.total_calls, answered: cur.answered_calls,
       people: cur.customers ?? 0, reached: cur.customers_answered ?? 0,
@@ -135,113 +140,11 @@ function directionFromCalls(calls: CallLogRecord[], withTalk = false): Direction
 export function figuresFromCalls(calls: CallLogRecord[]): PeriodFigures {
   return {
     all: directionFromCalls(calls),
+    internal: calls.filter((c) => c.call_type !== 'IN' && c.call_type !== 'OUT').length,
     inbound: directionFromCalls(calls.filter((c) => c.call_type === 'IN')),
     outbound: directionFromCalls(calls.filter((c) => c.call_type === 'OUT'), true),
     queue: null,
   };
-}
-
-export type Tone = '' | 'success' | 'warn' | 'danger';
-
-/** Higher-is-better bands: at or above `good` is green, at or above `warn` amber. */
-export function bandTone(v: number | null | undefined, good: number, warn: number): Tone {
-  if (v === null || v === undefined) return '';
-  return v >= good ? 'success' : v >= warn ? 'warn' : 'danger';
-}
-
-/** Abandonment, where LOWER is better: 5% healthy, 10% the queue's defining problem. */
-function abandonTone(v: number | null | undefined): Tone {
-  if (v === null || v === undefined) return '';
-  return v <= 5 ? 'success' : v <= 10 ? 'warn' : 'danger';
-}
-
-const VERDICT_TONE: Record<RateVerdict, Tone> = { good: 'success', warn: 'warn', bad: 'danger', '': '' };
-
-/** Tooltip props: the sentence, its optional formula line, and the icon's name. */
-export interface Tip { content: string; formula?: string; label?: string }
-export interface Part { label: string; n: number }
-export interface Metric { key: string; label: string; value: string; tone?: Tone; tip?: Tip }
-
-/** The sub-counts under a figure: "Queue 2 · Direct 1". */
-function Parts({ parts }: { parts: Part[] }) {
-  if (parts.length === 0) return null;
-  return (
-    <div className="dcard-parts">
-      {parts.map((p) => <span key={p.label}>{p.label} <b>{p.n.toLocaleString()}</b></span>)}
-    </div>
-  );
-}
-
-/** The period total against the previous period of the same length: "+120 vs previous". */
-function PeriodDelta({ delta }: { delta: number }) {
-  const { t } = useTranslation();
-  const Icon = delta > 0 ? TrendingUp : delta < 0 ? TrendingDown : Minus;
-  return (
-    <span className="dcard-delta">
-      <Icon size={12} />
-      {delta > 0 ? '+' : ''}{delta.toLocaleString()} {t('analytics.delta.vsPrevPeriod', 'vs previous period')}
-    </span>
-  );
-}
-
-/**
- * One card of figures: a title, an optional live count, the period's headline number with
- * its sub-counts, then a grid of quality figures.
- */
-export function FigureCard({
-  icon, title, tip, live, liveParts = [], periodLabel, period, periodDelta, periodParts = [], metrics, badge,
-}: {
-  icon: React.ReactNode; title: string; tip?: Tip;
-  live?: number; liveParts?: Part[];
-  periodLabel: string; period: number | null; periodDelta?: number | null;
-  periodParts?: Part[]; metrics: Metric[];
-  /** A text flag beside the title. */
-  badge?: React.ReactNode;
-}) {
-  const { t } = useTranslation();
-  return (
-    <section className={`dcard${live ? ' live' : ''}`} aria-label={title}>
-      <header className="dcard-head">
-        <span className="dcard-icon">{icon}</span>
-        <h3 className="dcard-title">{title}</h3>
-        {tip && <Tooltip {...tip} label={title} />}
-        {badge && <span className="dcard-badge">{badge}</span>}
-      </header>
-
-      {live !== undefined && (
-        <>
-          <div className="dcard-block">
-            <div className="dcard-line">
-              <span className="dcard-kicker live"><Radio size={12} />{t('dashboard.now', 'Now')}</span>
-              <span className={`dcard-value${live > 0 ? ' now' : ' idle'}`}>{live}</span>
-            </div>
-            <Parts parts={liveParts} />
-          </div>
-          <div className="dcard-divider" />
-        </>
-      )}
-
-      <div className="dcard-block">
-        <div className="dcard-line">
-          <span className="dcard-kicker"><CalendarDays size={12} />{periodLabel}</span>
-          <span className="dcard-value">{period === null ? '—' : period.toLocaleString()}</span>
-        </div>
-        {period !== null && periodDelta !== undefined && periodDelta !== null && <PeriodDelta delta={periodDelta} />}
-        {period !== null && <Parts parts={periodParts} />}
-      </div>
-
-      {period !== null && metrics.length > 0 && (
-        <dl className="dcard-metrics">
-          {metrics.map((m) => (
-            <div key={m.key} className={`dcard-metric${m.tone ? ` ${m.tone}` : ''}`}>
-              <dt>{m.label}{m.tip && <Tooltip {...m.tip} label={m.label} />}</dt>
-              <dd>{m.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-    </section>
-  );
 }
 
 type T = ReturnType<typeof useTranslation>['t'];
@@ -273,15 +176,18 @@ export function TodayKpis({ figures: f, isAgent }: TodayKpisProps) {
   const q = f.queue;
   const missed = f.all.calls - f.all.answered;
 
-  const cards: KpiCardProps[] = [
+  const cards: StatCardProps[] = [
     {
+      icon: <PhoneCall size={16} />,
       label: t('dashboard.kpi.totalCalls', 'Total calls'),
       value: f.all.calls.toLocaleString(),
       tip: kpiTip(t, 'dashboard.tip.totalCalls', t('dashboard.kpi.totalCalls', 'Total calls'), undefined,
-        { text: 'Every call today — inbound, outbound and between extensions.' }),
-      desc: t('dashboard.kpi.totalSplit', '{{in}} in · {{out}} out', { in: f.inbound.calls, out: f.outbound.calls }),
+        { text: 'Every call today — inbound, outbound and between extensions, echo tests and feature codes included.' }),
+      desc: t('dashboard.kpi.totalSplitInternal', '{{in}} in · {{out}} out · {{internal}} internal',
+        { in: f.inbound.calls.toLocaleString(), out: f.outbound.calls.toLocaleString(), internal: f.internal.toLocaleString() }),
     },
     {
+      icon: <CheckCircle2 size={16} />,
       label: t('dashboard.kpi.answered', 'Answered'),
       value: f.all.answered.toLocaleString(),
       tip: kpiTip(t, 'dashboard.tip.answered', t('dashboard.kpi.answered', 'Answered'), undefined,
@@ -289,28 +195,32 @@ export function TodayKpis({ figures: f, isAgent }: TodayKpisProps) {
       desc: t('dashboard.kpi.contactRateOf', 'Contact rate {{rate}}', { rate: fmtPct(f.all.contactRate) }),
     },
     {
+      icon: <UserCheck size={16} />,
       label: t('dashboard.kpi.answerRate', 'Answer rate'),
       value: fmtPct(f.all.answerRate),
       tip: tips.answerRate,
       desc: t('dashboard.kpi.peopleReached', '{{reached}} of {{people}} numbers reached',
         { reached: f.all.reached, people: f.all.people }),
-      colorClass: perPersonRateVerdict(f.all.answerRate),
+      tone: VERDICT_TONE[perPersonRateVerdict(f.all.answerRate)],
     },
     isAgent || !q ? {
+      icon: <PhoneMissed size={16} />,
       label: t('dashboard.kpi.missed', 'Missed'),
       value: missed.toLocaleString(),
       tip: kpiTip(t, 'dashboard.tip.missed', t('dashboard.kpi.missed', 'Missed'), undefined,
         { text: 'Your calls today that did not connect.', formula: 'calls − answered' }),
-      colorClass: missed > 0 ? 'bad' : '',
+      tone: missed > 0 ? 'danger' : '',
     } : {
+      icon: <PhoneMissed size={16} />,
       label: t('dashboard.kpi.abandoned', 'Abandoned'),
       value: q.abandoned.toLocaleString(),
       tip: kpiTip(t, 'dashboard.tip.abandoned', t('dashboard.kpi.abandoned', 'Abandoned'), undefined,
         { text: 'Inbound callers who hung up before anyone answered.', formula: 'inbound calls not answered' }),
       desc: t('dashboard.kpi.abandonRateOf', 'Abandon rate {{rate}}', { rate: fmtPct(q.abandonRate) }),
-      colorClass: abandonVerdict(q.abandonRate),
+      tone: VERDICT_TONE[abandonVerdict(q.abandonRate)],
     },
     {
+      icon: <Timer size={16} />,
       label: t('dashboard.kpi.aht', 'AHT'),
       value: fmtSecs(f.all.ahtSecs),
       tip: kpiTip(t, 'dashboard.tip.aht', t('dashboard.kpi.aht', 'AHT'), undefined,
@@ -318,11 +228,7 @@ export function TodayKpis({ figures: f, isAgent }: TodayKpisProps) {
     },
   ];
 
-  return (
-    <div className="an-kpi-grid cols-5">
-      {cards.map((c) => <KpiCard key={c.label} {...c} featured />)}
-    </div>
-  );
+  return <StatRow>{cards.map((c) => <StatCard key={c.label} {...c} />)}</StatRow>;
 }
 
 interface DirectionCardsProps {
@@ -362,16 +268,16 @@ export function DirectionCards({ figures: f, periodLabel }: DirectionCardsProps)
     answerRate(f.inbound),
     contactRate(f.inbound),
     ...(q ? [
-      { key: 'sla', label: t('dashboard.kpi.sla', 'SLA'), value: fmtPct(q.slaPct), tone: bandTone(q.slaPct, 80, 60) },
+      { key: 'sla', label: t('dashboard.kpi.sla', 'SLA'), value: fmtPct(q.slaPct), tone: VERDICT_TONE[slaVerdict(q.slaPct)] },
       {
         key: 'abandoned', label: t('dashboard.kpi.abandoned', 'Abandoned'), value: q.abandoned.toLocaleString(),
         tone: (q.abandoned > 0 ? 'danger' : '') as Tone,
       },
       {
         key: 'abandonRate', label: t('dashboard.kpi.abandonRate', 'Abandon rate'), value: fmtPct(q.abandonRate),
-        tone: abandonTone(q.abandonRate),
+        tone: VERDICT_TONE[abandonVerdict(q.abandonRate)],
       },
-      { key: 'fcr', label: t('dashboard.kpi.fcr', 'FCR'), value: fmtPct(q.fcrPct), tone: bandTone(q.fcrPct, 85, 70) },
+      { key: 'fcr', label: t('dashboard.kpi.fcr', 'FCR'), value: fmtPct(q.fcrPct), tone: VERDICT_TONE[fcrVerdict(q.fcrPct)] },
       { key: 'avgWait', label: t('dashboard.kpi.avgWait', 'Avg wait'), value: fmtSecs(q.avgWaitSecs) },
     ] : []),
     aht(f.inbound),

@@ -45,8 +45,6 @@ export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { Badge } from './Badge';
 export type { BadgeProps, BadgeTone } from './Badge';
-export { Stat, StatRow } from './Stat';
-export type { StatProps } from './Stat';
 export { Card } from './Card';
 export type { CardProps } from './Card';
 export { Loading } from './Loading';

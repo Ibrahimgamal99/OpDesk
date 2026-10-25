@@ -16,27 +16,6 @@
   gap: var(--space-4);
 }
 
-/* ---------------------------------------------------------------------------
-   KPI cards grid
-   --------------------------------------------------------------------------- */
-.an-kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: var(--space-3);
-}
-/* Five across on desktop only; the narrow breakpoints below still apply. */
-@media (min-width: 901px) {
-  .an-kpi-grid.cols-5 {
-    grid-template-columns: repeat(5, 1fr);
-  }
-}
-/* The Overview's four headline figures: one row on desktop. */
-@media (min-width: 901px) {
-  .an-kpi-grid.cols-4 {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
 /* A direct value label at the end of a bar: text ink, never the series colour. */
 .an-bar-label { fill: var(--text-secondary); font-size: var(--text-xs); }
 
@@ -45,59 +24,6 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
   gap: var(--space-4);
-}
-
-/* KpiCard renders with Stat's .ui-stat / .ui-stat-label / .ui-stat-value /
-   .ui-stat-hint classes, so tile, label and figure match every other summary row.
-   What a KPI adds to a Stat: the figure's status tone (an SLA met or missed is a
-   status, so the value itself carries it), the period delta and the sparkline. */
-.an-kpi-value.good { color: var(--accent-success); }
-.an-kpi-value.warn { color: var(--accent-warning); }
-.an-kpi-value.bad  { color: var(--accent-danger); }
-
-/* Headline cards (KpiCard featured): bigger type, a tone bar on top and a light tint of the
-   same tone, so the row a stakeholder reads first says how things are before any number is
-   read. The tone is the figure's verdict; a plain count has none and wears the brand blue. */
-.an-kpi-card--featured {
-  --kpi-tone: var(--accent-primary);
-  background: color-mix(in srgb, var(--kpi-tone) 8%, var(--bg-card));
-  border-color: color-mix(in srgb, var(--kpi-tone) 30%, var(--border-subtle));
-  border-top: 3px solid var(--kpi-tone);
-  padding: var(--space-4);
-  gap: var(--space-1h);
-}
-.an-kpi-card--featured[data-tone='good'] { --kpi-tone: var(--accent-success); }
-.an-kpi-card--featured[data-tone='warn'] { --kpi-tone: var(--accent-warning); }
-.an-kpi-card--featured[data-tone='bad']  { --kpi-tone: var(--accent-danger); }
-.an-kpi-card--featured .ui-stat-label {
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
-  color: var(--text-secondary);
-}
-.an-kpi-card--featured .ui-stat-value {
-  font-size: var(--text-3xl);
-  font-weight: var(--weight-bold);
-}
-.an-kpi-card--featured .ui-stat-hint {
-  font-size: var(--text-md);
-  color: var(--text-secondary);
-}
-
-.an-kpi-delta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-}
-
-.an-kpi-delta.pos { color: var(--accent-success); }
-.an-kpi-delta.neg { color: var(--accent-danger); }
-.an-kpi-delta.neu { color: var(--text-muted); }
-
-.an-kpi-delta-label {
-  font-weight: var(--weight-normal);
-  color: var(--text-muted);
 }
 
 /* Sparkline in card */
@@ -378,24 +304,9 @@
   color: var(--text-muted, var(--text-muted));
 }
 
-/* ---------------------------------------------------------------------------
-   Responsive breakpoints
-   --------------------------------------------------------------------------- */
-
-@media (max-width: 900px) {
-  .an-kpi-grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
 @media (max-width: 640px) {
   .an-tab-content {
     gap: var(--space-2h);
-  }
-
-  .an-kpi-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: var(--space-2);
   }
 
   .an-heatmap-grid {
@@ -404,12 +315,6 @@
 
   .an-heatmap-cell {
     height: 18px;
-  }
-}
-
-@media (max-width: 420px) {
-  .an-kpi-grid {
-    grid-template-columns: 1fr 1fr;
   }
 }
 
@@ -429,10 +334,6 @@
 [dir="rtl"] .an-table td.sticky {
   left: auto;
   right: 0;
-}
-
-[dir="rtl"] .an-kpi-delta {
-  flex-direction: row-reverse;
 }
 
 /* ---------------------------------------------------------------------------
@@ -502,7 +403,6 @@
   color: var(--text-muted, var(--text-muted));
   margin-top: 4px;
 }
-
 
 /* ---------------------------------------------------------------------------
    Agent Adherence — clickable row + the per-agent activity trace (AgentTimelineModal)
@@ -858,7 +758,6 @@
 }
 
 /* ── Per-campaign table: the name opens that campaign ── */
-
 
 .an-camp-note {
   font-size: var(--text-xs);

@@ -1543,11 +1543,11 @@
       "talkTime": "Tempo de conversa",
       "waiting": "Chamadas em espera",
       "totalCalls": "Total de chamadas",
-      "totalSplit": "{{in}} de entrada · {{out}} de saída",
       "contactRate": "Taxa de contato",
       "contactRateOf": "Taxa de contato {{rate}}",
       "peopleReached": "{{reached}} de {{people}} números alcançados",
-      "abandonRateOf": "Taxa de abandono {{rate}}"
+      "abandonRateOf": "Taxa de abandono {{rate}}",
+      "totalSplitInternal": "{{in}} de entrada · {{out}} de saída · {{internal}} internas"
     },
     "live": "Ao vivo",
     "now": "Agora",
@@ -1591,7 +1591,7 @@
         "text": "Há quanto tempo a pessoa que espera há mais tempo está aguardando. Fica vermelho após um minuto."
       },
       "totalCalls": {
-        "text": "Todas as chamadas de hoje — de entrada, de saída e entre ramais."
+        "text": "Todas as chamadas de hoje — de entrada, de saída e entre ramais, incluindo testes de eco e códigos de recurso."
       },
       "abandoned": {
         "text": "Chamadores de entrada que desligaram antes de alguém atender.",

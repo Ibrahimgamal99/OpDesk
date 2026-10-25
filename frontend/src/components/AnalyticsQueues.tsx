@@ -12,7 +12,7 @@ import {
   slaVerdict, abandonVerdict, targetVerdict,
 } from './analyticsUtils';
 import { Alert, Badge, Card, Dropdown, EmptyState, Tooltip } from './ui';
-import { FigureCard, VERDICT_TONE, type Metric } from './AnalyticsFigureCard';
+import { FigureCard, VERDICT_TONE, type Metric } from './FigureCards';
 
 interface HeatmapProps { data: HeatmapData }
 

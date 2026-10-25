@@ -1543,11 +1543,11 @@
       "talkTime": "Talk time",
       "waiting": "Calls Waiting",
       "totalCalls": "Total calls",
-      "totalSplit": "{{in}} in · {{out}} out",
       "contactRate": "Contact rate",
       "contactRateOf": "Contact rate {{rate}}",
       "peopleReached": "{{reached}} of {{people}} numbers reached",
-      "abandonRateOf": "Abandon rate {{rate}}"
+      "abandonRateOf": "Abandon rate {{rate}}",
+      "totalSplitInternal": "{{in}} in · {{out}} out · {{internal}} internal"
     },
     "live": "Live",
     "now": "Now",
@@ -1591,7 +1591,7 @@
         "text": "How long the person who has been waiting longest has been holding. Turns red past one minute."
       },
       "totalCalls": {
-        "text": "Every call today — inbound, outbound and between extensions."
+        "text": "Every call today — inbound, outbound and between extensions, echo tests and feature codes included."
       },
       "abandoned": {
         "text": "Inbound callers who hung up before anyone answered.",
