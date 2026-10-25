@@ -25,7 +25,7 @@ import { createTask, nowIso, truthy } from '../../core/py';
 import { runtime } from '../../core/runtime';
 import { authenticateWsToken, type Principal } from '../../core/security';
 import * as dbm from '../../db/db-manager';
-import { extFromInterface, normalizeInterface } from '../../services/ami';
+import { extFromInterface, normalizeInterface, sameNumber, type AMIExtensionsMonitor } from '../../services/ami';
 import { NOT_READY_REASON_ERROR } from '../../services/agent-state';
 
 const log = getLogger('api.routes.ws');
@@ -178,6 +178,97 @@ export function scopeCanControlQueueMember(scope: LiveScope | null | undefined, 
     return scopeCanAccessQueue(scope, queue);
   }
   return scopeCanAccessQueue(scope, queue);
+}
+
+/**
+ * The extension whose call a transfer / take-over `source` belongs to, when this connection
+ * may move it; null otherwise. The source is either an extension the connection controls,
+ * or the party (an outside caller, a colleague) talking to such an extension's call. `ext`
+ * names that extension (the Active Calls row); without it the controlled extensions on a
+ * call with `source` are searched.
+ */
+export function transferSourceOwner(
+  scope: LiveScope | null | undefined,
+  monitor: AMIExtensionsMonitor,
+  source: string,
+  ext = '',
+): string | null {
+  const s = source.trim();
+  const e = ext.trim();
+  if (!s) return null;
+  if (!e || e === s) {
+    if (scopeCanControlExtension(scope, s)) return s;
+    if (e) return null;
+  }
+  const talksTo = (owner: string) => {
+    const peer = monitor.callPeerOf(owner);
+    return !!peer && sameNumber(peer, s);
+  };
+  if (e) return scopeCanControlExtension(scope, e) && talksTo(e) ? e : null;
+  for (const owner of monitor.activeCalls.keys()) {
+    if (scopeCanControlExtension(scope, owner) && talksTo(owner)) return owner;
+  }
+  return null;
+}
+
+/**
+ * Why this connection may not start `mode` (listen / whisper / barge) on `target` from
+ * `supervisor`, or null when it may. Agents never supervise; the mode must be one the user
+ * was granted; the spy leg rings the user's OWN extension (an admin may also ring another
+ * extension of the PBX), so nobody can make a colleague's phone eavesdrop.
+ */
+export function supervisionRefusal(
+  scope: LiveScope | null | undefined,
+  monitor: AMIExtensionsMonitor,
+  mode: string,
+  supervisor: string,
+  target: string,
+): string | null {
+  if (!scope || scope.role === 'agent') return 'Agents cannot supervise calls';
+  const modes = Array.isArray(scope.monitor_modes) ? (scope.monitor_modes as string[]) : [];
+  if (!modes.includes(mode)) return `Not allowed to ${mode}`;
+  if (!/^[0-9]+$/.test(supervisor)) return 'Your extension must be a number';
+  const own = String(scope.extension || '').trim();
+  if (supervisor !== own && !(scope.role === 'admin' && monitor.monitored.has(supervisor))) {
+    return 'Supervise from your own extension';
+  }
+  if (!scopeCanControlExtension(scope, target)) return 'Not allowed to monitor this extension';
+  return null;
+}
+
+/** A queue member interface naming one extension: `<TECH>/<ext>` or `Local/<ext>@<context>[/n]`. */
+export function isExtensionInterface(iface: string): boolean {
+  return /^(PJSIP|SIP|IAX2|DAHDI)\/[0-9]{2,6}$/i.test(iface) || /^Local\/[0-9]{2,6}@[A-Za-z0-9_-]+(\/n)?$/i.test(iface);
+}
+
+/**
+ * The Redirect target of a transfer: the client may only pick among the PBX's own dial
+ * contexts (the AMI context, from-internal and the click-to-call context), and a numeric
+ * priority. null when what the client sent is not one of those.
+ */
+export async function transferTarget(
+  monitor: AMIExtensionsMonitor,
+  context: unknown,
+  priority: unknown,
+): Promise<{ context: string | null; priority: string } | null> {
+  const prio = priority === null || priority === undefined || priority === '' ? '1' : pyStr(priority).trim();
+  if (!/^[1-9][0-9]{0,2}$/.test(prio)) return null;
+  const ctx = context === null || context === undefined ? '' : pyStr(context).trim();
+  if (!ctx) return { context: null, priority: prio };
+  const allowed = new Set([monitor.context, 'from-internal']);
+  try {
+    const c2c = await dbm.getSetting('CLICK_TO_CALL_CONTEXT', process.env.CLICK_TO_CALL_CONTEXT || 'from-internal');
+    if (c2c) allowed.add(String(c2c).trim());
+  } catch (e) {
+    log.debug('click-to-call context lookup failed: %s', e);
+  }
+  return allowed.has(ctx) ? { context: ctx, priority: prio } : null;
+}
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -358,25 +449,35 @@ export async function handleClientMessage(websocket: WebSocket, message: unknown
         return;
       }
       case 'sync': {
-        // Reconcile extensions/queues with the PBX (prune removed ones, refresh names),
-        // then resync live status, calls and queues.
+        // It writes the agents and queues tables: an admin's action. Everyone else refreshes
+        // the live state with sync_calls / sync_queues.
+        if (scope.role !== 'admin') {
+          await send(actionResult('sync', false, 'Only an admin can run a full sync'));
+          return;
+        }
+        // Reconcile extensions with the PBX (refresh names; prune removed ones only when the
+        // extension set really changed), then resync live status, calls and queues.
         const extensions = await dbm.getExtensionsFromDb();
         if (extensions !== null && extensions !== undefined) {
           const names = await dbm.getExtensionNamesFromDb();
-          monitor.monitored = new Set(extensions.map((e) => String(e)));
+          const fresh = new Set(extensions.map((e) => String(e)));
           const bridge = getBridge();
           if (bridge) {
             bridge.extensionNames = names;
             bridge.invalidateNames();
           }
-          await dbm.syncAgentsFromExtensions([...monitor.monitored], names, true);
+          const changed = !sameSet(fresh, monitor.monitored);
+          monitor.monitored = fresh;
+          await dbm.syncAgentsFromExtensions([...fresh], names, changed);
         }
         await monitor.loadDeviceTechs();
         await monitor.syncExtensionStatuses();
         await monitor.syncActiveCalls();
         await monitor.syncQueueStatus();
         await monitor.syncDndState();
-        await dbm.syncQueuesFromList([...monitor.queues.keys()], await dbm.getQueueNamesFromDb(), true);
+        // New queues are added and names refreshed, never pruned: a queue missing from one
+        // QueueStatus reply would take its group links with it.
+        await dbm.syncQueuesFromList([...monitor.queues.keys()], await dbm.getQueueNamesFromDb());
         await send(actionResult('sync', true, 'Full sync completed'));
         return;
       }
@@ -391,11 +492,12 @@ export async function handleClientMessage(websocket: WebSocket, message: unknown
       case 'listen':
       case 'whisper':
       case 'barge': {
-        const supervisor = pyStr(get(m, 'supervisor', '') ?? '');
-        const target = pyStr(get(m, 'target', '') ?? '');
+        const supervisor = pyStr(get(m, 'supervisor', '') ?? '').trim();
+        const target = pyStr(get(m, 'target', '') ?? '').trim();
         if (!supervisor || !target) return;
-        if (!scopeCanControlExtension(scope, target)) {
-          await send(actionResult(action, false, 'Not allowed to monitor this extension'));
+        const refusal = supervisionRefusal(scope, monitor, action, supervisor, target);
+        if (refusal) {
+          await send(actionResult(action, false, refusal));
           return;
         }
         let result: boolean;
@@ -426,38 +528,42 @@ export async function handleClientMessage(websocket: WebSocket, message: unknown
         return;
       }
       case 'transfer': {
-        const source = pyStr(get(m, 'source', '') ?? '');
-        const destination = pyStr(get(m, 'destination', '') ?? '');
+        const source = pyStr(get(m, 'source', '') ?? '').trim();
+        const destination = pyStr(get(m, 'destination', '') ?? '').trim();
         if (!source || !destination) {
           await send(actionResult('transfer', false, 'Source and destination required'));
           return;
         }
-        if (!scopeCanControlExtension(scope, source)) {
+        const owner = transferSourceOwner(scope, monitor, source, pyStr(get(m, 'ext', '') ?? ''));
+        if (!owner) {
           await send(actionResult('transfer', false, 'Not allowed to control this extension'));
           return;
         }
-        const result = await monitor.transferCall(source, destination, {
-          context: (get(m, 'context') as string | null) || null,
-          priority: pyStr(get(m, 'priority', '1')),
-        });
+        const redirect = await transferTarget(monitor, get(m, 'context'), get(m, 'priority'));
+        if (!redirect) {
+          await send(actionResult('transfer', false, 'Transfer context not allowed'));
+          return;
+        }
+        const result = await monitor.transferCall(source, destination, { ...redirect, owner });
         await send(actionResult('transfer', result, `${result ? 'Transfer requested' : 'Failed to transfer'} ${source} to ${destination}`));
         if (result) await broadcastNow();
         return;
       }
       case 'take_over': {
-        const source = pyStr(get(m, 'source', '') ?? '');
+        const source = pyStr(get(m, 'source', '') ?? '').trim();
         const destination = String(scope.extension || '').trim();
+        const owner = source ? transferSourceOwner(scope, monitor, source, pyStr(get(m, 'ext', '') ?? '')) : null;
+        const redirect = await transferTarget(monitor, get(m, 'context'), get(m, 'priority'));
         if (!source) {
           await send(actionResult('take_over', false, 'Source required'));
         } else if (!destination) {
           await send(actionResult('take_over', false, 'No extension assigned to your user; cannot take over'));
-        } else if (!scopeCanControlExtension(scope, source)) {
+        } else if (!owner) {
           await send(actionResult('take_over', false, 'Not allowed to control this extension'));
+        } else if (!redirect) {
+          await send(actionResult('take_over', false, 'Transfer context not allowed'));
         } else {
-          const result = await monitor.transferCall(source, destination, {
-            context: (get(m, 'context') as string | null) || null,
-            priority: pyStr(get(m, 'priority', '1')),
-          });
+          const result = await monitor.transferCall(source, destination, { ...redirect, owner });
           await send(actionResult('take_over', result,
             `${result ? 'Call transferred to you' : 'Failed to take over'} (${source} → ${destination})`));
           if (result) await broadcastNow();
@@ -494,6 +600,12 @@ async function handleQueueAction(action: string, m: Record<string, unknown>, sco
   if (!queue || !iface) return;
   if (!scopeCanControlQueueMember(scope, queue, iface)) {
     await send(actionResult(action, false, 'Not allowed to manage this queue'));
+    return;
+  }
+  // A member is one extension's device, and one this connection can see: never a trunk,
+  // an arbitrary Local channel or a dial string.
+  if (action === 'queue_add' && (!isExtensionInterface(iface) || !scopeCanAccessExtension(scope, extFromInterface(iface)))) {
+    await send(actionResult(action, false, `Not an extension interface: ${iface}`));
     return;
   }
   let success: boolean;

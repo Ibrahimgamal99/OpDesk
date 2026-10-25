@@ -1,0 +1,481 @@
+{
+ "meaningful": [
+  [
+   "",
+   false
+  ],
+  [
+   "1",
+   false
+  ],
+  [
+   "12",
+   false
+  ],
+  [
+   "123",
+   true
+  ],
+  [
+   "1001",
+   true
+  ],
+  [
+   "+201001234567",
+   true
+  ],
+  [
+   "+",
+   false
+  ],
+  [
+   "++123",
+   false
+  ],
+  [
+   "*43",
+   true
+  ],
+  [
+   "*",
+   false
+  ],
+  [
+   "*4a",
+   false
+  ],
+  [
+   "s",
+   false
+  ],
+  [
+   "h",
+   false
+  ],
+  [
+   "01234567890",
+   true
+  ],
+  [
+   " 1001 ",
+   true
+  ],
+  [
+   "abc",
+   false
+  ],
+  [
+   "10a1",
+   false
+  ],
+  [
+   "<unknown>",
+   false
+  ],
+  [
+   "anonymous",
+   false
+  ],
+  [
+   "+12",
+   false
+  ],
+  [
+   "00",
+   false
+  ],
+  [
+   "1 2",
+   false
+  ],
+  [
+   "-123",
+   false
+  ]
+ ],
+ "ext_from_interface": [
+  [
+   "",
+   ""
+  ],
+  [
+   "100",
+   "100"
+  ],
+  [
+   " 100 ",
+   "100"
+  ],
+  [
+   "Local/100@from-queue/n",
+   "100"
+  ],
+  [
+   "PJSIP/100",
+   "100"
+  ],
+  [
+   "SIP/100",
+   "100"
+  ],
+  [
+   "Local/1001@from-queue",
+   "1001"
+  ],
+  [
+   "PJSIP/1001-0000ab",
+   "1001-0000ab"
+  ],
+  [
+   "abc/def/ghi",
+   "def"
+  ],
+  [
+   "1001@x",
+   "1001"
+  ],
+  [
+   " PJSIP/100 ",
+   "100"
+  ]
+ ],
+ "ext_from_channel": [
+  [
+   "",
+   null
+  ],
+  [
+   "PJSIP/110-0000001a",
+   "110"
+  ],
+  [
+   "SIP/1001-abc",
+   "1001"
+  ],
+  [
+   "PJSIP/opensips-000001",
+   null
+  ],
+  [
+   "Local/1001@from-internal-0001;1",
+   null
+  ],
+  [
+   "Local/+2010@dialer-out-0001;2",
+   null
+  ],
+  [
+   "PJSIP/abc",
+   null
+  ],
+  [
+   "IAX2/12-3",
+   "12"
+  ],
+  [
+   "PJSIP/1001",
+   null
+  ],
+  [
+   "Local/1043@mobile-late-00a;1",
+   null
+  ]
+ ],
+ "format_duration": [
+  [
+   0,
+   "00:00"
+  ],
+  [
+   1,
+   "00:01"
+  ],
+  [
+   59,
+   "00:59"
+  ],
+  [
+   60,
+   "01:00"
+  ],
+  [
+   61,
+   "01:01"
+  ],
+  [
+   3599,
+   "59:59"
+  ],
+  [
+   3600,
+   "01:00:00"
+  ],
+  [
+   3661,
+   "01:01:01"
+  ],
+  [
+   86399,
+   "23:59:59"
+  ],
+  [
+   90061,
+   "25:01:01"
+  ],
+  [
+   0.9,
+   "00:00"
+  ],
+  [
+   59.999,
+   "00:59"
+  ],
+  [
+   3600.5,
+   "01:00:00"
+  ]
+ ],
+ "parse": [
+  [
+   "Response: Success\r\nActionID: opdesk-1\r\nMessage: Pong\r\n\r\n",
+   {
+    "Response": "Success",
+    "ActionID": "opdesk-1",
+    "Message": "Pong"
+   }
+  ],
+  [
+   "Event: Hangup\r\nChannel: PJSIP/1001-0001\r\nCause-txt: Normal Clearing\r\n\r\n",
+   {
+    "Event": "Hangup",
+    "Channel": "PJSIP/1001-0001",
+    "Cause-txt": "Normal Clearing"
+   }
+  ],
+  [
+   "",
+   {}
+  ]
+ ],
+ "queue_member_status": [
+  [
+   "0",
+   "Unknown"
+  ],
+  [
+   "1",
+   "Not in use"
+  ],
+  [
+   "2",
+   "In use"
+  ],
+  [
+   "5",
+   "Unavailable"
+  ],
+  [
+   "8",
+   "On Hold"
+  ],
+  [
+   "9",
+   "Unknown (9)"
+  ],
+  [
+   "",
+   "Unknown ()"
+  ],
+  [
+   "x",
+   "Unknown (x)"
+  ],
+  [
+   1,
+   "Not in use"
+  ]
+ ],
+ "channel_type": [
+  [
+   "",
+   ""
+  ],
+  [
+   "PJSIP/sbc-000000a1",
+   "sbc"
+  ],
+  [
+   "PJSIP/1001-0001",
+   "Local"
+  ],
+  [
+   "Local/1001@from-queue-01;1",
+   "1001@from"
+  ],
+  [
+   "PJSIP/opensips-00ab",
+   "opensips"
+  ],
+  [
+   "nochannel",
+   ""
+  ],
+  [
+   "SIP/a-b-c",
+   "a"
+  ]
+ ],
+ "display_number": [
+  [
+   {
+    "original_destination": "1002",
+    "caller": "1003"
+   },
+   "1001",
+   "1002"
+  ],
+  [
+   {
+    "original_destination": "1001",
+    "caller": "s",
+    "destination": "+201001234567"
+   },
+   "1001",
+   "+201001234567"
+  ],
+  [
+   {
+    "exten": "*43"
+   },
+   "1001",
+   "*43"
+  ],
+  [
+   {},
+   "1001",
+   "Unknown"
+  ],
+  [
+   {
+    "callerid": "<unknown>",
+    "exten": "12"
+   },
+   "1001",
+   "Unknown"
+  ]
+ ],
+ "status_desc": [
+  [
+   "0",
+   "Idle"
+  ],
+  [
+   "4",
+   "Unavailable"
+  ],
+  [
+   " 8 ",
+   "Ringing"
+  ],
+  [
+   "99",
+   "Unknown (99)"
+  ],
+  [
+   "-1",
+   "Not Found"
+  ],
+  [
+   16,
+   "On Hold"
+  ]
+ ],
+ "missed_call_party": [
+  [
+   "1001",
+   {
+    "caller": "1003"
+   },
+   "",
+   [
+    true,
+    "1003"
+   ]
+  ],
+  [
+   "1001",
+   {
+    "exten": "1018"
+   },
+   "",
+   [
+    false,
+    null
+   ]
+  ],
+  [
+   "1018",
+   {
+    "exten": "1018",
+    "callerid": "1003"
+   },
+   "",
+   [
+    true,
+    "1003"
+   ]
+  ],
+  [
+   "1001",
+   {},
+   "01001234567",
+   [
+    true,
+    "01001234567"
+   ]
+  ],
+  [
+   "1001",
+   null,
+   "",
+   [
+    true,
+    null
+   ]
+  ],
+  [
+   "1001",
+   {
+    "queue_caller": "01234567890"
+   },
+   "",
+   [
+    true,
+    "01234567890"
+   ]
+  ],
+  [
+   "1001",
+   {
+    "callerid": "anonymous"
+   },
+   "",
+   [
+    true,
+    null
+   ]
+  ],
+  [
+   "1001",
+   {
+    "callerid": "1001",
+    "original_destination": "1001"
+   },
+   "",
+   [
+    true,
+    null
+   ]
+  ]
+ ]
+}

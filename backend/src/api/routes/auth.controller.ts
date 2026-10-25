@@ -15,6 +15,7 @@ import {
   createAccessToken,
   getUserScope,
   isAgentUser,
+  principalMonitorModes,
   recordLoginFailure,
   verifyPassword,
 } from '../../core/security';
@@ -93,7 +94,7 @@ export class AuthController {
         name: user.name ?? null,
         role: user.role,
         extension: user.extension ?? null,
-        monitor_modes: scope.monitor_modes.length ? scope.monitor_modes : ['listen'],
+        monitor_modes: principalMonitorModes(scope),
         allowed_agent_extensions: scope.allowed_agent_extensions,
         allowed_queue_names: scope.allowed_queue_names,
         is_agent: await isAgentUser({ id: user.id, extension: user.extension }),

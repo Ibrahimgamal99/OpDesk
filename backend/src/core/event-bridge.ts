@@ -17,6 +17,7 @@
 import type { WebSocket } from 'ws';
 import * as dbm from '../db/db-manager';
 import { DIALPLAN_CTX, formatDuration, type AMIExtensionsMonitor, type CallInfo } from '../services/ami';
+import { getSlaDefaultSecs, getSlaThresholds, slaThresholdFor, type SlaThresholds } from '../services/analytics';
 import { getLogger } from './logger';
 import { nowIso, truthy } from './py';
 import { runtime, type LiveStateBridge } from './runtime';
@@ -85,6 +86,9 @@ export class AMIEventBridge {
   extensionNames: Record<string, string> = {};
   private queueNames: Record<string, string> = {};
   private queueNamesAt = 0;
+  // Each queue's service-level target (analytics settings), for the Dashboard's past-target alert.
+  private slaThresholds: SlaThresholds = {};
+  private slaDefaultSecs = 20;
   private timer: NodeJS.Timeout | null = null;
   private lastBroadcast = 0;
   private broadcasting = false;
@@ -182,13 +186,18 @@ export class AMIEventBridge {
     );
   }
 
-  /** queues.queue_name display names (cached: the Python hit the DB per client per tick). */
+  /**
+   * queues.queue_name display names and the SLA targets (cached: the Python hit the DB per
+   * client per tick).
+   */
   private async refreshQueueNames(force = false): Promise<void> {
     if (!force && Date.now() - this.queueNamesAt < QUEUE_NAMES_TTL_MS) return;
     try {
       const names: Record<string, string> = {};
       for (const q of await dbm.getQueuesList()) names[String(q.extension)] = q.queue_name;
       this.queueNames = names;
+      this.slaThresholds = await getSlaThresholds();
+      this.slaDefaultSecs = await getSlaDefaultSecs();
       this.queueNamesAt = Date.now();
     } catch (e) {
       log.debug('queue names refresh failed: %s', e);
@@ -215,7 +224,9 @@ export class AMIEventBridge {
       // crossRef creates a bare placeholder the moment someone dials this extension, and
       // if the destination never gets a channel (caller gave up first, unregistered
       // phone) that placeholder would pin the card on "In Call" while the hint says Idle.
-      const callLive = truthy(callInfo['channel']);
+      // An `ended` entry (its channel is gone; kept for the call's final-hangup push, as a
+      // ring-all leg the ACD cancelled is) leaves the card to the hint as well.
+      const callLive = truthy(callInfo['channel']) && !truthy(callInfo['ended']);
       const callState = callLive ? strip(callInfo['state']) : '';
       let status: string;
       if (callLive) {
@@ -255,10 +266,11 @@ export class AMIEventBridge {
       if (callees.has(ext)) continue;
       const state = strip(info['state']);
       if (state && state.toLowerCase() === 'down') continue;
+      if (truthy(info['ended'])) continue;
       activeCalls[ext] = this.formatCallInfo(ext, info);
     }
 
-    const queues: Record<string, { extension: string; name: string; members: unknown; calls_waiting: number }> = {};
+    const queues: Record<string, { extension: string; name: string; members: unknown; calls_waiting: number; sla_secs: number }> = {};
     for (const [queueExt, queueInfo] of monitor.queues) {
       if ((queueExt || '').trim().toLowerCase() === DEFAULT_QUEUE_HIDDEN) continue;
       if (queueSet !== null && !queueSet.has(queueExt)) continue;
@@ -267,6 +279,7 @@ export class AMIEventBridge {
         name: this.queueNames[queueExt] || queueExt,
         members: queueInfo.members || {},
         calls_waiting: queueInfo.calls_waiting || 0,
+        sla_secs: slaThresholdFor(queueExt, this.slaThresholds, this.slaDefaultSecs),
       };
     }
 
@@ -353,6 +366,7 @@ export class AMIEventBridge {
       callerid: info['callerid'] ?? '',
       destination: info['destination'] ?? '',
       original_destination: info['original_destination'] ?? '',
+      route: this.monitor.liveRoute(info, ext),
     };
   }
 }

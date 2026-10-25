@@ -54,6 +54,9 @@ const log = getLogger('services.ami');
 /** One active_calls entry. Open bag: the Python dict grew keys from many events. */
 export type CallInfo = Record<string, any>;
 
+/** Which way a call in progress runs, as the Active Calls badge and the Dashboard split read it. */
+export type LiveRoute = 'inbound_queue' | 'inbound_direct' | 'internal' | 'outbound';
+
 export interface QueueMemberSummary {
   status: string;
   paused: boolean;
@@ -159,7 +162,7 @@ export const DEFAULT_TECH = 'PJSIP';
 const WATCHED_EVENTS: ReadonlySet<string> = new Set([
   'ExtensionStatus', 'PeerStatus', 'ContactStatus', 'DeviceStateChange',
   'Newchannel', 'Hangup', 'Dial', 'DialBegin', 'DialEnd',
-  'Bridge', 'NewCallerid', 'Newstate', 'VarSet',
+  'Bridge', 'NewCallerid', 'NewConnectedLine', 'Newstate', 'VarSet',
   'QueueMemberStatus', 'QueueMemberAdded', 'QueueMemberRemoved',
   'QueueEntry', 'QueueCallerJoin', 'QueueCallerLeave',
   'QueueMemberPause', 'QueueMemberPaused', 'QueueMemberUnpause',
@@ -311,6 +314,11 @@ export function normalizeInterface(iface: string | null | undefined, tech: strin
   return `${tech || DEFAULT_TECH}/${s}`;
 }
 
+/** The same phone number, allowing for a national leading zero written on one side only. */
+export function sameNumber(a: string, b: string): boolean {
+  return a === b || (!!a && !!b && a.replace(/^0+/, '') === b.replace(/^0+/, ''));
+}
+
 /** Strip formatting from a dialable number and validate it. null if unusable. */
 export function normalizeDialNumber(raw: unknown): string | null {
   const s = pyStr(raw ?? '').replace(/[\s\-().]/g, '');
@@ -375,6 +383,9 @@ export class AMIExtensionsMonitor {
   linkedid2channels: Map<string, Set<string>> = new Map(); // linkedid -> live channels (final-hangup detection)
   linkedidCrmSent: Set<string> = new Set(); // "linkedid:uniqueid" already pushed (dedupe)
   answeredCh: Map<string, string> = new Map(); // device channel that reached Up -> ext
+  // Linkedid -> (ext -> entry) of calls whose extension started a new call before the old
+  // call's final hangup arrived: kept for that hangup's Linkedid sweep (see parkEndedCall).
+  endedCalls: Map<string, Map<string, CallInfo>> = new Map();
   callNotificationCallback: ((ext: string) => unknown) | null = null;
   incomingCallCallback: ((ext: string, caller: string, callId: string, displayName: string) => unknown) | null = null;
   callOutcomeCallback: ((ext: string, callStatus: string, linkedid: string) => unknown) | null = null;
@@ -562,6 +573,79 @@ export class AMIExtensionsMonitor {
     return info;
   }
 
+  /**
+   * This extension's own channel is gone, but sibling legs on the same Linkedid keep the call
+   * alive, so the entry must survive for the final hangup's Linkedid sweep (it holds what the
+   * outcome frame and the CRM push need). Flag it as ended so every display path treats the
+   * extension as free again: a queue ring-all leg the ACD cancelled when another member
+   * answered must not stay Ringing while the winner talks on.
+   */
+  markCallEnded(ext: string, info: CallInfo): void {
+    if (info['ended']) return;
+    // Another of the extension's own devices is still live (two registered contacts): point
+    // the entry at it instead. The channel must name the extension: ch2ext also maps a trunk
+    // leg to the number it dialled.
+    for (const c of this.ch2ext.keys()) {
+      if (c !== (info['channel'] ?? null) && extFromChannel(c) === ext) {
+        info['channel'] = c;
+        return;
+      }
+    }
+    info['ended'] = true;
+    info['state'] = 'Down';
+    delete info['destchannel'];
+    delete info['dest_state'];
+    delete info['_wake_pushed'];
+    log.debug('Call entry for %s marked ended (its channel is gone, sibling legs still up)', ext);
+  }
+
+  /**
+   * Move an ended entry out of active_calls but keep it reachable for its own call's final
+   * hangup, so a new call on the same extension starts from a clean entry. False when it has
+   * no Linkedid to be swept by (it then stays where it is).
+   */
+  parkEndedCall(ext: string, info: CallInfo): boolean {
+    const lid = info['linkedid'];
+    if (!lid) return false;
+    let parked = this.endedCalls.get(lid);
+    if (parked === undefined) {
+      parked = new Map();
+      this.endedCalls.set(lid, parked);
+    }
+    parked.set(ext, info);
+    // Bounded: a Linkedid whose final hangup never arrives would otherwise leak.
+    while (this.endedCalls.size > 500) this.endedCalls.delete(this.endedCalls.keys().next().value as string);
+    return true;
+  }
+
+  /**
+   * The route of a call in progress, from `ext`'s side: an outside caller through a queue or
+   * straight to the extension, an extension (or a feature code) on either side, or an outside
+   * number the extension dialled. null while nothing marks it yet.
+   */
+  liveRoute(info: CallInfo, ext: string): LiveRoute | null {
+    const caller = pyStr(info['caller'] || info['queue_caller'] || '');
+    if (meaningful(caller) && caller !== ext) {
+      if (isExtNumber(caller)) return 'internal';
+      return info['queue'] || info['queue_caller'] ? 'inbound_queue' : 'inbound_direct';
+    }
+    const dialled = pyStr(info['original_destination'] || info['exten'] || info['destination'] || '');
+    if (dialled.startsWith('*')) return 'internal';
+    if (!meaningful(dialled) || dialled === ext) return null;
+    return isExtNumber(dialled) ? 'internal' : 'outbound';
+  }
+
+  /**
+   * The number `ext`'s live call is talking to (what the Active Calls row shows), or null
+   * when the extension has no live call.
+   */
+  callPeerOf(ext: string): string | null {
+    const info = this.activeCalls.get(ext);
+    if (!info || !info['channel'] || info['ended']) return null;
+    const peer = this.displayNumber(info, ext);
+    return peer === 'Unknown' ? null : peer;
+  }
+
   /** Map channel -> ext, caching new mappings. */
   resolveExt(channel: string): string | null {
     let ext = this.ch2ext.get(channel) || null;
@@ -582,7 +666,7 @@ export class AMIExtensionsMonitor {
   }
 
   statusDesc(code: unknown, ext: string | null = null): string {
-    if (ext && this.activeCalls.has(ext)) {
+    if (ext && this.activeCalls.has(ext) && !this.activeCalls.get(ext)!['ended']) {
       const info = this.activeCalls.get(ext)!;
       const num = this.displayNumber(info, ext);
       const state = dget(info, 'state', '');
@@ -594,13 +678,16 @@ export class AMIExtensionsMonitor {
   }
 
   /** Let *target* know it has an incoming call from *caller*. */
-  crossRef(caller: string, target: string): void {
+  crossRef(caller: string, target: string, linkedid = ''): void {
     if (target === caller || !meaningful(target)) return;
     // Only internal extensions (3-5 digits); external numbers would leave stale entries.
     if (!isdigit(target) || target.length > 5) return;
     const t = this.callInfo(target);
     t['caller'] = caller; // Always set caller for incoming call detection
     if (!t['original_destination']) t['original_destination'] = caller;
+    // Tagged with the caller's Linkedid so the final-hangup sweep reaps the placeholder when
+    // the target never gets a channel of its own (caller gave up first, unregistered phone).
+    if (linkedid && !t['linkedid']) t['linkedid'] = linkedid;
   }
 
   /** Remember the channel driver an extension uses (from a channel or interface name). */
@@ -741,11 +828,15 @@ export class AMIExtensionsMonitor {
     const newCh2ext = new Map<string, string>();
     const newChCallerid = new Map<string, string>();
     const newAnswered = new Map<string, string>();
+    // EVERY channel Asterisk listed, extension or not: a caller waiting in a queue sits on a
+    // trunk channel, which names no extension but is very much alive.
+    const liveChannels = new Set<string>();
 
     for (const cur of msgs.slice(1)) {
       if (cur['Event'] !== 'Status') continue;
       const ch = cur['Channel'] || '';
       if (!ch) continue;
+      liveChannels.add(ch);
       const ext = extFromChannel(ch);
       if (!ext) continue;
       this.learnTech(ch);
@@ -763,6 +854,9 @@ export class AMIExtensionsMonitor {
       let info: CallInfo;
       if (existing && truthyObj(existing)) {
         info = { ...existing };
+        // Asterisk lists a live channel for this extension: whatever ended earlier is over,
+        // so the `ended` flag (markCallEnded) must not hide the call just resynced.
+        delete info['ended'];
         // Preserve duration tracking fields
         if (!('start_time' in info)) info['start_time'] = new Date();
         if (!('answer_time' in info)) info['answer_time'] = null;
@@ -780,6 +874,7 @@ export class AMIExtensionsMonitor {
       newActive.set(ext, info);
       if ((state || 'Up') === 'Up' && RE_DEVICE_CHANNEL.test(ch)) newAnswered.set(ch, ext);
       const linkedid = cur['Linkedid'] || '';
+      if (linkedid && !info['linkedid']) info['linkedid'] = linkedid;
       if (linkedid) {
         this.ch2linkedid.set(ch, linkedid);
         let set = this.linkedid2channels.get(linkedid);
@@ -791,6 +886,10 @@ export class AMIExtensionsMonitor {
       }
     }
 
+    // An ended entry still owes its call's final-hangup push: park it rather than lose it.
+    for (const [ext, info] of this.activeCalls) {
+      if (info['ended'] && !newActive.has(ext)) this.parkEndedCall(ext, info);
+    }
     this.activeCalls = newActive;
     this.ch2ext = newCh2ext;
     this.chCallerid = newChCallerid;
@@ -800,10 +899,11 @@ export class AMIExtensionsMonitor {
     for (const [ch, ext] of [...this.destch2ext]) {
       if (!chSet.has(ch) && !newActive.has(ext)) this.destch2ext.delete(ch);
     }
-    // Queue entries whose channel is gone are stale.
+    // Queue entries whose channel is gone are stale. "Gone" is judged against every listed
+    // channel, not just the extension ones, or each sync would evict the waiting callers.
     const newCh2uid = new Map<string, string>();
     for (const [ch, uid] of this.ch2uniqueid) {
-      if (chSet.has(ch)) newCh2uid.set(ch, uid);
+      if (liveChannels.has(ch)) newCh2uid.set(ch, uid);
       else if (this.queueEntries.has(uid)) {
         const entry = this.queueEntries.get(uid)!;
         this.queueEntries.delete(uid);
@@ -1425,7 +1525,11 @@ export class AMIExtensionsMonitor {
     // Device names carry no channel suffix (PJSIP/100), so this only matches the rare
     // channel-shaped device, exactly as the Python did. Hints come via ExtensionStatus.
     const ext = extFromChannel(dget(p, 'Device', ''));
-    if (ext && this.activeCalls.has(ext)) this.activeCalls.get(ext)!['state'] = dget(p, 'State', '');
+    if (ext && this.activeCalls.has(ext)) {
+      const info = this.activeCalls.get(ext)!;
+      // An entry held only for the final-hangup sweep must not be revived by a late state event.
+      if (!info['ended']) info['state'] = dget(p, 'State', '');
+    }
   }
 
   evNewchannel(p: AmiMessage, _ts: string): void {
@@ -1460,8 +1564,17 @@ export class AMIExtensionsMonitor {
     }
 
     this.ch2ext.set(ch, ext);
-    const info = this.callInfo(ext);
+    let info = this.callInfo(ext);
+    if (info['ended'] && this.parkEndedCall(ext, info)) {
+      // A new channel is a new call: the finished one waits for its own final hangup
+      // elsewhere, and this one must not inherit its start_time, peer or queue fields.
+      info = {};
+      this.activeCalls.set(ext, info);
+    }
     info['channel'] = ch;
+    // The final-hangup sweep finds the call by it, even when the last leg to leave is a
+    // trunk channel that resolves to no extension.
+    if (linkedid) info['linkedid'] = linkedid;
     info['callerid'] = callerid;
     if (meaningful(exten)) info['exten'] = exten;
     else if (!('exten' in info)) info['exten'] = '';
@@ -1488,7 +1601,7 @@ export class AMIExtensionsMonitor {
     if (!('original_destination' in info)) {
       if (meaningful(exten) && exten !== ext) {
         info['original_destination'] = exten;
-        this.crossRef(ext, exten);
+        this.crossRef(ext, exten, linkedid);
       } else {
         const conn = dget(p, 'ConnectedLineNum', '');
         if (meaningful(conn)) info['original_destination'] = conn;
@@ -1613,6 +1726,11 @@ export class AMIExtensionsMonitor {
     this.destch2ext.delete(ch);
     const chType = this.getChannelType(ch);
 
+    // Whether a channel-specific path below pushed this call from an extension's side; the
+    // Linkedid sweep at the end only covers a call nothing else pushed.
+    let extensionPushed = false;
+    const pushes = (pushExt: string | null) => isExtNumber(pushExt) && !this.queues.has(pushExt);
+
     // Trunk/system channels are not call participants.
     const isTrunkChannel = ch.startsWith('PJSIP/asterisk-') || ch.startsWith('SIP/asterisk-');
     if (isTrunkChannel && isFinalHangup) {
@@ -1641,6 +1759,7 @@ export class AMIExtensionsMonitor {
               log.info(`📤 Hangup detected for caller ${callerExt}, attempting CRM send`);
               if (crmKey) this.linkedidCrmSent.add(crmKey);
               this.scheduleCallFinished(actualExt, callerInfo, p, queue, 'caller');
+              extensionPushed = extensionPushed || pushes(actualExt);
               // Only the party that was rung has a missed call: when actualExt fell
               // back to callerExt (who placed the call) there is nobody to notify.
               const [notify, callerVal] = this.missedCallParty(actualExt, callerInfo, actualExt !== callerExt ? callerExt : '');
@@ -1680,6 +1799,8 @@ export class AMIExtensionsMonitor {
     // The extension's own call entry
     if (ext) {
       const extInfo = this.activeCalls.get(ext) ?? null;
+      // Entries made by other events may lack the Linkedid the final-hangup sweep needs.
+      if (extInfo && truthyObj(extInfo) && linkedid && !extInfo['linkedid']) extInfo['linkedid'] = linkedid;
       if (extInfo && truthyObj(extInfo)) {
         const stored = dget(extInfo, 'channel', 'NOT SET');
         if (stored !== ch) log.debug(`Channel mismatch for ${ext}: stored=${pyStr(stored)}, hangup=${ch}`);
@@ -1697,6 +1818,7 @@ export class AMIExtensionsMonitor {
             log.info(`📤 Hangup detected for extension ${ext}, attempting CRM send`);
             if (crmKey) this.linkedidCrmSent.add(crmKey);
             this.scheduleCallFinished(ext, extInfo, p, queue, 'extension');
+            extensionPushed = extensionPushed || pushes(ext);
             const [notify, callerVal] = this.missedCallParty(ext, extInfo, '', startedCall);
             if (notify && this.shouldNotifyMissedOrBusy(cause, extInfo)) {
               this.notifyMissedCall(ext, callerVal, queue || extInfo['queue'] || null, uniqueid, cause);
@@ -1725,9 +1847,11 @@ export class AMIExtensionsMonitor {
             log.info('[%s] 📴 %s: Hangup with %s (channel %s)%s', ts, ext, caller, chType || ext, durationStr);
           }
         }
-        // Drop the entry only on the final hangup: while sibling legs live (a transfer)
-        // the truly-final hangup still needs this call's context for the push.
+        // Drop the entry only on the final hangup: while sibling legs live (a transfer, or
+        // the agent hanging up before the trunk) the truly-final hangup still needs this
+        // call's context for the push. Until then it is flagged ended, not shown.
         if (isFinalHangup) this.activeCalls.delete(ext);
+        else this.markCallEnded(ext, extInfo);
       } else if (extInfo && truthyObj(extInfo) && (extInfo['destchannel'] ?? null) === ch) {
         delete extInfo['destchannel'];
       } else if (extInfo && truthyObj(extInfo)) {
@@ -1740,6 +1864,7 @@ export class AMIExtensionsMonitor {
             log.info(`📤 Final hangup detected for extension ${ext} (channel mismatch), attempting CRM send`);
             if (crmKey) this.linkedidCrmSent.add(crmKey);
             this.scheduleCallFinished(ext, extInfo, p, queue, 'extension');
+            extensionPushed = extensionPushed || pushes(ext);
             const [notify, callerVal] = this.missedCallParty(ext, extInfo, '', startedCall);
             if (notify && this.shouldNotifyMissedOrBusy(cause, extInfo)) {
               this.notifyMissedCall(ext, callerVal, queue || extInfo['queue'] || null, uniqueid, cause);
@@ -1769,10 +1894,66 @@ export class AMIExtensionsMonitor {
       for (const [chName, extName] of [...this.destch2ext]) if (extName === ext) this.destch2ext.delete(chName);
     }
 
-    // Fallback: entries whose channel (or destination channel) is this one
+    // Fallback: entries whose channel (or destination channel) is this one. Dropped only on
+    // the final hangup; before that the entry keeps the call's context for the sweep below.
     for (const [extName, info] of [...this.activeCalls]) {
-      if ((info['channel'] ?? null) === ch) this.activeCalls.delete(extName);
-      else if ((info['destchannel'] ?? null) === ch) delete info['destchannel'];
+      if ((info['channel'] ?? null) === ch) {
+        if (isFinalHangup) this.activeCalls.delete(extName);
+        else this.markCallEnded(extName, info);
+      } else if ((info['destchannel'] ?? null) === ch) {
+        delete info['destchannel'];
+      }
+    }
+
+    if (isFinalHangup && linkedid) this.sweepFinishedCall(linkedid, p, queue, extensionPushed);
+  }
+
+  /**
+   * Final-hangup safety net (Linkedid sweep). The channel paths above push only when the final
+   * channel resolves back to an extension's entry, but the last leg to leave a call is often
+   * a trunk (the agent hung up first) or a queue-keyed leg, so the agent's entry would be
+   * dropped with no outcome frame and no CRM push. Reap every entry still tagged with this
+   * Linkedid (live or parked) and, when no path above pushed the call from an extension's
+   * side, push it from each extension that was on it: once per call, so the callee leg of an
+   * extension-to-extension call is covered by its caller's push, and a ring-all leg that was
+   * cancelled unanswered (already on its own missed-call bell) is not a call of its own.
+   */
+  private sweepFinishedCall(linkedid: string, p: AmiMessage, queue: string | null, extensionPushed: boolean): void {
+    const pending: Array<[string, CallInfo]> = [];
+    const later: Array<[string, CallInfo]> = [];
+    for (const [extName, info] of [...this.activeCalls]) {
+      if ((info['linkedid'] ?? '') !== linkedid) continue;
+      pending.push([extName, info]);
+      // A channel-less entry (the queue caller's, keyed by their number) is what the pushes
+      // read the queue wait and answer flags from: reap it once they have run.
+      if (info['channel']) this.activeCalls.delete(extName);
+      else later.push([extName, info]);
+    }
+    const parked = this.endedCalls.get(linkedid);
+    this.endedCalls.delete(linkedid);
+    if (parked) pending.push(...parked);
+
+    if (!extensionPushed) {
+      const owed = pending.filter(([extName, info]) =>
+        // A crossRef placeholder never got a channel: it has no call to report.
+        !!info['channel'] && isExtNumber(extName) && !this.queues.has(extName) && !(info['ended'] && !info['answer_time']),
+      );
+      const owedExts = new Set(owed.map(([extName]) => extName));
+      for (const [extName, info] of owed) {
+        const caller = pyStr(info['caller'] || '');
+        if (caller !== extName && owedExts.has(caller)) continue;
+        const crmKey = `${linkedid}:${pyStr(info['channel'])}`;
+        if (this.linkedidCrmSent.has(crmKey)) continue;
+        this.linkedidCrmSent.add(crmKey);
+        log.info(`📤 Final hangup for Linkedid ${linkedid} - sending CRM for extension ${extName} (trunk/mismatched final leg)`);
+        this.scheduleCallFinished(extName, info, p, queue, 'extension');
+      }
+    }
+    // Queued after every push of this hangup (setImmediate runs in order).
+    if (later.length) {
+      setImmediate(() => {
+        for (const [extName, info] of later) if (this.activeCalls.get(extName) === info) this.activeCalls.delete(extName);
+      });
     }
   }
 
@@ -1795,6 +1976,23 @@ export class AMIExtensionsMonitor {
         if (!('original_destination' in info)) info['original_destination'] = exten;
       }
     }
+  }
+
+  /**
+   * The party on the other end of a tracked channel changed: after a Redirect or a transfer
+   * the extension stays put and only the far end changes, so the call's destination follows.
+   * `destination` is a display field and always refreshed; `original_destination` is the
+   * call's FIRST destination (the CRM push reads it), so it is only filled when missing.
+   */
+  evNewConnectedLine(p: AmiMessage, _ts: string): void {
+    const ch = dget(p, 'Channel', '');
+    const conn = dget(p, 'ConnectedLineNum', '');
+    const ext = this.resolveExt(ch);
+    if (!ext || conn === ext || !meaningful(conn)) return;
+    const info = this.activeCalls.get(ext);
+    if (info === undefined || info['ended']) return;
+    info['destination'] = conn;
+    if (!('original_destination' in info)) info['original_destination'] = conn;
   }
 
   evDial(p: AmiMessage, _ts: string): void {
@@ -1841,10 +2039,13 @@ export class AMIExtensionsMonitor {
       const candidate = dialstring.split('@', 1)[0].split('/', 1)[0].trim();
       if (meaningful(candidate)) dialed = candidate;
     }
+    // The party dialling: an inbound trunk leg is keyed by the DID it came in on, but the
+    // callee's caller is the outside number on that leg.
+    const callerNum: string = !isExtNumber(ext) && meaningful(info['caller']) && info['caller'] !== ext ? info['caller'] : ext;
     if (dialed) {
       info['exten'] = dialed;
       if (!('original_destination' in info)) info['original_destination'] = dialed;
-      if (dialed !== ext) this.crossRef(ext, dialed);
+      if (dialed !== ext) this.crossRef(callerNum, dialed, dget(p, 'Linkedid', ''));
     }
 
     // Track the destination extension's channel (internal extensions only)
@@ -1853,7 +2054,7 @@ export class AMIExtensionsMonitor {
       const destInfo = this.callInfo(destExt);
       destInfo['channel'] = destch;
       if (!('state' in destInfo)) destInfo['state'] = 'Ringing';
-      destInfo['caller'] = ext;
+      destInfo['caller'] = callerNum;
       this.ch2ext.set(destch, destExt);
 
       // Wake a mobile softphone registered to this extension (VoIP push), once per dial leg.
@@ -1911,7 +2112,8 @@ export class AMIExtensionsMonitor {
     if (!destExt && meaningful(destexten) && isdigit(destexten) && destexten.length <= 5) destExt = destexten;
     if (destExt) {
       const destInfo = this.activeCalls.get(destExt);
-      if (destInfo && truthyObj(destInfo)) {
+      // An ended entry's channel is gone: a late DialEnd must not map it back to life.
+      if (destInfo && truthyObj(destInfo) && !destInfo['ended']) {
         if (destch) {
           destInfo['channel'] = destch;
           this.ch2ext.set(destch, destExt);
@@ -2724,18 +2926,20 @@ export class AMIExtensionsMonitor {
   /**
    * The channel to Redirect for a transfer source: an extension's own channel, or — when
    * the source is the "talking to" number — the other leg of the call that party is on.
+   * `owner` (the extension whose call the source belongs to) limits that search to its call,
+   * so the same outside number on another extension's call is never the one moved.
    */
-  channelForTransferSource(source: string): string | null {
+  channelForTransferSource(source: string, owner: string | null = null): string | null {
     const s = (source || '').trim();
     if (!s) return null;
     const own = this.activeCalls.get(s)?.['channel'];
     if (own) return own;
     const cached = this.getActiveChannelSync(s);
     if (cached) return cached;
-    const numMatch = (a: string, b: string) => a === b || (!!a && !!b && a.replace(/^0+/, '') === b.replace(/^0+/, ''));
     for (const [ext, info] of this.activeCalls) {
+      if (owner && ext !== owner) continue;
       const talkingTo = this.displayNumber(info, ext);
-      if (!talkingTo || talkingTo === 'Unknown' || !numMatch(s, talkingTo)) continue;
+      if (!talkingTo || talkingTo === 'Unknown' || !sameNumber(s, talkingTo)) continue;
       const agentCh = info['channel'];
       if (!agentCh) continue;
       const linkedid = this.ch2linkedid.get(agentCh);
@@ -2754,8 +2958,15 @@ export class AMIExtensionsMonitor {
     return null;
   }
 
-  /** Blind transfer the call on *ext* (an extension or the other party's number) via Redirect. */
-  async transferCall(ext: string, destination: string, opts: { context?: string | null; priority?: string } = {}): Promise<boolean> {
+  /**
+   * Blind transfer the call on *ext* (an extension or the other party's number) via Redirect.
+   * `owner`: the extension whose call a party number belongs to (see channelForTransferSource).
+   */
+  async transferCall(
+    ext: string,
+    destination: string,
+    opts: { context?: string | null; priority?: string; owner?: string | null } = {},
+  ): Promise<boolean> {
     if (!this.connected) {
       log.error('❌ Not connected to AMI');
       return false;
@@ -2765,7 +2976,7 @@ export class AMIExtensionsMonitor {
       return false;
     }
     await this.syncActiveCalls();
-    const ch = this.channelForTransferSource(ext);
+    const ch = this.channelForTransferSource(ext, opts.owner ?? null);
     if (!ch) {
       log.error(`❌ No active call on extension/number ${ext}`);
       return false;
@@ -2842,13 +3053,13 @@ export class AMIExtensionsMonitor {
     const targetLinkedid = this.ch2linkedid.get(ch) || this.activeCalls.get(target)?.['linkedid'] || null;
     const spyId = `spy-${supervisor}-${target}-${Date.now()}`;
     const mode = label.toLowerCase();
-    const i = ch.lastIndexOf('-');
-    const base = i !== -1 ? ch.slice(0, i) : ch;
+    // ChanSpy matches a channel-name PREFIX: `PJSIP/101` would also spy on PJSIP/1010-….
+    // The full channel name (PJSIP/101-0000002a) names this call's leg and nothing else.
     const resp = await this.sendAsync('Originate', {
       Channel: this.deviceInterface(supervisor),
       ChannelId: spyId,
       Application: 'ChanSpy',
-      Data: `${base},${options}`,
+      Data: `${ch},${options}`,
       CallerID: `${label} <${target}>`,
       Timeout: '30000',
     });

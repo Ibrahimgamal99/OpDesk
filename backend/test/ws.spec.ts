@@ -11,6 +11,8 @@
 const PRINCIPALS: Record<string, Record<string, unknown>> = {
   admin: { id: 1, username: 'admin', name: null, role: 'admin', extension: null, monitor_modes: ['listen'],
     allowed_agent_extensions: null, allowed_queue_names: null, live_agent_extensions: null, live_queue_names: null },
+  admin2: { id: 4, username: 'admin2', name: null, role: 'admin', extension: '100', monitor_modes: ['listen', 'whisper', 'barge'],
+    allowed_agent_extensions: null, allowed_queue_names: null, live_agent_extensions: null, live_queue_names: null },
   sup: { id: 2, username: 'sup', name: null, role: 'supervisor', extension: '200', monitor_modes: ['listen'],
     allowed_agent_extensions: ['101', '102'], allowed_queue_names: ['800'], live_agent_extensions: ['101', '102'], live_queue_names: ['800'] },
   agent: { id: 3, username: 'a101', name: null, role: 'agent', extension: '101', monitor_modes: [],
@@ -28,8 +30,14 @@ jest.mock('../src/db/db-manager', () => ({
   agentActivityTransition: jest.fn(async () => 1),
   getSetting: jest.fn(async (_k: string, d: string) => d),
   insertCallNotification: jest.fn(async () => 1),
+  recordSupervision: jest.fn(async () => true),
 }));
 jest.mock('../src/services/vad-runner', () => ({ schedule: jest.fn() }));
+jest.mock('../src/services/analytics', () => ({
+  ...jest.requireActual('../src/services/analytics'),
+  getSlaThresholds: jest.fn(async () => ({ '800': 30 })),
+  getSlaDefaultSecs: jest.fn(async () => 20),
+}));
 
 import * as http from 'http';
 import { WebSocket } from 'ws';
@@ -38,8 +46,10 @@ import { runtime } from '../src/core/runtime';
 import {
   attachWebSocket,
   closeWebSockets,
+  isExtensionInterface,
   scopeCanControlExtension,
   scopeCanControlQueueMember,
+  transferSourceOwner,
 } from '../src/api/routes/ws';
 import { AgentStateManager } from '../src/services/agent-state';
 import { AMIExtensionsMonitor } from '../src/services/ami';
@@ -157,6 +167,8 @@ describe('state frames are filtered by LIVE scope', () => {
     expect(s.extensions['101']).toMatchObject({ extension: '101', status: 'idle', status_code: '0', dnd: false, call_info: null });
     expect(Object.keys(s.queues)).toEqual(['800']);
     expect(s.queues['800'].name).toBe('Sales');
+    // The queue's service-level target rides along for the Dashboard's past-target alert.
+    expect(s.queues['800'].sla_secs).toBe(30);
     expect(Object.values(s.queue_members).map((m: any) => [m.interface, m.paused, m.pause_reason]).sort()).toEqual([
       ['PJSIP/101', false, ''],
       ['PJSIP/102', true, 'lunch'],
@@ -263,5 +275,173 @@ describe('notification frames', () => {
     // The agent's history is their own extension only; the outcome is theirs.
     expect(kinds(g)).toEqual([['call_outcome', '101']]);
     for (const c of [a, s, g]) c.ws.close();
+  });
+});
+
+describe('supervisor controls on a live call', () => {
+  // 101 talks to an outside caller on a trunk leg; 103 (outside the supervisor's scope)
+  // talks to the same number on another call.
+  beforeAll(() => {
+    monitor.activeCalls.set('101', { channel: 'PJSIP/101-00000001', caller: '0791234567', linkedid: 'L1', state: 'Up', start_time: new Date() });
+    monitor.ch2ext.set('PJSIP/101-00000001', '101');
+    monitor.ch2linkedid.set('PJSIP/101-00000001', 'L1');
+    monitor.linkedid2channels.set('L1', new Set(['PJSIP/101-00000001', 'PJSIP/trunk-00000002']));
+    monitor.activeCalls.set('103', { channel: 'PJSIP/103-00000003', caller: '0791234567', linkedid: 'L3', state: 'Up' });
+    monitor.ch2linkedid.set('PJSIP/103-00000003', 'L3');
+    monitor.linkedid2channels.set('L3', new Set(['PJSIP/103-00000003', 'PJSIP/trunk-00000004']));
+  });
+  afterAll(() => {
+    for (const ext of ['101', '103']) monitor.activeCalls.delete(ext);
+    monitor.ch2ext.delete('PJSIP/101-00000001');
+    monitor.linkedid2channels.clear();
+    monitor.ch2linkedid.clear();
+  });
+
+  const lastRedirect = () => [...actions].reverse().find((a) => a.Action === 'Redirect');
+
+  it('take over / transfer the outside caller of an in-scope extension', async () => {
+    const c = await open('/ws?token=sup');
+    await c.next('initial_state');
+    c.ws.send(JSON.stringify({ action: 'take_over', source: '0791234567', ext: '101' }));
+    expect(await c.next('action_result')).toMatchObject({ action: 'take_over', success: true });
+    // The caller's own leg of 101's call moves to the supervisor's extension.
+    expect(lastRedirect()).toMatchObject({ Channel: 'PJSIP/trunk-00000002', Exten: '200', Priority: '1' });
+
+    c.ws.send(JSON.stringify({ action: 'transfer', source: '0791234567', ext: '101', destination: '102' }));
+    expect(await c.next('action_result')).toMatchObject({ action: 'transfer', success: true });
+    expect(lastRedirect()).toMatchObject({ Channel: 'PJSIP/trunk-00000002', Exten: '102' });
+
+    // Without `ext` the server finds the in-scope extension the caller is talking to.
+    c.ws.send(JSON.stringify({ action: 'transfer', source: '0791234567', destination: '102' }));
+    expect(await c.next('action_result')).toMatchObject({ action: 'transfer', success: true });
+    expect(lastRedirect()).toMatchObject({ Channel: 'PJSIP/trunk-00000002' });
+    c.ws.close();
+  });
+
+  it('refuses a source the named extension is not talking to, or an extension out of scope', async () => {
+    const c = await open('/ws?token=sup');
+    await c.next('initial_state');
+    const before = actions.length;
+    c.ws.send(JSON.stringify({ action: 'take_over', source: '0790000000', ext: '101' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to control this extension' });
+    c.ws.send(JSON.stringify({ action: 'transfer', source: '0791234567', ext: '103', destination: '102' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to control this extension' });
+    c.ws.send(JSON.stringify({ action: 'transfer', source: '103', destination: '102' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to control this extension' });
+    expect(actions.slice(before).some((a) => a.Action === 'Redirect')).toBe(false);
+    c.ws.close();
+  });
+
+  it('a transfer lands only in a PBX dial context, at a numeric priority', async () => {
+    const c = await open('/ws?token=sup');
+    await c.next('initial_state');
+    c.ws.send(JSON.stringify({ action: 'transfer', source: '101', destination: '102', context: 'macro-dial' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Transfer context not allowed' });
+    c.ws.send(JSON.stringify({ action: 'transfer', source: '101', destination: '102', priority: 'hangup' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Transfer context not allowed' });
+    c.ws.send(JSON.stringify({ action: 'transfer', source: '101', destination: '102', context: 'from-internal', priority: '2' }));
+    expect(await c.next('action_result')).toMatchObject({ success: true });
+    expect(lastRedirect()).toMatchObject({ Channel: 'PJSIP/101-00000001', Context: 'from-internal', Priority: '2' });
+    c.ws.close();
+  });
+
+  it('supervision: granted modes only, from your own extension, never as an agent', async () => {
+    const before = actions.length;
+    const g = await open('/ws?token=agent');
+    await g.next('initial_state');
+    g.ws.send(JSON.stringify({ action: 'listen', supervisor: '101', target: '101' }));
+    expect(await g.next('action_result')).toMatchObject({ action: 'listen', success: false, message: 'Agents cannot supervise calls' });
+    g.ws.close();
+
+    const c = await open('/ws?token=sup');
+    await c.next('initial_state');
+    c.ws.send(JSON.stringify({ action: 'barge', supervisor: '200', target: '101' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to barge' });
+    c.ws.send(JSON.stringify({ action: 'listen', supervisor: '102', target: '101' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Supervise from your own extension' });
+    c.ws.send(JSON.stringify({ action: 'listen', supervisor: 'PJSIP/200', target: '101' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Your extension must be a number' });
+    c.ws.send(JSON.stringify({ action: 'listen', supervisor: '200', target: '103' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to monitor this extension' });
+    expect(actions.slice(before).some((a) => a.Action === 'Originate')).toBe(false);
+
+    c.ws.send(JSON.stringify({ action: 'listen', supervisor: '200', target: '101' }));
+    expect(await c.next('action_result')).toMatchObject({ success: true });
+    expect(actions[actions.length - 1]).toMatchObject({ Action: 'Originate', Channel: 'PJSIP/200', Application: 'ChanSpy', Data: 'PJSIP/101-00000001,qsE' });
+    c.ws.close();
+
+    // An admin may ring another extension of the PBX, not an arbitrary number.
+    const a = await open('/ws?token=admin2');
+    await a.next('initial_state');
+    a.ws.send(JSON.stringify({ action: 'whisper', supervisor: '102', target: '101' }));
+    expect(await a.next('action_result')).toMatchObject({ success: true });
+    a.ws.send(JSON.stringify({ action: 'barge', supervisor: '999', target: '101' }));
+    expect(await a.next('action_result')).toMatchObject({ success: false, message: 'Supervise from your own extension' });
+    a.ws.close();
+  });
+
+  it('owner resolution', () => {
+    const sup = PRINCIPALS.sup as never;
+    expect(transferSourceOwner(sup, monitor, '101')).toBe('101');
+    expect(transferSourceOwner(sup, monitor, '0791234567', '101')).toBe('101');
+    expect(transferSourceOwner(sup, monitor, '791234567', '101')).toBe('101'); // national zero
+    expect(transferSourceOwner(sup, monitor, '0791234567')).toBe('101');
+    expect(transferSourceOwner(sup, monitor, '0791234567', '103')).toBeNull();
+    expect(transferSourceOwner(sup, monitor, '102', '101')).toBeNull();
+  });
+});
+
+describe('agent board: a supervisor forces presence for agents in scope', () => {
+  it('Not Ready with a reason pauses the agent in every queue; out of scope is refused', async () => {
+    const c = await open('/ws?token=sup');
+    await c.next('initial_state');
+    c.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'not_ready', reason_code: 'lunch', agent: '102' }));
+    expect(await c.next('action_result')).toMatchObject({ action: 'agent_set_status', success: true });
+    expect(actions[actions.length - 1]).toMatchObject({ Action: 'QueuePause', Queue: '800', Interface: 'PJSIP/102', Reason: 'lunch' });
+    expect(runtime.agentState!.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch' });
+
+    c.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'ready', agent: '102' }));
+    expect(await c.next('action_result')).toMatchObject({ success: true, message: 'Ready' });
+
+    const before = actions.length;
+    c.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'not_ready', reason_code: 'lunch', agent: '103' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to control this agent' });
+    c.ws.send(JSON.stringify({ action: 'agent_logout', target: '103' }));
+    expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to control this agent' });
+    expect(actions.length).toBe(before);
+    c.ws.close();
+  });
+});
+
+describe('admin-only sync and queue member shape', () => {
+  it('a full sync (it writes the agents and queues tables) is an admin action', async () => {
+    const c = await open('/ws?token=sup');
+    await c.next('initial_state');
+    c.ws.send(JSON.stringify({ action: 'sync' }));
+    expect(await c.next('action_result')).toEqual({ type: 'action_result', action: 'sync', success: false, message: 'Only an admin can run a full sync' });
+    c.ws.close();
+  });
+
+  it('queue_add takes only an extension interface the connection can see', async () => {
+    const c = await open('/ws?token=sup');
+    await c.next('initial_state');
+    for (const iface of ['PJSIP/trunk', 'Local/0791234567@from-internal', 'Local/102@from-queue/n;1', 'PJSIP/103']) {
+      c.ws.send(JSON.stringify({ action: 'queue_add', queue: '800', interface: iface }));
+      expect(await c.next('action_result')).toMatchObject({ action: 'queue_add', success: false });
+    }
+    expect(actions.some((a) => a.Action === 'QueueAdd')).toBe(false);
+    c.ws.send(JSON.stringify({ action: 'queue_add', queue: '800', interface: '102' }));
+    expect(await c.next('action_result')).toMatchObject({ action: 'queue_add', success: true });
+    expect(actions[actions.length - 1]).toMatchObject({ Action: 'QueueAdd', Queue: '800', Interface: 'PJSIP/102' });
+    c.ws.close();
+  });
+
+  it('extension interfaces', () => {
+    expect(isExtensionInterface('PJSIP/101')).toBe(true);
+    expect(isExtensionInterface('SIP/2001')).toBe(true);
+    expect(isExtensionInterface('Local/101@from-queue/n')).toBe(true);
+    expect(isExtensionInterface('PJSIP/101-00000001')).toBe(false);
+    expect(isExtensionInterface('PJSIP/trunk')).toBe(false);
+    expect(isExtensionInterface('Local/101@from-queue/n,x')).toBe(false);
   });
 });

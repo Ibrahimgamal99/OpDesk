@@ -8,19 +8,21 @@ import {
   Play,
   Phone,
   Clock,
-  RefreshCw
+  RefreshCw,
+  UserCheck
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import type { Queue, QueueMember, QueueEntry, Extension, ActionMessage } from '../types';
-import { memberExtension, memberState, memberStateClass } from './queueMemberState';
+import type { Queue, QueueMember, QueueEntry, Extension, ActionMessage, AgentStateInfo } from '../types';
+import { memberBucket, memberExtension, memberState, memberStateClass } from './queueMemberState';
 import { AGENT_STATE_META, DEVICE_STATUS_META, StatusBadge, type StatusMeta } from './statusBadge';
 import { fmtTimer, parseClock } from '../lib/format';
-import { Badge, Dropdown, EmptyState, FormField, Modal, Page, SearchInput, Toolbar, useConfirm } from './ui';
+import { Badge, Dropdown, EmptyState, FormField, Modal, Page, SearchInput, Tabs, Toolbar, useConfirm } from './ui';
 import type { DropdownOption } from './ui';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
 import { getUser } from '../auth';
 import { usePauseReasons, WRAPUP_REASON } from '../hooks/usePauseReasons';
+import { AgentBoard } from './AgentBoard';
 import '../styles/live.css';
 
 interface QueuesPanelProps {
@@ -29,6 +31,8 @@ interface QueuesPanelProps {
   entries: Record<string, QueueEntry>;
   /** All monitored extensions, used to populate the Add Member picker. */
   extensions?: Record<string, Extension>;
+  /** Agent presence, for the Agents tab. */
+  agentStates?: Record<string, AgentStateInfo>;
   sendAction: (action: ActionMessage) => void;
   onSync?: () => void;
 }
@@ -61,14 +65,20 @@ function memberBadge(
     }
     case 'unavailable':
       return { meta: DEVICE_STATUS_META.unavailable, label: t('queues.memberUnavailable', 'Unavailable') };
+    case 'unknown':
+      return { meta: DEVICE_STATUS_META.unavailable, label: t('queues.memberUnknown', 'Unknown') };
     case 'busy':
       return { meta: DEVICE_STATUS_META.in_call, label: t('common.inCall', 'In Call') };
+    case 'ringing':
+      return { meta: DEVICE_STATUS_META.ringing, label: t(DEVICE_STATUS_META.ringing.key, DEVICE_STATUS_META.ringing.fallback) };
+    case 'on_hold':
+      return { meta: DEVICE_STATUS_META.on_hold, label: t(DEVICE_STATUS_META.on_hold.key, DEVICE_STATUS_META.on_hold.fallback) };
     default:
       return { meta: AGENT_STATE_META.ready, label: t('agent.state.ready', 'Ready') };
   }
 }
 
-export function QueuesPanel({ queues, members, entries, extensions, sendAction, onSync }: QueuesPanelProps) {
+export function QueuesPanel({ queues, members, entries, extensions, agentStates, sendAction, onSync }: QueuesPanelProps) {
   const { t } = useTranslation();
   const [confirm, confirmDialog] = useConfirm();
   const { selectable, labelFor } = usePauseReasons();
@@ -90,6 +100,10 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
+  // The Agents tab is the supervisor's board of the same floor, agent by agent.
+  const [tab, setTab] = useState<'queues' | 'agents'>('queues');
+  const [agentQuery, setAgentQuery] = useState('');
+  const showAgents = canManage && tab === 'agents';
 
   // When members update from the server, clear processing state only for members
   // that have reached their target paused state — leaves other in-flight actions intact.
@@ -176,12 +190,13 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
     const target = !member.paused;
     setProcessingPause(prev => new Map(prev).set(memberKey, target));
 
-    sendAction({
-      action: member.paused ? 'queue_unpause' : 'queue_pause',
-      queue: member.queue,
-      interface: member.interface,
-      ...(member.paused ? {} : { reason }),
-    });
+    // Ready / Not Ready is the agent's presence, not one queue's: it applies to every queue
+    // the agent is in, exactly as the agent's own status bar does. A per-queue pause left the
+    // agent Not Ready while still taking calls from the other queues.
+    const agent = memberExtension(member.interface);
+    sendAction(member.paused
+      ? { action: 'agent_set_status', status: 'ready', agent }
+      : { action: 'agent_set_status', status: 'not_ready', reason_code: reason, agent });
 
     // Fallback: clear processing state if no WebSocket update arrives.
     setTimeout(() => {
@@ -239,7 +254,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
     switch (filter as QueueStatusFilter) {
       case 'waiting': return queue.calls_waiting > 0;
       case 'noReady': return !qMembers.some(m => memberState(m) === 'available');
-      case 'idle': return queue.calls_waiting === 0 && !qMembers.some(m => memberState(m) === 'busy');
+      case 'idle': return queue.calls_waiting === 0 && !qMembers.some(m => memberBucket(m) === 'busy');
       default: return true;
     }
   };
@@ -274,7 +289,30 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
           {t('common.sync')}
         </button>
       )}
-      toolbar={
+      tabs={canManage && (
+        <Tabs
+          ariaLabel={t('nav.queues')}
+          active={tab}
+          onChange={(k) => setTab(k as 'queues' | 'agents')}
+          tabs={[
+            { key: 'queues', label: t('nav.queues'), icon: <Users size={14} />, count: queueList.length },
+            { key: 'agents', label: t('agentBoard.tab', 'Agents'), icon: <UserCheck size={14} /> },
+          ]}
+        />
+      )}
+      toolbar={showAgents ? (
+        <Toolbar
+          search={
+            <SearchInput
+              value={agentQuery}
+              onChange={setAgentQuery}
+              debounceMs={0}
+              label={t('agentBoard.search', 'Search agents')}
+              placeholder={t('agentBoard.searchPlaceholder', 'Search by name or extension')}
+            />
+          }
+        />
+      ) : (
         <Toolbar
           search={
             <SearchInput
@@ -320,9 +358,11 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
             </span>
           )}
         />
-      }
+      )}
     >
-      {queueList.length === 0 ? (
+      {showAgents ? (
+        <AgentBoard agentStates={agentStates || {}} extensions={extensions || {}} query={agentQuery} sendAction={sendAction} />
+      ) : queueList.length === 0 ? (
         <EmptyState icon={Users} title={t('queues.noQueues')} />
       ) : shownQueues.length === 0 ? (
         <EmptyState

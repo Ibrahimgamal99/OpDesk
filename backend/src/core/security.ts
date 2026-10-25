@@ -223,6 +223,15 @@ export async function getUserScope(userId: number): Promise<UserScope> {
   };
 }
 
+/**
+ * The supervision modes a user may use: none for an agent (agents never supervise, so the UI
+ * offers them no Listen button and the WS refuses it), else the granted ones, at least listen.
+ */
+export function principalMonitorModes(scope: Pick<UserScope, 'role' | 'monitor_modes'>): string[] {
+  if (scope.role === 'agent') return [];
+  return scope.monitor_modes.length ? scope.monitor_modes : ['listen'];
+}
+
 /** Shape a loaded scope into the request principal. `username` is the token's claim when known. */
 export function principalFromScope(scope: UserScope, username?: string | null): Principal {
   return {
@@ -231,9 +240,7 @@ export function principalFromScope(scope: UserScope, username?: string | null): 
     name: scope.name,
     role: scope.role,
     extension: scope.extension,
-    // PY parity: `scope.get("monitor_modes") or ["listen"]`, so an agent's [] reads as ["listen"]
-    // here (the WS layer, not this list, decides who may supervise).
-    monitor_modes: scope.monitor_modes.length ? scope.monitor_modes : ['listen'],
+    monitor_modes: principalMonitorModes(scope),
     allowed_agent_extensions: scope.allowed_agent_extensions,
     allowed_queue_names: scope.allowed_queue_names,
     live_agent_extensions: scope.live_agent_extensions,

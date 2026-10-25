@@ -118,7 +118,14 @@
     "table": {
       "state": "الحالة",
       "talkingTo": "يتحدث مع",
-      "talkTime": "وقت الحديث"
+      "talkTime": "وقت الحديث",
+      "direction": "الاتجاه"
+    },
+    "route": {
+      "inbound_queue": "واردة · قائمة انتظار",
+      "inbound_direct": "واردة · مباشرة",
+      "internal": "داخلية",
+      "outbound": "صادرة"
     },
     "actions": {
       "listen": "استماع (صامت)",
@@ -172,10 +179,22 @@
     "search": "البحث في قوائم الانتظار",
     "searchPlaceholder": "البحث باسم قائمة الانتظار أو رقمها",
     "memberUnavailable": "غير متاح",
+    "memberUnknown": "غير معروف",
     "pauseReason": "السبب",
     "pickReason": "اختر سبباً",
     "pauseTitle": "تعيين {{member}} كغير جاهز",
     "pauseHint": "تُسجَّل حالة «غير جاهز» دائماً مع سبب، ليميّز تقرير الالتزام بين العمل والاستراحات."
+  },
+  "agentBoard": {
+    "tab": "الوكلاء",
+    "search": "البحث عن وكلاء",
+    "searchPlaceholder": "ابحث بالاسم أو التحويلة",
+    "empty": "لا يوجد وكلاء ضمن نطاقك",
+    "noMatches": "لا يوجد وكلاء يطابقون هذا البحث",
+    "setReady": "تعيين جاهز",
+    "setNotReady": "تعيين غير جاهز",
+    "logoutTitle": "تسجيل خروج {{agent}}؟",
+    "logoutConfirm": "سيغادر {{agent}} كل قوائم الانتظار ويتوقف عن تلقي مكالماتها."
   },
   "callLog": {
     "viewManage": "عرض وإدارة سجلات المكالمات",
@@ -1470,6 +1489,10 @@
   },
   "dashboard": {
     "direction": {},
+    "alert": {
+      "understaffed": "{{queue}}: {{waiting}} في الانتظار ولا يوجد وكيل جاهز للرد.",
+      "pastTarget": "{{queue}}: انتظر أحد المتصلين {{wait}}، متجاوزًا الهدف {{target}}."
+    },
     "kpi": {
       "available": "متاح",
       "longestWait": "أطول انتظار",

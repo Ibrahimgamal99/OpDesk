@@ -1143,8 +1143,19 @@ html[lang='ar'] body * {
   box-shadow: none;
 }
 
-.queue-member-status.paused {
+.queue-member-status.paused,
+.queue-member-status.unknown {
   background: var(--status-unavailable);
+  box-shadow: none;
+}
+
+.queue-member-status.ringing {
+  background: var(--status-ringing);
+  box-shadow: 0 0 8px var(--status-ringing-glow);
+}
+
+.queue-member-status.on-hold {
+  background: var(--status-hold);
   box-shadow: none;
 }
 

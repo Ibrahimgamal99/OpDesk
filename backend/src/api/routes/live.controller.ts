@@ -68,12 +68,14 @@ export class LiveController {
     for (const ext of monitor.monitored) {
       if (allowSet !== null && !allowSet.has(ext)) continue;
       const extData = monitor.extensions.get(ext) || {};
+      // An `ended` entry only waits for its call's final hangup: the extension is free.
       const callInfo = monitor.activeCalls.get(ext);
+      const live = !!callInfo && !callInfo['ended'];
       extensions.push({
         extension: ext,
         status: Object.prototype.hasOwnProperty.call(extData, 'Status') ? extData['Status'] : '-1',
-        in_call: monitor.activeCalls.has(ext),
-        call_info: callInfo && Object.keys(callInfo).length ? jsonable(callInfo) : null,
+        in_call: live,
+        call_info: live && Object.keys(callInfo).length ? jsonable(callInfo) : null,
       });
     }
     return { extensions };
@@ -89,6 +91,7 @@ export class LiveController {
     const calls: Record<string, unknown> = {};
     for (const [ext, info] of monitor.activeCalls) {
       if (allowed !== null && !allowed.includes(ext)) continue;
+      if (info['ended']) continue;
       calls[ext] = jsonable(info);
     }
     return { calls };
@@ -151,7 +154,11 @@ export class LiveController {
     };
   }
 
-  /** R47: the queue picker; reconciles the queues table with the live PBX set first. */
+  /**
+   * R47: the queue picker; adds the live PBX queues to the queues table first. Never prunes:
+   * any signed-in user can call this, and a queue missing from one QueueStatus reply would
+   * take its group links with it.
+   */
   @Get('/api/settings/queues')
   @Auth('user')
   async listQueues() {
@@ -159,8 +166,7 @@ export class LiveController {
     const monitor = runtime.monitor;
     const liveNames = monitor && monitor.queues.size ? [...monitor.queues.keys()] : [];
     if (liveNames.length) {
-      // monitor.queues is pruned by syncQueueStatus: the live PBX set, safe to prune against.
-      await dbm.syncQueuesFromList(liveNames, nameMap, true);
+      await dbm.syncQueuesFromList(liveNames, nameMap);
     } else if (Object.keys(nameMap).length) {
       await dbm.syncQueuesFromList(Object.keys(nameMap), nameMap);
     }
