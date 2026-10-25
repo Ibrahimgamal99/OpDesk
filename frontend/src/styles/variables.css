@@ -1,0 +1,488 @@
+/* ════════════════════════════════════════════════════════════════════
+   Design tokens  (shared design system)
+   --------------------------------------------------------------------
+   Theme-agnostic tokens (spacing, type, radii, motion, layout) live in
+   :root. Color tokens are theme-scoped: the dark palette is the default
+   and is mirrored under [data-theme="dark"]; [data-theme="light"] inverts
+   it. Components only ever read var(--token), so theming is a pure
+   token swap with no component changes.
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ─── Spacing scale ───────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+  /* Half-steps. Added because 6/10/14px were already in wide use inline; snapping
+     ~90 gaps and margins to the 4px scale would have reflowed most panels, so the
+     values that exist in the design are named instead of quietly rounded. */
+  --space-1h: 6px;
+  --space-2h: 10px;
+  --space-3h: 14px;
+
+  /* ─── Typography ──────────────────────────────── */
+  --font-sans: 'Inter', 'Cairo', 'Noto Sans Arabic', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Roboto Mono', monospace;
+
+  --text-xs:   11px;
+  --text-sm:   12px;
+  /* 13px sat between --text-sm and --text-base in ~30 places; named rather than
+     rounded, for the same reason as the space half-steps. */
+  --text-md:   13px;
+  --text-base: 14px;
+  --text-lg:   16px;
+  --text-xl:   20px;
+  --text-2xl:  26px;
+  --text-3xl:  32px;
+
+  --weight-normal:   400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --tracking-tight: -0.01em;
+
+  /* ─── Radii ───────────────────────────────────── */
+  /* Tightened: still modern-rounded, but no oversized lozenges. Small controls
+     (badges/chips/status pills) use --radius-sm so they read as crafted tags. */
+  --radius-sm: 6px;
+  --radius:    6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* ─── Icon scale ──────────────────────────────────
+     lucide renders `size` as width/height ATTRIBUTES, which CSS overrides. So
+     icon geometry belongs here with the rest of the visual scale rather than as
+     numeric props scattered through the components -- the components pass no
+     `size` at all and the sizing rule sits next to the colour rule.
+
+     Five steps, mapped to roles rather than to a t-shirt scale, because the
+     useful distinction is "is this a leading icon or a tick" and not "is this
+     14px or 15px". --icon-control matches ui/SearchInput at --control-h, so a
+     dropdown and a search field on the same row agree. */
+  --icon-chip:      10px;   /* chip remove, inside a --text-xs pill */
+  --icon-mark:      12px;   /* selected tick, clear-filter, at sm density */
+  --icon-lead:      13px;   /* leading icon and chevron, at sm density */
+  --icon-mark-lg:   14px;   /* the same two, at md density */
+  --icon-control:   15px;   /* leading icon and chevron at --control-h */
+
+  /* ─── Motion ──────────────────────────────────── */
+  --transition:      180ms ease;
+  --transition-fast:   150ms cubic-bezier(0.4,0,0.2,1);
+  --transition-normal: 250ms cubic-bezier(0.4,0,0.2,1);
+  --transition-slow:   400ms cubic-bezier(0.4,0,0.2,1);
+
+  /* ─── Layout ──────────────────────────────────── */
+  --sidebar-width: 220px;
+  --header-height: 56px;
+  --content-max:   1320px;
+
+  /* ─── Control geometry ────────────────────────────
+     The shared size of every control that can sit on a filter row: the search
+     field, a `md` Dropdown trigger, the date-range trigger. Named because
+     "every control on the row is the same height, and the row has one radius"
+     is a rule that cannot be enforced when each control restates its own
+     padding — a 10px-padded select beside a 12px-padded search is drift that
+     no token check can see. Geometry only: colour stays with each control, and
+     a size change must never move a surface.
+
+     --control-h is the resolved height of the previous `md` trigger
+     (2 × --space-2h padding + a --text-md line box + 2 × 1px border), so
+     adopting it changes nothing visually — it just makes the value shared
+     rather than re-derived. */
+  --control-h:           38px;
+  /* In-row size (.btn-sm): table actions, toolbar chips. */
+  --control-h-sm:        30px;
+  /* Minimum comfortable touch target. Applied on `pointer: coarse` only, so the
+     mouse densities above are unaffected. */
+  --touch-target:        44px;
+  --control-pad-inline:  var(--space-3h);
+  --control-radius:      var(--radius-md);
+
+  /* ─── Compat aliases ──────────────────────────────
+     Some panels (API Keys, Audit, System Logs) were authored against shorter
+     token names. These indirections resolve lazily at use time, so they pick up
+     whichever theme is active — keeping those panels on the design system. */
+  --bg:           var(--bg-card);
+  --bg-alt:       var(--bg-secondary);
+  --text:         var(--text-primary);
+  --muted:        var(--text-muted);
+  --accent-amber: var(--warning);
+  --accent-pink:  var(--accent-purple);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   DARK THEME (default) — modern-SaaS neutral slate
+   ════════════════════════════════════════════════════════════════════ */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ─── Backgrounds ─────────────────────────────── */
+  --bg-primary:   #0d1014;   /* app canvas — neutral slate, less blue-black */
+  --bg-secondary: #161a21;
+  --bg-tertiary:  #1b2027;
+  --bg-card:      #14181e;
+  --bg-hover:     #1e242c;
+  --bg-glass:     var(--bg-secondary);
+  --glass-bg:     var(--bg-secondary);
+  --glass-border: rgba(255, 255, 255, 0.06);
+
+  /* ─── Borders ─────────────────────────────────── */
+  --border:         #2a313a;
+  --border-primary: #2a313a;
+  --border-accent:  #3a424d;
+  --border-subtle:  rgba(42, 49, 58, 0.6);
+
+  /* ─── Text ────────────────────────────────────── */
+  --text-primary:   #e8edf3;
+  --text-secondary: #9aa4b2;
+  --text-muted:     #6b7480;
+
+  /* ─── Status colors ───────────────────────────── */
+  --status-idle:          #3fb950;
+  --status-idle-bg:       rgba(63, 185, 80, 0.12);
+  --status-idle-glow:     transparent;
+  --status-ringing:       #f85149;
+  --status-ringing-bg:    rgba(248, 81, 73, 0.12);
+  --status-ringing-glow:  transparent;
+  --status-call:          #58a6ff;
+  --status-call-bg:       rgba(88, 166, 255, 0.12);
+  --status-call-glow:     transparent;
+  --status-unavailable:   #6e7681;
+  --status-unavailable-bg: rgba(110, 118, 129, 0.12);
+  --status-hold:          #a5a5ff;
+  --status-hold-bg:       rgba(165, 165, 255, 0.12);
+
+  /* ─── Accent palette ──────────────────────────── */
+  --accent:               #4493f8;
+  --accent-primary:       #4493f8;
+  --accent-primary-hover: #6cabfb;
+  --accent-hover:         #6cabfb;
+  --accent-secondary:     #1f6feb;
+  --accent-teal:          #39c5cf;
+  --accent-purple:        #a5a5ff;
+  --accent-light:         rgba(68, 147, 248, 0.14);
+  /* Call direction series (inbound · outbound · internal), validated as a categorical set
+     against --bg-card with the dataviz checks: never reuse a status colour for these. */
+  --chart-inbound:        #4493f8;
+  --chart-outbound:       #e06c2a;
+  --chart-internal:       #1e9f96;
+  /* legacy alias (scrollbar hover etc.) */
+  --accent-gold-dim:      var(--accent-primary);
+
+  /* semantic */
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger:  #f85149;
+  --info:    #4493f8;
+  --accent-success: #3fb950;
+  --accent-warning: #d29922;
+  --accent-danger:  #f85149;
+  /* MISSED is red, per the iOS/Android missed-call convention, but deliberately NOT
+     --accent-danger: five outcomes were sharing that one red (missed, failure,
+     network_error, abandoned, dropped), so the colour had stopped distinguishing
+     "nobody took the call" from "something broke". This is a rose-red -- far enough
+     round the wheel from the coral danger to read as a different verdict, and far
+     enough from --status-dropped's pink to not read as that one. */
+  --accent-missed:  #ff4d6a;
+  /* The call could not be PLACED -- a wrong number (FAILURE) or the carrier failing
+     (NETWORK_ERROR). Split off --accent-danger so the warm band spreads by verdict
+     instead of crowding four meanings onto one red: rose = nobody took it, red =
+     answered but never reached a person (the FCC-regulated abandon), burnt orange =
+     could not be placed, amber = the callee did not take it. */
+  --accent-fault:   #f0883e;
+
+  /* ─── Shadows (softer, Linear/Vercel-style) ───── */
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.25);
+  --shadow:     0 2px 8px rgba(0,0,0,0.28);
+  --shadow-md:  0 2px 8px rgba(0,0,0,0.28);
+  --shadow-lg:  0 6px 20px rgba(0,0,0,0.32);
+  --shadow-xl:  0 12px 36px rgba(0,0,0,0.4);
+  /* Glows neutralized — transparent no-op (safe inside comma shadow lists). */
+  --shadow-glow:        0 0 0 0 transparent;
+  --shadow-glow-ringing: 0 0 0 0 transparent;
+
+  /* ─── Stacking layers ─────────────────────────────
+     Named layers instead of bare numbers. The numbers were already an implicit
+     scale -- 100 header, 1000 overlays, 1150/1160 softphone, 2000 "above the
+     softphone" -- but each new surface had to be reverse-engineered from the
+     others, and the one comment that documented the ordering said "above
+     .modal-overlay (1000)" while sitting next to a 2000. Ordering now lives in
+     one list; the gaps are deliberate room to slot something between layers.
+
+     Theme-invariant, so this block is not mirrored in the light theme. */
+  --z-base:       1;    /* in-flow decoration lifted off the background */
+  --z-sticky:    10;    /* sticky table headers */
+  --z-menu:      20;    /* inline menus anchored in a bar */
+  --z-menu-high: 30;
+  --z-header:   100;    /* the app header */
+  --z-header-mobile: 110;
+  --z-overlay: 1000;    /* modal backdrops, incoming-call overlay */
+  --z-toast:   1001;    /* notifications, above a modal */
+  --z-fab:     1150;    /* floating softphone button */
+  --z-fab-mobile: 1155;
+  --z-popover: 1160;    /* the softphone popover itself */
+  --z-top:     2000;    /* must sit above the softphone */
+  /* ui/Dropdown's menu, and it has to be LAST -- above even --z-top.
+     The menu is portal-ed to <body>, so it leaves the stacking context of
+     whatever it was opened from, but visually it still belongs to that trigger.
+     Triggers live inside modals (1000), the softphone popover (1160) and
+     top-layer surfaces (2000), so anything lower paints the menu *behind* the
+     surface that owns it: the dropdown opens and nothing appears.
+     This sat at 200 and every dropdown inside a modal was dead. The two
+     implementations this replaced both hardcoded `zIndex: 10000` inline, which
+     silently overrode the 200 in their own CSS -- that inline value was not
+     sloppiness, it was the fix, and the class was the thing that was wrong. */
+  --z-dropdown: 2100;
+
+  /* ─── Gradients ───────────────────────────────────
+     Gradients get a role here rather than being written inline: the same brand
+     wash existed at 135deg, 145deg and 90deg in different panels, which read as
+     three decisions when it was meant to be one. */
+  --gradient-brand:        linear-gradient(135deg, var(--accent-primary), var(--accent-teal));
+  --gradient-brand-hover:  linear-gradient(135deg, var(--accent-primary-hover), var(--accent-teal));
+  --gradient-brand-bar:    linear-gradient(90deg, var(--accent-primary), var(--accent-teal));
+  /* A picked row or item: the accent at a whisper, so it reads as chosen without
+     competing with hover (--bg-hover) or a status colour. */
+  --bg-selected:           rgb(var(--accent-primary-rgb) / 0.08);
+  --gradient-brand-tint:   linear-gradient(135deg, rgb(var(--accent-primary-rgb) / 0.2), rgb(var(--accent-teal-rgb) / 0.2));
+  --gradient-accent-purple: linear-gradient(90deg, var(--accent-purple), var(--accent-primary));
+  --gradient-accent-deep:  linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+  --gradient-success:      linear-gradient(135deg, var(--accent-success), var(--accent-teal));
+  --gradient-surface:      linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+  --gradient-surface-up:   linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  --gradient-text:         linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+  /* Tinted washes: a faint status colour fading into the panel it sits on. The
+     surface differs per role, which is why these are separate roles and not one
+     gradient with a swappable stop. */
+  --gradient-success-wash:      linear-gradient(135deg, rgb(var(--accent-success-rgb) / 0.08) 0%, var(--bg-tertiary) 100%);
+  --gradient-success-wash-hover: linear-gradient(135deg, rgb(var(--accent-success-rgb) / 0.12) 0%, var(--bg-hover) 100%);
+  --gradient-success-wash-card: linear-gradient(135deg, rgb(var(--accent-success-rgb) / 0.08) 0%, var(--bg-card) 100%);
+  --gradient-success-wash-down: linear-gradient(180deg, rgb(var(--accent-success-rgb) / 0.07) 0%, var(--bg-secondary) 100%);
+  --gradient-brand-wash:       linear-gradient(135deg, rgb(var(--accent-primary-rgb) / 0.05) 0%, transparent 50%);
+  --gradient-brand-tint-soft:  linear-gradient(135deg, rgb(var(--accent-primary-rgb) / 0.1), rgb(var(--accent-teal-rgb) / 0.1));
+  --gradient-brand-tint-mid:   linear-gradient(135deg, rgb(var(--accent-primary-rgb) / 0.15), rgb(var(--accent-teal-rgb) / 0.15));
+  --gradient-brand-sweep:      linear-gradient(to right, rgb(var(--accent-primary-rgb) / 0.06), rgb(var(--accent-primary-rgb) / 0.8));
+  --gradient-supervision:      linear-gradient(135deg, var(--accent-purple), var(--journey-supervision));
+  --gradient-meter-fill:       linear-gradient(to top, var(--accent-primary), var(--accent-primary-hover));
+  /* Reads a component-scoped --ah-color/--ah-bg at the use site, which is how a
+     per-row hue keeps one gradient definition. */
+  --gradient-adherence-row:    linear-gradient(to right, color-mix(in srgb, var(--ah-color) 16%, transparent), var(--ah-bg));
+  --gradient-hold-veil:        linear-gradient(180deg, var(--status-hold-bg) 0%, transparent 42%);
+  /* Scroll-edge fades. Not decoration and not a brand gradient: they are the
+     affordance that says "there is more past this edge", so they wash from the
+     surface the scroll region is painted on into nothing. Two roles rather than
+     one flipped at the use site, because a scroll container can need both at
+     once and each has to name the edge it belongs to. */
+  --gradient-scroll-fade-start: linear-gradient(to bottom, var(--bg-card), transparent);
+  --gradient-scroll-fade-end:   linear-gradient(to top, var(--bg-card), transparent);
+
+  /* ─── Control surface ─────────────────────────────
+     THE resting background for every text control (input/textarea/select
+     trigger/search/filter). One surface product-wide; :hover/:focus/.open may
+     paint whatever they like. Having this named is what makes "why is this field
+     a different grey from that one?" answerable. */
+  --control-surface: var(--bg-tertiary);
+
+  /* ─── Channel triplets ────────────────────────────
+     The same colors as above, as bare "R G B" channels, so a translucent
+     variant composes from the token instead of restating the hex:
+
+         background: rgb(var(--accent-primary-rgb) / 0.12);
+
+     Before this existed, every tint was written as its own rgba() literal, so
+     the palette had ~90 one-off translucent colors whose base had drifted from
+     the accent it was meant to match, and none of them changed with the theme.
+     Keep each triplet in step with its solid token. */
+  --accent-primary-rgb:  68 147 248;
+  --accent-success-rgb:  63 185 80;
+  --accent-warning-rgb:  210 153 34;
+  --accent-danger-rgb:   248 81 73;
+  --accent-missed-rgb:   255 77 106;
+  --accent-fault-rgb:    240 136 62;
+  --accent-teal-rgb:     57 197 207;
+  --accent-purple-rgb:   165 165 255;
+  --text-muted-rgb:      107 116 128;
+  --border-primary-rgb:  42 49 58;
+  /* Scrim = the black used behind modals and inside shadows; on-scrim = the
+     white used for highlights over it. Named by role, not by colour, because
+     they do NOT invert with the theme -- a modal backdrop stays dark in both. */
+  --scrim-rgb:           0 0 0;
+  --on-scrim-rgb:        255 255 255;
+
+  /* ─── Text over a filled accent ───────────────────
+     Not --text-primary: this sits on a saturated accent/status fill, so it
+     stays near-white in both themes rather than inverting. */
+  --text-on-accent: #ffffff;
+
+  /* ─── Call-journey event palette ──────────────────
+     One hue per journey event type. Defined here rather than on the modal so
+     the timeline, the legend and the log rows read the same source. */
+  --journey-inbound:     #3fb950;
+  --journey-outbound:    #4493f8;
+  --journey-queue:       #8b5cf6;
+  --journey-ring:        #d29922;
+  --journey-answer:      #39c5cf;
+  --journey-no-answer:   #f85149;
+  --journey-transfer:    #f0883e;
+  --journey-supervision: #a855f7;
+  --journey-hangup:      #6b7480;
+  /* ATTEMPT: one pass the auto-dialer made at a lead (its journey opens each attempt
+     with one). Deliberately close to --journey-queue, since an attempt is the dialer
+     doing the same thing again rather than a new kind of event. */
+  --journey-attempt:     #a78bfa;
+
+  /* ─── Third-party brand marks ─────────────────────
+     Google's and Microsoft's own colours, used by the SSO buttons' inline SVGs.
+     Fixed by those brands, so unlike everything else here they must NOT invert
+     with the theme and must not be swapped for a semantic token -- named only so
+     the values live in one place instead of inside markup. */
+  --brand-google-blue:   #4285f4;
+  --brand-google-red:    #ea4335;
+  --brand-google-yellow: #fbbc05;
+  --brand-google-green:  #34a853;
+  --brand-ms-red:        #f25022;
+  --brand-ms-green:      #7fba00;
+  --brand-ms-blue:       #00a4ef;
+  --brand-ms-yellow:     #ffb900;
+
+  /* Call outcome that has no status token of its own. */
+  --status-dropped: #db61a2;
+  --status-dropped-rgb: 219 97 162;
+
+  /* ─── Leaderboard medals ──────────────────────────
+     Metal colours, so they are deliberately theme-invariant. */
+  --medal-gold:       #f0c040;
+  --medal-silver:     #c0c0c0;
+  --medal-bronze:     #cd7f32;
+  --medal-gold-rgb:   210 163 34;
+  --medal-silver-rgb: 180 180 180;
+  --medal-bronze-rgb: 180 120 70;
+
+  /* ─── Decorative background tint (removed) ────── */
+  --bg-tint-1: transparent;
+  --bg-tint-2: transparent;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   LIGHT THEME — clean, airy, neutral grays
+   ════════════════════════════════════════════════════════════════════ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* ─── Backgrounds ─────────────────────────────── */
+  --bg-primary:   #f6f8fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary:  #eef1f5;
+  --bg-card:      #ffffff;
+  --bg-hover:     #f0f3f7;
+  --bg-glass:     var(--bg-secondary);
+  --glass-bg:     var(--bg-secondary);
+  --glass-border: rgba(15, 23, 42, 0.06);
+
+  /* ─── Borders ─────────────────────────────────── */
+  --border:         #d8dee6;
+  --border-primary: #d8dee6;
+  --border-accent:  #c2cbd6;
+  --border-subtle:  rgba(15, 23, 42, 0.08);
+
+  /* ─── Text ────────────────────────────────────── */
+  --text-primary:   #1c2128;
+  --text-secondary: #5a6573;
+  --text-muted:     #8b95a3;
+
+  /* ─── Status colors (darker for contrast on light) */
+  --status-idle:          #1a7f37;
+  --status-idle-bg:       rgba(26, 127, 55, 0.10);
+  --status-idle-glow:     transparent;
+  --status-ringing:       #cf222e;
+  --status-ringing-bg:    rgba(207, 34, 46, 0.10);
+  --status-ringing-glow:  transparent;
+  --status-call:          #1f6feb;
+  --status-call-bg:       rgba(31, 111, 235, 0.10);
+  --status-call-glow:     transparent;
+  --status-unavailable:   #8b95a3;
+  --status-unavailable-bg: rgba(139, 149, 163, 0.12);
+  --status-hold:          #7c5cff;
+  --status-hold-bg:       rgba(124, 92, 255, 0.10);
+
+  /* ─── Accent palette ──────────────────────────── */
+  --accent:               #1f6feb;
+  --accent-primary:       #1f6feb;
+  --accent-primary-hover: #1a5fd0;
+  --accent-hover:         #1a5fd0;
+  --accent-secondary:     #1a5fd0;
+  --accent-teal:          #0d9aa3;
+  --accent-purple:        #7c5cff;
+  --accent-light:         rgba(31, 111, 235, 0.10);
+  --chart-inbound:        #1f6feb;
+  --chart-outbound:       #e0631f;
+  --chart-internal:       #0d9aa3;
+  --accent-gold-dim:      var(--accent-primary);
+
+  /* semantic */
+  --success: #1a7f37;
+  --warning: #9a6700;
+  --danger:  #cf222e;
+  --info:    #1f6feb;
+  --accent-success: #1a7f37;
+  --accent-warning: #9a6700;
+  --accent-danger:  #cf222e;
+  /* Light twins of the dark --accent-missed / --accent-fault; darker, to carry on white. */
+  --accent-missed:  #c81e4e;
+  --accent-fault:   #bc4c00;
+
+  /* ─── Shadows (soft, low-alpha for light bg) ──── */
+  --shadow-sm:  0 1px 2px rgba(15,23,42,0.06);
+  --shadow:     0 1px 3px rgba(15,23,42,0.08);
+  --shadow-md:  0 2px 6px rgba(15,23,42,0.08);
+  --shadow-lg:  0 6px 18px rgba(15,23,42,0.10);
+  --shadow-xl:  0 12px 32px rgba(15,23,42,0.14);
+  --shadow-glow:        0 0 0 0 transparent;
+  --shadow-glow-ringing: 0 0 0 0 transparent;
+
+  /* ─── Channel triplets (light) ────────────────────
+     Mirrors of the light solid tokens; see the dark block for the rationale. */
+  --accent-primary-rgb:  31 111 235;
+  --accent-success-rgb:  26 127 55;
+  --accent-warning-rgb:  154 103 0;
+  --accent-danger-rgb:   207 34 46;
+  --accent-missed-rgb:   200 30 78;
+  --accent-fault-rgb:    188 76 0;
+  --accent-teal-rgb:     13 154 163;
+  --accent-purple-rgb:   124 92 255;
+  --text-muted-rgb:      139 149 163;
+  --border-primary-rgb:  216 222 230;
+  /* Scrim stays dark in the light theme too: a backdrop that inverted would
+     stop reading as "behind a modal". */
+  --scrim-rgb:           15 23 42;
+  --on-scrim-rgb:        255 255 255;
+
+  --text-on-accent: #ffffff;
+
+  /* ─── Call-journey event palette (light) ──────── */
+  --journey-inbound:     #1a7f37;
+  --journey-outbound:    #1f6feb;
+  --journey-queue:       #6d28d9;
+  --journey-ring:        #9a6700;
+  --journey-answer:      #0d9aa3;
+  --journey-no-answer:   #cf222e;
+  --journey-transfer:    #c2410c;
+  --journey-supervision: #7c3aed;
+  --journey-hangup:      #5a6573;
+  --journey-attempt:     #5b21b6;
+
+  /* ─── Decorative background tint (removed) ────── */
+  --bg-tint-1: transparent;
+  --bg-tint-2: transparent;
+}

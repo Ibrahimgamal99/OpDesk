@@ -2,110 +2,19 @@
    Uses existing CSS custom properties from index.css for full dark-theme compatibility. */
 
 /* ---------------------------------------------------------------------------
-   Layout
+   Layout — ui/Page owns the header, tab band and body padding; this only
+   stacks the active sub-panel's sections.
    --------------------------------------------------------------------------- */
-
-/* ---------------------------------------------------------------------------
-   Sub-tab navigation
-   --------------------------------------------------------------------------- */
-
-/* ── Generic ui-tabs pill container (shared Tabs component) ───────────── */
-.ui-tabs {
-  display: flex;
-  gap: 4px;
-  background: var(--bg-tertiary);
-  padding: 5px;
-  border-radius: var(--radius-lg, 10px);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  width: fit-content;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
+.an-panel {
+  min-height: 0;
+  overflow-x: clip;
 }
-.ui-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 16px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: var(--radius-md, 8px);
-  cursor: pointer;
-  transition: all var(--transition-fast, 0.15s);
-  font-family: inherit;
-  white-space: nowrap;
-}
-.ui-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
-.ui-tab.active {
-  background: var(--accent-primary);
-  color: var(--text-on-accent);
-  box-shadow: var(--shadow-md);
-}
-.ui-tab-count {
-  background: rgba(255,255,255,0.18);
-  border-radius: var(--radius-xs);
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 700;
-}
-.ui-tab.active .ui-tab-count { background: rgba(255,255,255,0.25); }
-
-/* Override the generic ui-tabs pill container to become a flat nav rail */
 
 .an-tab-content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-height: 0;
+  gap: var(--space-4);
 }
-
-.panel-header-actions { display: flex; align-items: center; gap: var(--space-2, 8px); flex-wrap: wrap; }
-
-.an-subtabs {
-  display: flex;
-  gap: 3px;
-  background: var(--bg-card);
-  border-radius: var(--radius-sm);
-  padding: 4px;
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  width: fit-content;
-  min-width: 100%;
-}
-
-.an-subtab {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 14px;
-  border-radius: var(--radius-xs);
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-weight: 500;
-  transition: background 0.15s, color 0.15s;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.an-subtab:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.an-subtab.active {
-  background: var(--accent-primary);
-  color: var(--text-on-accent);
-  box-shadow: 0 1px 6px rgba(88,166,255,0.3);
-}
-
-/* The period picker's chip row and custom-date bar lived here. Both are gone:
-   the range is now ui/RangePicker, styled in shell.css with the rest of the ui/
-   layer. Its chips were pills at --radius-xl with an --accent-primary fill on
-   the selected one — the active-tab treatment, on a control that is not a tab. */
 
 /* ---------------------------------------------------------------------------
    KPI cards grid
@@ -113,74 +22,73 @@
 .an-kpi-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 12px;
+  gap: var(--space-3);
+}
+/* Five across on desktop only; the narrow breakpoints below still apply. */
+@media (min-width: 901px) {
+  .an-kpi-grid.cols-5 {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+/* The Overview's four headline figures: one row on desktop. */
+@media (min-width: 901px) {
+  .an-kpi-grid.cols-4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
-.an-kpi-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  border-radius: var(--radius-sm);
-  padding: 15px 16px 13px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  position: relative;
-  overflow: hidden;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s;
-  cursor: default;
+/* A direct value label at the end of a bar: text ink, never the series colour. */
+.an-bar-label { fill: var(--text-secondary); font-size: var(--text-xs); }
+
+/* Two charts side by side, wrapping to one column on their own width. */
+.an-chart-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: var(--space-4);
 }
 
-.an-kpi-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
-  border-color: var(--border-accent);
-}
-
-/* Accent top bar — defaults to primary, overridden by status class */
-.an-kpi-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  background: var(--accent-primary);
-  opacity: 0.4;
-  transition: background 0.18s, opacity 0.18s;
-}
-
-.an-kpi-card:hover::before {
-  opacity: 0.7;
-}
-.an-kpi-card.good::before { background: var(--accent-success); }
-.an-kpi-card.warn::before { background: var(--accent-warning); }
-.an-kpi-card.bad::before  { background: var(--accent-danger); }
-
-.an-kpi-label {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-}
-
-.an-kpi-value {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1;
-  letter-spacing: -0.02em;
-}
-
+/* KpiCard renders with Stat's .ui-stat / .ui-stat-label / .ui-stat-value /
+   .ui-stat-hint classes, so tile, label and figure match every other summary row.
+   What a KPI adds to a Stat: the figure's status tone (an SLA met or missed is a
+   status, so the value itself carries it), the period delta and the sparkline. */
 .an-kpi-value.good { color: var(--accent-success); }
 .an-kpi-value.warn { color: var(--accent-warning); }
 .an-kpi-value.bad  { color: var(--accent-danger); }
 
+/* Headline cards (KpiCard featured): bigger type, a tone bar on top and a light tint of the
+   same tone, so the row a stakeholder reads first says how things are before any number is
+   read. The tone is the figure's verdict; a plain count has none and wears the brand blue. */
+.an-kpi-card--featured {
+  --kpi-tone: var(--accent-primary);
+  background: color-mix(in srgb, var(--kpi-tone) 8%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--kpi-tone) 30%, var(--border-subtle));
+  border-top: 3px solid var(--kpi-tone);
+  padding: var(--space-4);
+  gap: var(--space-1h);
+}
+.an-kpi-card--featured[data-tone='good'] { --kpi-tone: var(--accent-success); }
+.an-kpi-card--featured[data-tone='warn'] { --kpi-tone: var(--accent-warning); }
+.an-kpi-card--featured[data-tone='bad']  { --kpi-tone: var(--accent-danger); }
+.an-kpi-card--featured .ui-stat-label {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+.an-kpi-card--featured .ui-stat-value {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
+}
+.an-kpi-card--featured .ui-stat-hint {
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+}
+
 .an-kpi-delta {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.72rem;
-  font-weight: 600;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .an-kpi-delta.pos { color: var(--accent-success); }
@@ -188,20 +96,13 @@
 .an-kpi-delta.neu { color: var(--text-muted); }
 
 .an-kpi-delta-label {
-  font-weight: 400;
-  opacity: 0.65;
-  font-size: 0.68rem;
-}
-
-.an-kpi-desc {
-  font-size: 0.7rem;
+  font-weight: var(--weight-normal);
   color: var(--text-muted);
-  line-height: 1.4;
 }
 
 /* Sparkline in card */
 .an-sparkline {
-  margin-top: 6px;
+  margin-top: var(--space-1h);
   opacity: 0.85;
 }
 
@@ -210,47 +111,26 @@
    --------------------------------------------------------------------------- */
 .an-progress {
   height: 4px;
-  border-radius: var(--radius-2xs);
-  background: var(--bg-tertiary);
+  border-radius: 2px;
+  background: var(--bg-tertiary, var(--bg-primary));
   overflow: hidden;
   flex-shrink: 0;
 }
 
 .an-progress-fill {
   height: 100%;
-  border-radius: var(--radius-2xs);
-  background: var(--accent-primary);
-  transition: width 0.45s ease;
+  border-radius: 2px;
+  background: var(--accent-primary, var(--accent-primary));
 }
 
-.an-progress-fill.good { background: var(--accent-success); }
-.an-progress-fill.warn { background: var(--accent-warning); }
-.an-progress-fill.bad  { background: var(--accent-danger); }
+.an-progress-fill.good { background: var(--accent-success, var(--accent-success)); }
+.an-progress-fill.warn { background: var(--accent-warning, var(--accent-warning)); }
+.an-progress-fill.bad  { background: var(--accent-danger, var(--accent-danger)); }
 
-/* ---------------------------------------------------------------------------
-   Section card (used for chart + table containers)
-   --------------------------------------------------------------------------- */
-.an-section {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  border-radius: var(--radius-sm);
-  padding: 16px;
-}
-
-.an-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.an-section-title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+/* The short bar under a count (Queues → Answered), pushed to the cell's end. */
+.an-progress--mini {
+  inline-size: var(--space-8);
+  margin-inline-start: auto;
 }
 
 /* ---------------------------------------------------------------------------
@@ -270,42 +150,42 @@
 .an-table th {
   text-align: left;
   padding: 9px 12px;
-  color: var(--text-muted);
+  color: var(--text-muted, var(--text-muted));
   font-weight: 600;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
+  border-bottom: 1px solid var(--border-subtle, rgb(var(--border-primary-rgb) / 0.5));
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
   transition: color var(--transition-fast, 150ms);
-  background: var(--bg-card);
+  background: var(--bg-card, var(--bg-tertiary));
 }
 
-.an-table th:hover { color: var(--text-primary); }
-.an-table th.sorted { color: var(--accent-primary); }
+.an-table th:hover { color: var(--text-primary, var(--text-primary)); }
+.an-table th.sorted { color: var(--accent-primary, var(--accent-primary)); }
 
 .an-table th.sticky,
 .an-table td.sticky {
   position: sticky;
   left: 0;
-  z-index: var(--z-raised);
-  background: var(--bg-card);
+  z-index: var(--z-base);
+  background: var(--bg-card, var(--bg-tertiary));
 }
 
 .an-table td {
   padding: 9px 12px;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
+  color: var(--text-primary, var(--text-primary));
+  border-bottom: 1px solid var(--border-subtle, rgb(var(--border-primary-rgb) / 0.5));
   vertical-align: middle;
 }
 
 .an-table tr:hover td {
-  background: var(--bg-hover);
+  background: var(--bg-hover, var(--bg-hover));
 }
 .an-table tr:hover td.sticky {
-  background: var(--bg-card);
+  background: var(--bg-card, var(--bg-tertiary));
   filter: brightness(1.06);
 }
 
@@ -314,7 +194,16 @@
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
-.an-table .muted { color: var(--text-muted); }
+.an-table .muted { color: var(--text-muted, var(--text-muted)); }
+.an-table .an-tnum { font-variant-numeric: tabular-nums; }
+
+/* Shrink-to-content column (rank, sparkline). */
+.an-table .an-col-fit { inline-size: 1%; white-space: nowrap; }
+
+/* Adherence time columns wear the presence colour of the state they total. */
+.an-table .an-fg-ready   { color: var(--status-idle); }
+.an-table .an-fg-on-call { color: var(--status-call); }
+.an-table .an-fg-wrap    { color: var(--status-hold); }
 
 /* ---------------------------------------------------------------------------
    SLA cell (badge + mini bar)
@@ -334,47 +223,16 @@
   align-items: center;
   justify-content: center;
   width: 24px; height: 24px;
-  border-radius: var(--radius-circle);
+  border-radius: 50%;
   font-size: 0.72rem;
   font-weight: 700;
-  background: rgba(88,166,255,0.12);
-  color: var(--accent-primary);
+  background: rgb(var(--accent-primary-rgb) / 0.12);
+  color: var(--accent-primary, var(--accent-primary));
   flex-shrink: 0;
 }
-.an-rank.gold   { background: rgba(210,163,34,0.16); color: var(--rank-gold); border: 1px solid rgba(210,163,34,0.3); }
-.an-rank.silver { background: rgba(180,180,180,0.12); color: var(--rank-silver); border: 1px solid rgba(180,180,180,0.25); }
-.an-rank.bronze { background: rgba(180,120,70,0.16); color: var(--rank-bronze); border: 1px solid rgba(180,120,70,0.3); }
-
-/* ---------------------------------------------------------------------------
-   Badges
-   --------------------------------------------------------------------------- */
-.an-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 9px;
-  border-radius: var(--radius-xl);
-  font-size: 0.72rem;
-  font-weight: 600;
-  white-space: nowrap;
-  letter-spacing: 0.02em;
-}
-
-.an-badge.sla-met  {
-  background: rgba(63,185,80,0.12);
-  color: var(--accent-success);
-  border: 1px solid rgba(63,185,80,0.2);
-}
-.an-badge.sla-fail {
-  background: rgba(248,81,73,0.10);
-  color: var(--accent-danger);
-  border: 1px solid rgba(248,81,73,0.18);
-}
-.an-badge.neutral {
-  background: rgba(110,118,129,0.12);
-  color: var(--text-muted);
-  border: 1px solid rgba(110,118,129,0.2);
-}
+.an-rank.gold   { background: rgb(var(--medal-gold-rgb) / 0.16); color: var(--medal-gold); border: 1px solid rgb(var(--medal-gold-rgb) / 0.3); }
+.an-rank.silver { background: rgb(var(--medal-silver-rgb) / 0.12); color: var(--medal-silver); border: 1px solid rgb(var(--medal-silver-rgb) / 0.25); }
+.an-rank.bronze { background: rgb(var(--medal-bronze-rgb) / 0.16); color: var(--medal-bronze); border: 1px solid rgb(var(--medal-bronze-rgb) / 0.3); }
 
 /* ---------------------------------------------------------------------------
    Heatmap
@@ -394,7 +252,7 @@
 }
 
 .an-heatmap-hour-label {
-  color: var(--text-muted);
+  color: var(--text-muted, var(--text-muted));
   text-align: center;
   padding: 2px 0;
   font-size: 0.6rem;
@@ -402,18 +260,19 @@
 }
 
 .an-heatmap-day-label {
-  color: var(--text-secondary);
+  color: var(--text-secondary, var(--text-secondary));
   display: flex;
   align-items: center;
-  padding-right: 6px;
+  padding-inline-end: 6px;
   font-size: 0.68rem;
   font-weight: 600;
 }
 
 .an-heatmap-cell {
   height: 24px;
-  border-radius: var(--radius-2xs);
-  background: var(--bg-tertiary);
+  border-radius: 3px;
+  /* Alpha is the cell's share of the busiest hour, set inline as --an-heat. */
+  background: rgb(var(--accent-primary-rgb) / var(--an-heat, 0.04));
   cursor: default;
   position: relative;
   transition: transform 0.1s, filter 0.1s;
@@ -422,7 +281,7 @@
 .an-heatmap-cell:hover {
   transform: scale(1.08);
   filter: brightness(1.3);
-  z-index: var(--z-raised);
+  z-index: var(--z-base);
 }
 
 .an-heatmap-cell:hover::after {
@@ -431,16 +290,16 @@
   bottom: calc(100% + 5px);
   left: 50%;
   transform: translateX(-50%);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-accent);
+  background: var(--bg-primary, var(--bg-primary));
+  border: 1px solid var(--border-accent, var(--text-muted));
   padding: 4px 8px;
-  border-radius: var(--radius-xs);
+  border-radius: 5px;
   white-space: nowrap;
   font-size: 0.7rem;
-  color: var(--text-primary);
-  z-index: var(--z-tooltip);
+  color: var(--text-primary, var(--text-primary));
+  z-index: var(--z-menu);
   pointer-events: none;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 12px rgb(var(--scrim-rgb) / 0.4);
 }
 
 .an-heatmap-legend {
@@ -449,168 +308,14 @@
   gap: 8px;
   margin-top: 10px;
   font-size: 0.68rem;
-  color: var(--text-muted);
+  color: var(--text-muted, var(--text-muted));
 }
 
 .an-heatmap-legend-bar {
   height: 8px;
   width: 120px;
-  border-radius: var(--radius-xs);
-  background: linear-gradient(to right, rgba(88,166,255,0.06), rgba(88,166,255,0.8));
-}
-
-/* ---------------------------------------------------------------------------
-   Filter bar (Drilldown)
-   --------------------------------------------------------------------------- */
-.an-filters {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-  padding: 12px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  border-radius: var(--radius-sm);
-}
-
-.an-filter-group {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.an-filter-icon {
-  position: absolute;
-  left: 9px;
-  color: var(--text-muted);
-  pointer-events: none;
-  flex-shrink: 0;
-}
-
-.an-filter-input {
-  padding: 6px 10px 6px 30px;
-  border-radius: var(--radius-md, 12px);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  background: var(--control-surface);
-  color: var(--text-primary);
-  font-size: 0.8rem;
-  font-family: inherit;
-  transition: border-color var(--transition-fast, 150ms), box-shadow var(--transition-fast, 150ms);
-  min-width: 0;
-}
-
-.an-filter-input:hover {
-  border-color: var(--border-accent);
-}
-
-.an-filter-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--status-call-glow, rgba(88,166,255,0.2));
-}
-
-.an-filter-input::placeholder {
-  color: var(--text-muted);
-  opacity: 0.7;
-}
-
-.an-filter-select {
-  padding: 6px 28px 6px 10px;
-  border-radius: var(--radius-md, 12px);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  background: var(--control-surface);
-  color: var(--text-primary);
-  font-size: 0.8rem;
-  font-family: inherit;
-  cursor: pointer;
-  transition: border-color var(--transition-fast, 150ms), box-shadow var(--transition-fast, 150ms);
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236e7681' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-}
-
-.an-filter-select:hover {
-  border-color: var(--border-accent);
-}
-
-.an-filter-select:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--status-call-glow, rgba(88,166,255,0.2));
-}
-
-.an-filter-select option {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-}
-
-.an-filter-clear {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border-radius: var(--radius-xs);
-  border: 1px solid rgba(248,81,73,0.3);
-  background: rgba(248,81,73,0.08);
-  color: var(--accent-danger);
-  cursor: pointer;
-  font-size: 0.76rem;
-  font-weight: 500;
-  transition: all 0.15s;
-  white-space: nowrap;
-}
-
-.an-filter-clear:hover {
-  background: rgba(248,81,73,0.15);
-  border-color: rgba(248,81,73,0.5);
-}
-
-.an-filter-count {
-  margin-left: auto;
-  font-size: 0.76rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-/* Custom select + dot styles live in index.css (global) */
-
-/* ---------------------------------------------------------------------------
-   Export bar
-   --------------------------------------------------------------------------- */
-.an-export-bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.an-export-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 0.79rem;
-  font-weight: 500;
-  transition: all var(--transition-fast, 150ms);
-  white-space: nowrap;
-}
-
-.an-export-btn:hover:not(:disabled) {
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
-  background: rgba(88,166,255,0.08);
-}
-
-.an-export-btn:disabled {
-  opacity: 0.38;
-  cursor: default;
-  pointer-events: none;
+  border-radius: 4px;
+  background: var(--gradient-brand-sweep);
 }
 
 /* ---------------------------------------------------------------------------
@@ -622,81 +327,22 @@
   justify-content: center;
   gap: 10px;
   padding: 64px 0;
-  color: var(--text-muted);
+  color: var(--text-muted, var(--text-muted));
   font-size: 0.87rem;
-}
-
-.an-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 48px 0;
-  color: var(--text-muted);
-  font-size: 0.84rem;
-  text-align: center;
-}
-
-.an-empty-icon {
-  opacity: 0.35;
-  margin-bottom: 4px;
 }
 
 /* Spinner */
 .an-spinner {
   width: 18px; height: 18px;
-  border: 2px solid var(--border-subtle, rgba(48,54,61,0.5));
-  border-top-color: var(--accent-primary);
-  border-radius: var(--radius-circle);
+  border: 2px solid var(--border-subtle, rgb(var(--border-primary-rgb) / 0.5));
+  border-top-color: var(--accent-primary, var(--accent-primary));
+  border-radius: 50%;
   animation: an-spin 0.7s linear infinite;
   flex-shrink: 0;
 }
 
 @keyframes an-spin {
   to { transform: rotate(360deg); }
-}
-
-/* ---------------------------------------------------------------------------
-   Pagination
-   --------------------------------------------------------------------------- */
-.an-pagination {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.an-page-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px; height: 30px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle, rgba(48,54,61,0.5));
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  transition: all var(--transition-fast, 150ms);
-}
-
-.an-page-btn:hover:not(:disabled) {
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
-  background: rgba(88,166,255,0.08);
-}
-
-.an-page-btn:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-.an-page-info {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  padding: 0 6px;
-  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------------------------
@@ -723,25 +369,13 @@
 
 .an-agent-name {
   font-size: 0.82rem;
-  color: var(--text-primary);
+  color: var(--text-primary, var(--text-primary));
   font-weight: 500;
 }
 
 .an-agent-ext {
   font-size: 0.7rem;
-  color: var(--text-muted);
-}
-
-/* ---------------------------------------------------------------------------
-   Drilldown table footer row
-   --------------------------------------------------------------------------- */
-.an-drilldown-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 8px 0 0;
+  color: var(--text-muted, var(--text-muted));
 }
 
 /* ---------------------------------------------------------------------------
@@ -752,53 +386,16 @@
   .an-kpi-grid {
     grid-template-columns: repeat(4, 1fr);
   }
-
-  .an-date-input {
-    width: 118px;
-  }
 }
 
 @media (max-width: 640px) {
-
-  .an-date-input {
-    width: 110px;
+  .an-tab-content {
+    gap: var(--space-2h);
   }
 
   .an-kpi-grid {
     grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-  }
-
-  .an-kpi-value {
-    font-size: 1.45rem;
-  }
-
-  .an-section {
-    padding: 12px;
-  }
-
-  .an-filters {
-    padding: 10px 12px;
-    gap: 6px;
-  }
-
-  .an-filter-input,
-  .an-filter-select {
-    width: 100%;
-  }
-
-  .an-filter-group {
-    width: 100%;
-  }
-
-  .an-drilldown-footer {
-    flex-direction: column-reverse;
-    align-items: flex-start;
-  }
-
-  .an-export-bar {
-    width: 100%;
-    justify-content: flex-start;
+    gap: var(--space-2);
   }
 
   .an-heatmap-grid {
@@ -813,10 +410,6 @@
 @media (max-width: 420px) {
   .an-kpi-grid {
     grid-template-columns: 1fr 1fr;
-  }
-
-  .an-kpi-value {
-    font-size: 1.25rem;
   }
 }
 
@@ -838,27 +431,467 @@
   right: 0;
 }
 
-[dir="rtl"] .an-filter-icon {
-  left: auto;
-  right: 9px;
-}
-
-[dir="rtl"] .an-filter-input {
-  padding-left: 10px;
-  padding-right: 30px;
-}
-
-[dir="rtl"] .an-filter-select {
-  padding-left: 28px;
-  padding-right: 10px;
-  background-position: left 8px center;
-}
-
-[dir="rtl"] .an-filter-count {
-  margin-left: 0;
-  margin-right: auto;
-}
-
 [dir="rtl"] .an-kpi-delta {
   flex-direction: row-reverse;
+}
+
+/* ---------------------------------------------------------------------------
+   Erlang C staffing tab
+   --------------------------------------------------------------------------- */
+/* Required-vs-actual bar chart (hand-rolled, matches the heatmap approach) */
+.an-staffing-legend {
+  display: flex;
+  gap: 16px;
+  margin: 4px 0 10px;
+  font-size: 0.72rem;
+  color: var(--text-muted, var(--text-muted));
+}
+
+.an-staffing-legend span { display: inline-flex; align-items: center; gap: 5px; }
+
+.an-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.an-swatch.req { background: var(--border-accent, var(--text-muted)); }
+.an-swatch.act { background: var(--accent-success, var(--accent-success)); }
+.an-swatch.understaff { background: var(--accent-danger, var(--accent-danger)); }
+
+.an-staffing-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 140px;
+  padding: 8px 0 0;
+  overflow-x: auto;
+}
+
+.an-staffing-col {
+  flex: 1;
+  min-width: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.an-staffing-bars {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+}
+
+/* Height comes from u-fill-y (--u-fill set per hour); the width is restated with
+   the parent in the selector so it outranks u-fill-y's full-width default. */
+.an-staffing-bars > .an-staffing-bar {
+  inline-size: 42%;
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+}
+.an-staffing-bar.req { background: var(--border-accent, var(--text-muted)); }
+.an-staffing-bar.act { background: var(--accent-success, var(--accent-success)); }
+.an-staffing-bar.act.understaff { background: var(--accent-danger, var(--accent-danger)); }
+
+.an-staffing-hlabel {
+  font-size: 0.62rem;
+  color: var(--text-muted, var(--text-muted));
+  margin-top: 4px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Agent Adherence — clickable row + the per-agent activity trace (AgentTimelineModal)
+   --------------------------------------------------------------------------- */
+
+/* An adherence row opens that agent's trace, so it has to look pressable. The
+   sticky first cell carries its own background and would otherwise stay unhighlighted. */
+.an-table tbody tr.an-row-clickable { cursor: pointer; }
+.an-table tbody tr.an-row-clickable:hover td,
+.an-table tbody tr.an-row-clickable:focus-visible td {
+  background: var(--bg-hover);
+}
+.an-table tbody tr.an-row-clickable:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.an-tl-period {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.an-tl-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.an-tl-session {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.an-tl-session-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2h) var(--space-3);
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.an-tl-session-when {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.an-tl-day { font-weight: 600; color: var(--text-primary); }
+.an-tl-arrow { color: var(--text-muted); display: inline-block; }
+[dir="rtl"] .an-tl-arrow { transform: scaleX(-1); }
+
+.an-tl-bound {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-tl-session-dur {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-tl-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) 0;
+}
+
+/* One move. The rail column draws the connecting line + the state dot, so the
+   states read as a sequence rather than as unrelated rows. */
+.an-tl-item {
+  display: grid;
+  grid-template-columns: auto var(--space-4) minmax(140px, auto) 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+}
+
+.an-tl-time {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-tl-rail {
+  position: relative;
+  align-self: stretch;
+  display: block;
+}
+.an-tl-rail::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-subtle);
+  transform: translateX(-50%);
+}
+.an-tl-rail::after {
+  content: '';
+  position: absolute;
+  inset-inline-start: 50%;
+  top: 50%;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--tl-dot, var(--text-muted));
+  transform: translate(-50%, -50%);
+}
+.an-tl-item:first-child .an-tl-rail::before { top: 50%; }
+.an-tl-item:last-child .an-tl-rail::before { bottom: 50%; }
+
+.an-tl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.an-tl-chip {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1h);
+  white-space: nowrap;
+}
+
+.an-tl-dur {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+.an-tl-dur em { color: var(--text-muted); font-style: normal; }
+
+/* Phone: the meta chips and the duration drop under the state pill rather than
+   squeezing the five columns past the screen edge. */
+@media (max-width: 560px) {
+  .an-tl-item {
+    grid-template-columns: auto var(--space-4) 1fr;
+  }
+  .an-tl-meta,
+  .an-tl-dur {
+    grid-column: 3;
+    text-align: start;
+  }
+  /* The rail spans all three stacked rows; auto-placement would leave it in row 1 and
+     the connecting line would break into a stub between every entry. */
+  .an-tl-rail {
+    grid-row: 1 / -1;
+  }
+}
+
+/* The adherence agent name is a real <button> (the row's keyboard-reachable way into
+   the trace), styled as the text it replaced. */
+.an-tl-open {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.an-tl-open:hover { color: var(--accent-primary); }
+.an-tl-open:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------------------
+   Agent Performance — per-agent route breakdown (AgentCallsModal)
+   --------------------------------------------------------------------------- */
+.an-ac-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.an-ac-summary .an-ac-group th {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  text-align: start;
+}
+.an-ac-group-count {
+  margin-inline-start: var(--space-2);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-ac-route { font-weight: var(--weight-medium); }
+.an-ac-route-hint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* A route with no calls stays listed (every case is shown), just quieter. */
+.an-table tbody tr.an-ac-empty td { color: var(--text-muted); }
+.an-table tbody tr.an-ac-empty .an-ac-route { color: var(--text-muted); }
+
+.an-table tbody tr.an-ac-selected td {
+  background: var(--bg-selected);
+}
+.an-table tbody tr.an-ac-selected .an-ac-route { color: var(--accent-primary); }
+
+.an-ac-ended {
+  display: inline-flex;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+.an-ac-ended [aria-hidden] { color: var(--text-muted); }
+
+.an-ac-count {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* A refetch (page, route or status) keeps the old rows up, dimmed, rather than
+   blanking the list. */
+.an-ac-list[aria-busy='true'] { opacity: 0.6; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Campaign Performance
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Outcome mix: label, share bar, count ── */
+.an-camp-outcomes {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.an-camp-outcome {
+  display: grid;
+  /* A fixed label column so every bar starts on the same line and the rows read as one
+     scale; auto-sizing them made each outcome's bar begin somewhere else. */
+  grid-template-columns: 150px 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+/* The outcome's colour arrives as --u-color; this outranks .an-progress-fill's default
+   accent whichever stylesheet loads last. */
+.an-camp-outcome .an-progress-fill { background: var(--u-color, var(--accent-primary)); }
+
+.an-camp-outcome-label {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.an-camp-outcome-val {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.an-camp-outcome-pct {
+  font-weight: 400;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ── Instant / Scheduled donut, trend and outcome mix in one row ──
+   The trend, in the middle, takes half: it is the only one with a time axis to spread out.
+   Grid rows stretch, so the three panels share one height. Below 1200px they stack. */
+.an-camp-charts {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1200px) {
+  .an-camp-charts { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); }
+  /* A quarter-width column: a narrower label column leaves the share bars room to read. */
+  .an-camp-charts .an-camp-outcome { grid-template-columns: 110px 1fr auto; gap: var(--space-2); }
+}
+
+.an-camp-split {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.an-camp-split-ring { position: relative; }
+
+/* The total sits in the hole; it must not take the pointer from the slices around it. */
+.an-camp-split-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.an-camp-split-total {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.an-camp-split-caption {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.an-camp-split-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.an-camp-split-legend li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+.an-camp-split-swatch {
+  width: var(--space-2h);
+  height: var(--space-2h);
+  border-radius: var(--radius-sm);
+  background: var(--u-color);
+}
+.an-camp-split-name {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Per-campaign table: the name opens that campaign ── */
+
+
+.an-camp-note {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ── Agent rows and their expanded detail ── */
+.an-camp-expand-col { inline-size: var(--space-7); }
+.an-camp-spark-col { inline-size: calc(var(--space-8) * 2); }
+
+.an-camp-agent-row.open { background: var(--bg-hover); }
+
+.an-camp-detail-row > td { padding: 0; }
+
+.an-camp-detail {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 2fr;
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-3h) var(--space-4);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 720px) {
+  .an-camp-detail { grid-template-columns: 1fr; }
+  .an-camp-outcome { grid-template-columns: 110px 1fr auto; }
+}
+
+.an-camp-detail-chart { min-width: 0; }
+
+.an-camp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
 }

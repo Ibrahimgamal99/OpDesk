@@ -6,7 +6,12 @@ import { Login } from './components/Login'
 import { getToken, removeToken } from './auth'
 import { rlog } from './lib/remoteLog'
 import './i18n'
+import './styles/variables.css'
 import './styles/index.css'
+import './styles/classic-pages.css'
+// After index.css: utilities are single-purpose and should win over a component
+// rule of equal specificity when both are applied deliberately.
+import './styles/utilities.css'
 
 function Root() {
   const [token, setTokenState] = useState<string | null>(() => getToken())

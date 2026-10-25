@@ -1,83 +1,70 @@
 import React from 'react';
+import type { LucideIcon } from 'lucide-react';
 
 /**
- * The page shell. Owns every piece of page chrome: header, title, icon slot,
- * trailing actions, the tab strip container, and the toolbar container.
+ * The one page shell. Every routed panel renders exactly one of these and puts
+ * nothing above or around it, so every page has the same slot map:
  *
- * Pages pass content into slots and never lay out chrome themselves — no
- * page-level padding, max-width, background, or header markup. A page that
- * needs different spacing is a bug in Page, not a licence to override.
+ *   [icon] Title (count)                    [ scope ] [ actions ]
+ *   ──────────────────────────────────────────────────────────────
+ *   [ tabs ]
+ *   ──────────────────────────────────────────────────────────────
+ *   [ toolbar: search · filters ·                     · exports ]
+ *   ──────────────────────────────────────────────────────────────
+ *   body
  *
- * There is deliberately no `subtitle` prop. The standard requires a subtitle to
- * be required or forbidden product-wide, because mixing them gives two header
- * heights; before this component, Call History had one and the other screens
- * did not. Forbidden is the cheaper half of that choice — the one subtitle in
- * the product read "View and manage", which no user needed. Reversing it means
- * adding the prop here once and filling it in on every page, not sprinkling.
+ * Before this, each panel wrote its own `.panel-header`: icons at 16px on some
+ * pages and 18px on others, hand-rolled `up-tab` buttons in the header on Users
+ * and Groups, tabs in an inline-padded div on the Dialer, and a total-count chip
+ * on Call History that no other page had. Pages now pass content; the shell owns
+ * the icon size, the padding, the bands and their borders.
+ *
+ * `scope` is the question the page answers (the date range) and sits before the
+ * actions. It is not a filter, so it never goes in the toolbar.
  */
 export interface PageProps {
-  /**
-   * Leading icon. One family product-wide (lucide) at the size Page fixes —
-   * pass the element, not a size. Emoji and glyphs are not icons.
-   */
-  icon?: React.ReactNode;
-  title: string;
-  /**
-   * State that belongs to the surface itself (Live / Paused / Off). Sits with
-   * the title, because it names what you are looking at. Not an action.
-   */
-  status?: React.ReactNode;
-  /**
-   * The window of data the whole page is showing — in practice a
-   * <RangePicker/>, and its one home product-wide.
-   *
-   * It used to live in the Toolbar's `range` slot. That was wrong twice over: a
-   * date range is not a filter over the rows, it is the question the page is
-   * answering, and Analytics has nothing to filter — so its toolbar existed
-   * only to hold the range, rendering a full-width bordered box with one
-   * control pinned to its far edge and ~1200px of nothing beside it. Scope
-   * belongs with the page's identity; the toolbar narrows what scope returned.
-   *
-   * Consequence: a page whose only toolbar content was the range now has no
-   * toolbar at all, which is the intended outcome.
-   */
+  icon: LucideIcon;
+  title: React.ReactNode;
+  /** A total shown beside the title, e.g. the number of live calls. */
+  count?: number;
+  /** The date range or other "what is this page about" control. */
   scope?: React.ReactNode;
-  /** Header trailing slot. Exactly one primary action per page. */
+  /** Header trailing slot. At most one solid (primary) button. */
   actions?: React.ReactNode;
-  /** A <Tabs/>. Page owns the slot and the container, so pages cannot restyle it. */
+  /** A <Tabs> element. One level only. */
   tabs?: React.ReactNode;
-  /** A <Toolbar/>. Always directly below the tabs, never in the header. */
+  /** A <Toolbar> element. */
   toolbar?: React.ReactNode;
-  children: React.ReactNode;
+  /** Drops the body padding, for a table or stream that runs edge to edge. */
+  flush?: boolean;
   className?: string;
+  bodyClassName?: string;
+  children: React.ReactNode;
 }
 
 export function Page({
-  icon, title, status, scope, actions, tabs, toolbar, children, className,
+  icon: Icon, title, count, scope, actions, tabs, toolbar, flush, className, bodyClassName, children,
 }: PageProps) {
   return (
-    <section className={`ui-page${className ? ` ${className}` : ''}`}>
-      <header className="ui-page-head">
-        <h2 className="ui-page-title">
-          {icon && <span className="ui-page-title-icon">{icon}</span>}
+    <section className={`panel ui-page${className ? ` ${className}` : ''}`}>
+      <div className="panel-header ui-page-header">
+        <h2 className="panel-title">
+          <Icon size={16} className="panel-title-icon" aria-hidden />
           {title}
-          {status && <span className="ui-page-status">{status}</span>}
+          {count !== undefined && <span className="ui-page-count">{count.toLocaleString()}</span>}
         </h2>
         {(scope || actions) && (
-          <div className="ui-page-trail">
-            {/* Scope before actions, always: it reads as part of the sentence the
-                title starts ("Call History — Today"), and an action that jumped
-                position between pages would be the more expensive drift. */}
-            {scope && <div className="ui-page-scope">{scope}</div>}
-            {actions && <div className="ui-page-actions">{actions}</div>}
+          <div className="panel-header-actions">
+            {scope}
+            {actions}
           </div>
         )}
-      </header>
-
+      </div>
       {tabs && <div className="ui-page-tabs">{tabs}</div>}
       {toolbar && <div className="ui-page-toolbar">{toolbar}</div>}
-
-      <div className="ui-page-body">{children}</div>
+      <div className={['panel-content', 'ui-page-body', flush && 'ui-page-body--flush', bodyClassName].filter(Boolean).join(' ')}>
+        {children}
+      </div>
     </section>
   );
 }

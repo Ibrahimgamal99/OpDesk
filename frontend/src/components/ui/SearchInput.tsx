@@ -1,16 +1,17 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, X, Loader2 } from 'lucide-react';
+import { Loader2, Search, X } from 'lucide-react';
+import type React from 'react';
 
 /**
  * The only search field. Same icon at the inline-start, same clear button at the
  * inline-end, same Esc behaviour, same spinner slot, same height and radius as
- * every other control on the toolbar row, same 250ms debounce, same `?q=` sync.
+ * every other control on a filter row, same debounce, same `?q=` sync.
  *
- * Before this, AMI Stream had a visibly labelled "SEARCH" field inside a card
- * and Call History had an unlabelled bare pill. The label is now always present
- * for assistive tech and never painted, which keeps the row one control tall
- * without leaving the input unlabelled.
+ * Before this, Call History had an unlabelled bare pill that swapped its
+ * background on focus, and Teams had no search at all. The label is now always
+ * present for assistive tech and never painted, which keeps a filter row one
+ * control tall without leaving the input unlabelled.
  *
  * ## Who owns the debounce
  *
@@ -18,13 +19,14 @@ import { Search, X, Loader2 } from 'lucide-react';
  * after the field goes quiet; the keystroke-by-keystroke text is internal, so
  * typing stays responsive without the parent re-fetching per character.
  *
- * Callers must therefore NOT debounce again. Each screen previously kept its own
- * timer at its own interval (Call History 400ms, CRM Deliveries 400ms, AMI
- * Stream none — it restarted its poll on every keystroke); those were removed
- * when this landed. Stacking a caller timer on top of this one silently doubles
- * that screen's latency, which is exactly the failure this centralises away.
+ * Callers must therefore NOT debounce again. Call History kept its own 400ms
+ * timer before this landed and it was removed with it — stacking a caller timer
+ * on top of this one silently doubles that screen's latency, which is exactly
+ * the failure this centralises away. A caller filtering a list already in
+ * memory passes `debounceMs={0}` instead of dropping the component.
  *
- * Requires a Router ancestor because of `?q=`. Pass `urlSync={false}` outside one.
+ * Requires a Router ancestor because of `?q=`. Pass `urlSync={false}` outside
+ * one, and on any screen that is not the route's primary list.
  */
 export interface SearchInputProps {
   /** The committed term. */
@@ -111,8 +113,8 @@ export function SearchInput({
   }, [value, urlSync, setParams]);
 
   const clear = () => {
-    // Immediate, not debounced: waiting 250ms to empty a field the user just
-    // emptied reads as lag.
+    // Immediate, not debounced: waiting for the timer to empty a field the user
+    // just emptied reads as lag.
     commit('');
     inputRef.current?.focus();
   };
@@ -145,7 +147,7 @@ export function SearchInput({
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={handleKeyDown}
       />
-      {loading && <Loader2 size={14} className="ui-search-spinner" aria-hidden="true" />}
+      {loading && <Loader2 size={14} className="ui-search-spinner spinner" aria-hidden="true" />}
       {!loading && draft && (
         <button type="button" className="ui-search-clear" onClick={clear} aria-label={`Clear ${label}`}>
           <X size={14} />

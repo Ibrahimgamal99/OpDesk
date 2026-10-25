@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import * as Popover from '@radix-ui/react-popover';
 import { CalendarRange, Check, ChevronDown } from 'lucide-react';
+import { Popover } from './Popover';
 
 /**
  * The only date-range control. One trigger that reads the current range, opening
@@ -8,25 +8,25 @@ import { CalendarRange, Check, ChevronDown } from 'lucide-react';
  *
  * ## Why it is not a chip row any more
  *
- * The previous control painted every preset as a pill and filled the selected one
- * with --accent-primary. On Analytics that put an accent-filled "Today" pill
- * directly beneath the accent-filled "Overview" tab pill: two different
- * hierarchies — which slice of data, and which view — rendered identically. It
- * also spent five control widths on a control that is read far more often than it
- * is changed. One trigger says what the range IS at a glance, and costs one
- * width.
+ * The control this replaced (`PeriodPicker`) painted every preset as a pill and
+ * filled the selected one with --accent-primary. On Analytics that put an
+ * accent-filled "Today" pill directly beneath the accent-filled "Overview" tab
+ * pill: two different hierarchies — which slice of data, and which view —
+ * rendered identically. It also spent five control widths plus a second row on
+ * a control that is read far more often than it is changed, and Call History
+ * squeezed that same block into its filter grid, where it wrapped. One trigger
+ * says what the range IS at a glance, and costs one control width on both.
  *
- * ## Why a popover and not a Sheet on narrow screens
+ * ## Where it lives
  *
- * ui/Sheet exists because an anchored panel is unusable once the on-screen
- * keyboard claims half the viewport. That does not apply here: the panel is a
- * short list of buttons, and its only inputs are `type=date`, which open the
- * platform's own date UI rather than the text keyboard. Nothing in this panel can
- * summon it. Radix keeps the panel on screen via collision detection.
+ * The header, next to the page's identity — never the filter row. The range is
+ * the question a page is answering, not a narrowing of the answer, and a
+ * control type has one home. RangePicker deliberately takes no `size` variant
+ * for a toolbar, so it cannot drift back down into one on a single screen.
  *
- * Presets are supplied by the caller — this file has no i18n dependency, the same
- * reason ui/Toolbar takes `filtersLabel`. Build them with `rangePresets(t)` from
- * analyticsUtils so all three screens offer the same list.
+ * Presets are supplied by the caller — this file has no i18n dependency, like
+ * the rest of ui/. Build them with `rangePresets(t)` from analyticsUtils so
+ * every screen offers the same list.
  */
 export interface RangePreset {
   /** Stable identity — also the React key. */
@@ -70,78 +70,81 @@ export function RangePicker({
   const current = selected ? selected.label : formatRange(value.from, value.to, locale);
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger
-        className={`ui-range-trigger${className ? ` ${className}` : ''}`}
-        aria-label={`${label}: ${current}`}
-      >
-        <CalendarRange size={15} className="ui-range-icon" aria-hidden="true" />
-        <span className="ui-range-value">{current}</span>
-        <ChevronDown size={14} className="ui-range-caret" aria-hidden="true" />
-      </Popover.Trigger>
-
-      <Popover.Portal>
-        <Popover.Content
-          className="ui-range-panel"
-          align="end"
-          sideOffset={6}
-          collisionPadding={8}
-          aria-label={label}
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      label={label}
+      minWidth={232}
+      // The trigger's home is a page header's trailing slot, so its panel is
+      // always wider than it and always near the far edge. Lining the panel's
+      // trailing edge up with the trigger's opens it back into the page.
+      align="end"
+      trigger={({ ref, ...triggerProps }) => (
+        <button
+          {...triggerProps}
+          ref={ref}
+          type="button"
+          className={`ui-range-trigger${className ? ` ${className}` : ''}`}
+          aria-label={`${label}: ${current}`}
         >
-          <div className="ui-range-presets">
-            {presets.map(p => (
-              <button
-                type="button"
-                key={p.key}
-                className="ui-range-preset"
-                aria-pressed={selected?.key === p.key}
-                onClick={() => { onChange({ from: p.from, to: p.to }); setOpen(false); }}
-              >
-                <span>{p.label}</span>
-                {/* Marks the selection instead of filling the row with accent:
-                    a filled row here would read as the active tab treatment. */}
-                {selected?.key === p.key && <Check size={14} aria-hidden="true" />}
-              </button>
-            ))}
-          </div>
+          <CalendarRange size={15} className="ui-range-icon" aria-hidden="true" />
+          <span className="ui-range-value">{current}</span>
+          <ChevronDown size={14} className="ui-range-caret" aria-hidden="true" />
+        </button>
+      )}
+    >
+      <div className="ui-range-presets">
+        {presets.map(p => (
+          <button
+            type="button"
+            key={p.key}
+            className="ui-range-preset"
+            aria-pressed={selected?.key === p.key}
+            onClick={() => { onChange({ from: p.from, to: p.to }); setOpen(false); }}
+          >
+            <span>{p.label}</span>
+            {/* Marks the selection instead of filling the row with accent: a
+                filled row here would read as the active tab treatment. */}
+            {selected?.key === p.key && <Check size={14} aria-hidden="true" />}
+          </button>
+        ))}
+      </div>
 
-          {/* No "Custom" mode to enter — editing either date simply stops matching
-              a preset, so the check mark clears itself. One less state to be in. */}
-          <div className="ui-range-custom" role="group" aria-label={customLabel}>
-            <span className="ui-range-custom-label">{customLabel}</span>
-            <div className="ui-range-dates">
-              <input
-                type="date"
-                className="ui-range-date"
-                value={value.from}
-                max={max}
-                aria-label={`${customLabel} — ${value.from}`}
-                onChange={e => {
-                  const from = e.target.value;
-                  if (!from) return;
-                  // Keep the pair ordered: dragging `from` past `to` pushes `to`.
-                  onChange({ from, to: from > value.to ? from : value.to });
-                }}
-              />
-              {/* An en dash, not an arrow: an arrow has to be flipped for RTL,
-                  and a range separator does not. */}
-              <span className="ui-range-arrow" aria-hidden="true">–</span>
-              <input
-                type="date"
-                className="ui-range-date"
-                value={value.to}
-                max={max}
-                aria-label={`${customLabel} — ${value.to}`}
-                onChange={e => {
-                  const to = e.target.value;
-                  if (!to) return;
-                  onChange({ from: to < value.from ? to : value.from, to });
-                }}
-              />
-            </div>
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+      {/* No "Custom" mode to enter — editing either date simply stops matching a
+          preset, so the check mark clears itself. One less state to be in. */}
+      <div className="ui-range-custom" role="group" aria-label={customLabel}>
+        <span className="ui-range-custom-label">{customLabel}</span>
+        <div className="ui-range-dates">
+          <input
+            type="date"
+            className="ui-range-date"
+            value={value.from}
+            max={max}
+            aria-label={`${customLabel} — ${value.from}`}
+            onChange={e => {
+              const from = e.target.value;
+              if (!from) return;
+              // Keep the pair ordered: dragging `from` past `to` pushes `to`.
+              onChange({ from, to: from > value.to ? from : value.to });
+            }}
+          />
+          {/* An en dash, not an arrow: an arrow has to be flipped for RTL, and a
+              range separator does not. */}
+          <span className="ui-range-arrow" aria-hidden="true">–</span>
+          <input
+            type="date"
+            className="ui-range-date"
+            value={value.to}
+            max={max}
+            aria-label={`${customLabel} — ${value.to}`}
+            onChange={e => {
+              const to = e.target.value;
+              if (!to) return;
+              onChange({ from: to < value.from ? to : value.from, to });
+            }}
+          />
+        </div>
+      </div>
+    </Popover>
   );
 }

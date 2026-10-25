@@ -327,3 +327,10 @@ export function toneFor(severity: Severity): 'info' | 'warning' | 'danger' {
     default: return 'danger';
   }
 }
+
+/** The message to show a user for any thrown value. */
+export function messageOf(e: unknown, fallback: string): string {
+  if (e instanceof ApiError) return e.message;
+  if (e instanceof Error && e.message) return e.message;
+  return fallback;
+}
