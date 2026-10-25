@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BellRing, Clock, Hourglass, LayoutDashboard, Phone, Radio, TrendingUp, Users } from 'lucide-react';
+import { BellRing, CalendarDays, Clock, Hourglass, LayoutDashboard, Phone, Radio, TrendingUp, Users } from 'lucide-react';
 import { LineChart, Line, Tooltip as ChartTooltip, ResponsiveContainer } from 'recharts';
 import type { AppState, ExecutiveKPIResponse, CallLogRecord, VolumeTrendPoint } from '../types';
 import { fetchWithAuth, getUser } from '../auth';
@@ -8,7 +8,7 @@ import { fmtTimer, parseClock } from '../lib/format';
 import { Alert, Badge, EmptyState, Loading, Page, SegmentedBar, Tooltip } from './ui';
 import { todayStr } from './analyticsUtils';
 import { memberState } from './queueMemberState';
-import { DirectionCards, figuresFromCalls, figuresFromOverview, type PeriodFigures } from './DirectionCards';
+import { DirectionCards, TodayKpis, figuresFromCalls, figuresFromOverview, type PeriodFigures } from './DirectionCards';
 import '../styles/dashboard.css';
 import '../styles/live.css';
 
@@ -44,7 +44,7 @@ function HeroStat({
 /**
  * The Dashboard: the whole system on one screen, live and for today.
  *   * the live strip -- calls in progress, callers waiting, the longest wait, ringing, workforce;
- *   * today's figures: all calls, inbound and outbound (DirectionCards);
+ *   * today's figures: an all-calls headline row (TodayKpis), then inbound and outbound (DirectionCards);
  *   * the 7-day volume trend and the live queue board (supervisors and admins).
  * Live figures move with the WebSocket state; today's are polled every minute.
  */
@@ -239,11 +239,14 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
               <Alert tone="info">{t('dashboard.todayUnavailable', 'Today’s metrics are unavailable.')}</Alert>
             )}
             {!todayUnavailable && (
-              <DirectionCards
-                figures={today}
-                periodLabel={t('dashboard.todaySoFar', 'Today so far')}
-                isAgent={isAgent}
-              />
+              <>
+                <div className="dash-section-label"><CalendarDays size={14} />{t('dashboard.today', 'Today')}</div>
+                {today && <TodayKpis figures={today} isAgent={isAgent} />}
+                <DirectionCards
+                  figures={today}
+                  periodLabel={t('dashboard.todaySoFar', 'Today so far')}
+                />
+              </>
             )}
 
             {/* ── 7-day volume trend ── */}

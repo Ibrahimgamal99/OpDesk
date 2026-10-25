@@ -1003,7 +1003,9 @@
       "shortAbandonDesc": "Abandoned before wait threshold",
       "market": "Market Talk Time",
       "marketDesc": "Total outbound talk time",
-      "unansweredCalls": "Unanswered"
+      "unansweredCalls": "Unanswered",
+      "contactRate": "Contact rate",
+      "contactRateOf": "Contact rate {{rate}}"
     },
     "delta": {
       "vsPrevPeriod": "vs prior period"
@@ -1113,10 +1115,6 @@
           "formula": "total wait ÷ callers",
           "text": "How long queue callers wait before someone picks up."
         },
-        "callAnswerRate": {
-          "formula": "answered ÷ calls",
-          "text": "Share of all calls in this period that were answered — in, out and internal."
-        },
         "delta": {
           "formula": "this period − previous",
           "text": "Change from the period just before this one."
@@ -1125,16 +1123,8 @@
           "formula": "callers with no repeat call ÷ answered callers",
           "text": "Answered queue callers who did not call a queue again within the FCR window."
         },
-        "inboundAnswerRate": {
-          "formula": "answered ÷ inbound calls",
-          "text": "Share of inbound calls that were answered."
-        },
         "market": {
           "text": "Total talk time on answered outbound calls."
-        },
-        "outboundAnswerRate": {
-          "formula": "answered ÷ calls placed",
-          "text": "Share of outbound calls that were answered."
         },
         "shortAbandonShare": {
           "formula": "quick hang-ups ÷ offered",
@@ -1146,6 +1136,22 @@
         },
         "volume": {
           "text": "Every call in this period — in, out and internal."
+        },
+        "answerRate": {
+          "text": "Share of the distinct outside numbers in the period that were actually spoken to, in and out together — however many calls each took. It counts people, not calls.",
+          "formula": "numbers that answered ÷ distinct numbers"
+        },
+        "contactRate": {
+          "text": "Share of the calls that connected — every call counted, retries included. Answer rate counts the people behind the calls instead.",
+          "formula": "answered ÷ calls"
+        },
+        "inboundPeopleRate": {
+          "text": "Share of the distinct numbers that called in whose call was answered — however many times each called.",
+          "formula": "callers answered ÷ distinct callers"
+        },
+        "outboundPeopleRate": {
+          "text": "Share of the distinct numbers dialled that picked up at least once — however many tries each took.",
+          "formula": "numbers that answered ÷ distinct numbers dialled"
         }
       },
       "overview": {
@@ -1535,7 +1541,13 @@
       "ringing": "Ringing",
       "sla": "SLA",
       "talkTime": "Talk time",
-      "waiting": "Calls Waiting"
+      "waiting": "Calls Waiting",
+      "totalCalls": "Total calls",
+      "totalSplit": "{{in}} in · {{out}} out",
+      "contactRate": "Contact rate",
+      "contactRateOf": "Contact rate {{rate}}",
+      "peopleReached": "{{reached}} of {{people}} numbers reached",
+      "abandonRateOf": "Abandon rate {{rate}}"
     },
     "live": "Live",
     "now": "Now",
@@ -1577,6 +1589,29 @@
       },
       "longestWaitLive": {
         "text": "How long the person who has been waiting longest has been holding. Turns red past one minute."
+      },
+      "totalCalls": {
+        "text": "Every call today — inbound, outbound and between extensions."
+      },
+      "abandoned": {
+        "text": "Inbound callers who hung up before anyone answered.",
+        "formula": "inbound calls not answered"
+      },
+      "missed": {
+        "text": "Your calls today that did not connect.",
+        "formula": "calls − answered"
+      },
+      "aht": {
+        "text": "Average talk time of an answered call.",
+        "formula": "talk time ÷ answered"
+      },
+      "answerRate": {
+        "text": "Share of the distinct outside numbers involved that were actually spoken to — however many calls each of them took. It counts people, so ten tries to one person who finally picks up is one person reached. Internal calls between extensions are left out.",
+        "formula": "numbers that answered ÷ distinct numbers"
+      },
+      "contactRate": {
+        "text": "Share of the calls that connected — every call counted, so a number tried five times counts five times. Answer rate counts the people behind the calls instead.",
+        "formula": "answered ÷ calls"
       }
     },
     "title": "Dashboard",
@@ -1592,6 +1627,7 @@
       "offline": "Offline",
       "title": "Agent Availability",
       "total": "{{count}} agents"
-    }
+    },
+    "today": "Today"
   }
 }

@@ -730,6 +730,50 @@ def _compute_fcr(date_from: str, date_to: str, window_days: int,
 
 
 # ---------------------------------------------------------------------------
+# Answer rate: people, not calls
+# ---------------------------------------------------------------------------
+#
+# Two rates, deliberately both (the same split echo makes):
+#   * answer_rate  -- distinct outside numbers that were answered / distinct outside
+#     numbers involved. Five calls to one person who finally picks up is ONE person who
+#     answered. Internal extension-to-extension calls have no outside party, so they are
+#     on neither side of it.
+#   * contact_rate -- answered calls / all calls. Every call counts, retries included.
+#
+# The same customer is written '01012345678' by one system and '+201012345678' by
+# another, so numbers compare on their last nine digits. Anything shorter than seven
+# digits is an extension or feature code, not an outside line.
+
+_NUMBER_KEY_DIGITS = 9
+_MIN_EXTERNAL_DIGITS = 7
+
+
+def _number_key(num) -> str:
+    """A comparable key for an outside number, or '' when it is not one."""
+    digits = ''.join(ch for ch in str(num or '') if ch.isdigit())
+    if len(digits) < _MIN_EXTERNAL_DIGITS:
+        return ''
+    return digits[-_NUMBER_KEY_DIGITS:]
+
+
+def _rate(part: int, whole: int):
+    return round(part / whole * 100, 1) if whole else None
+
+
+def _people_rates(rows) -> dict:
+    """answer_rate / contact_rate and the counts behind them, for one slice of rows."""
+    answered_rows = [r for r in rows if str(r.get('disposition', '')).upper() == 'ANSWERED']
+    customers = {r.get('counterparty') for r in rows if r.get('counterparty')}
+    reached = {r.get('counterparty') for r in answered_rows if r.get('counterparty')}
+    return {
+        'customers': len(customers),
+        'customers_answered': len(reached),
+        'answer_rate': _rate(len(reached), len(customers)),
+        'contact_rate': _rate(len(answered_rows), len(rows)),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public KPI functions
 # ---------------------------------------------------------------------------
 
@@ -741,6 +785,7 @@ def _compute_directional_kpis(rows, thresholds, default_secs, short_abandon_secs
 
     # Inbound queue KPIs (existing logic)
     in_kpis = _derive_rates(_compute_kpis_from_rows(in_rows, thresholds, default_secs, short_abandon_secs))
+    in_kpis.update(_people_rates(in_rows))
 
     # Outbound KPIs
     out_total = len(out_rows)
@@ -757,19 +802,23 @@ def _compute_directional_kpis(rows, thresholds, default_secs, short_abandon_secs
         'no_answer_calls': out_no_answer,
         'busy_calls': out_busy,
         'aht_secs': round(out_billsec / out_answered) if out_answered else None,
-        'answer_rate': round(out_answered / out_total * 100, 1) if out_total else None,
         'sum_billsec': out_billsec,
     }
+    out_kpis.update(_people_rates(out_rows))
 
-    # Combined KPIs (all calls)
+    # Combined KPIs (all calls). Every direction on both sides, internal included:
+    # the total always counted internal calls, so the answered count has to as well
+    # or the two disagree.
     all_total = len(rows)
-    all_answered = in_kpis['answered_calls'] + out_answered
-    all_billsec = in_kpis['sum_billsec'] + out_billsec
+    all_answered_rows = [r for r in rows if str(r.get('disposition', '')).upper() == 'ANSWERED']
+    all_answered = len(all_answered_rows)
+    all_billsec = sum(int(r.get('billsec') or 0) for r in all_answered_rows)
     combined = {
         'total_calls': all_total,
         'answered_calls': all_answered,
         'aht_secs': round(all_billsec / all_answered) if all_answered else None,
     }
+    combined.update(_people_rates(rows))
 
     in_kpis['outbound'] = out_kpis
     in_kpis['combined'] = combined
@@ -814,6 +863,8 @@ def _compute_period_kpis_with_outbound(date_from, date_to, allowed_queues, allow
         q_ext = dst if call_type == 'IN' and dst.isdigit() else ''
         enriched.append({
             'direction': call_type,
+            # The outside party: who we dialled on an outbound call, who called us otherwise.
+            'counterparty': _number_key(r.get('dst') if call_type == 'OUT' else r.get('src')),
             'disposition': disp,
             'queue_ext': q_ext,
             'wait_secs': max(0, duration - talk) if q_ext else 0,

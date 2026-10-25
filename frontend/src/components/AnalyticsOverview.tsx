@@ -7,7 +7,7 @@ import type { DateRange } from './analyticsUtils';
 import type { ExecutiveKPIResponse, VolumeTrendPoint } from '../types';
 import {
   fmtSecs, fmtPct, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip, pctOf, rangeLabel,
-  slaVerdict, abandonVerdict, fcrVerdict, perCallRateVerdict, targetVerdict,
+  slaVerdict, abandonVerdict, fcrVerdict, perCallRateVerdict, perPersonRateVerdict,
 } from './analyticsUtils';
 import { Alert, Card, Tooltip } from './ui';
 import { KpiCard } from './KpiCard';
@@ -69,16 +69,23 @@ export function AnalyticsOverview({ dateRange }: Props) {
 
   const allTotal = all?.total_calls ?? cur.total_calls;
   const allAnswered = all?.answered_calls ?? cur.answered_calls;
-  const allRate = pctOf(allAnswered, allTotal);
-  const prevAllRate = prev ? pctOf(prevAll?.answered_calls ?? prev.answered_calls, prevAll?.total_calls ?? prev.total_calls) : null;
-  const inRate = pctOf(cur.answered_calls, cur.total_calls);
+  // Answer rate counts people (distinct outside numbers reached ÷ involved), contact rate
+  // counts calls (answered ÷ all). Both come from the backend, the same as the Dashboard.
+  const allRate = all?.answer_rate ?? null;
+  const prevAllRate = prevAll?.answer_rate ?? null;
+  const allContact = all?.contact_rate ?? pctOf(allAnswered, allTotal);
+  const inRate = cur.answer_rate ?? null;
+  const inContact = cur.contact_rate ?? pctOf(cur.answered_calls, cur.total_calls);
+  const outContact = out ? out.contact_rate ?? pctOf(out.answered_calls, out.total_calls) : null;
 
   // ── Tips. OpDesk's own formulas, so they carry their own English. ───────────
   const tips = {
     volume: kpiTip(t, 'analytics.tip.kpi.volume', t('analytics.kpi.volume'), undefined,
       { text: 'Every call in this period — in, out and internal.' }),
-    answerRate: kpiTip(t, 'analytics.tip.kpi.callAnswerRate', t('analytics.kpi.answerRate'), undefined,
-      { text: 'Share of all calls in this period that were answered — in, out and internal.', formula: 'answered ÷ calls' }),
+    answerRate: kpiTip(t, 'analytics.tip.kpi.answerRate', t('analytics.kpi.answerRate'), undefined,
+      { text: 'Share of the distinct outside numbers in the period that were actually spoken to, in and out together — however many calls each took. It counts people, not calls.', formula: 'numbers that answered ÷ distinct numbers' }),
+    contactRate: kpiTip(t, 'analytics.tip.kpi.contactRate', t('analytics.kpi.contactRate', 'Contact rate'), undefined,
+      { text: 'Share of the calls that connected — every call counted, retries included. Answer rate counts the people behind the calls instead.', formula: 'answered ÷ calls' }),
     sla: kpiTip(t, 'analytics.tip.kpi.slaAnswered', t('analytics.kpi.sla'), undefined,
       { text: 'How often answered inbound calls were picked up within the queue’s SLA threshold.', formula: 'answered in time ÷ answered' }),
     aht: kpiTip(t, 'analytics.tip.kpi.ahtTalk', t('analytics.kpi.aht'), undefined,
@@ -91,10 +98,10 @@ export function AnalyticsOverview({ dateRange }: Props) {
       { text: 'How long queue callers wait before someone picks up.', formula: 'total wait ÷ callers' }),
     fcr: kpiTip(t, 'analytics.tip.kpi.fcrRepeat', t('analytics.kpi.fcr'), undefined,
       { text: 'Answered queue callers who did not call a queue again within the FCR window.', formula: 'callers with no repeat call ÷ answered callers' }),
-    inboundRate: kpiTip(t, 'analytics.tip.kpi.inboundAnswerRate', t('analytics.kpi.inboundAnswerRate'), undefined,
-      { text: 'Share of inbound calls that were answered.', formula: 'answered ÷ inbound calls' }),
-    outboundRate: kpiTip(t, 'analytics.tip.kpi.outboundAnswerRate', t('analytics.kpi.outboundAnswerRate'), undefined,
-      { text: 'Share of outbound calls that were answered.', formula: 'answered ÷ calls placed' }),
+    inboundRate: kpiTip(t, 'analytics.tip.kpi.inboundPeopleRate', t('analytics.kpi.inboundAnswerRate'), undefined,
+      { text: 'Share of the distinct numbers that called in whose call was answered — however many times each called.', formula: 'callers answered ÷ distinct callers' }),
+    outboundRate: kpiTip(t, 'analytics.tip.kpi.outboundPeopleRate', t('analytics.kpi.outboundAnswerRate'), undefined,
+      { text: 'Share of the distinct numbers dialled that picked up at least once — however many tries each took.', formula: 'numbers that answered ÷ distinct numbers dialled' }),
     market: kpiTip(t, 'analytics.tip.kpi.market', t('analytics.kpi.market'), undefined,
       { text: 'Total talk time on answered outbound calls.' }),
   };
@@ -111,8 +118,9 @@ export function AnalyticsOverview({ dateRange }: Props) {
       label: t('analytics.kpi.answerRate'),
       value: fmtPct(allRate),
       tip: tips.answerRate,
+      desc: t('analytics.kpi.contactRateOf', 'Contact rate {{rate}}', { rate: fmtPct(allContact) }),
       delta: delta(allRate, prevAllRate),
-      colorClass: perCallRateVerdict(allRate),
+      colorClass: perPersonRateVerdict(allRate),
     },
     {
       label: t('analytics.kpi.sla'),
@@ -134,7 +142,9 @@ export function AnalyticsOverview({ dateRange }: Props) {
   const period = rangeLabel(dateRange);
   const inboundMetrics: Metric[] = [
     { key: 'answerRate', label: t('analytics.kpi.inboundAnswerRate'), value: fmtPct(inRate),
-      tone: VERDICT_TONE[targetVerdict(inRate, 80)], tip: tips.inboundRate },
+      tone: VERDICT_TONE[perPersonRateVerdict(inRate)], tip: tips.inboundRate },
+    { key: 'contactRate', label: t('analytics.kpi.contactRate', 'Contact rate'), value: fmtPct(inContact),
+      tone: VERDICT_TONE[perCallRateVerdict(inContact)], tip: tips.contactRate },
     { key: 'sla', label: t('analytics.kpi.sla'), value: fmtPct(cur.sla_pct),
       tone: VERDICT_TONE[slaVerdict(cur.sla_pct)], tip: tips.sla },
     { key: 'abandon', label: t('analytics.kpi.abandonment'), value: fmtPct(cur.abandonment_rate),
@@ -144,7 +154,9 @@ export function AnalyticsOverview({ dateRange }: Props) {
   ];
   const outboundMetrics: Metric[] = out ? [
     { key: 'answerRate', label: t('analytics.kpi.outboundAnswerRate'), value: fmtPct(out.answer_rate),
-      tone: VERDICT_TONE[perCallRateVerdict(out.answer_rate)], tip: tips.outboundRate },
+      tone: VERDICT_TONE[perPersonRateVerdict(out.answer_rate)], tip: tips.outboundRate },
+    { key: 'contactRate', label: t('analytics.kpi.contactRate', 'Contact rate'), value: fmtPct(outContact),
+      tone: VERDICT_TONE[perCallRateVerdict(outContact)], tip: tips.contactRate },
     { key: 'aht', label: t('analytics.kpi.outboundAht'), value: fmtSecs(out.aht_secs), tip: tips.aht },
     { key: 'talk', label: t('analytics.kpi.market'), value: fmtSecs(out.sum_billsec), tip: tips.market },
   ] : [];

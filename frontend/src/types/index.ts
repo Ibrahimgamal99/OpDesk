@@ -181,14 +181,25 @@ export interface OutboundKpis {
   no_answer_calls: number;
   busy_calls: number;
   aht_secs: number | null;
-  answer_rate: number | null;
   sum_billsec: number;
+  /** Distinct outside numbers involved / of those, the ones that answered. The
+   *  answer_rate is their ratio; contact_rate is answered calls ÷ all calls. */
+  customers?: number;
+  customers_answered?: number;
+  answer_rate?: number | null;
+  contact_rate?: number | null;
 }
 
 export interface CombinedKpis {
   total_calls: number;
   answered_calls: number;
   aht_secs: number | null;
+  /** Distinct outside numbers involved / of those, the ones that answered. The
+   *  answer_rate is their ratio; contact_rate is answered calls ÷ all calls. */
+  customers?: number;
+  customers_answered?: number;
+  answer_rate?: number | null;
+  contact_rate?: number | null;
 }
 
 export interface KpiSummary {
@@ -201,6 +212,12 @@ export interface KpiSummary {
   answered_calls: number;
   abandoned_calls: number;
   avg_wait_secs: number | null;
+  /** Distinct outside numbers involved / of those, the ones that answered. The
+   *  answer_rate is their ratio; contact_rate is answered calls ÷ all calls. */
+  customers?: number;
+  customers_answered?: number;
+  answer_rate?: number | null;
+  contact_rate?: number | null;
   outbound?: OutboundKpis;
   combined?: CombinedKpis;
 }
