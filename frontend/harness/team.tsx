@@ -1,19 +1,26 @@
 /**
- * Users + Groups list search. Renders the REAL panels' list markup and the REAL
- * ui/SearchInput against the REAL stylesheets, with the same filter predicates
- * the panels use, so a driver can type and assert the list actually narrows.
+ * Users + Groups list search. Renders the REAL ui/ shell (Page, Tabs, Toolbar,
+ * SearchInput, Table, Badge) against the REAL stylesheets, with the same
+ * `matches`/`prepareQuery` predicates the panels use, so a driver can type and
+ * assert the list actually narrows.
  *
  * The panels themselves fetch on mount and gate on an admin session, so they are
- * not mounted directly; this reproduces their list sub-tab with static rows.
+ * not mounted directly; this reproduces their list tab with static rows.
  *
  * Not part of the app bundle; vite only sees it via harness/team.html.
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
-import { Users, Group, Pencil, Trash2, Phone, List, ChevronDown } from 'lucide-react';
-import { SearchInput } from '../src/components/ui';
+import { Users, Group, Pencil, Trash2, Plus, ChevronDown } from 'lucide-react';
+import {
+  Page, Tabs, Toolbar, SearchInput, Table, Badge, EmptyState, matches, prepareQuery, type BadgeTone,
+} from '../src/components/ui';
+// Same set and order as src/main.tsx.
+import '../src/styles/variables.css';
 import '../src/styles/index.css';
+import '../src/styles/classic-pages.css';
+import '../src/styles/utilities.css';
 
 const USERS = [
   { id: 1, username: 'ibrahim', name: 'Ibrahim Gamal', extension: '1001', role: 'admin', groups: ['Sales', 'Support'] },
@@ -26,134 +33,147 @@ const GROUPS = [
   { id: 2, name: 'Support', agents: ['1001 (Ibrahim Gamal)'], queues: ['701 Tech'], users: ['ibrahim'] },
 ];
 
+const ROLE_TONE: Record<string, BadgeTone> = { admin: 'purple', supervisor: 'primary', agent: 'success' };
+
+const noop = () => {};
+
+function RowActions() {
+  return (
+    <div className="u-row u-justify-end u-gap-1">
+      <button type="button" className="btn btn-ghost btn-sm btn-icon" aria-label="Edit"><Pencil size={14} /></button>
+      <button type="button" className="btn btn-ghost btn-danger btn-sm btn-icon" aria-label="Delete"><Trash2 size={14} /></button>
+    </div>
+  );
+}
+
+function TeamPage({ tab, count, search, setSearch, label, placeholder, children }: {
+  tab: 'users' | 'groups'; count: number; search: string; setSearch: (v: string) => void;
+  label: string; placeholder: string; children: React.ReactNode;
+}) {
+  return (
+    <Page
+      icon={Users}
+      title="Teams"
+      count={count}
+      tabs={<Tabs tabs={[{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }]} active={tab} onChange={noop} />}
+      actions={<button type="button" className="btn btn-primary"><Plus size={14} />{tab === 'users' ? 'Add user' : 'Add group'}</button>}
+      toolbar={
+        <Toolbar search={
+          <SearchInput urlSync={false} debounceMs={0} value={search} onChange={setSearch} label={label} placeholder={placeholder} />
+        } />
+      }
+    >
+      {children}
+    </Page>
+  );
+}
+
 function UsersList() {
   const [search, setSearch] = React.useState('');
   const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return USERS;
-    return USERS.filter(u => [u.username, u.name, u.extension, u.role, ...u.groups]
-      .some(v => (v || '').toLowerCase().includes(q)));
+    const q = prepareQuery(search);
+    return q ? USERS.filter(u => matches(q, u.username, u.name, u.extension, u.role, ...u.groups)) : USERS;
   }, [search]);
 
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2 className="panel-title"><Users size={16} className="panel-title-icon" />Users</h2>
-      </div>
-      <div className="panel-content">
-        <div className="up-search">
-          <SearchInput
-            urlSync={false} debounceMs={0} value={search} onChange={setSearch}
-            label="Search users" placeholder="Username, name, extension, group…"
-          />
-        </div>
-        {filtered.length === 0 ? (
-          <div className="up-empty" id="users-empty">No users match "{search}"</div>
-        ) : (
-          <div className="up-users-list" id="users-list">
-            {filtered.map(u => (
-              <div key={u.id} className="up-user-card">
-                <div className="up-user-avatar">{u.username[0].toUpperCase()}</div>
-                <div className="up-user-info">
-                  <div className="up-user-name">{u.username}</div>
-                  <div className="up-user-meta">{[u.name, u.extension].join(' · ')}</div>
-                  <div className="up-user-badges">
-                    <span className={`up-role-badge ${u.role}`}>{u.role}</span>
-                    <button type="button" className="up-access-tag up-access-tag-btn">
-                      {u.groups.length === 0 ? 'No groups' : `${u.groups.length} groups`}
-                    </button>
-                  </div>
+    <TeamPage tab="users" count={USERS.length} search={search} setSearch={setSearch}
+      label="Search users" placeholder="Username, name, extension, group…">
+      <div id={filtered.length ? 'users-list' : undefined}>
+        <Table
+          framed
+          caption="Users"
+          rows={filtered}
+          rowKey={u => u.id}
+          empty={<div id="users-empty"><EmptyState icon={Users} title={`No users match "${search}"`} /></div>}
+          columns={[
+            {
+              key: 'name', header: 'Username', primary: true,
+              cell: u => (
+                <div className="u-min-w-0">
+                  <div className="u-semibold u-truncate">{u.username}</div>
+                  <div className="u-fg-muted u-text-sm u-truncate">{[u.name, u.extension].join(' · ')}</div>
                 </div>
-                <div className="up-user-actions">
-                  <button className="btn btn-edit"><Pencil size={14} /></button>
-                  <button className="btn btn-delete"><Trash2 size={14} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ),
+            },
+            { key: 'role', header: 'Role', cell: u => <Badge tone={ROLE_TONE[u.role] ?? 'neutral'}>{u.role}</Badge> },
+            {
+              key: 'access', header: 'Access',
+              cell: u => (
+                <button type="button" className="btn btn-ghost btn-sm" title={u.groups.join(', ') || 'No groups'}>
+                  {u.groups.length === 0 ? 'No groups' : u.groups.length === 1 ? '1 group' : `${u.groups.length} groups`}
+                </button>
+              ),
+            },
+            { key: 'actions', header: 'Actions', align: 'end', cell: () => <RowActions /> },
+          ]}
+        />
       </div>
-    </div>
+    </TeamPage>
   );
 }
 
 function GroupsList() {
   const [search, setSearch] = React.useState('');
+  // Every row expanded, as the old harness showed it, so the member chips render.
+  const [expanded, setExpanded] = React.useState<Set<number>>(() => new Set(GROUPS.map(g => g.id)));
+  const toggle = (id: number) => setExpanded(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return GROUPS;
-    return GROUPS.filter(g => [g.name, ...g.agents, ...g.queues, ...g.users]
-      .some(v => (v || '').toLowerCase().includes(q)));
+    const q = prepareQuery(search);
+    return q ? GROUPS.filter(g => matches(q, g.name, ...g.agents, ...g.queues, ...g.users)) : GROUPS;
   }, [search]);
 
+  const memberCell = (open: boolean, summary: string, chips: React.ReactNode[]) => {
+    if (!open) return <span className="u-fg-secondary">{summary}</span>;
+    if (chips.length === 0) return <span className="u-fg-muted">None</span>;
+    return <div className="u-row u-wrap u-gap-1">{chips}</div>;
+  };
+
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2 className="panel-title"><Group size={16} className="panel-title-icon" />Groups</h2>
+    <TeamPage tab="groups" count={GROUPS.length} search={search} setSearch={setSearch}
+      label="Search groups" placeholder="Group, agent, queue, user…">
+      <div id={filtered.length ? 'groups-list' : undefined}>
+        <Table
+          framed
+          caption="Groups"
+          rows={filtered}
+          rowKey={g => g.id}
+          onRowClick={g => toggle(g.id)}
+          empty={<div id="groups-empty"><EmptyState icon={Group} title={`No groups match "${search}"`} /></div>}
+          columns={[
+            {
+              key: 'name', header: 'Group name', primary: true,
+              cell: g => (
+                <button type="button" className="btn btn-ghost btn-sm" aria-expanded={expanded.has(g.id)}
+                  onClick={e => { e.stopPropagation(); toggle(g.id); }}>
+                  <ChevronDown size={14} className={`gp-chevron${expanded.has(g.id) ? ' is-open' : ''}`} aria-hidden />
+                  {g.name}
+                </button>
+              ),
+            },
+            {
+              key: 'agents', header: 'Agents',
+              cell: g => memberCell(expanded.has(g.id), `${g.agents.length} agents`,
+                g.agents.map((a, i) => <Badge key={i} tone="primary" title={a}>{a}</Badge>)),
+            },
+            {
+              key: 'queues', header: 'Queues',
+              cell: g => memberCell(expanded.has(g.id), `${g.queues.length} queues`,
+                g.queues.map((q, i) => <Badge key={i} tone="purple" title={q}>{q}</Badge>)),
+            },
+            {
+              key: 'users', header: 'Users',
+              cell: g => memberCell(expanded.has(g.id), `${g.users.length} users`,
+                g.users.map((u, i) => <Badge key={i} title={u}>{u}</Badge>)),
+            },
+            { key: 'actions', header: 'Actions', align: 'end', cell: () => <RowActions /> },
+          ]}
+        />
       </div>
-      <div className="panel-content">
-        <div className="up-search">
-          <SearchInput
-            urlSync={false} debounceMs={0} value={search} onChange={setSearch}
-            label="Search groups" placeholder="Group, agent, queue, user…"
-          />
-        </div>
-        {filtered.length === 0 ? (
-          <div className="up-empty" id="groups-empty">No groups match "{search}"</div>
-        ) : (
-          <div className="up-users-list" id="groups-list">
-            {filtered.map(g => (
-              <div key={g.id} className="up-user-card">
-                <div className="up-user-info" style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div className="up-user-avatar" style={{ background: 'var(--accent-teal)', color: 'var(--bg-primary)', flexShrink: 0 }}>
-                      <Group size={20} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span className="up-user-name">{g.name}</span>
-                        <ChevronDown size={18} style={{ color: 'var(--text-muted)' }} />
-                      </div>
-                      <div className="up-user-badges">
-                        <span className="up-access-tag">{g.agents.length} agents</span>
-                        <span className="up-access-tag">{g.queues.length} queues</span>
-                        <span className="up-access-tag">{g.users.length} users</span>
-                      </div>
-                      <div className="gp-expanded">
-                        <div className="gp-detail-grid">
-                          <div className="gp-detail-section">
-                            <div className="gp-detail-label"><Phone size={12} />Agents <span>({g.agents.length})</span></div>
-                            <div className="gp-chips">
-                              {g.agents.map((a, i) => <span key={i} className="gp-chip gp-chip-agent">{a}</span>)}
-                            </div>
-                          </div>
-                          <div className="gp-detail-section">
-                            <div className="gp-detail-label"><List size={12} />Queues <span>({g.queues.length})</span></div>
-                            <div className="gp-chips">
-                              {g.queues.map((q, i) => <span key={i} className="gp-chip gp-chip-queue">{q}</span>)}
-                            </div>
-                          </div>
-                          <div className="gp-detail-section">
-                            <div className="gp-detail-label"><Users size={12} />Users <span>({g.users.length})</span></div>
-                            <div className="gp-chips">
-                              {g.users.map((u, i) => <span key={i} className="gp-chip gp-chip-user">{u}</span>)}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="up-user-actions">
-                  <button className="btn btn-edit"><Pencil size={14} /></button>
-                  <button className="btn btn-delete"><Trash2 size={14} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    </TeamPage>
   );
 }
 
