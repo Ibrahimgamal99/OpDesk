@@ -27,6 +27,13 @@ html[lang='ar'] body {
   font-family: 'Noto Sans Arabic', 'Tajawal', 'Cairo', 'Segoe UI', 'Inter', 'Roboto', sans-serif;
 }
 
+/* Arabic letters join; any tracking (the uppercase section labels use up to
+   0.12em) pulls them apart into isolated forms. */
+html[lang='ar'] body,
+html[lang='ar'] body * {
+  letter-spacing: normal !important;
+}
+
 /* Decorative radial-gradient background removed for the flatter, unified
    design-system aesthetic. Tints are transparent no-ops. */
 
