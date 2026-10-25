@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import type React from 'react';
 import { useTranslation } from 'react-i18next';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
-import { ChevronUp, ChevronDown } from 'lucide-react';
+import { ChevronUp, ChevronDown, Users } from 'lucide-react';
 import type { DateRange } from './analyticsUtils';
 import type { AgentKPIRow } from '../types';
-import { fmtSecs, fmtPct, slaProgressClass, buildDateParams, analyticsGet, useAnalyticsFetch } from './analyticsUtils';
+import { fmtSecs, fmtPct, slaProgressClass, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip } from './analyticsUtils';
+import { Alert, Badge, Card, EmptyState, Tooltip } from './ui';
 
 type SortKey = 'rank' | 'agent_name' | 'total_calls' | 'answered_calls' | 'inbound_calls' | 'outbound_calls' | 'aht_secs' | 'sla_contribution_pct';
 type SortDir = 'asc' | 'desc';
@@ -81,32 +83,39 @@ export function AnalyticsAgents({ dateRange }: Props) {
     return <div className="an-loading"><div className="an-spinner" />{t('analytics.loading')}</div>;
   }
   if (error) {
-    return <div className="an-empty">{t('analytics.error')}</div>;
+    return <Alert>{t('analytics.error')}</Alert>;
   }
 
   const sorted = sortRows(agents, sortKey, sortDir);
 
-  const columns: { key: SortKey; label: string }[] = [
-    { key: 'rank',                 label: t('analytics.agents.rank') },
+  type Tip = { text: string; formula?: string };
+  const columns: { key: SortKey; label: string; tipKey?: string; tip?: Tip }[] = [
+    { key: 'rank',                 label: t('analytics.agents.rank'),     tipKey: 'analytics.tip.agents.rank',
+      tip: { text: 'Position by calls answered.' } },
     { key: 'agent_name',           label: t('analytics.agents.agent') },
-    { key: 'total_calls',          label: t('analytics.queues.total') },
-    { key: 'answered_calls',       label: t('analytics.agents.answered') },
-    { key: 'inbound_calls',        label: '📥 ' + t('analytics.directions.inbound', 'Inbound') },
-    { key: 'outbound_calls',       label: '📤 ' + t('analytics.directions.outbound', 'Outbound') },
-    { key: 'aht_secs',             label: t('analytics.agents.aht') },
-    { key: 'sla_contribution_pct', label: t('analytics.agents.slaContrib') },
+    { key: 'total_calls',          label: t('analytics.queues.total'),    tipKey: 'analytics.tip.agents.totalAll',
+      tip: { text: 'Every call this agent handled: inbound, outbound and internal.' } },
+    { key: 'answered_calls',       label: t('analytics.agents.answered'), tipKey: 'analytics.tip.agents.answered',
+      tip: { text: 'Calls this agent picked up.' } },
+    { key: 'inbound_calls',        label: t('analytics.directions.inbound', 'Inbound'),   tipKey: 'analytics.tip.agents.inbound',
+      tip: { text: 'Calls that came in to this agent.' } },
+    { key: 'outbound_calls',       label: t('analytics.directions.outbound', 'Outbound'), tipKey: 'analytics.tip.agents.outbound',
+      tip: { text: 'Calls this agent placed.' } },
+    { key: 'aht_secs',             label: t('analytics.agents.aht'),      tipKey: 'analytics.tip.kpi.ahtTalk',
+      tip: { text: 'Average talk time of an answered call.', formula: 'talk time ÷ answered' } },
+    { key: 'sla_contribution_pct', label: t('analytics.agents.slaContrib'), tipKey: 'analytics.tip.agents.slaContribution',
+      tip: { text: 'How often this agent picked up queue calls in time. Blank if they take no queue calls.', formula: 'answered in time ÷ queue calls answered' } },
   ];
 
   return (
-    <div className="an-section">
-      <div className="an-section-header">
-        <div className="an-section-title">{t('analytics.agents.title')}</div>
-        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          {agents.length} {t('analytics.agents.agents', 'agents')}
-        </span>
-      </div>
+    <Card
+      icon={Users}
+      title={t('analytics.agents.title')}
+      description={`${agents.length} ${t('analytics.agents.agents', 'agents')}`}
+      flush
+    >
       {agents.length === 0 ? (
-        <div className="an-empty">{t('analytics.empty', 'No data for this period')}</div>
+        <EmptyState size="sm" icon={Users} title={t('analytics.empty', 'No data for this period')} />
       ) : (
         <div className="an-table-wrap">
           <table className="an-table">
@@ -123,15 +132,20 @@ export function AnalyticsAgents({ dateRange }: Props) {
                     onClick={() => toggleSort(c.key)}
                   >
                     {c.label} <SortIcon col={c.key} />
+                    {c.tipKey && <Tooltip {...kpiTip(t, c.tipKey, c.label, undefined, c.tip)} />}
                   </th>
                 ))}
-                <th style={{ whiteSpace: 'nowrap' }}>{t('analytics.agents.trend7d')}</th>
+                <th className="u-nowrap">
+                  {t('analytics.agents.trend7d')}
+                  <Tooltip {...kpiTip(t, 'analytics.tip.agents.trend', t('analytics.agents.trend7d'), undefined,
+                    { text: 'Calls answered per day, last 7 days.' })} />
+                </th>
               </tr>
             </thead>
             <tbody>
               {sorted.map(a => (
                 <tr key={a.agent_extension}>
-                  <td style={{ width: 40 }}>
+                  <td className="an-col-fit">
                     <RankBadge rank={a.rank} />
                   </td>
                   <td className="sticky">
@@ -142,31 +156,31 @@ export function AnalyticsAgents({ dateRange }: Props) {
                       </div>
                     </div>
                   </td>
-                  <td className="num" style={{ fontWeight: 600 }}>
+                  <td className="num u-semibold">
                     {a.total_calls.toLocaleString()}
                   </td>
                   <td className="num">{a.answered_calls.toLocaleString()}</td>
-                  <td className="num" style={{ color: 'var(--accent-primary)' }}>{(a.inbound_calls ?? 0).toLocaleString()}</td>
-                  <td className="num" style={{ color: 'var(--warning)' }}>{(a.outbound_calls ?? 0).toLocaleString()}</td>
+                  <td className="num u-fg-accent">{(a.inbound_calls ?? 0).toLocaleString()}</td>
+                  <td className="num u-fg-warning">{(a.outbound_calls ?? 0).toLocaleString()}</td>
                   <td className="num">{fmtSecs(a.aht_secs)}</td>
                   <td>
                     {a.sla_contribution_pct !== null ? (
                       <div className="an-sla-cell">
-                        <span className={`an-badge ${a.sla_contribution_pct >= 80 ? 'sla-met' : 'sla-fail'}`}>
+                        <Badge tone={a.sla_contribution_pct >= 80 ? 'success' : 'danger'}>
                           {fmtPct(a.sla_contribution_pct)}
-                        </span>
+                        </Badge>
                         <div className="an-progress">
                           <div
-                            className={`an-progress-fill ${slaProgressClass(a.sla_contribution_pct)}`}
-                            style={{ width: `${a.sla_contribution_pct}%` }}
+                            className={`an-progress-fill u-fill-x ${slaProgressClass(a.sla_contribution_pct)}`}
+                            style={{ '--u-fill': `${a.sla_contribution_pct}%` } as React.CSSProperties}
                           />
                         </div>
                       </div>
                     ) : (
-                      <span className="an-badge neutral">—</span>
+                      <Badge tone="neutral">—</Badge>
                     )}
                   </td>
-                  <td style={{ width: 96 }}>
+                  <td className="an-col-fit">
                     {a.daily_trend.length > 1 && <TinySparkline data={a.daily_trend} />}
                   </td>
                 </tr>
@@ -175,6 +189,6 @@ export function AnalyticsAgents({ dateRange }: Props) {
           </table>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

@@ -24,29 +24,29 @@ export function AnalyticsPanel({ dateRange, onDateRangeChange }: AnalyticsPanelP
   const [tab, setTab] = useState<AnalyticsTab>('overview');
 
   const tabs = [
-    { key: 'overview',  label: t('analytics.nav.overview'),  icon: <LayoutDashboard size={13} /> },
-    { key: 'queues',    label: t('analytics.nav.queues'),    icon: <Layers size={13} /> },
-    { key: 'agents',    label: t('analytics.nav.agents'),    icon: <Users size={13} /> },
-    { key: 'adherence', label: t('analytics.nav.adherence'), icon: <UserCheck size={13} /> },
-    { key: 'drilldown', label: t('analytics.nav.drilldown'), icon: <ListFilter size={13} /> },
+    { key: 'overview',  label: t('analytics.nav.overview'),  icon: <LayoutDashboard size={14} /> },
+    { key: 'queues',    label: t('analytics.nav.queues'),    icon: <Layers size={14} /> },
+    { key: 'agents',    label: t('analytics.nav.agents'),    icon: <Users size={14} /> },
+    { key: 'adherence', label: t('analytics.nav.adherence'), icon: <UserCheck size={14} /> },
+    { key: 'drilldown', label: t('analytics.nav.drilldown'), icon: <ListFilter size={14} /> },
   ];
 
   return (
     <Page
-      icon={<BarChart3 size={18} />}
+      icon={BarChart3}
       title={t('analytics.title')}
-      tabs={<Tabs tabs={tabs} active={tab} onChange={(k) => setTab(k as AnalyticsTab)} />}
-      // No toolbar: the range is the only control this page has, and a range is
-      // scope, not a filter. The page is header + tabs + charts.
+      className="an-panel"
+      bodyClassName="an-tab-content"
+      // The range is scope, not a filter: it is the question this page answers,
+      // so it sits with the page's identity in the header.
       scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
+      tabs={<Tabs tabs={tabs} active={tab} onChange={(k) => setTab(k as AnalyticsTab)} ariaLabel={t('analytics.title')} />}
     >
-      <div className="an-tab-content">
-        {tab === 'overview'  && <AnalyticsOverview  dateRange={dateRange} />}
-        {tab === 'queues'    && <AnalyticsQueues    dateRange={dateRange} />}
-        {tab === 'agents'    && <AnalyticsAgents    dateRange={dateRange} />}
-        {tab === 'adherence' && <AnalyticsAdherence dateRange={dateRange} />}
-        {tab === 'drilldown' && <AnalyticsDrilldown dateRange={dateRange} />}
-      </div>
+      {tab === 'overview'  && <AnalyticsOverview  dateRange={dateRange} />}
+      {tab === 'queues'    && <AnalyticsQueues    dateRange={dateRange} />}
+      {tab === 'agents'    && <AnalyticsAgents    dateRange={dateRange} />}
+      {tab === 'adherence' && <AnalyticsAdherence dateRange={dateRange} />}
+      {tab === 'drilldown' && <AnalyticsDrilldown dateRange={dateRange} />}
     </Page>
   );
 }
