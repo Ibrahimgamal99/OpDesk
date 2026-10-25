@@ -333,6 +333,16 @@ export async function isValidNotReadyReason(code: unknown): Promise<boolean> {
  * (code, label, productive, color, sortOrder, isActive) or one fields object
  * ({code, label, productive, color, sort_order, is_active}).
  */
+/**
+ * A sort order from a request: missing or blank -> the default 100, an integer (0
+ * included) as given, anything else null (refused). `int(x or 100)` turned an explicit 0
+ * into 100, so a code meant to sort first sorted after the seeded 10-40 codes.
+ */
+function sortOrderValue(raw: unknown): number | null {
+  if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim())) return 100;
+  return pyInt(raw);
+}
+
 export async function pauseReasonCreate(
   codeOrFields: string | Record<string, unknown>,
   label?: string | null,
@@ -354,8 +364,8 @@ export async function pauseReasonCreate(
   const c = strOrEmptyStripped(code);
   const l = strOrEmptyStripped(label);
   if (!c || !l) return null;
-  // int(sort_order or 100): a non-integer is refused rather than raised.
-  const order = truthy(sortOrder) ? pyInt(sortOrder) : 100;
+  // A non-integer is refused rather than raised.
+  const order = sortOrderValue(sortOrder);
   if (order === null) return null;
   try {
     const res = await execute(
@@ -385,7 +395,7 @@ export async function pauseReasonUpdate(reasonId: number, fields: Record<string,
     let val: SqlValue;
     if (key === 'productive' || key === 'is_active') val = truthy(raw) ? 1 : 0;
     else if (key === 'sort_order') {
-      const n = truthy(raw) ? pyInt(raw) : 100;
+      const n = sortOrderValue(raw);
       if (n === null) return false;
       val = n;
     } else val = raw as SqlValue;
