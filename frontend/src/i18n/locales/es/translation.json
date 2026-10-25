@@ -844,7 +844,11 @@
     "home": {
       "allSettings": "Toda la configuración",
       "cat": {
-        "contactCenter": "Centro de contacto"
+        "contactCenter": "Centro de contacto",
+        "telephony": "Telefonía y red",
+        "recording": "Grabación y cumplimiento",
+        "access": "Integraciones y acceso",
+        "analytics": "Analíticas"
       },
       "desc": {
         "analytics": "Objetivo de SLA, ventana de FCR y umbral de abandono corto.",
@@ -1490,7 +1494,6 @@
     "sipDesc": "La contraseña con la que se registran tus teléfonos y softphones.",
     "qrDesc": "Escanéalo con Medut Softphone para añadir tu extensión."
   },
-  "access": "Integraciones y acceso",
   "callStatus": {
     "ABANDONED": "Abandonada",
     "ANSWERED": "Contestada",
@@ -1590,7 +1593,5 @@
       "title": "Disponibilidad de agentes",
       "total": "{{count}} agentes"
     }
-  },
-  "recording": "Grabación y cumplimiento",
-  "telephony": "Telefonía y red"
+  }
 }

@@ -1878,6 +1878,16 @@ select.form-input option:checked {
   align-items: center;
   gap: var(--space-1h);
   margin-top: var(--space-1);
+  min-width: 0;
+}
+
+/* A status like "Enabled · pbx.example.com:5061" (longer still in Spanish)
+   wraps inside the card instead of running past its edge. */
+.sh-card-status .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
 
 .sh-card-chevron {
