@@ -132,7 +132,14 @@
 }
 .dcard--stat { gap: var(--space-2); padding: var(--space-3h) var(--space-4); }
 .dcard--stat .dcard-icon { inline-size: 30px; block-size: 30px; }
-.dcard--stat .dcard-title { font-size: var(--text-md); }
+/* A stat title wraps instead of ellipsing: six cards share a row (Queue service), so a
+   longer label ("Recovered callers", most non-English labels) was cut mid-word. */
+.dcard--stat .dcard-title {
+  font-size: var(--text-md);
+  white-space: normal;
+  text-wrap: balance;
+  line-height: var(--leading-tight);
+}
 .dcard-stat-value {
   font-size: var(--text-2xl);
   font-weight: var(--weight-bold);
