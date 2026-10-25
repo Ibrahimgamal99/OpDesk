@@ -9,8 +9,8 @@ import { type DateRange, rangePresets, todayStr } from './analyticsUtils';
  * This is not a second implementation of the control and must never grow into
  * one — it renders no markup and no styles of its own, and every visual decision
  * stays in ui/RangePicker. It exists because ui/ carries no i18n dependency, so
- * without it each of the three screens would repeat the same five props and be
- * free to repeat them differently. Anything visual belongs upstream in
+ * without it Analytics and Call History would each repeat the same five props
+ * and be free to repeat them differently. Anything visual belongs upstream in
  * ui/RangePicker as a prop.
  */
 export interface PageRangeProps {

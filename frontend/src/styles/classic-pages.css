@@ -107,7 +107,7 @@
   width: 46px;
   height: 46px;
   flex-shrink: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-xl);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -247,7 +247,7 @@
 .an-section {
   background: var(--bg-card, var(--bg-tertiary));
   border: 1px solid var(--border-subtle, rgb(var(--border-primary-rgb) / 0.5));
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 16px;
 }
 

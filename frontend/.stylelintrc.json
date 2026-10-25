@@ -71,7 +71,8 @@
   "overrides": [
     {
       "files": [
-        "src/styles/index.css"
+        "src/styles/index.css",
+        "src/styles/variables.css"
       ],
       "rules": {
         "color-no-hex": null

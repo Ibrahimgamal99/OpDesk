@@ -42,7 +42,7 @@ html[lang='ar'] body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-accent);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -267,7 +267,7 @@ html[lang='ar'] body {
 
 .header-status .stat-item::before {
   height: 3px;
-  border-radius: 2px 2px 0 0;
+  border-radius: var(--radius-3xs) var(--radius-3xs) 0 0;
 }
 
 .header-status .stat-item:nth-child(1)::before {
@@ -370,7 +370,7 @@ html[lang='ar'] body {
   text-align: center;
   color: rgb(var(--scrim-rgb));
   background: var(--status-ringing, var(--accent-warning));
-  border-radius: 8px;
+  border-radius: var(--radius-smd);
   box-shadow: 0 0 0 1px var(--bg-card);
 }
 .header-bell-dropdown {
@@ -707,7 +707,7 @@ html[lang='ar'] body {
   font-size: var(--text-xs);
   font-weight: 700;
   padding: 2px 7px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   line-height: 1.4;
 }
 
@@ -1117,7 +1117,7 @@ html[lang='ar'] body {
 .queue-member-status {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--status-idle);
   box-shadow: 0 0 8px var(--status-idle-glow);
   flex-shrink: 0;
@@ -1233,7 +1233,7 @@ html[lang='ar'] body {
 .incoming-call-avatar {
   width: 76px;
   height: 76px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent-light);
   color: var(--accent-primary);
   display: flex;
@@ -1245,7 +1245,7 @@ html[lang='ar'] body {
 .incoming-call-ring-pulse {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent-primary);
   opacity: 0.35;
   animation: incomingCallPulse 1.8s ease-out infinite;
@@ -1313,7 +1313,7 @@ html[lang='ar'] body {
   width: 60px;
   height: 60px;
   padding: 17px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   color: var(--text-on-accent);
   box-shadow: var(--shadow-md);
 }
@@ -1670,7 +1670,7 @@ select.form-input option:checked {
   font-size: var(--text-xs);
   font-weight: 700;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   margin-inline-start: 4px;
 }
 .cn-filters {
@@ -2016,11 +2016,11 @@ select.form-input option:checked {
 }
 .gp-chips::-webkit-scrollbar-track {
   background: var(--bg-tertiary);
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
 }
 .gp-chips::-webkit-scrollbar-thumb {
   background: var(--border-accent);
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
 }
 .gp-chips::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
@@ -2034,7 +2034,7 @@ select.form-input option:checked {
   color: var(--text-primary);
   background: var(--bg-hover);
   border: 1px solid var(--border-subtle);
-  border-radius: 20px;
+  border-radius: var(--radius-2xl);
   flex-shrink: 0;
   max-width: 100%;
   overflow: hidden;
@@ -2067,7 +2067,7 @@ select.form-input option:checked {
   letter-spacing: 0.04em;
   color: var(--text-muted);
   background: var(--bg-hover);
-  border-radius: 20px;
+  border-radius: var(--radius-2xl);
 }
 
 @media (max-width: 640px) {
@@ -2154,14 +2154,14 @@ select.form-input option:checked {
   width: 100%;
   height: 3px;
   background: var(--border-subtle);
-  border-radius: 2px;
+  border-radius: var(--radius-3xs);
   overflow: hidden;
 }
 
 .cl-audio-progress-fill {
   height: 100%;
   background: var(--accent-primary);
-  border-radius: 2px;
+  border-radius: var(--radius-3xs);
   transition: width 0.1s linear;
 }
 
@@ -2177,7 +2177,7 @@ select.form-input option:checked {
   color: var(--text-muted);
   background: var(--bg-tertiary);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2251,7 +2251,7 @@ select.form-input option:checked {
 
 .cl-qos-badge {
   padding: 5px 12px;
-  border-radius: 20px;
+  border-radius: var(--radius-2xl);
   font-size: var(--text-sm);
   font-weight: 700;
 }
@@ -2448,7 +2448,7 @@ select.form-input option:checked {
   position: relative;
   height: 20px;
   background: var(--bg-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
   border: 1px solid var(--border-subtle);
 }
@@ -2457,7 +2457,7 @@ select.form-input option:checked {
   position: absolute;
   top: 2px;
   height: calc(100% - 4px);
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
   min-width: 2px;
   /* Offset and extent arrive as custom properties from the component; the
      logical property lives here so an Arabic timeline runs right-to-left. */
@@ -2499,7 +2499,7 @@ select.form-input option:checked {
   color: var(--text-muted);
   background: var(--bg-tertiary);
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 /* .ui-modal-body is the scroll container; a second max-height here produced a
@@ -2591,7 +2591,7 @@ select.form-input option:checked {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--bg-tertiary);
   border: 2px solid var(--border-subtle);
   flex-shrink: 0;
@@ -2602,7 +2602,7 @@ select.form-input option:checked {
   min-height: 12px;
   margin-top: 4px;
   background: var(--border-subtle);
-  border-radius: 1px;
+  border-radius: var(--radius-3xs);
 }
 .cl-journey-timeline-content {
   flex: 1;
@@ -2639,7 +2639,7 @@ select.form-input option:checked {
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-variant-numeric: tabular-nums;
 }
 /* ATTEMPT event: the dialer attempt's own recording, on its own row under the pills.
@@ -2765,7 +2765,7 @@ select.form-input option:checked {
 .softphone-status-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--text-muted);
   flex-shrink: 0;
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
@@ -2943,7 +2943,7 @@ select.form-input option:checked {
   width: 48px;
   height: 48px;
   border: 1px solid var(--border-subtle);
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
@@ -3148,7 +3148,7 @@ select.form-input option:checked {
   width: 56px;
   height: 56px;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   cursor: pointer;
   transition: all var(--transition-fast);
   -webkit-tap-highlight-color: transparent;
@@ -3277,7 +3277,7 @@ select.form-input option:checked {
 .softphone-level-bar-wrap {
   width: 8px;
   height: 32px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   overflow: hidden;
@@ -3290,7 +3290,7 @@ select.form-input option:checked {
   /* Level arrives as --u-fill; the fast transition keeps the meter live. */
   height: var(--u-fill, 0%);
   min-height: 2px;
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
   transition: height 0.08s ease-out;
 }
 
@@ -3360,7 +3360,7 @@ select.form-input option:checked {
   width: 56px;
   height: 56px;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent-danger);
   color: var(--text-on-accent);
   cursor: pointer;
@@ -3423,7 +3423,7 @@ select.form-input option:checked {
 .an-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   flex-shrink: 0;
 }
 
@@ -3503,7 +3503,7 @@ select.form-input option:checked {
   z-index: var(--z-fab);
   width: 58px;
   height: 58px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   border: none;
   display: flex;
   align-items: center;
@@ -3536,7 +3536,7 @@ select.form-input option:checked {
   inset-inline-end: 4px;
   width: 11px;
   height: 11px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   border: 2px solid var(--bg-primary);
   background: var(--text-muted);
 }
@@ -3562,7 +3562,7 @@ select.form-input option:checked {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: var(--radius-pill);
   background: var(--accent-danger);
   border: 2px solid var(--bg-primary);
   color: var(--text-on-accent);
@@ -3635,7 +3635,7 @@ select.form-input option:checked {
 .agent-bar-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   flex: 0 0 auto;
 }
 
@@ -3722,7 +3722,7 @@ select.form-input option:checked {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3749,7 +3749,7 @@ select.form-input option:checked {
 .agent-header-dot {
   width: 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   flex: 0 0 auto;
   background: var(--ah-color);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ah-color) 22%, transparent);
@@ -3784,7 +3784,7 @@ select.form-input option:checked {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   border: 1px solid var(--ah-color);
   background: color-mix(in srgb, var(--ah-color) 16%, transparent);
   color: var(--ah-color);
@@ -3811,7 +3811,7 @@ select.form-input option:checked {
   position: relative;
   width: 46px;
   height: 24px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--qt-color) 20%, transparent);
   border: 1px solid color-mix(in srgb, var(--qt-color) 55%, transparent);
   transition: background 0.15s ease;
@@ -3823,7 +3823,7 @@ select.form-input option:checked {
   transform: translateY(-50%);
   width: 20px;
   height: 20px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--qt-color);
   color: var(--text-on-accent);
   display: inline-flex;
@@ -3851,7 +3851,7 @@ select.form-input option:checked {
   position: relative;
   width: 46px;
   height: 24px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--dt-color) 20%, transparent);
   border: 1px solid color-mix(in srgb, var(--dt-color) 55%, transparent);
   transition: background 0.15s ease;
@@ -3863,7 +3863,7 @@ select.form-input option:checked {
   transform: translateY(-50%);
   width: 20px;
   height: 20px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--dt-color);
   color: var(--text-on-accent);
   display: inline-flex;
@@ -3920,7 +3920,7 @@ select.form-input option:checked {
 .agent-header-menu-swatch {
   width: 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   flex: 0 0 auto;
 }
 .agent-header-menu-sep {
@@ -3973,7 +3973,7 @@ select.form-input option:checked {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: rgb(var(--accent-primary-rgb) / 0.12);
   color: var(--accent-primary);
   flex-shrink: 0;
@@ -4211,7 +4211,7 @@ select.form-input option:checked {
   justify-content: center;
   flex: 0 0 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   color: var(--accent-primary);
 }
@@ -4251,7 +4251,7 @@ select.form-input option:checked {
 .sp-xfer-dot {
   flex: 0 0 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent-warning);
 }
 
@@ -4614,7 +4614,7 @@ select.form-input option:checked {
   position: relative;
   width: 44px;
   height: 26px;
-  border-radius: 13px;
+  border-radius: var(--radius-pill);
   background: var(--bg-tertiary);
   border: 2px solid var(--border-accent);
   transition: all var(--transition-normal);
@@ -4634,7 +4634,7 @@ select.form-input option:checked {
   inset-inline-start: 2px;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--text-muted);
   display: flex;
   align-items: center;
@@ -4729,7 +4729,7 @@ select.form-input option:checked {
   display: flex;
   gap: 2px;
   height: 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   /* Shows through wherever there is nothing to draw, so an empty bar still reads
      as a bar rather than as a gap in the layout. */
@@ -5269,7 +5269,7 @@ select.form-input option:checked {
 .ui-empty--md { padding: var(--space-8) var(--space-6); }
 .ui-empty--sm { padding: var(--space-6) var(--space-4); }
 .ui-empty-icon {
-  width: 44px; height: 44px; border-radius: 50%;
+  width: 44px; height: 44px; border-radius: var(--radius-round);
   display: flex; align-items: center; justify-content: center;
   background: rgb(var(--accent-primary-rgb) / 0.1); color: var(--accent-primary);
 }
@@ -5365,7 +5365,7 @@ select.form-input option:checked {
   background: color-mix(in srgb, var(--badge-color) 12%, transparent);
   border-color: color-mix(in srgb, var(--badge-color) 28%, transparent);
 }
-.badge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.badge-dot { width: 6px; height: 6px; border-radius: var(--radius-round); background: currentColor; flex: none; }
 
 /* ── Stat (ui/Stat) ───────────────────────────────────────────────────── */
 .ui-stat-row {
@@ -5391,7 +5391,7 @@ select.form-input option:checked {
 .ui-stat--danger  .ui-stat-icon { color: var(--accent-danger); }
 .ui-stat--neutral .ui-stat-icon { color: var(--text-muted); }
 .ui-stat-live {
-  margin-inline-start: auto; width: 7px; height: 7px; border-radius: 50%;
+  margin-inline-start: auto; width: 7px; height: 7px; border-radius: var(--radius-round);
   background: var(--accent-success); animation: badge-live-pulse 1.6s ease-in-out infinite;
 }
 .ui-stat-value {
@@ -5772,7 +5772,7 @@ select.form-input option:checked {
 }
 .cl-note-item {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-smd);
   padding: 8px 10px;
   background: var(--bg-card);
 }
@@ -5838,7 +5838,7 @@ select.form-input option:checked {
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-secondary);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 4px 10px;
   font-size: var(--text-xs);
   font-family: inherit;
@@ -5939,7 +5939,7 @@ select.form-input option:checked {
   gap: 4px;
   margin-top: 6px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-light);
   color: var(--accent-primary);
   font-size: var(--text-xs);
@@ -7003,7 +7003,7 @@ select.form-input option:checked {
   inline-size: 8px;
   block-size: 8px;
   flex-shrink: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--text-muted);
 }
 
@@ -7118,7 +7118,7 @@ select.form-input option:checked {
   width: 8px;
   height: 8px;
   flex: none;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   /* Hollow by default. Only `answered` is filled, so a trail that ended in the
      one result the campaign wanted is legible without decoding five hues. */
   border: 1.5px solid currentColor;
@@ -7273,7 +7273,7 @@ a.btn { text-decoration: none; }
 }
 .apikey-tricheck.is-checked { background: var(--accent-primary); border-color: var(--accent-primary); }
 .apikey-tricheck.is-mixed { background: rgb(var(--accent-primary-rgb) / 0.3); }
-.apikey-tricheck-mixed { width: 6px; height: 6px; border-radius: 1px; background: var(--accent-primary); }
+.apikey-tricheck-mixed { width: 6px; height: 6px; border-radius: var(--radius-3xs); background: var(--accent-primary); }
 /* Webhook editor: keep the Save footer in view on a long form. */
 .crmx-card { overflow: visible; }
 .crmx-card > .ui-card-footer { position: sticky; inset-block-end: 0; z-index: var(--z-sticky); }
