@@ -34,13 +34,13 @@ export function AnalyticsPanel({ dateRange, onDateRangeChange }: AnalyticsPanelP
   return (
     <Page
       icon={BarChart3}
-      title={t('analytics.title')}
+      title={t('nav.analytics')}
       className="an-panel"
       bodyClassName="an-tab-content"
       // The range is scope, not a filter: it is the question this page answers,
       // so it sits with the page's identity in the header.
       scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
-      tabs={<Tabs tabs={tabs} active={tab} onChange={(k) => setTab(k as AnalyticsTab)} ariaLabel={t('analytics.title')} />}
+      tabs={<Tabs tabs={tabs} active={tab} onChange={(k) => setTab(k as AnalyticsTab)} ariaLabel={t('nav.analytics')} />}
     >
       {tab === 'overview'  && <AnalyticsOverview  dateRange={dateRange} />}
       {tab === 'queues'    && <AnalyticsQueues    dateRange={dateRange} />}

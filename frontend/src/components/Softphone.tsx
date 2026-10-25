@@ -143,7 +143,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
   const callStatusLabel = (s: string): string => {
     if (s === 'Incoming call...') return t('softphone.callStatus.incoming', 'Incoming call...');
     if (s === 'Ringing...') return t('softphone.callStatus.ringing', 'Ringing...');
-    if (s === 'In call') return t('softphone.callStatus.inCall', 'In call');
+    if (s === 'In call') return t('common.inCall', 'In call');
     if (s === 'Call error') return t('softphone.callStatus.callError', 'Call error');
     if (s === 'Error') return t('softphone.status.error', 'Error');
     const calling = /^Calling (.+)\.\.\.$/.exec(s);
@@ -172,7 +172,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
         {header(false)}
         <div className="softphone-incoming-body">
           <div className="softphone-caller-number">{incomingCall.callerNumber}</div>
-          <div className="softphone-caller-name">{incomingCall.callerName || t('softphone.incomingCall')}</div>
+          <div className="softphone-caller-name">{incomingCall.callerName || t('common.incomingCall')}</div>
           <div className="softphone-status-row">
             <span className="softphone-status-badge">{statusLabel}</span>
           </div>
@@ -212,7 +212,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
     activeCallRemoteNumber ||
     (callStatus.startsWith('In call with ') ? callStatus.slice('In call with '.length) : '') ||
     (isOutgoingRinging ? (dialNumber.trim() || lastDialedNumber) : '');
-  const inCallName = activeCallRemoteName || (isOutgoingRinging ? t('softphone.status.connecting') : t('softphone.incomingCall'));
+  const inCallName = activeCallRemoteName || (isOutgoingRinging ? t('softphone.status.connecting') : t('common.incomingCall'));
   const inCallDuration = callDuration || '00:00';
 
   if (isCallAnswered || isOutgoingRinging) {
@@ -242,7 +242,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
                 <span className="softphone-quality-detail">
                   {callStats.jitterMs != null && <>{t('softphone.quality_jitter')} {Math.round(callStats.jitterMs)}ms</>}
                   {callStats.packetLossPct != null && <> · {t('softphone.quality_loss')} {callStats.packetLossPct.toFixed(1)}%</>}
-                  {callStats.rttMs != null && <> · {t('softphone.quality_rtt')} {Math.round(callStats.rttMs)}ms</>}
+                  {callStats.rttMs != null && <> · {t('common.latency')} {Math.round(callStats.rttMs)}ms</>}
                 </span>
               </div>
             );
@@ -271,11 +271,11 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             <button
               type="button"
               className={`softphone-incall-btn ${isOnHold ? 'softphone-incall-btn-active' : ''}`}
-              title={isOnHold ? t('softphone.resume') : t('softphone.hold')}
+              title={isOnHold ? t('common.resume') : t('softphone.hold')}
               onClick={toggleHold}
             >
               <Pause size={22} />
-              <span>{isOnHold ? t('softphone.resume') : t('softphone.hold')}</span>
+              <span>{isOnHold ? t('common.resume') : t('softphone.hold')}</span>
             </button>
             <button
               type="button"
@@ -289,12 +289,12 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             <button
               type="button"
               className={`softphone-incall-btn ${showTransfer ? 'softphone-incall-btn-active' : ''}`}
-              title={t('softphone.transfer')}
+              title={t('common.transfer')}
               onClick={() => setShowTransfer((prev) => !prev)}
               aria-expanded={showTransfer}
             >
               <ArrowRightLeft size={22} />
-              <span>{t('softphone.transfer')}</span>
+              <span>{t('common.transfer')}</span>
             </button>
           </div>
           {/* Transfer panel: pick a destination, then hand the call over (blind
@@ -304,7 +304,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
               <div className="sp-xfer-head">
                 <span className="sp-xfer-title">{t('softphone.transferToExtension')}</span>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={closeTransfer}>
-                  {t('softphone.cancel')}
+                  {t('common.cancel')}
                 </button>
               </div>
               <input
@@ -338,8 +338,8 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             type="button"
             className="softphone-btn-hangup"
             onClick={hangup}
-            title={t('softphone.endCall')}
-            aria-label={t('softphone.endCall')}
+            title={t('common.endCall')}
+            aria-label={t('common.endCall')}
           >
             <PhoneOff size={24} />
           </button>
@@ -394,8 +394,8 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             className="softphone-bottom-btn softphone-call-btn"
             onClick={hasActiveCall ? hangup : () => makeCall()}
             disabled={!isConnected || (!hasActiveCall && !dialNumber.trim() && !lastDialedNumber)}
-            title={hasActiveCall ? t('softphone.endCall') : t('softphone.answer')}
-            aria-label={hasActiveCall ? t('softphone.endCall') : t('softphone.answer')}
+            title={hasActiveCall ? t('common.endCall') : t('softphone.answer')}
+            aria-label={hasActiveCall ? t('common.endCall') : t('softphone.answer')}
           >
             <Phone size={26} />
           </button>

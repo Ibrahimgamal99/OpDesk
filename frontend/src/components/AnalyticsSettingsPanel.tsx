@@ -60,7 +60,7 @@ export function AnalyticsSettingsPanel({ card, onSaved }: AnalyticsSettingsPanel
   const saveButton = (
     <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || loading}>
       {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
-      {saving ? t('settings.saving') : t('analytics.settings.save')}
+      {saving ? t('common.saving') : t('analytics.settings.save')}
     </button>
   );
 

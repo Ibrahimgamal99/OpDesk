@@ -130,8 +130,8 @@ export function AnalyticsOverview({ dateRange }: Props) {
   ];
 
   // ── 4. Charts ───────────────────────────────────────────────────────────────
-  const inbound = t('analytics.directions.inbound', 'Inbound');
-  const outbound = t('analytics.directions.outbound', 'Outbound');
+  const inbound = t('direction.inbound', 'Inbound');
+  const outbound = t('direction.outbound', 'Outbound');
   const byDay = trend.map((p) => ({
     date: p.date.slice(5),
     inbound: p.total_calls,

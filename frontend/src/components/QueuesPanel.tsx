@@ -45,15 +45,15 @@ type QueueStatusFilter = 'waiting' | 'noReady' | 'idle';
 function memberBadge(member: QueueMember, t: TFunction): { meta: StatusMeta; label: string } {
   switch (memberState(member)) {
     case 'paused': {
-      const base = t('queues.notReady', 'Not Ready');
+      const base = t('agent.state.notReady', 'Not Ready');
       return { meta: AGENT_STATE_META.not_ready, label: member.pause_reason ? `${base} · ${member.pause_reason}` : base };
     }
     case 'unavailable':
       return { meta: DEVICE_STATUS_META.unavailable, label: t('queues.memberUnavailable', 'Unavailable') };
     case 'busy':
-      return { meta: DEVICE_STATUS_META.in_call, label: t('queues.memberInCall', 'In Call') };
+      return { meta: DEVICE_STATUS_META.in_call, label: t('common.inCall', 'In Call') };
     default:
-      return { meta: AGENT_STATE_META.ready, label: t('queues.memberReady', 'Ready') };
+      return { meta: AGENT_STATE_META.ready, label: t('agent.state.ready', 'Ready') };
   }
 }
 
@@ -228,12 +228,12 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
   return (
     <Page
       icon={Users}
-      title={t('queues.title')}
+      title={t('nav.queues')}
       count={queueList.length}
       actions={onSync && (
-        <button type="button" className="btn btn-ghost" onClick={onSync} title={t('queues.syncAll')}>
+        <button type="button" className="btn btn-ghost" onClick={onSync} title={t('common.syncAll')}>
           <RefreshCw size={14} />
-          {t('queues.sync')}
+          {t('common.sync')}
         </button>
       )}
       toolbar={
@@ -256,7 +256,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                     onChange={setStatusFilter}
                     size="md"
                     ariaLabel={t('common.status')}
-                    options={[{ value: '', label: t('queues.filter.allStatuses', 'All statuses') }, ...statusOptions]}
+                    options={[{ value: '', label: t('common.allStatuses', 'All statuses') }, ...statusOptions]}
                   />
                 </div>
               )}
@@ -268,7 +268,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                     size="md"
                     searchable
                     icon={Users}
-                    ariaLabel={t('queues.filter.agent', 'Agent')}
+                    ariaLabel={t('fields.agent', 'Agent')}
                     searchPlaceholder={t('queues.filter.agentSearch', 'Find an agent')}
                     options={[{ value: '', label: t('queues.filter.allAgents', 'All agents') }, ...agentOptions]}
                   />
@@ -382,8 +382,8 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                               onClick={() => handleTogglePause(member)}
                               disabled={processing}
                               aria-busy={processing}
-                              title={member.paused ? t('queues.unpause') : t('queues.pause')}
-                              aria-label={member.paused ? t('queues.unpause') : t('queues.pause')}
+                              title={member.paused ? t('queues.unpause') : t('common.pause')}
+                              aria-label={member.paused ? t('queues.unpause') : t('common.pause')}
                             >
                               {member.paused ? <Play size={14} /> : <Pause size={14} />}
                             </button>
@@ -423,7 +423,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
           footer={(
             <>
               <button type="button" className="btn" onClick={() => { setShowAddMember(null); resetAddForm(); }}>
-                {t('queues.cancel')}
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -431,12 +431,12 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                 onClick={() => handleAddMember(showAddMember)}
                 disabled={!newMemberInterface}
               >
-                {t('queues.login')}
+                {t('common.logIn')}
               </button>
             </>
           )}
         >
-          <FormField label={t('queues.extensionLabel', 'Extension')} required>
+          <FormField label={t('fields.extension', 'Extension')} required>
             <Dropdown
               size="md"
               searchable
@@ -454,7 +454,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
               searchPlaceholder={t('queues.selectExtension')}
             />
           </FormField>
-          <FormField label={t('queues.nameLabel', 'Name')} htmlFor="queue-member-name">
+          <FormField label={t('fields.name', 'Name')} htmlFor="queue-member-name">
             <input
               id="queue-member-name"
               type="text"
@@ -474,7 +474,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                 onClick={() => setNewMemberPaused(false)}
               >
                 <Play size={14} />
-                {t('queues.statusReady')}
+                {t('agent.state.ready')}
               </button>
               <button
                 type="button"
@@ -483,7 +483,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                 onClick={() => setNewMemberPaused(true)}
               >
                 <Pause size={14} />
-                {t('queues.statusNotReady')}
+                {t('agent.state.notReady')}
               </button>
             </div>
           </FormField>

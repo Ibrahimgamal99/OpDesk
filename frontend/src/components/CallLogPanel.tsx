@@ -19,6 +19,8 @@ import type { DateRange } from './analyticsUtils';
 import { fmtTimer } from '../lib/format';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
 import { StatCard, StatRow } from './FigureCards';
+import { CallStatusBadge } from './CallStatusBadge';
+import { CALL_STATUS_ORDER, callStatusColor, callStatusLabel, canonicalCallStatus } from './callStatus';
 import '../styles/work.css';
 
 // ---------------------------------------------------------------------------
@@ -42,9 +44,9 @@ function formatCallDate(dateStr: string, t: TFunction): { date: string; time: st
 
   let dateLabel: string;
   if (callDay.getTime() === today.getTime()) {
-    dateLabel = t('callLog.today');
+    dateLabel = t('common.today');
   } else if (callDay.getTime() === yesterday.getTime()) {
-    dateLabel = t('callLog.yesterday');
+    dateLabel = t('common.yesterday');
   } else {
     dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
@@ -150,31 +152,6 @@ function getAudioSummary(qos: QoSData, t: TFunction): string {
   };
   const parts = [describe(qos.rxMes, 'incoming'), describe(qos.txMes, 'outgoing')].filter(Boolean);
   return parts.join('; ') || t('callLog.audioDesc.noData');
-}
-
-// Keyed on OpDesk's canonical outcome enum (backend/call_log.py CALL_OUTCOMES). Colours
-// follow the scheme in styles/variables.css that the shared callStatus.ts uses: green =
-// answered, amber = the callee did not take it, burnt = could not be placed, red = picked
-// up but never reached a person.
-const STATUS_COLOR: Record<string, string> = {
-  ANSWERED:     'var(--accent-success)',
-  NO_ANSWER:    'var(--accent-warning)',
-  BUSY:         'var(--accent-warning)',
-  FAILURE:      'var(--accent-fault)',
-  ABANDONED:    'var(--accent-danger)',
-  CANCELED:     'var(--text-secondary)',
-  DROPPED:      'var(--status-dropped)',
-  OUT_OF_REACH: 'var(--text-muted)',
-  in_progress:  'var(--accent-primary)',
-};
-const STATUS_ORDER = Object.keys(STATUS_COLOR);
-
-const statusColor = (s: string) => STATUS_COLOR[s] ?? 'var(--text-muted)';
-const statusLabel = (t: TFunction, s: string) => t(`callLog.status.${s}`, { defaultValue: s });
-
-function CallLogStatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  return <Badge color={statusColor(status)}>{statusLabel(t, status)}</Badge>;
 }
 
 const ITEMS_PER_PAGE = 25;
@@ -315,8 +292,8 @@ function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerPr
           type="button"
           className="btn btn-ghost btn-sm btn-icon"
           onClick={togglePlay}
-          title={`${playing ? t('callLog.pause') : t('callLog.play')}${fileHint}`}
-          aria-label={playing ? t('callLog.pause') : t('callLog.play')}
+          title={`${playing ? t('common.pause') : t('callLog.play')}${fileHint}`}
+          aria-label={playing ? t('common.pause') : t('callLog.play')}
         >
           {playing ? <Pause size={14} /> : <Play size={14} />}
         </button>
@@ -399,7 +376,7 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
       icon={<Gauge size={16} />}
       width="wide"
       className="cl-qos-modal"
-      footer={<button type="button" className="btn" onClick={onClose}>{t('callLog.qos.close')}</button>}
+      footer={<button type="button" className="btn" onClick={onClose}>{t('common.close')}</button>}
     >
       <div className="cl-qos-body">
         {/* Hero: overall score, participants, plain-language summary */}
@@ -410,7 +387,7 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
               <span className={`cl-qos-hero-value u-fg-${overall.quality}`}>{overall.label}</span>
             </div>
             <div className="cl-qos-participants">
-              <span className="cl-qos-badge agent">{call.extension || t('callLog.qos.agent')}</span>
+              <span className="cl-qos-badge agent">{call.extension || t('fields.agent')}</span>
               <ArrowLeftRight size={14} className="cl-qos-arrow" />
               <span className="cl-qos-badge customer">
                 {qos.caller || call.phone_number || t('callLog.qos.customer')}
@@ -513,7 +490,7 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
       width="md"
       className="cl-journey-modal"
       headerAside={<span className="cl-journey-step-count">{stepsLabel}</span>}
-      footer={<button type="button" className="btn" onClick={onClose}>{t('callLog.qos.close')}</button>}
+      footer={<button type="button" className="btn" onClick={onClose}>{t('common.close')}</button>}
     >
       <div className="cl-journey-body">
         <div className="cl-journey-summary">
@@ -627,7 +604,7 @@ function VadModal({ vad, recordingFile, onClose }: VadModalProps) {
       icon={<Activity size={16} />}
       width="lg"
       className="cl-vad-modal"
-      footer={<button type="button" className="btn" onClick={onClose}>{t('callLog.qos.close')}</button>}
+      footer={<button type="button" className="btn" onClick={onClose}>{t('common.close')}</button>}
     >
       <div className="u-col u-gap-4">
         {recordingFile && (
@@ -638,7 +615,7 @@ function VadModal({ vad, recordingFile, onClose }: VadModalProps) {
             tracks below (sp1 primary, sp2 success), so they double as the legend. */}
         <StatRow>
           <StatCard
-            label={t('callLog.vad.duration', 'Duration')}
+            label={t('fields.duration', 'Duration')}
             icon={<Clock size={14} />}
             iconTone="muted"
             value={fmt(duration)}
@@ -799,14 +776,14 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
     [...new Set([...Object.keys(counts), ...(selected ? [selected] : [])])];
 
   const statusRank = (v: string) => {
-    const i = STATUS_ORDER.indexOf(v);
-    return i < 0 ? STATUS_ORDER.length : i;
+    const i = CALL_STATUS_ORDER.indexOf(canonicalCallStatus(v));
+    return i < 0 ? CALL_STATUS_ORDER.length : i;
   };
   const statusCounts = countBy(listed, c => c.status || undefined);
   const statusOptions = presentOptions(
     valuesOf(statusCounts, statusFilter)
       .sort((a, b) => statusRank(a) - statusRank(b) || a.localeCompare(b))
-      .map(s => ({ value: s, label: statusLabel(t, s), dotColor: statusColor(s) })),
+      .map(s => ({ value: s, label: callStatusLabel(t, s), dotColor: callStatusColor(s) })),
     statusCounts, statusFilter);
   const callTypeCounts = countBy(listed, c => c.call_type || undefined);
   const callTypeOptions = presentOptions(
@@ -917,26 +894,26 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
     },
     { key: 'app', header: t('callLog.table.app'), cell: call => call.app || '—' },
     {
-      key: 'direction', header: t('callLog.table.direction'),
+      key: 'direction', header: t('fields.direction'),
       cell: call => <CallDirectionBadge call={call} />,
     },
     {
-      key: 'status', header: t('callLog.table.status'),
+      key: 'status', header: t('common.status'),
       cell: call => (
         call.status === 'ANSWERED' && parseQoS(call.QoS) ? (
           <button type="button" className="cl-status-qos" onClick={() => handleOpenQos(call)} title={t('callLog.viewQoS')}>
-            <CallLogStatusBadge status={call.status} />
+            <CallStatusBadge status={call.status} />
           </button>
-        ) : <CallLogStatusBadge status={call.status} />
+        ) : <CallStatusBadge status={call.status} />
       ),
     },
     {
-      key: 'agent', header: t('callLog.table.agent'),
+      key: 'agent', header: t('fields.agent'),
       cell: call => call.extension || '—',
     },
     {
       // Duration with talk time as its secondary line: one column, both figures.
-      key: 'duration', header: t('callLog.table.duration'),
+      key: 'duration', header: t('fields.duration'),
       cell: call => (
         <div className="cl-party">
           <span className="u-mono">{formatDuration(call.duration)}</span>
@@ -968,7 +945,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       },
     },
     {
-      key: 'journey', header: t('callLog.table.callJourney'),
+      key: 'journey', header: t('callLog.journey.title'),
       cell: call => (call.call_journey_count != null && call.call_journey_count > 1) ? (
         <button
           type="button"
@@ -1006,7 +983,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   return (
     <Page
       icon={History}
-      title={t('callLog.title')}
+      title={t('nav.callHistory')}
       count={totalCount}
       scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
       flush
@@ -1029,8 +1006,8 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                     value={statusFilter}
                     onChange={setStatusFilter}
                     size="md"
-                    ariaLabel={t('callLog.table.status')}
-                    options={[{ value: '', label: t('callLog.allStatuses') }, ...statusOptions]}
+                    ariaLabel={t('common.status')}
+                    options={[{ value: '', label: t('common.allStatuses') }, ...statusOptions]}
                   />
                 </div>
               )}
@@ -1041,8 +1018,8 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                     onChange={setCallTypeFilter}
                     icon={ArrowUpDown}
                     size="md"
-                    ariaLabel={t('callLog.table.direction')}
-                    options={[{ value: '', label: t('callLog.allDirections') }, ...callTypeOptions]}
+                    ariaLabel={t('fields.direction')}
+                    options={[{ value: '', label: t('direction.all') }, ...callTypeOptions]}
                   />
                 </div>
               )}
@@ -1091,7 +1068,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
         <Loading label={t('callLog.loading')} />
       ) : error ? (
         <div className="u-p-3">
-          <Alert action={<button type="button" className="btn" onClick={fetchData}><RefreshCw size={14} />{t('callLog.retry')}</button>}>
+          <Alert action={<button type="button" className="btn" onClick={fetchData}><RefreshCw size={14} />{t('common.retry')}</button>}>
             {error}
           </Alert>
         </div>
@@ -1100,7 +1077,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
           columns={columns}
           rows={pageItems}
           rowKey={(call, idx) => `${call.calldate}-${idx}`}
-          caption={t('callLog.title')}
+          caption={t('nav.callHistory')}
           className="cl-log-table"
           empty={
             <EmptyState
@@ -1113,7 +1090,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
                 : t('callLog.emptyRange', 'Try a wider date range.')}
               action={anyFilterActive ? (
                 <button type="button" className="btn" onClick={clearFilters}>
-                  {t('callLog.clearFilters', 'Clear filters')}
+                  {t('common.clearFilters', 'Clear filters')}
                 </button>
               ) : undefined}
             />

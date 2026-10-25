@@ -134,7 +134,7 @@ export function MobileSetupBody({ userId }: { userId?: number }) {
           <span className="u-row u-gap-1h">
             <button type="button" className="btn btn-ghost btn-sm" onClick={copy}>
               {copied ? <ClipboardCheck size={14} /> : <Copy size={14} />}
-              {copied ? t('mobileSetup.copied', 'Copied') : t('mobileSetup.copy', 'Copy')}
+              {copied ? t('common.copied', 'Copied') : t('common.copy', 'Copy')}
             </button>
             {qr && (
               <a className="btn btn-ghost btn-sm" href={qr} download={`medut-${setup.extension}.png`}>

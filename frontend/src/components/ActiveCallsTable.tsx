@@ -39,7 +39,7 @@ export function ActiveCallsTable({
   const { t } = useTranslation();
   const columns: Column<CallInfo>[] = [
     {
-      key: 'extension', header: t('activeCalls.table.extension'), primary: true,
+      key: 'extension', header: t('fields.extension'), primary: true,
       cell: call => <span className="u-mono u-semibold">{call.extension}</span>,
     },
     {
@@ -60,7 +60,7 @@ export function ActiveCallsTable({
         : (call.talking_to || '—'),
     },
     {
-      key: 'duration', header: t('activeCalls.table.duration'),
+      key: 'duration', header: t('fields.duration'),
       cell: call => <span className="u-mono">{call.duration || '—'}</span>,
     },
     {
@@ -68,7 +68,7 @@ export function ActiveCallsTable({
       cell: call => <span className="u-mono">{call.talk_time || '—'}</span>,
     },
     ...(getUser()?.role !== 'agent' ? [{
-      key: 'actions', header: t('activeCalls.table.actions'), label: '',
+      key: 'actions', header: t('common.actions'), label: '',
       cell: (call: CallInfo) => (
         <CallActions
           call={call}
@@ -147,8 +147,8 @@ function CallActions({ call, onSupervisorAction, onHangup, onTransfer, onTakeOve
             type="button"
             className="btn btn-ghost btn-danger btn-sm btn-icon"
             onClick={() => onHangup(call.extension)}
-            title={t('activeCalls.actions.endCall')}
-            aria-label={t('activeCalls.actions.endCall')}
+            title={t('common.endCall')}
+            aria-label={t('common.endCall')}
           >
             <PhoneOff size={14} />
           </button>
@@ -188,7 +188,7 @@ function CallActions({ call, onSupervisorAction, onHangup, onTransfer, onTakeOve
                 onTransfer(transferSource, dest);
                 closeTransfer();
               }}>
-              {t('activeCalls.transfer.transfer')}
+              {t('common.transfer')}
             </button>
           </div>
           {onTakeOver && getUser()?.extension && call.talking_to?.trim() && (
@@ -208,7 +208,7 @@ function CallActions({ call, onSupervisorAction, onHangup, onTransfer, onTakeOve
             </div>
           )}
           <button type="button" className="btn btn-ghost btn-sm" onClick={closeTransfer}>
-            {t('activeCalls.transfer.cancel')}
+            {t('common.cancel')}
           </button>
         </div>
       )}

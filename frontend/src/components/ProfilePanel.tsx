@@ -28,9 +28,9 @@ export function ProfilePanel() {
   const currentLang = LANGUAGE_OPTIONS.find((l) => i18n.language === l || i18n.language?.startsWith(`${l}-`)) ?? i18n.language;
 
   const facts: { key: string; label: string; value: string }[] = [
-    { key: 'name', label: t('profile.name', 'Name'), value: user?.name || '—' },
-    { key: 'username', label: t('profile.username', 'Username'), value: user?.username || '—' },
-    { key: 'role', label: t('profile.role', 'Role'), value: t(`users.roles.${user?.role}`, { defaultValue: user?.role || '—' }) },
+    { key: 'name', label: t('fields.name', 'Name'), value: user?.name || '—' },
+    { key: 'username', label: t('fields.username', 'Username'), value: user?.username || '—' },
+    { key: 'role', label: t('fields.role', 'Role'), value: t(`users.roles.${user?.role}`, { defaultValue: user?.role || '—' }) },
     { key: 'ext', label: t('header.ext'), value: user?.extension || '—' },
   ];
 
@@ -38,7 +38,7 @@ export function ProfilePanel() {
     <Page icon={UserCircle} title={t('profile.title', 'My Profile')}>
       <div className="acct-profile-grid">
         <div className="acct-profile-col">
-          <Card icon={User} title={t('profile.account', 'Account')} description={t('profile.accountDesc', 'Your sign-in details.')}>
+          <Card icon={User} title={t('common.account', 'Account')} description={t('profile.accountDesc', 'Your sign-in details.')}>
             <div className="crmx-meta acct-facts">
               {facts.map((f) => (
                 <div className="crmx-meta-cell" key={f.key}>
@@ -66,7 +66,7 @@ export function ProfilePanel() {
 
           <Card
             icon={KeyRound}
-            title={t('account.loginPassword', 'Change password')}
+            title={t('common.changePassword', 'Change password')}
             description={t('profile.passwordDesc', 'The password you sign in to OpDesk with.')}
           >
             <PasswordForm sip={false} />

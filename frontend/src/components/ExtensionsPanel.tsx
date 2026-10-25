@@ -135,7 +135,7 @@ export function ExtensionsPanel({
   return (
     <Page
       icon={Phone}
-      title={t('extensions.title')}
+      title={t('nav.extensions')}
       count={rows.length}
       actions={
         <>
@@ -150,9 +150,9 @@ export function ExtensionsPanel({
             {compact ? t('extensions.comfortable') : t('extensions.compact')}
           </button>
           {onSync && (
-            <button type="button" className="btn btn-ghost" onClick={onSync} title={t('extensions.syncAll')}>
+            <button type="button" className="btn btn-ghost" onClick={onSync} title={t('common.syncAll')}>
               <RefreshCw size={14} />
-              {t('extensions.sync')}
+              {t('common.sync')}
             </button>
           )}
         </>
@@ -177,7 +177,7 @@ export function ExtensionsPanel({
                     onChange={setStatusFilter}
                     size="md"
                     ariaLabel={t('common.status', 'Status')}
-                    options={[{ value: '', label: t('extensions.filter.allStatuses', 'All statuses') }, ...statusOptions]}
+                    options={[{ value: '', label: t('common.allStatuses', 'All statuses') }, ...statusOptions]}
                   />
                 </div>
               )}
