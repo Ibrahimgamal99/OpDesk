@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  BookUser, UserPlus, Pencil, Trash2, Save, Loader2, CheckCircle2, AlertCircle,
-  Phone, PhoneCall, Building2,
+  BookUser, Plus, Pencil, Trash2, Save, Loader2, PhoneCall,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import type { Contact } from '../types';
 import { raiseFor } from '../lib/api';
-import { SearchInput } from './ui';
+import {
+  SearchInput, Alert, Page, Toolbar, EmptyState, Badge, type BadgeTone, Table, Modal, Loading,
+  FormSection, FormRow, FormField, useConfirm,
+} from './ui';
 
 export interface ContactsPanelProps {
   /** Start a call to this number (fills the softphone dialer and opens it). */
@@ -17,17 +19,24 @@ export interface ContactsPanelProps {
 
 const EMPTY_FORM = { name: '', phone: '', company: '', notes: '' };
 
+/**
+ * The shared contacts phonebook. Every user reads it and can click to call; only
+ * admins see add/edit/delete. The list is loaded whole and searched in the browser.
+ */
 export function ContactsPanel({ onDial }: ContactsPanelProps) {
   const { t } = useTranslation();
+  const [confirm, confirmDialog] = useConfirm();
   const isAdmin = getUser()?.role === 'admin';
   const { canConnect } = useWebPhoneContext();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [subTab, setSubTab] = useState<'list' | 'create'>('list');
+  // The add/edit form is a modal over the list; the list is the only view.
+  const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Contact | null>(null);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
@@ -60,13 +69,21 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
   const resetForm = useCallback(() => {
     setEditing(null);
     setForm(EMPTY_FORM);
-    setSubTab('list');
+    setFormOpen(false);
   }, []);
 
+  const openCreate = () => {
+    setMessage(null);
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setFormOpen(true);
+  };
+
   const startEdit = (c: Contact) => {
+    setMessage(null);
     setEditing(c);
     setForm({ name: c.name, phone: c.phone, company: c.company || '', notes: c.notes || '' });
-    setSubTab('create');
+    setFormOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -80,6 +97,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
       setMessage({ type: 'error', text: t('contacts.phoneRequired') });
       return;
     }
+    setSaving(true);
     try {
       const res = await fetchWithAuth(editing ? `/api/contacts/${editing.id}` : '/api/contacts', {
         method: editing ? 'PUT' : 'POST',
@@ -97,11 +115,19 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
       loadContacts();
     } catch (err: unknown) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : t('contacts.saveError') });
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDelete = async (c: Contact) => {
-    if (!window.confirm(t('contacts.deleteConfirm', { name: c.name }))) return;
+    const ok = await confirm({
+      title: t('contacts.deleteTitle', 'Delete contact?'),
+      message: t('contacts.deleteConfirm', { name: c.name }),
+      confirmLabel: t('common.delete', 'Delete'),
+      cancelLabel: t('common.cancel'),
+    });
+    if (!ok) return;
     setMessage(null);
     try {
       const res = await fetchWithAuth(`/api/contacts/${c.id}`, { method: 'DELETE' });
@@ -114,204 +140,213 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="panel">
-        <div className="panel-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 64 }}>
-          <Loader2 size={32} className="spinner" />
-          <p style={{ marginTop: 20, color: 'var(--text-secondary)', fontSize: 14 }}>{t('contacts.loading')}</p>
-        </div>
-      </div>
-    );
-  }
+  const sourceBadge = (source: Contact['source']): { tone: BadgeTone; label: string } => {
+    if (source === 'crm') return { tone: 'info', label: t('contacts.sourceCrm') };
+    return { tone: 'success', label: t('contacts.sourceManual') };
+  };
 
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2 className="panel-title">
-          <BookUser size={16} className="panel-title-icon" />
-          {t('contacts.title')}
-        </h2>
-        {isAdmin && (
-          <div className="panel-header-actions">
-            <div className="up-tabs up-tabs-inline">
-              <button
-                type="button"
-                className={`up-tab ${subTab === 'create' ? 'active' : ''}`}
-                onClick={() => setSubTab('create')}
-              >
-                <UserPlus size={14} />
-                {editing ? t('contacts.editContact') : t('contacts.addContact')}
+    <Page
+      icon={BookUser}
+      title={t('contacts.title')}
+      count={loading ? undefined : contacts.length}
+      actions={isAdmin ? (
+        <button type="button" className="btn btn-primary" onClick={openCreate}>
+          <Plus size={14} />
+          {t('contacts.addContact')}
+        </button>
+      ) : undefined}
+      toolbar={
+        <Toolbar
+          search={
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              label={t('contacts.searchLabel', 'Search contacts')}
+              placeholder={t('contacts.searchPlaceholder')}
+              // Filters an already-loaded list, so there is no request to coalesce.
+              debounceMs={0}
+              urlSync={false}
+            />
+          }
+        />
+      }
+    >
+      {/* A form error belongs to the open form, so it shows inside the modal instead. */}
+      {message && !(formOpen && message.type === 'error') && (
+        <Alert
+          tone={message.type === 'success' ? 'success' : 'error'}
+          onDismiss={() => setMessage(null)}
+        >
+          {message.text}
+        </Alert>
+      )}
+
+      {loading && contacts.length === 0 ? (
+        <Loading label={t('contacts.loading')} />
+      ) : (
+        <Table
+          framed
+          caption={t('contacts.title')}
+          rows={filtered}
+          rowKey={c => c.id}
+          empty={contacts.length > 0 ? (
+            <EmptyState
+              icon={BookUser}
+              title={t('contacts.noMatchesTitle', 'No matching contacts')}
+              description={t('contacts.noMatches')}
+            />
+          ) : (
+            <EmptyState
+              icon={BookUser}
+              title={t('contacts.emptyTitle', 'No contacts yet')}
+              description={t('contacts.noContacts')}
+            />
+          )}
+          columns={[
+            {
+              key: 'name', header: t('contacts.name'), primary: true,
+              cell: c => (
+                <div className="u-min-w-0">
+                  <div className="u-semibold">{c.name}</div>
+                  {c.notes && <div className="u-fg-muted u-text-sm u-truncate">{c.notes}</div>}
+                </div>
+              ),
+            },
+            {
+              key: 'phone', header: t('contacts.phone'),
+              cell: c => <span className="u-mono" dir="ltr">{c.phone}</span>,
+            },
+            {
+              key: 'company', header: t('contacts.company'), hideOnMobile: true,
+              cell: c => c.company || '—',
+            },
+            {
+              key: 'source', header: t('contacts.source', 'Source'),
+              cell: c => {
+                const badge = sourceBadge(c.source);
+                return <Badge tone={badge.tone}>{badge.label}</Badge>;
+              },
+            },
+            {
+              key: 'actions', header: t('common.actions', 'Actions'), align: 'end',
+              cell: c => (
+                <div className="u-row u-justify-end u-gap-1">
+                  {onDial && canConnect && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm btn-icon"
+                      onClick={() => onDial(c.phone)}
+                      title={t('contacts.call', { name: c.name })}
+                      aria-label={t('contacts.call', { name: c.name })}
+                    >
+                      <PhoneCall size={14} />
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm btn-icon"
+                        onClick={() => startEdit(c)}
+                        title={t('contacts.editContact')}
+                        aria-label={t('contacts.editContact')}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-danger btn-sm btn-icon"
+                        onClick={() => handleDelete(c)}
+                        title={t('common.delete', 'Delete')}
+                        aria-label={t('common.delete', 'Delete')}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      )}
+
+      {isAdmin && (
+        <Modal
+          open={formOpen}
+          onClose={resetForm}
+          title={editing ? t('contacts.editContact') : t('contacts.addContact')}
+          icon={<BookUser size={16} />}
+          width="wide"
+          footer={
+            <>
+              <button type="button" className="btn" onClick={resetForm}>
+                {t('contacts.cancel')}
               </button>
-              <button
-                type="button"
-                className={`up-tab ${subTab === 'list' ? 'active' : ''}`}
-                onClick={() => setSubTab('list')}
-              >
-                <BookUser size={14} />
-                {t('contacts.title')}
+              <button type="submit" form="contact-form" className="btn btn-primary" disabled={saving}>
+                {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+                {editing ? t('contacts.updateContact') : t('contacts.addContact')}
               </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="panel-content">
-        {message && (
-          <div className={`up-alert ${message.type === 'success' ? 'success' : 'error'}`}>
-            {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-            <span>{message.text}</span>
-          </div>
-        )}
-
-        {subTab === 'create' && isAdmin && (
-          <div className="up-add-card">
-            <div className="up-add-header">
-              <div className="up-add-icon">
-                {editing ? <Pencil size={24} /> : <UserPlus size={24} />}
-              </div>
-              <div>
-                <h2 className="up-add-title">{editing ? t('contacts.editContact') : t('contacts.addContact')}</h2>
-                <p className="up-add-desc">{t('contacts.formDesc')}</p>
-              </div>
-            </div>
-
-            <form onSubmit={handleSubmit} className="up-add-body">
-              <div className="up-form-row">
-                <div className="up-form-group">
-                  <label>{t('contacts.name')}</label>
+            </>
+          }
+        >
+          <form id="contact-form" onSubmit={handleSubmit}>
+            {formOpen && message?.type === 'error' && (
+              <Alert className="u-mb-3" onDismiss={() => setMessage(null)}>{message.text}</Alert>
+            )}
+            <p className="u-fg-muted u-mt-0">{t('contacts.formDesc')}</p>
+            <FormSection title={t('contacts.details', 'Details')} first>
+              <FormRow>
+                <FormField label={t('contacts.name')} htmlFor="contact-name" required>
                   <input
+                    id="contact-name"
                     type="text"
                     className="form-input"
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                     placeholder={t('contacts.namePlaceholder')}
                   />
-                </div>
-                <div className="up-form-group">
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Phone size={14} />
-                    {t('contacts.phone')}
-                  </label>
+                </FormField>
+                <FormField label={t('contacts.phone')} htmlFor="contact-phone" required>
                   <input
+                    id="contact-phone"
                     type="text"
                     className="form-input"
+                    dir="ltr"
                     value={form.phone}
                     onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                     placeholder={t('contacts.phonePlaceholder')}
                   />
-                </div>
-              </div>
-              <div className="up-form-row">
-                <div className="up-form-group">
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Building2 size={14} />
-                    {t('contacts.company')}
-                  </label>
+                </FormField>
+              </FormRow>
+              <FormRow>
+                <FormField label={t('contacts.company')} htmlFor="contact-company">
                   <input
+                    id="contact-company"
                     type="text"
                     className="form-input"
                     value={form.company}
                     onChange={e => setForm(f => ({ ...f, company: e.target.value }))}
                     placeholder={t('contacts.companyPlaceholder')}
                   />
-                </div>
-                <div className="up-form-group">
-                  <label>{t('contacts.notes')}</label>
+                </FormField>
+                <FormField label={t('contacts.notes')} htmlFor="contact-notes">
                   <input
+                    id="contact-notes"
                     type="text"
                     className="form-input"
                     value={form.notes}
                     onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                     placeholder={t('contacts.notesPlaceholder')}
                   />
-                </div>
-              </div>
-
-              <div className="up-actions">
-                <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Save size={16} />
-                  {editing ? t('contacts.updateContact') : t('contacts.addContact')}
-                </button>
-                <button type="button" className="btn" onClick={resetForm}>
-                  {t('contacts.cancel')}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {subTab === 'list' && (
-          <>
-            {/* ui/SearchInput, not a .form-input with a hand-placed icon: that
-                was a form field pressed into service as a search box, so it
-                carried the form surface and 13px text while every other search
-                field in the product was 14px on the control surface. */}
-            <div className="up-search">
-              <SearchInput
-                value={search}
-                onChange={setSearch}
-                label={t('contacts.searchLabel', 'Search contacts')}
-                placeholder={t('contacts.searchPlaceholder')}
-                // Filters an already-loaded list, so there is no request to
-                // coalesce and no deep link worth writing to the address bar.
-                debounceMs={0}
-                urlSync={false}
-              />
-            </div>
-
-            {filtered.length === 0 ? (
-              <div className="up-empty">
-                {contacts.length === 0 ? t('contacts.noContacts') : t('contacts.noMatches')}
-              </div>
-            ) : (
-              <div className="up-users-list">
-                {filtered.map(c => (
-                  <div key={c.id} className="up-user-card">
-                    <div className="up-user-avatar">{(c.name[0] || '?').toUpperCase()}</div>
-                    <div className="up-user-info">
-                      <div className="up-user-name">{c.name}</div>
-                      <div className="up-user-meta">
-                        {[c.phone, c.company].filter(Boolean).join(' · ')}
-                      </div>
-                      {c.notes && (
-                        <div className="up-user-meta" style={{ fontStyle: 'italic' }}>{c.notes}</div>
-                      )}
-                      <div className="up-user-badges">
-                        <span className={`contact-src-badge ${c.source}`}>
-                          {c.source === 'crm' ? t('contacts.sourceCrm') : t('contacts.sourceManual')}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="up-user-actions">
-                      {onDial && canConnect && (
-                        <button
-                          type="button"
-                          className="btn btn-edit"
-                          onClick={() => onDial(c.phone)}
-                          title={t('contacts.call', { name: c.name })}
-                        >
-                          <PhoneCall size={14} />
-                        </button>
-                      )}
-                      {isAdmin && (
-                        <>
-                          <button type="button" className="btn btn-edit" onClick={() => startEdit(c)} title={t('contacts.editContact')}>
-                            <Pencil size={14} />
-                          </button>
-                          <button type="button" className="btn btn-delete" onClick={() => handleDelete(c)} title={t('contacts.deleteConfirm', { name: c.name })}>
-                            <Trash2 size={14} />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
+                </FormField>
+              </FormRow>
+            </FormSection>
+          </form>
+        </Modal>
+      )}
+      {confirmDialog}
+    </Page>
   );
 }

@@ -4,7 +4,7 @@ import { Headphones, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { Softphone } from './Softphone';
-import { type AgentPresence } from './AgentStatusBar';
+import type { AgentPresence } from './AgentStatusHeader';
 
 interface FloatingSoftphoneProps {
   open: boolean;
@@ -78,6 +78,7 @@ export function FloatingSoftphone({ open, onOpenChange, presence = null }: Float
       {open && (
         <div
           className="softphone-popover-backdrop"
+          role="presentation"
           onClick={() => {
             if (!incomingCall) onOpenChange(false);
           }}

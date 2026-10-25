@@ -1,13 +1,17 @@
 import { useState } from 'react';
+import type { CSSProperties } from 'react';
 import {
   Phone,
   PhoneOff,
+  PhoneForwarded,
   Trash2,
   Search,
   Delete,
   Pause,
   MicOff,
   ArrowRightLeft,
+  ChevronRight,
+  ChevronDown,
   Volume2,
   Mic,
   Signal,
@@ -21,17 +25,25 @@ import { useTranslation } from 'react-i18next';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { useAudioLevels } from '../hooks/useAudioLevels';
 import { AgentStatusHeader } from './AgentStatusHeader';
-import type { AgentPresence } from './AgentStatusBar';
+import type { AgentPresence } from './AgentStatusHeader';
+import { Alert } from './ui';
 
-// Map a live MOS (1–5) to a single signal-strength icon + colour, matching the
+// Map a live MOS (1–5) to a single signal-strength icon + tone class, matching the
 // Call History QoS labels so the live and recorded quality read the same.
-function mosSignal(v: number | null): { Icon: LucideIcon; color: string; labelKey: string } {
-  if (v == null) return { Icon: SignalZero,   color: 'var(--text-muted)', labelKey: 'softphone.qos_na' };
-  if (v >= 4.3)  return { Icon: SignalHigh,    color: 'var(--accent-success)', labelKey: 'softphone.qos_excellent' };
-  if (v >= 4.0)  return { Icon: Signal,        color: 'var(--journey-inbound)', labelKey: 'softphone.qos_good' };
-  if (v >= 3.5)  return { Icon: SignalMedium,  color: 'var(--accent-warning)', labelKey: 'softphone.qos_fair' };
-  return                { Icon: SignalLow,     color: 'var(--accent-danger)', labelKey: 'softphone.qos_poor' };
+function mosSignal(v: number | null): { Icon: LucideIcon; tone: string; labelKey: string } {
+  if (v == null) return { Icon: SignalZero,   tone: 'u-fg-muted',   labelKey: 'softphone.qos_na' };
+  if (v >= 4.3)  return { Icon: SignalHigh,    tone: 'u-fg-success', labelKey: 'softphone.qos_excellent' };
+  if (v >= 4.0)  return { Icon: Signal,        tone: 'u-fg-success', labelKey: 'softphone.qos_good' };
+  if (v >= 3.5)  return { Icon: SignalMedium,  tone: 'u-fg-warning', labelKey: 'softphone.qos_fair' };
+  return                { Icon: SignalLow,     tone: 'u-fg-danger',  labelKey: 'softphone.qos_poor' };
 }
+
+// Softphone log line colour by entry type.
+const LOG_TONE: Record<string, string> = {
+  error: 'u-fg-danger',
+  success: 'u-fg-success',
+  warn: 'u-fg-warning',
+};
 
 const DIAL_PAD = [
   [['1', ''], ['2', 'ABC'], ['3', 'DEF']],
@@ -113,6 +125,11 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
     }
   };
 
+  const closeTransfer = () => {
+    setShowTransfer(false);
+    setTransferDest('');
+  };
+
   const statusLabel =
     status === 'connecting'
       ? t('softphone.status.connecting')
@@ -122,24 +139,42 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
           ? t('softphone.status.error')
           : t('softphone.status.notRegistered');
 
+  /** The web phone reports its call status in English (lib/webPhone.ts); show it translated. */
+  const callStatusLabel = (s: string): string => {
+    if (s === 'Incoming call...') return t('softphone.callStatus.incoming', 'Incoming call...');
+    if (s === 'Ringing...') return t('softphone.callStatus.ringing', 'Ringing...');
+    if (s === 'In call') return t('softphone.callStatus.inCall', 'In call');
+    if (s === 'Call error') return t('softphone.callStatus.callError', 'Call error');
+    if (s === 'Error') return t('softphone.status.error', 'Error');
+    const calling = /^Calling (.+)\.\.\.$/.exec(s);
+    if (calling) return t('softphone.callStatus.calling', 'Calling {{number}}...', { number: calling[1] });
+    if (s.startsWith('In call with ')) return t('softphone.callStatus.inCallWith', 'In call with {{number}}', { number: s.slice('In call with '.length) });
+    return s;
+  };
+
+  const header = (withConfigActions: boolean) => (
+    <AgentStatusHeader
+      title={t('softphone.title')}
+      icon={<Phone size={16} className="softphone-header-icon" />}
+      isConnected={isConnected}
+      presence={presence}
+      onCall={hasActiveCall}
+      {...(withConfigActions
+        ? { onRefresh: refetchConfig, refreshDisabled: configLoading, onReconnect: reconnect }
+        : {})}
+    />
+  );
+
   // Incoming call screen
   if (incomingCall) {
     return (
       <div className="softphone-panel softphone-incoming">
-        <AgentStatusHeader
-          title={t('softphone.title')}
-          icon={<Phone size={18} className="softphone-header-icon" />}
-          isConnected={isConnected}
-          presence={presence}
-          onCall={hasActiveCall}
-        />
+        {header(false)}
         <div className="softphone-incoming-body">
           <div className="softphone-caller-number">{incomingCall.callerNumber}</div>
           <div className="softphone-caller-name">{incomingCall.callerName || t('softphone.incomingCall')}</div>
           <div className="softphone-status-row">
-            <button type="button" className="softphone-status-badge" disabled>
-              {statusLabel}
-            </button>
+            <span className="softphone-status-badge">{statusLabel}</span>
           </div>
           <div className="softphone-answer-actions">
             <button
@@ -147,6 +182,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
               className="softphone-btn-decline"
               onClick={() => incomingCall.reject()}
               title={t('softphone.decline')}
+              aria-label={t('softphone.decline')}
             >
               <PhoneOff size={24} />
             </button>
@@ -160,12 +196,13 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
                 incomingCall.accept();
               }}
               title={t('softphone.answer')}
+              aria-label={t('softphone.answer')}
             >
               <Phone size={24} />
             </button>
           </div>
         </div>
-        <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+        <audio className="u-hidden" ref={remoteAudioRef} autoPlay playsInline />
       </div>
     );
   }
@@ -174,20 +211,20 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
   const inCallNumber =
     activeCallRemoteNumber ||
     (callStatus.startsWith('In call with ') ? callStatus.slice('In call with '.length) : '') ||
-    (isOutgoingRinging ? dialNumber : '');
+    (isOutgoingRinging ? (dialNumber.trim() || lastDialedNumber) : '');
   const inCallName = activeCallRemoteName || (isOutgoingRinging ? t('softphone.status.connecting') : t('softphone.incomingCall'));
   const inCallDuration = callDuration || '00:00';
 
   if (isCallAnswered || isOutgoingRinging) {
+    const runTransfer = () => {
+      const dest = transferDest.trim();
+      if (!dest) return;
+      transfer(dest);
+      closeTransfer();
+    };
     return (
       <div className="softphone-panel softphone-incall">
-        <AgentStatusHeader
-          title={t('softphone.title')}
-          icon={<Phone size={18} className="softphone-header-icon" />}
-          isConnected={isConnected}
-          presence={presence}
-          onCall={hasActiveCall}
-        />
+        {header(false)}
         <div className="softphone-incall-body">
           <div className="softphone-incall-number">{inCallNumber || '—'}</div>
           <div className="softphone-incall-name">{inCallName}</div>
@@ -197,8 +234,8 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             return (
               <div className="softphone-quality" title={t(sig.labelKey)}>
                 <div className="softphone-quality-head">
-                  <sig.Icon size={16} style={{ color: sig.color }} />
-                  <span className="softphone-quality-mos" style={{ color: sig.color }}>
+                  <sig.Icon size={16} className={sig.tone} />
+                  <span className={`softphone-quality-mos ${sig.tone}`}>
                     {t('softphone.quality_mos')} {callStats.mos.toFixed(1)}
                   </span>
                 </div>
@@ -211,21 +248,21 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             );
           })()}
           <div className="softphone-audio-levels">
-            <div className="softphone-level-item" title="Speaker (incoming volume)">
+            <div className="softphone-level-item" title={t('softphone.levelSpeaker', 'Speaker (incoming volume)')}>
               <Volume2 size={18} className="softphone-level-icon" />
               <div className="softphone-level-bar-wrap">
                 <div
                   className="softphone-level-bar softphone-level-speaker"
-                  style={{ height: `${Math.round(speakerLevel * 100)}%` }}
+                  style={{ '--u-fill': `${Math.round(speakerLevel * 100)}%` } as CSSProperties}
                 />
               </div>
             </div>
-            <div className="softphone-level-item" title="Microphone (your voice)">
+            <div className="softphone-level-item" title={t('softphone.levelMic', 'Microphone (your voice)')}>
               <Mic size={18} className="softphone-level-icon" />
               <div className="softphone-level-bar-wrap">
                 <div
                   className="softphone-level-bar softphone-level-mic"
-                  style={{ height: `${Math.round(micLevel * 100)}%` }}
+                  style={{ '--u-fill': `${Math.round(micLevel * 100)}%` } as CSSProperties}
                 />
               </div>
             </div>
@@ -251,49 +288,49 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             </button>
             <button
               type="button"
-              className="softphone-incall-btn"
+              className={`softphone-incall-btn ${showTransfer ? 'softphone-incall-btn-active' : ''}`}
               title={t('softphone.transfer')}
               onClick={() => setShowTransfer((prev) => !prev)}
+              aria-expanded={showTransfer}
             >
               <ArrowRightLeft size={22} />
               <span>{t('softphone.transfer')}</span>
             </button>
           </div>
+          {/* Transfer panel: pick a destination, then hand the call over (blind
+              transfer via SIP REFER — the only transfer OpDesk's web phone does). */}
           {showTransfer && (
             <div className="softphone-transfer">
-              <span className="softphone-transfer-label">
-                {t('softphone.transferToExtension')}
-              </span>
+              <div className="sp-xfer-head">
+                <span className="sp-xfer-title">{t('softphone.transferToExtension')}</span>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={closeTransfer}>
+                  {t('softphone.cancel')}
+                </button>
+              </div>
               <input
                 type="text"
                 value={transferDest}
                 onChange={(e) => setTransferDest(e.target.value)}
                 placeholder={t('softphone.transferPlaceholder')}
-                className="form-input softphone-transfer-input"
+                aria-label={t('softphone.transferToExtension')}
+                className="form-input sp-xfer-input"
               />
               <button
                 type="button"
-                className="btn btn-primary"
+                className="sp-xfer-option"
                 disabled={!transferDest.trim()}
-                onClick={() => {
-                  const dest = transferDest.trim();
-                  if (!dest) return;
-                  transfer(dest);
-                  setShowTransfer(false);
-                  setTransferDest('');
-                }}
+                onClick={runTransfer}
               >
-                {t('softphone.transfer')}
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  setShowTransfer(false);
-                  setTransferDest('');
-                }}
-              >
-                {t('softphone.cancel')}
+                <span className="sp-xfer-option-icon">
+                  <PhoneForwarded size={18} />
+                </span>
+                <span className="sp-xfer-option-text">
+                  <span className="sp-xfer-option-label">{t('softphone.blindTransfer', 'Blind transfer')}</span>
+                  <span className="sp-xfer-option-desc">
+                    {t('softphone.blindTransferHint', 'Sends the caller straight there. You leave the call now.')}
+                  </span>
+                </span>
+                <ChevronRight size={16} className="sp-xfer-option-go" />
               </button>
             </div>
           )}
@@ -302,11 +339,12 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             className="softphone-btn-hangup"
             onClick={hangup}
             title={t('softphone.endCall')}
+            aria-label={t('softphone.endCall')}
           >
             <PhoneOff size={24} />
           </button>
         </div>
-        <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+        <audio className="u-hidden" ref={remoteAudioRef} autoPlay playsInline />
       </div>
     );
   }
@@ -314,16 +352,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
   // Dialpad view
   return (
     <div className="softphone-panel">
-      <AgentStatusHeader
-        title={t('softphone.title')}
-        icon={<Phone size={18} className="softphone-header-icon" />}
-        isConnected={isConnected}
-        presence={presence}
-        onCall={hasActiveCall}
-        onRefresh={refetchConfig}
-        refreshDisabled={configLoading}
-        onReconnect={reconnect}
-      />
+      {header(true)}
 
       <div className="softphone-dial-area">
         <div className="softphone-search-wrap">
@@ -331,7 +360,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
           <input
             type="text"
             className="softphone-search-input"
-            placeholder={lastDialedNumber ? lastDialedNumber : t('softphone.enterNumber')}
+            placeholder={lastDialedNumber || t('softphone.enterNumber')}
             value={dialNumber}
             onChange={(e) => setDialNumber(e.target.value.replace(/[^0-9*#+\-\s()]/g, ''))}
             onKeyDown={handleKeyDown}
@@ -363,9 +392,10 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
           <button
             type="button"
             className="softphone-bottom-btn softphone-call-btn"
-            onClick={hasActiveCall ? hangup : makeCall}
+            onClick={hasActiveCall ? hangup : () => makeCall()}
             disabled={!isConnected || (!hasActiveCall && !dialNumber.trim() && !lastDialedNumber)}
             title={hasActiveCall ? t('softphone.endCall') : t('softphone.answer')}
+            aria-label={hasActiveCall ? t('softphone.endCall') : t('softphone.answer')}
           >
             <Phone size={26} />
           </button>
@@ -375,6 +405,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
             onClick={backspace}
             disabled={!dialNumber}
             title={t('softphone.backspace')}
+            aria-label={t('softphone.backspace')}
           >
             <Delete size={20} />
           </button>
@@ -383,35 +414,35 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
 
       {/* Config / Connect strip */}
       {configError && (
-        <div className="softphone-alert error">{configError}</div>
+        <Alert className="softphone-alert">{configError}</Alert>
       )}
       {status === 'error' && config?.server?.trim().startsWith('wss://') && (() => {
         const s = config.server.trim().replace(/^wss:\/\//, '').split('/')[0];
         const httpsUrl = s ? `https://${s}` : '';
         return httpsUrl ? (
-          <p className="softphone-hint" style={{ marginTop: 6 }}>
-            <strong>Firefox?</strong> Open{' '}
-            <a href={httpsUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'underline' }}>
+          <p className="softphone-hint u-mt-1h">
+            <strong>{t('softphone.firefoxHint.lead', 'Firefox?')}</strong> {t('softphone.firefoxHint.open', 'Open')}{' '}
+            <a href={httpsUrl} target="_blank" rel="noopener noreferrer">
               {httpsUrl}
             </a>{' '}
-            in a new tab, accept the certificate, then try again.
+            {t('softphone.firefoxHint.rest', 'in a new tab, accept the certificate, then try again.')}
           </p>
         ) : null;
       })()}
       {!config?.server?.trim() && !configLoading && (
         <p className="softphone-hint">
-          Admin: set <strong>WEBRTC_PBX_SERVER</strong> in Settings.
+          {t('softphone.adminServerHint.before', 'Admin: set')} <strong>WEBRTC_PBX_SERVER</strong> {t('softphone.adminServerHint.after', 'in Settings.')}
         </p>
       )}
       {config?.server?.trim() && (!config?.extension?.trim() || !config?.extension_secret?.trim()) && !configLoading && (
         <p className="softphone-hint">
-          Set your <strong>extension</strong> and <strong>extension secret</strong> (configured by an administrator).
+          {t('softphone.credentialsHint.setYour', 'Set your')} <strong>{t('softphone.credentialsHint.extension', 'extension')}</strong> {t('softphone.credentialsHint.and', 'and')} <strong>{t('softphone.credentialsHint.secret', 'extension secret')}</strong> {t('softphone.credentialsHint.byAdmin', '(configured by an administrator).')}
         </p>
       )}
       {/* Call status & duration */}
       {(callStatus || callDuration) && (
         <div className="softphone-call-status">
-          <span>{callStatus}</span>
+          <span>{callStatusLabel(callStatus)}</span>
           {callDuration && <span className="softphone-duration">{callDuration}</span>}
         </div>
       )}
@@ -420,39 +451,35 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
       <div className="softphone-log-section">
         <button
           type="button"
-          className="softphone-log-toggle"
+          className="softphone-log-toggle u-row u-gap-1h"
           onClick={() => setShowLog(!showLog)}
+          aria-expanded={showLog}
         >
-          {t('softphone.log')} {showLog ? '▼' : '▶'}
+          {t('softphone.log')}
+          {showLog ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
         {showLog && (
           <div className="softphone-log-box">
             <div className="softphone-log-header">
               <span>{t('softphone.log')}</span>
               {logs.length > 0 && (
-                <button type="button" className="btn" onClick={clearLogs} style={{ padding: '4px 8px', fontSize: 11 }}>
-                  <Trash2 size={12} />
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm btn-icon"
+                  onClick={clearLogs}
+                  aria-label={t('softphone.clearLog', 'Clear log')}
+                  title={t('softphone.clearLog', 'Clear log')}
+                >
+                  <Trash2 size={14} />
                 </button>
               )}
             </div>
             <div className="softphone-log-content">
               {logs.length === 0 ? (
-                <span className="text-muted">{t('softphone.noEntries')}</span>
+                <span className="u-fg-muted">{t('softphone.noEntries')}</span>
               ) : (
                 logs.map((entry, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      color:
-                        entry.type === 'error'
-                          ? 'var(--accent-danger)'
-                          : entry.type === 'success'
-                            ? 'var(--accent-success)'
-                            : entry.type === 'warn'
-                              ? 'var(--accent-warning)'
-                              : 'var(--text-secondary)',
-                    }}
-                  >
+                  <div key={i} className={LOG_TONE[entry.type] ?? 'u-fg-secondary'}>
                     [{entry.time}] {entry.message}
                   </div>
                 ))
@@ -462,7 +489,7 @@ export function Softphone({ presence = null }: { presence?: AgentPresence | null
         )}
       </div>
 
-      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+      <audio className="u-hidden" ref={remoteAudioRef} autoPlay playsInline />
     </div>
   );
 }
