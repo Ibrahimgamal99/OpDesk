@@ -5387,39 +5387,6 @@ select.form-input option:checked {
 }
 .badge-dot { width: 6px; height: 6px; border-radius: var(--radius-round); background: currentColor; flex: none; }
 
-/* ── Stat (ui/Stat) ───────────────────────────────────────────────────── */
-.ui-stat-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: var(--space-3);
-}
-.ui-stat {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-3h) var(--space-4);
-  display: flex; flex-direction: column; gap: var(--space-1);
-  min-width: 0;
-}
-.ui-stat-label {
-  display: flex; align-items: center; gap: var(--space-1h);
-  font-size: var(--text-sm); color: var(--text-muted); font-weight: var(--weight-medium);
-}
-.ui-stat-icon { display: inline-flex; color: var(--accent-primary); }
-.ui-stat--success .ui-stat-icon { color: var(--accent-success); }
-.ui-stat--warning .ui-stat-icon { color: var(--accent-warning); }
-.ui-stat--danger  .ui-stat-icon { color: var(--accent-danger); }
-.ui-stat--neutral .ui-stat-icon { color: var(--text-muted); }
-.ui-stat-live {
-  margin-inline-start: auto; width: 7px; height: 7px; border-radius: var(--radius-round);
-  background: var(--accent-success); animation: badge-live-pulse 1.6s ease-in-out infinite;
-}
-.ui-stat-value {
-  font-size: var(--text-2xl); font-weight: var(--weight-semibold); color: var(--text-primary);
-  line-height: 1.1; font-variant-numeric: tabular-nums;
-}
-.ui-stat-hint { font-size: var(--text-sm); color: var(--text-muted); }
-
 /* ── Form helpers (up-form-* base rules already defined above) ────────── */
 .up-hint { font-size: var(--text-sm); color: var(--text-muted); }
 .up-form-divider.first { margin-top: 0; }

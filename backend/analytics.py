@@ -815,6 +815,9 @@ def _compute_directional_kpis(rows, thresholds, default_secs, short_abandon_secs
     all_billsec = sum(int(r.get('billsec') or 0) for r in all_answered_rows)
     combined = {
         'total_calls': all_total,
+        # Everything that is neither inbound nor outbound: extension to extension,
+        # feature codes and echo tests. Part of the total, so the split adds up.
+        'internal_calls': sum(1 for r in rows if r.get('direction') not in ('IN', 'OUT')),
         'answered_calls': all_answered,
         'aht_secs': round(all_billsec / all_answered) if all_answered else None,
     }

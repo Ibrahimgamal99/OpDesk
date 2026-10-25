@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import {
   Modal, Dropdown, SearchInput, Alert, Pagination, Page, Toolbar, Table, EmptyState,
-  Badge, Stat, StatRow, Loading, type Column, type DropdownOption,
+  Badge, Loading, type Column, type DropdownOption,
 } from './ui';
 import type { CallLogRecord, QoSData, CallJourneyEvent } from '../types';
 import { getAuthHeaders, fetchWithAuth } from '../auth';
@@ -18,6 +18,7 @@ import { PageRange } from './PageRange';
 import type { DateRange } from './analyticsUtils';
 import { fmtTimer } from '../lib/format';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
+import { StatCard, StatRow } from './FigureCards';
 import '../styles/work.css';
 
 // ---------------------------------------------------------------------------
@@ -636,41 +637,40 @@ function VadModal({ vad, recordingFile, onClose }: VadModalProps) {
         {/* Summary stats. The speaker icons wear the same tones as their timeline
             tracks below (sp1 primary, sp2 success), so they double as the legend. */}
         <StatRow>
-          <Stat
+          <StatCard
             label={t('callLog.vad.duration', 'Duration')}
             icon={<Clock size={14} />}
-            tone="neutral"
+            iconTone="muted"
             value={fmt(duration)}
           />
-          <Stat
+          <StatCard
             label={t('callLog.vad.speaker1', { count: vad.sp1_segments ?? 0, defaultValue: 'Speaker 1 ({{count}} segments)' })}
             icon={<Mic size={14} />}
-            tone="primary"
             value={fmt(sp1Talk)}
-            hint={pct(sp1Talk)}
+            desc={pct(sp1Talk)}
           />
-          <Stat
+          <StatCard
             label={t('callLog.vad.speaker2', { count: vad.sp2_segments ?? 0, defaultValue: 'Speaker 2 ({{count}} segments)' })}
             icon={<Mic size={14} />}
-            tone="success"
+            iconTone="success"
             value={fmt(sp2Talk)}
-            hint={pct(sp2Talk)}
+            desc={pct(sp2Talk)}
           />
           {overlap > 0 && (
-            <Stat
+            <StatCard
               label={t('callLog.vad.overlap', 'Overlap')}
               icon={<Users size={14} />}
-              tone="warning"
+              iconTone="warn"
               value={fmt(overlap)}
-              hint={pct(overlap)}
+              desc={pct(overlap)}
             />
           )}
-          <Stat
+          <StatCard
             label={t('callLog.vad.silence', 'Silence')}
             icon={<MicOff size={14} />}
-            tone="neutral"
+            iconTone="muted"
             value={fmt(silence)}
-            hint={pct(silence)}
+            desc={pct(silence)}
           />
         </StatRow>
 

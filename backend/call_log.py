@@ -149,8 +149,9 @@ def classify_cdr_direction(cdr: dict) -> str:
     elif src_ext and dst_ext:
         votes["INTERNAL"] += 5
     elif src_ext and is_feature(dst):
-        # Extension dialing a feature code (*43, *97, etc.) — treated as OUT
-        votes["OUT"] += 3
+        # Extension dialing a feature code (*43 echo test, *97 voicemail, ...): it
+        # never leaves the PBX, so it is internal, not an outbound call.
+        votes["INTERNAL"] += 5
     
     # Vote 3: Channels (weight 2)
     trunk_indicators = ["trunk", "gw", "provider", "peer", "dahdi"]
@@ -171,8 +172,10 @@ def classify_cdr_direction(cdr: dict) -> str:
     # Return max votes
     max_votes = max(votes.values())
     if max_votes == 0:
-        # Feature codes from extensions → OUT
-        if src_ext and (is_feature(dst) or dst_ext is False):
+        # Feature codes from extensions stay on the PBX → INTERNAL
+        if src_ext and is_feature(dst):
+            return "INTERNAL"
+        if src_ext and dst_ext is False:
             return "OUT"
         return "INTERNAL" if src_ext else "UNKNOWN"
     

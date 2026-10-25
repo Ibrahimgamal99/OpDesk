@@ -192,6 +192,8 @@ export interface OutboundKpis {
 
 export interface CombinedKpis {
   total_calls: number;
+  /** Neither inbound nor outbound: extension to extension, feature codes, echo tests. */
+  internal_calls?: number;
   answered_calls: number;
   aht_secs: number | null;
   /** Distinct outside numbers involved / of those, the ones that answered. The

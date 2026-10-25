@@ -2,7 +2,10 @@ import { useTranslation } from 'react-i18next';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid, Legend, ResponsiveContainer,
 } from 'recharts';
-import { BarChart3, Headset, PhoneIncoming, PhoneOutgoing } from 'lucide-react';
+import {
+  BarChart3, Gauge, Headset, Hourglass, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOff, PhoneOutgoing,
+  RefreshCcw, Timer, UserCheck,
+} from 'lucide-react';
 import type { DateRange } from './analyticsUtils';
 import type { ExecutiveKPIResponse, VolumeTrendPoint } from '../types';
 import {
@@ -10,9 +13,7 @@ import {
   slaVerdict, abandonVerdict, fcrVerdict, perCallRateVerdict, perPersonRateVerdict,
 } from './analyticsUtils';
 import { Alert, Card, Tooltip } from './ui';
-import { KpiCard } from './KpiCard';
-import type { KpiCardProps } from './KpiCard';
-import { FigureCard, VERDICT_TONE, type Metric } from './AnalyticsFigureCard';
+import { FigureCard, StatCard, StatRow, VERDICT_TONE, type Metric, type StatCardProps } from './FigureCards';
 
 function delta(a: number | null | undefined, b: number | null | undefined): number | null {
   if (a === null || a === undefined || b === null || b === undefined) return null;
@@ -107,34 +108,44 @@ export function AnalyticsOverview({ dateRange }: Props) {
   };
 
   // ── 1. Headline: what a stakeholder reads first ─────────────────────────────
-  const headline: KpiCardProps[] = [
+  const headline: StatCardProps[] = [
     {
+      icon: <PhoneCall size={16} />,
       label: t('analytics.kpi.volume'),
       value: allTotal.toLocaleString(),
       tip: tips.volume,
+      desc: t('dashboard.kpi.totalSplitInternal', '{{in}} in · {{out}} out · {{internal}} internal', {
+        in: cur.total_calls.toLocaleString(), out: (out?.total_calls ?? 0).toLocaleString(),
+        internal: (all?.internal_calls ?? Math.max(0, allTotal - cur.total_calls - (out?.total_calls ?? 0))).toLocaleString(),
+      }),
       delta: delta(allTotal, prevAll?.total_calls ?? prev?.total_calls),
     },
     {
+      icon: <UserCheck size={16} />,
       label: t('analytics.kpi.answerRate'),
       value: fmtPct(allRate),
       tip: tips.answerRate,
       desc: t('analytics.kpi.contactRateOf', 'Contact rate {{rate}}', { rate: fmtPct(allContact) }),
       delta: delta(allRate, prevAllRate),
-      colorClass: perPersonRateVerdict(allRate),
+      good: 'up',
+      tone: VERDICT_TONE[perPersonRateVerdict(allRate)],
     },
     {
+      icon: <Gauge size={16} />,
       label: t('analytics.kpi.sla'),
       value: fmtPct(cur.sla_pct),
       tip: tips.sla,
       delta: delta(cur.sla_pct, prev?.sla_pct),
-      colorClass: slaVerdict(cur.sla_pct),
+      good: 'up',
+      tone: VERDICT_TONE[slaVerdict(cur.sla_pct)],
     },
     {
+      icon: <Timer size={16} />,
       label: t('analytics.kpi.aht'),
       value: fmtSecs(all?.aht_secs ?? cur.aht_secs),
       tip: tips.aht,
       delta: delta(all?.aht_secs ?? cur.aht_secs, prevAll?.aht_secs ?? prev?.aht_secs),
-      deltaInvert: true,
+      good: 'down',
     },
   ];
 
@@ -162,48 +173,55 @@ export function AnalyticsOverview({ dateRange }: Props) {
   ] : [];
 
   // ── 3. Queue service: how the queue treated the people who waited in it ─────
-  const queueService: KpiCardProps[] = [
+  const queueService: StatCardProps[] = [
     {
+      icon: <Gauge size={16} />,
       label: t('analytics.kpi.sla'),
       value: fmtPct(cur.sla_pct),
       tip: tips.sla,
       desc: t('analytics.kpi.slaDesc'),
       delta: delta(cur.sla_pct, prev?.sla_pct),
-      colorClass: slaVerdict(cur.sla_pct),
+      good: 'up',
+      tone: VERDICT_TONE[slaVerdict(cur.sla_pct)],
     },
     {
+      icon: <PhoneMissed size={16} />,
       label: t('analytics.kpi.abandonment'),
       value: fmtPct(cur.abandonment_rate),
       tip: tips.abandonment,
       desc: t('analytics.kpi.abandonmentDesc'),
       delta: delta(cur.abandonment_rate, prev?.abandonment_rate),
-      deltaInvert: true,
-      colorClass: abandonVerdict(cur.abandonment_rate),
+      good: 'down',
+      tone: VERDICT_TONE[abandonVerdict(cur.abandonment_rate)],
     },
     {
+      icon: <PhoneOff size={16} />,
       label: t('analytics.kpi.shortAbandon'),
       value: fmtPct(cur.short_abandon_rate),
       tip: tips.shortAbandon,
       desc: t('analytics.kpi.shortAbandonDesc'),
       delta: delta(cur.short_abandon_rate, prev?.short_abandon_rate),
-      deltaInvert: true,
-      colorClass: abandonVerdict(cur.short_abandon_rate),
+      good: 'down',
+      tone: VERDICT_TONE[abandonVerdict(cur.short_abandon_rate)],
     },
     {
+      icon: <Hourglass size={16} />,
       label: t('analytics.kpi.avgWaitKpi'),
       value: fmtSecs(cur.avg_wait_secs),
       tip: tips.avgWait,
       desc: t('analytics.kpi.avgWaitDesc'),
       delta: delta(cur.avg_wait_secs, prev?.avg_wait_secs),
-      deltaInvert: true,
+      good: 'down',
     },
     {
+      icon: <RefreshCcw size={16} />,
       label: t('analytics.kpi.fcr'),
       value: fmtPct(cur.fcr_pct),
       tip: tips.fcr,
       desc: t('analytics.kpi.fcrDesc'),
       delta: delta(cur.fcr_pct, prev?.fcr_pct),
-      colorClass: fcrVerdict(cur.fcr_pct),
+      good: 'up',
+      tone: VERDICT_TONE[fcrVerdict(cur.fcr_pct)],
     },
   ];
 
@@ -240,9 +258,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
 
   return (
     <div className="u-col u-gap-4">
-      <div className="an-kpi-grid cols-4">
-        {headline.map((c) => <KpiCard key={c.label} {...c} featured />)}
-      </div>
+      <StatRow>{headline.map((c) => <StatCard key={c.label} {...c} />)}</StatRow>
 
       <div className="dcards">
         <FigureCard
@@ -281,9 +297,7 @@ export function AnalyticsOverview({ dateRange }: Props) {
             title={chartTitle(t('analytics.overview.queueService', 'Queue service'),
               kpiTip(t, 'analytics.tip.overview.queueService', t('analytics.overview.queueService', 'Queue service'), undefined,
                 { text: 'How the queues treated the people who waited in them: how fast they were answered, how many gave up, and whether they had to call again.' }))}>
-        <div className="an-kpi-grid cols-5">
-          {queueService.map((c) => <KpiCard key={c.label} {...c} />)}
-        </div>
+        <StatRow>{queueService.map((c) => <StatCard key={c.label} {...c} />)}</StatRow>
       </Card>
 
       {daily && (
