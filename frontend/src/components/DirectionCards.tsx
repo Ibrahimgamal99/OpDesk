@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import type { CallLogRecord, ExecutiveKPIResponse } from '../types';
 import {
-  abandonVerdict, fcrVerdict, fmtPct, fmtSecs, kpiTip, perCallRateVerdict, perPersonRateVerdict, slaVerdict,
+  abandonVerdict, fcrVerdict, fmtPct, fmtSecs, kpiTip, metricTips, perCallRateVerdict, perPersonRateVerdict, slaVerdict,
 } from './analyticsUtils';
 import {
   FigureCard, StatCard, StatRow, VERDICT_TONE, type Metric, type StatCardProps, type Tip, type Tone,
@@ -147,22 +147,6 @@ export function figuresFromCalls(calls: CallLogRecord[]): PeriodFigures {
   };
 }
 
-type T = ReturnType<typeof useTranslation>['t'];
-
-/** The two rates' tooltips, shared by the headline row and the direction cards. */
-function rateTips(t: T) {
-  return {
-    answerRate: kpiTip(t, 'dashboard.tip.answerRate', t('dashboard.kpi.answerRate', 'Answer rate'), undefined, {
-      text: 'Share of the distinct outside numbers involved that were actually spoken to — however many calls each of them took. It counts people, so ten tries to one person who finally picks up is one person reached. Internal calls between extensions are left out.',
-      formula: 'numbers that answered ÷ distinct numbers',
-    }),
-    contactRate: kpiTip(t, 'dashboard.tip.contactRate', t('dashboard.kpi.contactRate', 'Contact rate'), undefined, {
-      text: 'Share of the calls that connected — every call counted, so a number tried five times counts five times. Answer rate counts the people behind the calls instead.',
-      formula: 'answered ÷ calls',
-    }),
-  };
-}
-
 interface TodayKpisProps {
   figures: PeriodFigures;
   /** Agents have no queue figures, so their Abandoned card counts their missed calls. */
@@ -172,31 +156,31 @@ interface TodayKpisProps {
 /** Today's headline figures for every call, in and out: the row above the direction cards. */
 export function TodayKpis({ figures: f, isAgent }: TodayKpisProps) {
   const { t } = useTranslation();
-  const tips = rateTips(t);
+  const tips = metricTips(t);
   const q = f.queue;
   const missed = f.all.calls - f.all.answered;
 
   const cards: StatCardProps[] = [
     {
       icon: <PhoneCall size={16} />,
-      label: t('dashboard.kpi.totalCalls', 'Total calls'),
+      label: t('metrics.totalCalls'),
       value: f.all.calls.toLocaleString(),
-      tip: kpiTip(t, 'dashboard.tip.totalCalls', t('dashboard.kpi.totalCalls', 'Total calls'), undefined,
+      tip: kpiTip(t, 'dashboard.tip.totalCalls', t('metrics.totalCalls'), undefined,
         { text: 'Every call today — inbound, outbound and between extensions, echo tests and feature codes included.' }),
       desc: t('dashboard.kpi.totalSplitInternal', '{{in}} in · {{out}} out · {{internal}} internal',
         { in: f.inbound.calls.toLocaleString(), out: f.outbound.calls.toLocaleString(), internal: f.internal.toLocaleString() }),
     },
     {
       icon: <CheckCircle2 size={16} />,
-      label: t('dashboard.kpi.answered', 'Answered'),
+      label: t('metrics.answered'),
       value: f.all.answered.toLocaleString(),
-      tip: kpiTip(t, 'dashboard.tip.answered', t('dashboard.kpi.answered', 'Answered'), undefined,
+      tip: kpiTip(t, 'dashboard.tip.answered', t('metrics.answered'), undefined,
         { text: 'Calls that actually connected and had talk time.' }),
-      desc: t('dashboard.kpi.contactRateOf', 'Contact rate {{rate}}', { rate: fmtPct(f.all.contactRate) }),
+      desc: t('metrics.contactRateOf', { rate: fmtPct(f.all.contactRate) }),
     },
     {
       icon: <UserCheck size={16} />,
-      label: t('dashboard.kpi.answerRate', 'Answer rate'),
+      label: t('metrics.answerRate'),
       value: fmtPct(f.all.answerRate),
       tip: tips.answerRate,
       desc: t('dashboard.kpi.peopleReached', '{{reached}} of {{people}} numbers reached',
@@ -212,19 +196,18 @@ export function TodayKpis({ figures: f, isAgent }: TodayKpisProps) {
       tone: missed > 0 ? 'danger' : '',
     } : {
       icon: <PhoneMissed size={16} />,
-      label: t('dashboard.kpi.abandoned', 'Abandoned'),
+      label: t('metrics.abandoned'),
       value: q.abandoned.toLocaleString(),
-      tip: kpiTip(t, 'dashboard.tip.abandoned', t('dashboard.kpi.abandoned', 'Abandoned'), undefined,
+      tip: kpiTip(t, 'dashboard.tip.abandoned', t('metrics.abandoned'), undefined,
         { text: 'Inbound callers who hung up before anyone answered.', formula: 'inbound calls not answered' }),
-      desc: t('dashboard.kpi.abandonRateOf', 'Abandon rate {{rate}}', { rate: fmtPct(q.abandonRate) }),
+      desc: t('metrics.abandonRateOf', { rate: fmtPct(q.abandonRate) }),
       tone: VERDICT_TONE[abandonVerdict(q.abandonRate)],
     },
     {
       icon: <Timer size={16} />,
-      label: t('dashboard.kpi.aht', 'AHT'),
+      label: t('metrics.aht'),
       value: fmtSecs(f.all.ahtSecs),
-      tip: kpiTip(t, 'dashboard.tip.aht', t('dashboard.kpi.aht', 'AHT'), undefined,
-        { text: 'Average talk time of an answered call.', formula: 'talk time ÷ answered' }),
+      tip: tips.aht,
     },
   ];
 
@@ -241,25 +224,25 @@ interface DirectionCardsProps {
 /** Inbound and outbound, one figure card each (all calls are the TodayKpis row above). */
 export function DirectionCards({ figures: f, periodLabel }: DirectionCardsProps) {
   const { t } = useTranslation();
-  const tips = rateTips(t);
+  const tips = metricTips(t);
 
   const answeredTip = (label: string): Tip => ({
     content: t('dashboard.tip.answered.text', 'Calls that actually connected and had talk time.'), label,
   });
   const answered = (d: DirectionFigures): Metric => {
-    const label = t('dashboard.kpi.answered', 'Answered');
+    const label = t('metrics.answered');
     return { key: 'answered', label, value: d.answered.toLocaleString(), tip: answeredTip(label) };
   };
   const answerRate = (d: DirectionFigures): Metric => ({
-    key: 'answerRate', label: t('dashboard.kpi.answerRate', 'Answer rate'), value: fmtPct(d.answerRate),
+    key: 'answerRate', label: t('metrics.answerRate'), value: fmtPct(d.answerRate),
     tone: VERDICT_TONE[perPersonRateVerdict(d.answerRate)], tip: tips.answerRate,
   });
   const contactRate = (d: DirectionFigures): Metric => ({
-    key: 'contactRate', label: t('dashboard.kpi.contactRate', 'Contact rate'), value: fmtPct(d.contactRate),
+    key: 'contactRate', label: t('metrics.contactRate'), value: fmtPct(d.contactRate),
     tone: VERDICT_TONE[perCallRateVerdict(d.contactRate)], tip: tips.contactRate,
   });
   const aht = (d: DirectionFigures): Metric => ({
-    key: 'aht', label: t('dashboard.kpi.aht', 'AHT'), value: fmtSecs(d.ahtSecs),
+    key: 'aht', label: t('metrics.aht'), value: fmtSecs(d.ahtSecs),
   });
 
   const q = f?.queue ?? null;
@@ -268,17 +251,17 @@ export function DirectionCards({ figures: f, periodLabel }: DirectionCardsProps)
     answerRate(f.inbound),
     contactRate(f.inbound),
     ...(q ? [
-      { key: 'sla', label: t('dashboard.kpi.sla', 'SLA'), value: fmtPct(q.slaPct), tone: VERDICT_TONE[slaVerdict(q.slaPct)] },
+      { key: 'sla', label: t('metrics.sla'), value: fmtPct(q.slaPct), tone: VERDICT_TONE[slaVerdict(q.slaPct)] },
       {
-        key: 'abandoned', label: t('dashboard.kpi.abandoned', 'Abandoned'), value: q.abandoned.toLocaleString(),
+        key: 'abandoned', label: t('metrics.abandoned'), value: q.abandoned.toLocaleString(),
         tone: (q.abandoned > 0 ? 'danger' : '') as Tone,
       },
       {
-        key: 'abandonRate', label: t('dashboard.kpi.abandonRate', 'Abandon rate'), value: fmtPct(q.abandonRate),
+        key: 'abandonRate', label: t('metrics.abandonRate'), value: fmtPct(q.abandonRate),
         tone: VERDICT_TONE[abandonVerdict(q.abandonRate)],
       },
-      { key: 'fcr', label: t('dashboard.kpi.fcr', 'FCR'), value: fmtPct(q.fcrPct), tone: VERDICT_TONE[fcrVerdict(q.fcrPct)] },
-      { key: 'avgWait', label: t('dashboard.kpi.avgWait', 'Avg wait'), value: fmtSecs(q.avgWaitSecs) },
+      { key: 'fcr', label: t('metrics.fcr'), value: fmtPct(q.fcrPct), tone: VERDICT_TONE[fcrVerdict(q.fcrPct)] },
+      { key: 'avgWait', label: t('metrics.avgWait'), value: fmtSecs(q.avgWaitSecs) },
     ] : []),
     aht(f.inbound),
   ] : [];

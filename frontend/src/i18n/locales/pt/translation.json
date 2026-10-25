@@ -976,19 +976,10 @@
       "label": "Intervalo de datas"
     },
     "kpi": {
-      "sla": "SLA",
       "slaDesc": "Chamadas atendidas dentro do limite",
-      "fcr": "FCR",
       "fcrDesc": "Resolução no primeiro contato",
-      "abandonment": "Abandono",
       "abandonmentDesc": "Taxa de chamadas abandonadas",
-      "aht": "TMA",
       "ahtDesc": "Tempo médio de atendimento",
-      "volume": "Total de chamadas",
-      "answeredCalls": "Atendidas",
-      "abandonedCalls": "Abandonadas",
-      "answerRate": "Taxa de atendimento",
-      "avgWait": "Espera média",
       "na": "N/D",
       "outboundCalls": "Sainte",
       "outboundVolume": "Chamadas saintes",
@@ -997,15 +988,12 @@
       "outboundTrend": "Sainte",
       "inboundAnswerRate": "Taxa de atendimento entrante",
       "inboundAnswerRateDesc": "Chamadas entrantes atendidas",
-      "avgWaitKpi": "Espera média",
       "avgWaitDesc": "Tempo médio de espera na fila",
       "shortAbandon": "Abandono rápido",
       "shortAbandonDesc": "Abandonadas antes do limite",
       "market": "Tempo de mercado",
       "marketDesc": "Tempo total de chamadas saintes",
-      "unansweredCalls": "Não atendidas",
-      "contactRate": "Taxa de contato",
-      "contactRateOf": "Taxa de contato {{rate}}"
+      "unansweredCalls": "Não atendidas"
     },
     "delta": {
       "vsPrevPeriod": "vs período anterior"
@@ -1014,11 +1002,6 @@
       "title": "Desempenho de filas",
       "queue": "Fila",
       "total": "Total",
-      "answered": "Atendidas",
-      "abandoned": "Abandonadas",
-      "sla": "SLA %",
-      "aht": "TMA",
-      "avgWait": "Espera média",
       "peakHour": "Hora de pico",
       "heatmapLow": "Baixo",
       "heatmapHigh": "Alto",
@@ -1034,8 +1017,6 @@
       "title": "Desempenho de agentes",
       "rank": "#",
       "agent": "Agente",
-      "answered": "Atendidas",
-      "aht": "TMA",
       "slaContrib": "SLA %",
       "trend7d": "Tendência 7d",
       "agents": "agentes"
@@ -1107,10 +1088,6 @@
           "formula": "não atendidas ÷ oferecidas",
           "text": "Quantos chamadores de entrada desligaram antes de alguém atender."
         },
-        "ahtTalk": {
-          "formula": "tempo de conversa ÷ atendidas",
-          "text": "Tempo médio de conversa de uma chamada atendida."
-        },
         "avgWait": {
           "formula": "espera total ÷ chamadores",
           "text": "Quanto tempo os chamadores da fila esperam até alguém atender."
@@ -1136,14 +1113,6 @@
         },
         "volume": {
           "text": "Todas as chamadas deste período — de entrada, de saída e internas."
-        },
-        "answerRate": {
-          "text": "Proporção dos números externos distintos do período com os quais se falou de fato, entrada e saída juntas — independentemente de quantas chamadas cada um levou. Conta pessoas, não chamadas.",
-          "formula": "números que atenderam ÷ números distintos"
-        },
-        "contactRate": {
-          "text": "Proporção das chamadas que conectaram — cada chamada conta, tentativas repetidas incluídas. A taxa de atendimento conta as pessoas por trás das chamadas.",
-          "formula": "atendidas ÷ chamadas"
         },
         "inboundPeopleRate": {
           "text": "Proporção dos números distintos que ligaram e tiveram a chamada atendida — independentemente de quantas vezes cada um ligou.",
@@ -1175,10 +1144,6 @@
         "avgWait": {
           "formula": "espera total ÷ chamadores",
           "text": "Quanto tempo os chamadores esperam nesta fila, incluindo os que desistiram."
-        },
-        "callAnswerRate": {
-          "formula": "atendidas ÷ oferecidas",
-          "text": "Proporção das chamadas oferecidas a esta fila que um agente atendeu."
         },
         "card": {
           "text": "Esta fila no período: chamadas oferecidas a ela, quantas um agente atendeu e quantas desistiram, e quão bem ela as atendeu."
@@ -1526,27 +1491,15 @@
       "outbound": "Saída"
     },
     "kpi": {
-      "abandonRate": "Taxa de abandono",
-      "abandoned": "Abandonadas",
       "activeCalls": "Chamadas ativas",
-      "aht": "Tempo médio de atendimento",
-      "answerRate": "Taxa de atendimento",
-      "answered": "Atendidas",
       "available": "Disponíveis",
-      "avgWait": "Espera média",
-      "fcr": "FCR",
       "longestWait": "Maior espera",
       "missed": "Perdidas",
       "onCall": "Em chamada",
       "ringing": "Tocando",
-      "sla": "SLA",
       "talkTime": "Tempo de conversa",
       "waiting": "Chamadas em espera",
-      "totalCalls": "Total de chamadas",
-      "contactRate": "Taxa de contato",
-      "contactRateOf": "Taxa de contato {{rate}}",
       "peopleReached": "{{reached}} de {{people}} números alcançados",
-      "abandonRateOf": "Taxa de abandono {{rate}}",
       "totalSplitInternal": "{{in}} de entrada · {{out}} de saída · {{internal}} internas"
     },
     "live": "Ao vivo",
@@ -1600,18 +1553,6 @@
       "missed": {
         "text": "Suas chamadas de hoje que não conectaram.",
         "formula": "chamadas − atendidas"
-      },
-      "aht": {
-        "text": "Tempo médio de conversa de uma chamada atendida.",
-        "formula": "tempo de conversa ÷ atendidas"
-      },
-      "answerRate": {
-        "text": "Proporção dos números externos distintos com os quais se falou de fato — independentemente de quantas chamadas cada um levou. Conta pessoas: dez tentativas para uma pessoa que finalmente atende contam como uma pessoa alcançada. Chamadas internas entre ramais ficam de fora.",
-        "formula": "números que atenderam ÷ números distintos"
-      },
-      "contactRate": {
-        "text": "Proporção das chamadas que conectaram — cada chamada conta, então um número tentado cinco vezes conta cinco vezes. A taxa de atendimento conta as pessoas por trás das chamadas.",
-        "formula": "atendidas ÷ chamadas"
       }
     },
     "title": "Painel",
@@ -1629,5 +1570,33 @@
       "total": "{{count}} agentes"
     },
     "today": "Hoje"
+  },
+  "metrics": {
+    "totalCalls": "Total de chamadas",
+    "answered": "Atendidas",
+    "answerRate": "Taxa de atendimento",
+    "contactRate": "Taxa de contato",
+    "contactRateOf": "Taxa de contato {{rate}}",
+    "abandoned": "Abandonadas",
+    "abandonRate": "Taxa de abandono",
+    "abandonRateOf": "Taxa de abandono {{rate}}",
+    "aht": "TMA",
+    "sla": "SLA",
+    "fcr": "FCR",
+    "avgWait": "Espera média",
+    "tip": {
+      "answerRate": {
+        "text": "Proporção dos números externos distintos com os quais se falou de fato — independentemente de quantas chamadas cada um levou. Conta pessoas: dez tentativas para uma pessoa que finalmente atende contam como uma pessoa alcançada. Chamadas internas entre ramais ficam de fora.",
+        "formula": "números que atenderam ÷ números distintos"
+      },
+      "contactRate": {
+        "text": "Proporção das chamadas que conectaram — cada chamada conta, então um número tentado cinco vezes conta cinco vezes. A taxa de atendimento conta as pessoas por trás das chamadas.",
+        "formula": "atendidas ÷ chamadas"
+      },
+      "aht": {
+        "text": "Tempo médio de conversa de uma chamada atendida.",
+        "formula": "tempo de conversa ÷ atendidas"
+      }
+    }
   }
 }

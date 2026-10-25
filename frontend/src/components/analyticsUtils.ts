@@ -111,6 +111,18 @@ export function kpiTip(
   };
 }
 
+/**
+ * The tooltips of the metrics the Dashboard and Analytics both show, so a figure is
+ * explained in the same words wherever it appears. Labels live under `metrics.*` too.
+ */
+export function metricTips(t: TFunction) {
+  return {
+    answerRate: kpiTip(t, 'metrics.tip.answerRate', t('metrics.answerRate')),
+    contactRate: kpiTip(t, 'metrics.tip.contactRate', t('metrics.contactRate')),
+    aht: kpiTip(t, 'metrics.tip.aht', t('metrics.aht')),
+  };
+}
+
 /** A rate's verdict: drives the good/warn/bad tone of a KPI card or metric. */
 export type RateVerdict = 'good' | 'warn' | 'bad' | '';
 
