@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Save, Users, UserPlus, Pencil, Trash2, Shield, Plus, Phone, Eye, EyeOff, Radio, QrCode,
+  Save, Users, UserPlus, Pencil, Trash2, Shield, Plus, Phone, Eye, EyeOff, Radio, QrCode, Smartphone,
 } from 'lucide-react';
 import { MobileSetupQR } from './MobileSetupQR';
 import { useTranslation } from 'react-i18next';
@@ -67,7 +67,17 @@ const EMPTY_FORM = {
   monitor_modes: ['listen'] as string[],
   group_ids: [] as string[],
   webrtc: false,
+  /**
+   * PJSIP max_contacts > 1: the browser and the phone may hold a registration at the same
+   * time. null until the extension's credentials say (or when the PBX could not be read):
+   * the toggle is then hidden and nothing is saved, so an outage never writes a wrong value.
+   */
+  multiDevice: null as boolean | null,
 };
+
+/** The form's multi-device state from a credentials answer's max_contacts. */
+const multiDeviceOf = (maxContacts: unknown): boolean | null =>
+  typeof maxContacts === 'number' ? maxContacts > 1 : null;
 
 export function UsersPanel(props: UsersPanelProps = {}) {
   const { t } = useTranslation();
@@ -91,7 +101,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [form, setForm] = useState(EMPTY_FORM);
 
   const handleExtensionSelect = useCallback(async (ext: string) => {
-    setForm(f => ({ ...f, extension: ext, webrtc: ext ? f.webrtc : false }));
+    setForm(f => ({ ...f, extension: ext, webrtc: ext ? f.webrtc : false, multiDevice: null }));
     if (!ext) return;
     try {
       const res = await fetchWithAuth(`/api/settings/extensions/${ext}/credentials`);
@@ -102,6 +112,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           ...(editingUser ? {} : { username: data.username || ext, password: data.password || '' }),
           name: data.name || f.name,
           webrtc: data.webrtc === 'yes',
+          multiDevice: multiDeviceOf(data.max_contacts),
         }));
       }
     } catch { /* ignore */ }
@@ -119,6 +130,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       monitor_modes: pendingUserForm.monitor_modes,
       group_ids: pendingUserForm.group_ids,
       webrtc: false,
+      multiDevice: null,
     });
     setFormOpen(true);
     onClearPendingUserForm();
@@ -192,13 +204,14 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       monitor_modes: [...modes],
       group_ids: (u.group_ids || []).map(String),
       webrtc: false,
+      multiDevice: null,
     });
     setFormOpen(true);
     // Load the current WebRTC state for this user's extension (async).
     if (u.extension) {
       fetchWithAuth(`/api/settings/extensions/${u.extension}/credentials`)
         .then(res => (res.ok ? res.json() : null))
-        .then(data => { if (data) setForm(f => ({ ...f, webrtc: data.webrtc === 'yes' })); })
+        .then(data => { if (data) setForm(f => ({ ...f, webrtc: data.webrtc === 'yes', multiDevice: multiDeviceOf(data.max_contacts) })); })
         .catch(() => { /* ignore */ });
     }
   };
@@ -262,11 +275,28 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           webrtcFailed = true;
         }
       }
+      // The device limit, sent after WebRTC rather than with it: both end in a PBX reload,
+      // and only when the form knows the current value (see EMPTY_FORM.multiDevice).
+      let multiDeviceFailed = false;
+      if (form.extension && form.multiDevice !== null) {
+        try {
+          const md = await fetchWithAuth(`/api/settings/extensions/${form.extension}/max-contacts`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: form.multiDevice }),
+          });
+          if (!md.ok) multiDeviceFailed = true;
+        } catch {
+          multiDeviceFailed = true;
+        }
+      }
       resetForm();
       loadData({ keepMessage: true });
       setMessage(webrtcFailed
         ? { type: 'error', text: t('users.webrtcSaveFailed') }
-        : { type: 'success', text: saved });
+        : multiDeviceFailed
+          ? { type: 'error', text: t('users.multiDeviceSaveFailed', 'User saved, but updating the device limit failed.') }
+          : { type: 'success', text: saved });
     } catch (err: unknown) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : t('common.requestFailed', 'Request failed') });
     }
@@ -580,6 +610,17 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   label={t('users.webrtcLabel')}
                   description={t('users.webrtcHint')}
                   icon={<Radio size={14} />}
+                />
+              </FormRow>
+            )}
+            {form.extension && form.multiDevice !== null && (
+              <FormRow single>
+                <Toggle
+                  checked={form.multiDevice}
+                  onChange={multiDevice => setForm(f => ({ ...f, multiDevice }))}
+                  label={t('users.multiDeviceLabel', 'Browser and phone at the same time')}
+                  description={t('users.multiDeviceHint')}
+                  icon={<Smartphone size={14} />}
                 />
               </FormRow>
             )}

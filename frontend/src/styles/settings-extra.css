@@ -13,6 +13,27 @@
   overflow-wrap: anywhere;
 }
 
+/* The change a row recorded, folded under its summary; LTR, since it is JSON. */
+.audit-detail {
+  margin-block-start: var(--space-1);
+}
+
+.audit-detail > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.audit-detail > pre {
+  margin-block-start: var(--space-1);
+  padding: var(--space-2);
+  max-block-size: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
 .audit-actor {
   white-space: nowrap;
 }

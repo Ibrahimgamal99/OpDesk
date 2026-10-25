@@ -27,17 +27,64 @@ Configure it under **Settings → Integrations / CRM**.
 
 ## When it fires
 
-On hangup, from the AMI monitor. It is fire-and-forget and never blocks call processing.
+From the AMI monitor, never blocking call processing. **When to push**
+(`sync_trigger`) picks the moment:
+
+- **At hangup** (`hangup`, default) — as soon as the call ends.
+- **After wrap-up** (`wrapup`) — once the agent who took the call has finished wrap-up,
+  so the record matches the final call log (the finalized CDR's identity is laid over the
+  payload again). A call nobody answered has no wrap-up and goes out on the next sweep
+  (within ~15 s). `sync_wrapup_timeout` (seconds, default 600, 5–86400) is the longest
+  wait: past it the push goes out anyway.
 
 A call is skipped when:
 
 - call-data sync is disabled;
-- the call's direction (`inbound` / `outbound` / `internal`) is de-selected;
-- no CRM connector is configured — this is still recorded in the delivery log, so a
-  misconfigured connector does not look like "no calls".
+- the call's direction (`inbound` / `outbound` / `internal`) is de-selected.
 
-There is **no automatic retry.** A failed delivery is recorded and can be replayed by
-hand from **Logs → CRM Deliveries** (see [Delivery log](#delivery-log)).
+When CRM is **enabled but its connector cannot be built** (no server URL, a missing
+credential), every call is recorded in the delivery log as a failed delivery naming what
+is missing, so a misconfigured connector does not look like "no calls". Saving such a
+configuration is refused with a 400; a configuration that saves but does not come up
+live answers `active: false` with a warning.
+
+## Retries
+
+Every push is written to the delivery log **before** its first attempt, so a CRM that is
+down, 502-ing or slower than the timeout costs a retry rather than the call. A
+background worker re-sends due deliveries every 15 s.
+
+| Failure | Retried? |
+|---|---|
+| No response (refused, DNS, TLS, timeout) | yes |
+| `5xx` | yes |
+| `408`, `423`, `425`, `429` | yes |
+| any other `4xx` (the CRM rejected this payload), or a target the SSRF guard refuses | no — marked **failed** |
+
+Settings (`GET`/`POST /api/crm/config`):
+
+- `sync_retry_enabled` (default on) — off means one attempt per call;
+- `sync_retry_max_attempts` (default 5, 1–20) — attempts per call, the first included;
+- `sync_retry_delays` (default `30,120,600,1800` seconds) — the wait before attempt 2, 3,
+  …; the last value repeats.
+
+A `Retry-After` header (seconds or an HTTP date, capped at 24 h) wins when it asks for
+**more** time than the ladder, never less, so `Retry-After: 0` cannot cause a hot loop.
+A delivery whose budget is spent on transient failures is marked **abandoned**.
+
+### Idempotency
+
+Every attempt of one delivery carries the same key in two headers:
+
+```
+Idempotency-Key: 6f1c2a4e-…
+X-OpDesk-Delivery-Id: 6f1c2a4e-…
+```
+
+When a first attempt reached your CRM but its response was lost, the retry carries the
+same key: store it and ignore a repeat to avoid a duplicate call record. A manual
+**Resend** is a deliberate new delivery and gets a new key; **Retry now** re-sends the
+same delivery with its existing key.
 
 ## Transport
 
@@ -47,11 +94,20 @@ hand from **Logs → CRM Deliveries** (see [Delivery log](#delivery-log)).
 
 `POST` (default) or `PUT`, JSON body, configurable timeout and TLS verification.
 
-The URL is SSRF-checked before it is saved or used. Loopback, link-local (including the
+The URL is SSRF-checked when it is saved **and again before every request** (what the
+host resolves to then, not only at save time). Loopback, link-local (including the
 `169.254.169.254` cloud metadata address), multicast, reserved and unspecified addresses
 are **always** blocked. RFC-1918 private ranges are **allowed by default**, because an
 on-prem CRM on the LAN is a first-class deployment; tick *Block private addresses* for a
 stricter posture.
+
+- `endpoint_path`, `sync_endpoint` and the lookup URL are paths appended to the server
+  URL: they must start with `/` and may not contain `@`, `://`, a backslash or spaces
+  (`https://crm.example.com` + `@169.254.169.254/x` would otherwise be a request to the
+  metadata service). A request whose final URL leaves the configured host is refused.
+- The OAuth2 token URL is checked the same way as the server URL.
+- The push never follows redirects (a `3xx` is a failed delivery). The connection test
+  follows at most 5, vetting each hop before requesting it.
 
 ## Authentication
 
@@ -285,14 +341,28 @@ delivery log; nothing about the body is required or parsed.
 
 ## Delivery log
 
-Every attempt is recorded in the `webhook_deliveries` table and shown under
-**Logs → CRM Deliveries**: timestamp, direction, caller and destination, endpoint, HTTP
-status, latency, error, and the full request and response bodies on row expand.
+Every push is a row in the `webhook_deliveries` table, shown under
+**Logs → CRM Deliveries**: timestamp, direction, caller and destination, endpoint, status,
+the last HTTP status, latency, error, attempts, and the full request and response bodies on
+row expand. Its `status` is one of:
 
-Failed deliveries can be replayed with **Resend**. The stored request body is replayed
-verbatim through the CRM configuration currently in effect — the body is the historical
-fact, while the credentials and endpoint are re-read because a wrong endpoint is usually
-the reason the original failed. Each resend is a new row linked to the original.
+| Status | Meaning |
+|---|---|
+| `pending` | not delivered yet; the worker sends it again at `next_attempt_at` |
+| `delivered` | the CRM answered `2xx` |
+| `failed` | the CRM rejected it (a non-retryable `4xx`), or retries are off |
+| `abandoned` | retryable failures used up the attempt budget |
+
+The list shows the totals per status, and its status and direction filters show how many
+rows each value has under the other filters.
+
+- **Retry now** makes a pending, failed or abandoned delivery due at once (with up to
+  3 more attempts if its budget is spent) and sends it immediately, with the same
+  idempotency key. A delivered row is never retried.
+- **Resend** replays the stored request body verbatim through the CRM configuration
+  currently in effect — the body is the historical fact, while the credentials and
+  endpoint are re-read because a wrong endpoint is usually the reason the original failed.
+  Each resend is a new delivery linked to the original.
 
 **Privacy.** These rows hold call metadata (phone numbers, caller and agent names,
 extensions) and the complete request body, so the table inherits your database's backup
@@ -301,7 +371,8 @@ credentials are. The stored URL has its query string and any embedded credential
 stripped. Bodies are truncated at 8 KB. Access is admin-only; an API key cannot read the
 delivery log at all.
 
-Rows are pruned daily, `WEBHOOK_LOG_RETENTION_DAYS` days after creation (default 30).
+Rows are pruned daily, `WEBHOOK_LOG_RETENTION_DAYS` days after creation (default 30). A
+`pending` row is never pruned.
 
 ---
 

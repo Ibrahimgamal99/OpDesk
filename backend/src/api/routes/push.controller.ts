@@ -16,13 +16,16 @@ import type { Request } from 'express';
 import { env } from '../../core/config';
 import { getLogger } from '../../core/logger';
 import { pyJsonDumps } from '../../core/py';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { runtime } from '../../core/runtime';
 import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
 import * as pushService from '../../integrations/push-service';
 import { disableMobileWake, enableMobileWake } from '../../services/dialplan';
 import * as sipPush from '../../services/sip-push';
+import { codes } from '../errors';
 import { HttpError } from '../http-error';
+import type { ErrorField } from '../http-error';
 import { RawResponse, respond } from '../respond';
 import { Auth, Delete, Get, Post, Put, principal } from '../routing';
 import { parseBody, pInt, pStr, qStr, v } from '../validation';
@@ -47,20 +50,115 @@ export const MobileWakeConfigBody = v.model({
   wait_seconds: v.int().nullish(), // old name of hold_seconds
 });
 
+// A service-account key is ~2.4 KB and a .p8 ~250 bytes; anything far past that is not one.
+export const KEY_TEXT_MAX = 20000;
+export const MARKER_MAX = 64;
+export const RE_APPLE_ID = /^[A-Z0-9]{10}$/;
+export const RE_BUNDLE_ID = /^[A-Za-z0-9][A-Za-z0-9.-]{0,154}$/;
+export const RE_FCM_PROJECT = /^[a-z0-9][a-z0-9-]{4,62}$/;
+
+/**
+ * PUT /api/push/config. Every field is optional: one the client leaves out keeps what is
+ * stored. For the two key files, null also keeps what is stored and "" removes it.
+ */
 export const PushConfigBody = v.model({
-  enabled: v.bool(),
+  enabled: v.bool().optional(),
   hold_seconds: v.int().optional(),
   settle_seconds: v.int().optional(),
-  client_marker: v.str().optional(),
-  fcm_project_id: v.str().optional(),
+  client_marker: v.maxLen(v.str(), MARKER_MAX).optional(),
+  fcm_project_id: v.maxLen(v.str(), 64).optional(),
   // Key file contents. null/absent keeps what is stored; "" removes it.
-  fcm_service_account: v.str().nullish(),
-  apns_key_id: v.str().optional(),
-  apns_team_id: v.str().optional(),
-  apns_bundle_id: v.str().optional(),
-  apns_auth_key: v.str().nullish(),
+  fcm_service_account: v.maxLen(v.str(), KEY_TEXT_MAX).nullish(),
+  apns_key_id: v.maxLen(v.str(), 16).optional(),
+  apns_team_id: v.maxLen(v.str(), 16).optional(),
+  apns_bundle_id: v.maxLen(v.str(), 160).optional(),
+  apns_auth_key: v.maxLen(v.str(), KEY_TEXT_MAX).nullish(),
   apns_sandbox: v.bool().optional(),
 });
+export type PushConfigBodyT = ReturnType<typeof PushConfigBody.parse>;
+
+function fieldError(path: string, code: string, message: string): ErrorField {
+  return { path, code, message, params: {} };
+}
+
+/** The audit/log word for what a PUT did to a key file. */
+export function keyChange(value: string | null | undefined): string {
+  return value === null || value === undefined ? 'kept' : value === '' ? 'removed' : 'replaced';
+}
+
+/**
+ * The OpDesk_settings rows a PUT /api/push/config writes, or a 422 listing every field that
+ * is wrong (not just the first). Only the fields the body carries are written.
+ */
+export async function pushSettingsFromBody(body: PushConfigBodyT): Promise<Record<string, string>> {
+  const errors: ErrorField[] = [];
+  const values: Record<string, string> = {};
+
+  if (body.hold_seconds !== undefined && !(body.hold_seconds >= 8 && body.hold_seconds <= 30)) {
+    errors.push(fieldError('hold_seconds', 'value.out_of_range', 'Hold time must be 8 to 30 seconds'));
+  }
+  if (body.settle_seconds !== undefined && !(body.settle_seconds >= 0 && body.settle_seconds <= 10)) {
+    errors.push(fieldError('settle_seconds', 'value.out_of_range', 'Settle window must be 0 to 10 seconds'));
+  }
+
+  let serviceAccount: Record<string, unknown> | null = null;
+  if (body.fcm_service_account) {
+    try {
+      serviceAccount = pushService.parseServiceAccount(body.fcm_service_account);
+    } catch (e) {
+      errors.push(fieldError('fcm_service_account', 'value.invalid_key', `Service account JSON: ${(e as Error).message}`));
+    }
+  }
+  let projectId: string | null = null;
+  if (body.fcm_project_id !== undefined) {
+    projectId = body.fcm_project_id.trim() || String(serviceAccount?.project_id ?? '');
+  } else if (serviceAccount && !(await dbm.getSetting('PUSH_FCM_PROJECT_ID', ''))) {
+    // A first service account names the project when none is set yet.
+    projectId = String(serviceAccount.project_id ?? '');
+  }
+  if (projectId && !RE_FCM_PROJECT.test(projectId)) {
+    errors.push(fieldError('fcm_project_id', 'value.invalid', "FCM project ID: lowercase letters, digits and '-', as in the Firebase console"));
+  }
+
+  const keyId = body.apns_key_id === undefined ? null : body.apns_key_id.trim().toUpperCase();
+  const teamId = body.apns_team_id === undefined ? null : body.apns_team_id.trim().toUpperCase();
+  for (const [path, label, value] of [
+    ['apns_key_id', 'Key ID', keyId],
+    ['apns_team_id', 'Team ID', teamId],
+  ] as const) {
+    if (value && !RE_APPLE_ID.test(value)) errors.push(fieldError(path, 'value.invalid', `APNs ${label} is 10 letters and digits`));
+  }
+  const bundleId = body.apns_bundle_id === undefined ? null : body.apns_bundle_id.trim();
+  if (bundleId && !RE_BUNDLE_ID.test(bundleId)) {
+    errors.push(fieldError('apns_bundle_id', 'value.invalid', "Bundle ID: letters, digits, '.' and '-', e.g. com.example.app"));
+  }
+  let authKey: string | null = null;
+  if (body.apns_auth_key) {
+    try {
+      authKey = pushService.validateApnsKey(body.apns_auth_key);
+    } catch (e) {
+      errors.push(fieldError('apns_auth_key', 'value.invalid_key', `APNs auth key: ${(e as Error).message}`));
+    }
+  }
+
+  if (errors.length) {
+    throw new HttpError(422, { code: codes.PUSH_CONFIG_INVALID, message: errors.map((f) => f.message).join('; '), fields: errors });
+  }
+
+  if (projectId !== null) values.PUSH_FCM_PROJECT_ID = projectId;
+  if (body.fcm_service_account !== null && body.fcm_service_account !== undefined) {
+    values.PUSH_FCM_SERVICE_ACCOUNT = serviceAccount ? pyJsonDumps(serviceAccount) : '';
+  }
+  if (keyId !== null) values.PUSH_APNS_KEY_ID = keyId;
+  if (teamId !== null) values.PUSH_APNS_TEAM_ID = teamId;
+  if (bundleId !== null) values.PUSH_APNS_BUNDLE_ID = bundleId;
+  if (body.apns_auth_key !== null && body.apns_auth_key !== undefined) values.PUSH_APNS_AUTH_KEY = authKey || '';
+  if (body.apns_sandbox !== undefined) values.PUSH_APNS_SANDBOX = body.apns_sandbox ? 'true' : 'false';
+  // '' is a real value here (no marker: only pn-* contacts count as mobile), so it is stored
+  // as it is and read back as it is (see mobileWakeSettings).
+  if (body.client_marker !== undefined) values.MOBILE_CLIENT_MARKER = body.client_marker.trim();
+  return values;
+}
 
 /** A plain-text answer for the dialplan's CURL() (Starlette PlainTextResponse). */
 function plain(text: string): RawResponse {
@@ -93,12 +191,15 @@ export async function mobileWakeSettings(): Promise<MobileWakeSettings> {
     return Math.max(lo, Math.min(Math.trunc(f), hi));
   };
   const enabled = ((await dbm.getSetting('MOBILE_WAKE_ENABLED', env('MOBILE_WAKE_ENABLED', ''))) || '').toLowerCase();
-  const marker = await dbm.getSetting('MOBILE_CLIENT_MARKER', null);
+  // Read the row itself rather than through getSetting, which maps an empty value to its
+  // fallback: a marker the admin cleared must stay cleared, not turn back into the default.
+  const all = await dbm.getAllSettings();
+  const marker = Object.prototype.hasOwnProperty.call(all, 'MOBILE_CLIENT_MARKER') ? (all.MOBILE_CLIENT_MARKER ?? '') : null;
   return {
     enabled: ['true', '1', 'yes'].includes(enabled),
     hold_seconds: await number('MOBILE_WAKE_WAIT', sipPush.DEFAULT_HOLD, 8, 30),
     settle_seconds: await number('MOBILE_WAKE_SETTLE', sipPush.DEFAULT_SETTLE, 0, 10),
-    // A missing or empty row takes the default (get_setting maps '' to the fallback).
+    // Only a missing row takes the default; a stored '' means "no marker".
     client_marker: marker === null ? sipPush.DEFAULT_MARKER : marker,
   };
 }
@@ -106,13 +207,14 @@ export async function mobileWakeSettings(): Promise<MobileWakeSettings> {
 /** Write (or clear) the pre-dial hook and reload Asterisk; persist the result. */
 export async function applyMobileWake(enabled: boolean, hold: number, settle: number): Promise<boolean> {
   const ok = enabled ? await enableMobileWake(hold, settle) : await disableMobileWake();
-  if (ok) {
-    await dbm.setSetting('MOBILE_WAKE_ENABLED', enabled ? 'true' : 'false');
-    await dbm.setSetting('MOBILE_WAKE_WAIT', String(hold));
-    await dbm.setSetting('MOBILE_WAKE_SETTLE', String(settle));
-    sipPush.configure({ enabled });
-  }
-  return Boolean(ok);
+  if (!ok) return false;
+  const saved = await dbm.setSettings({
+    MOBILE_WAKE_ENABLED: enabled ? 'true' : 'false',
+    MOBILE_WAKE_WAIT: String(hold),
+    MOBILE_WAKE_SETTLE: String(settle),
+  });
+  if (saved) sipPush.configure({ enabled });
+  return Boolean(saved);
 }
 
 /** A push token shown in Settings: first 8 … last 6 characters. */
@@ -324,13 +426,14 @@ export class PushController {
       throw new HttpError(500, 'Internal server error');
     }
     if (!ok) throw new HttpError(500, 'Failed to enable mobile wake. Check server logs.');
+    setRedactedAuditDetail(req, { enabled: true, hold_seconds: hold, settle_seconds: settle });
     return respond({ message: `Mobile wake enabled (hold=${hold}s, settle=${settle}s). Asterisk dialplan reloaded.` });
   }
 
   /** Disable the mobile pre-dial wake dialplan. */
   @Post('/api/mobile-wake/disable')
   @Auth('admin')
-  async disableMobileWake() {
+  async disableMobileWake(@Req() req: Request) {
     const wake = await mobileWakeSettings();
     let ok: boolean;
     try {
@@ -340,6 +443,7 @@ export class PushController {
       throw new HttpError(500, 'Internal server error');
     }
     if (!ok) throw new HttpError(500, 'Failed to disable mobile wake. Check server logs.');
+    setRedactedAuditDetail(req, { enabled: false });
     return respond({ message: 'Mobile wake disabled. Asterisk dialplan reloaded.' });
   }
 
@@ -355,74 +459,42 @@ export class PushController {
   }
 
   /**
-   * Save Mobile Wake and push provider settings, rewrite the pre-dial hook if it is on (or
-   * was), and reload the push credentials.
+   * Save Mobile Wake and push provider settings (all or nothing; a field the body leaves out
+   * keeps what is stored), rewrite the pre-dial hook if it is on (or was), and reload the push
+   * credentials. Invalid input is one 422 naming every field that is wrong.
    */
   @Put('/api/push/config')
   @Auth('admin')
   async putPushConfig(@Req() req: Request) {
-    const raw = parseBody(PushConfigBody, req.body);
-    const body = {
-      enabled: raw.enabled,
-      hold_seconds: raw.hold_seconds ?? sipPush.DEFAULT_HOLD,
-      settle_seconds: raw.settle_seconds ?? sipPush.DEFAULT_SETTLE,
-      client_marker: raw.client_marker ?? sipPush.DEFAULT_MARKER,
-      fcm_project_id: raw.fcm_project_id ?? '',
-      fcm_service_account: raw.fcm_service_account ?? null,
-      apns_key_id: raw.apns_key_id ?? '',
-      apns_team_id: raw.apns_team_id ?? '',
-      apns_bundle_id: raw.apns_bundle_id ?? '',
-      apns_auth_key: raw.apns_auth_key ?? null,
-      apns_sandbox: raw.apns_sandbox ?? false,
-    };
-    if (!(body.hold_seconds >= 8 && body.hold_seconds <= 30)) throw new HttpError(400, 'Hold time must be 8 to 30 seconds');
-    if (!(body.settle_seconds >= 0 && body.settle_seconds <= 10)) throw new HttpError(400, 'Settle window must be 0 to 10 seconds');
-    for (const [label, value] of [
-      ['Key ID', body.apns_key_id],
-      ['Team ID', body.apns_team_id],
-    ] as const) {
-      if (value.trim() && !/^[A-Za-z0-9]{10}$/.test(value.trim())) {
-        throw new HttpError(400, `APNs ${label} is 10 letters and digits`);
-      }
-    }
-    let serviceAccount: Record<string, unknown> | null = null;
-    if (body.fcm_service_account) {
-      try {
-        serviceAccount = pushService.parseServiceAccount(body.fcm_service_account);
-      } catch (e) {
-        throw new HttpError(400, `Service account JSON: ${(e as Error).message}`);
-      }
-    }
-    let authKey: string | null = null;
-    if (body.apns_auth_key) {
-      try {
-        authKey = pushService.validateApnsKey(body.apns_auth_key);
-      } catch (e) {
-        throw new HttpError(400, `APNs auth key: ${(e as Error).message}`);
-      }
-    }
-
-    const projectId = body.fcm_project_id.trim() || String(serviceAccount?.project_id ?? '');
-    await dbm.setSetting('PUSH_FCM_PROJECT_ID', projectId);
-    if (body.fcm_service_account !== null) {
-      await dbm.setSetting('PUSH_FCM_SERVICE_ACCOUNT', serviceAccount ? pyJsonDumps(serviceAccount) : '');
-    }
-    await dbm.setSetting('PUSH_APNS_KEY_ID', body.apns_key_id.trim().toUpperCase());
-    await dbm.setSetting('PUSH_APNS_TEAM_ID', body.apns_team_id.trim().toUpperCase());
-    await dbm.setSetting('PUSH_APNS_BUNDLE_ID', body.apns_bundle_id.trim());
-    if (body.apns_auth_key !== null) await dbm.setSetting('PUSH_APNS_AUTH_KEY', authKey || '');
-    await dbm.setSetting('PUSH_APNS_SANDBOX', body.apns_sandbox ? 'true' : 'false');
-    await dbm.setSetting('MOBILE_CLIENT_MARKER', body.client_marker.trim());
-    sipPush.configure({ marker: body.client_marker });
-
+    const body = parseBody(PushConfigBody, req.body);
+    const values = await pushSettingsFromBody(body);
     const was = await mobileWakeSettings();
-    if (body.enabled || was.enabled) {
-      if (!(await applyMobileWake(body.enabled, body.hold_seconds, body.settle_seconds))) {
+    const enabled = body.enabled ?? was.enabled;
+    const hold = body.hold_seconds ?? was.hold_seconds;
+    const settle = body.settle_seconds ?? was.settle_seconds;
+    // With the wake off before and after, no dialplan is rewritten, so the timings are
+    // stored here; otherwise applyMobileWake stores them once the dialplan took them.
+    if (!enabled && !was.enabled) {
+      if (body.hold_seconds !== undefined) values.MOBILE_WAKE_WAIT = String(hold);
+      if (body.settle_seconds !== undefined) values.MOBILE_WAKE_SETTLE = String(settle);
+    }
+    if (Object.keys(values).length && !(await dbm.setSettings(values))) {
+      throw new HttpError(500, { code: codes.SETTINGS_SAVE_FAILED, message: 'Could not save the push settings. Nothing was changed.' });
+    }
+    if (values.MOBILE_CLIENT_MARKER !== undefined) sipPush.configure({ marker: values.MOBILE_CLIENT_MARKER });
+    setRedactedAuditDetail(req, {
+      enabled,
+      hold_seconds: hold,
+      settle_seconds: settle,
+      changed: Object.keys(values).sort(),
+      fcm_service_account: keyChange(body.fcm_service_account),
+      apns_auth_key: keyChange(body.apns_auth_key),
+    });
+
+    if (enabled || was.enabled) {
+      if (!(await applyMobileWake(enabled, hold, settle))) {
         throw new HttpError(500, 'Saved, but the Asterisk dialplan could not be updated. Check server logs.');
       }
-    } else {
-      await dbm.setSetting('MOBILE_WAKE_WAIT', String(body.hold_seconds));
-      await dbm.setSetting('MOBILE_WAKE_SETTLE', String(body.settle_seconds));
     }
 
     await pushService.reloadConfig();
@@ -431,16 +503,20 @@ export class PushController {
 
   /**
    * Replace the Web Push (VAPID) key pair. Every browser subscription was made for the old
-   * public key, so they are deleted; browsers subscribe again on their next visit.
+   * public key, so they are deleted; browsers subscribe again on their next visit. Keys and
+   * subscriptions change in one transaction: on failure nothing changed (a 500).
    */
   @Post('/api/push/vapid/rotate')
   @Auth('admin')
-  async rotateVapidKeys() {
+  async rotateVapidKeys(@Req() req: Request) {
     const [publicKey, privateKey] = pushService.generateVapidKeys();
-    await dbm.setSetting('PUSH_VAPID_PUBLIC_KEY', publicKey);
-    await dbm.setSetting('PUSH_VAPID_PRIVATE_KEY', privateKey);
-    const removed = await dbm.deleteWebPushSubscriptions();
+    const removed = await dbm.replaceVapidKeys({ PUSH_VAPID_PUBLIC_KEY: publicKey, PUSH_VAPID_PRIVATE_KEY: privateKey });
+    if (removed === null) {
+      throw new HttpError(500, { code: codes.SETTINGS_SAVE_FAILED, message: 'Could not save the new web push keys. Nothing was changed.' });
+    }
     await pushService.reloadConfig();
+    setRedactedAuditDetail(req, { removed_subscriptions: removed });
+    log.info('VAPID keys replaced by user %s; %s web subscription(s) removed', principal(req).id ?? null, removed);
     return respond({ public_key: publicKey, removed_subscriptions: removed });
   }
 
@@ -451,6 +527,7 @@ export class PushController {
     const bindingId = pInt(req.params.binding_id, 'binding_id');
     if (!(await dbm.deleteSipPushBinding(bindingId))) throw new HttpError(404, 'Binding not found');
     await sipPush.reloadBindings();
+    setRedactedAuditDetail(req, { deleted: bindingId });
     return respond({ deleted: bindingId });
   }
 }

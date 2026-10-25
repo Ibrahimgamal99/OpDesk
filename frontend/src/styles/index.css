@@ -5389,6 +5389,7 @@ select.form-input option:checked {
 
 /* ── Form helpers (up-form-* base rules already defined above) ────────── */
 .up-hint { font-size: var(--text-sm); color: var(--text-muted); }
+.up-field-error { display: block; font-size: var(--text-sm); color: var(--danger); margin-block-start: var(--space-1); }
 .up-form-divider.first { margin-top: 0; }
 .up-form-row.triple { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .ui-required { color: var(--danger); margin-inline-start: 2px; }

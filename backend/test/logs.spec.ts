@@ -2,7 +2,7 @@
  * core/system-logs and the logs routes: the AMI event buffer (off by default, summary, filters,
  * capacity), the SIP tracer tailing a temp file (block reassembly, rotation-safe start
  * failure), the client-log beacon (always 204), the System Logs toggles, the audit log, and
- * the CRM delivery log (keyset cursor, detail, resend).
+ * the CRM delivery log (keyset cursor, status counts and facets, detail, retry, resend).
  *
  * No database, no Asterisk: the db layer, the dialplan's PJSIP logger toggle and the CRM push
  * are mocked; the tracer reads a file this spec writes.
@@ -18,8 +18,12 @@ jest.mock(
   '../src/db/db-manager',
   () => ({
     getSetting: jest.fn(async (_k: string, fallback: string | null = null) => fallback),
+    WEBHOOK_DELIVERY_STATUSES: ['pending', 'delivered', 'failed', 'abandoned'],
     listWebhookDeliveries: jest.fn(),
     getWebhookDelivery: jest.fn(),
+    webhookDeliveryCounts: jest.fn(async () => ({ pending: 1, delivered: 5, failed: 2, abandoned: 0 })),
+    webhookDeliveryFacets: jest.fn(async () => ({ status: { failed: 2 }, call_type: { inbound: 2 } })),
+    requeueWebhookDelivery: jest.fn(),
     listAuditLog: jest.fn(async () => ({ entries: [{ id: 9, action: 'update' }], next_before_id: 9 })),
     auditLogFacets: jest.fn(async () => ({ action: { update: 1 }, entity_type: { settings: 1 } })),
   }));
@@ -28,13 +32,16 @@ jest.mock('../src/core/security', () => ({ principalOf: (req: { principal?: unkn
 jest.mock('../src/services/dialplan', () => ({ setPjsipLogger: jest.fn(async () => true) }));
 jest.mock('../src/integrations/crm', () => ({
   loadCrmSyncConfig: jest.fn(async () => ({ method: 'PUT', endpoint: '/sync' })),
+}));
+jest.mock('../src/integrations/crm-delivery', () => ({
   sendCrmDataAsync: jest.fn(async () => ({ success: true })),
+  sweepCrmDeliveries: jest.fn(async () => 1),
 }));
 
 import * as dbm from '../src/db/db-manager';
 import { AMIEventBuffer, amiEventBuffer, SipTracer, sipTracer } from '../src/core/system-logs';
 import { setPjsipLogger } from '../src/services/dialplan';
-import { sendCrmDataAsync } from '../src/integrations/crm';
+import { sendCrmDataAsync, sweepCrmDeliveries } from '../src/integrations/crm-delivery';
 import { clientLog, LogsController } from '../src/api/routes/logs.controller';
 import { RawResponse } from '../src/api/respond';
 
@@ -183,12 +190,18 @@ describe('logs routes', () => {
     expect(setPjsipLogger).toHaveBeenCalledWith(false);
   });
 
-  test('GET /api/logs/deliveries: respond_list with a keyset cursor', async () => {
+  test('GET /api/logs/deliveries: respond_list with a keyset cursor and the status counts', async () => {
     mocked(dbm.listWebhookDeliveries).mockResolvedValueOnce([[{ id: 50 }, { id: 49 }], true]);
     const res = await ctl.listDeliveries(req({ query: { limit: '2', success: 'false', search: '0100' } }));
-    expect(res).toEqual({ data: [{ id: 50 }, { id: 49 }], page: { cursor: null, next_cursor: 'eyJpZCI6NDl9', limit: 2 } });
+    expect(res).toEqual({
+      data: [{ id: 50 }, { id: 49 }],
+      page: { cursor: null, next_cursor: 'eyJpZCI6NDl9', limit: 2 },
+      counts: { pending: 1, delivered: 5, failed: 2, abandoned: 0 },
+    });
+    expect(dbm.webhookDeliveryFacets).not.toHaveBeenCalled();
     expect(dbm.listWebhookDeliveries).toHaveBeenCalledWith({
       success: false,
+      status: null,
       callId: null,
       callType: null,
       search: '0100',
@@ -202,6 +215,30 @@ describe('logs routes', () => {
     expect(next.page).toEqual({ cursor: 'eyJpZCI6NDl9', next_cursor: null, limit: 50 });
     expect(mocked(dbm.listWebhookDeliveries).mock.calls[1][0].afterId).toBe(49);
     await expect(ctl.listDeliveries(req({ query: { cursor: '!!' } }))).rejects.toMatchObject({ code: 'request.cursor.invalid' });
+  });
+
+  test('GET /api/logs/deliveries: status filter, facets on request, unknown status is a 400', async () => {
+    mocked(dbm.listWebhookDeliveries).mockResolvedValueOnce([[{ id: 9, status: 'failed' }], false]);
+    const res = await ctl.listDeliveries(req({ query: { status: 'unresolved', call_type: 'inbound', facets: '1' } }));
+    expect(res).toMatchObject({ facets: { status: { failed: 2 }, call_type: { inbound: 2 } } });
+    expect(mocked(dbm.listWebhookDeliveries).mock.calls[0][0]).toMatchObject({ status: 'unresolved', callType: 'inbound' });
+    // The facets see the same filters as the list (each facet drops its own in the DB layer).
+    expect(mocked(dbm.webhookDeliveryFacets).mock.calls[0][0]).toMatchObject({ status: 'unresolved', callType: 'inbound' });
+    await expect(ctl.listDeliveries(req({ query: { status: 'sent' } }))).rejects.toMatchObject({
+      status: 400,
+      message: "Unknown status 'sent'; allowed: abandoned, delivered, failed, pending, unresolved",
+    });
+  });
+
+  test('retry: requeues the same delivery and sweeps at once; 404 when it cannot be requeued', async () => {
+    mocked(dbm.requeueWebhookDelivery).mockResolvedValueOnce(false);
+    await expect(ctl.retryDelivery(req({ params: { delivery_id: '7' } }))).rejects.toMatchObject({ status: 404 });
+    expect(sweepCrmDeliveries).not.toHaveBeenCalled();
+    mocked(dbm.requeueWebhookDelivery).mockResolvedValueOnce(true);
+    mocked(dbm.getWebhookDelivery).mockResolvedValueOnce({ id: 7, status: 'delivered' });
+    expect(await ctl.retryDelivery(req({ params: { delivery_id: '7' } }))).toEqual({ ok: true, delivery: { id: 7, status: 'delivered' } });
+    expect(dbm.requeueWebhookDelivery).toHaveBeenLastCalledWith(7);
+    expect(sweepCrmDeliveries).toHaveBeenCalledTimes(1);
   });
 
   test('GET /api/logs/deliveries/:id is bare, 404 when missing', async () => {
@@ -244,6 +281,8 @@ describe('logs routes', () => {
     expect(sendCrmDataAsync).toHaveBeenCalledWith(runtimeMock.crmConnector, { caller: '100' }, {
       method: 'PUT',
       endpointPath: '/sync',
+      syncCfg: { method: 'PUT', endpoint: '/sync' },
+      trigger: 'resend',
       meta: {
         call_id: 'L1',
         uniqueid: 'U1',

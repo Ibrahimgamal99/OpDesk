@@ -35,6 +35,7 @@ import {
   renderLookupUrl,
   renderNameTemplate,
 } from './crm';
+import { startCrmDeliveryWorker, stopCrmDeliveryWorker } from './crm-delivery';
 
 const log = getLogger('integrations.crm_lookup');
 
@@ -278,11 +279,11 @@ export async function reloadResolverContacts(): Promise<void> {
 }
 
 /**
- * Startup: rewrite retired sync-field names, build the CRM connector, and arm the contact
+ * Startup: rewrite retired sync-field names, build the CRM connector, arm the contact
  * resolver with the phonebook (names resolve even with no CRM) and the lookup config
- * (live CRM fetch on a miss). Sets runtime.crmConnector / crmLookupConnector /
- * contactResolver. The AMI monitor is built afterwards with
- * `loadCrmSyncConfig()` and runtime.crmConnector.
+ * (live CRM fetch on a miss), and start the delivery retry worker. Sets
+ * runtime.crmConnector / crmLookupConnector / contactResolver. The AMI monitor is built
+ * afterwards with `loadCrmSyncConfig()` and runtime.crmConnector.
  */
 export async function initCrmRuntime(): Promise<void> {
   await migrateCrmSyncFields();
@@ -291,6 +292,9 @@ export async function initCrmRuntime(): Promise<void> {
   if (!runtime.contactResolver) runtime.contactResolver = new ContactResolver();
   runtime.contactResolver.setConfig(await loadCrmLookupConfig(), runtime.crmConnector);
   runtime.contactResolver.setContacts(await dbm.getContactsForResolver());
+  // Always on: deliveries queued before a restart are due whether or not CRM is on now
+  // (the worker claims nothing while there is no connector).
+  startCrmDeliveryWorker();
 }
 
 /**
@@ -312,8 +316,9 @@ export async function applyCrmRuntime(): Promise<void> {
   log.info('✅ CRM configuration reloaded live (no restart needed)');
 }
 
-/** Shutdown: close the CRM connector's HTTP client. */
+/** Shutdown: stop the delivery worker (pushing parked wrap-up calls) and close the CRM connector's HTTP client. */
 export async function closeCrmRuntime(): Promise<void> {
+  await stopCrmDeliveryWorker();
   if (runtime.crmConnector) {
     await runtime.crmConnector.close();
     log.info('CRM connector closed');

@@ -107,7 +107,11 @@ describe('update', () => {
 
 test('delete: ok, or 404 for an unknown or auto group', async () => {
   mocked(dbm.deleteGroup).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-  expect(await ctl.apiDeleteGroup(req({ params: { group_id: '5' } }))).toEqual({ ok: true });
+  mocked(dbm.getGroup).mockResolvedValueOnce({ id: 5, name: 'Sales' });
+  const r = req({ params: { group_id: '5' } });
+  expect(await ctl.apiDeleteGroup(r)).toEqual({ ok: true });
+  // What the delete took away, for the audit row.
+  expect((r as { auditDetail?: unknown }).auditDetail).toEqual({ deleted: { id: 5, name: 'Sales' } });
   await expect(ctl.apiDeleteGroup(req({ params: { group_id: '5' } }))).rejects.toMatchObject({
     status: 404,
     message: 'Group not found or cannot delete',

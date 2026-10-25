@@ -7,9 +7,9 @@
  *
  * Python: backend/crm.py, plus the settings-backed helpers server.py kept next to it
  * (init_crm_connector, load_crm_sync_config, load_crm_lookup_config,
- * _migrate_crm_sync_fields) and the push/record half of ami.py
- * (_send_crm_data_async, _record_crm_delivery), so the AMI monitor and the
- * delivery-resend route share one implementation.
+ * _migrate_crm_sync_fields). The delivery queue and retry worker the AMI monitor and the
+ * delivery-resend route share are in integrations/crm-delivery; the retry POLICY they apply
+ * (isRetryableFailure, retryDelayFor) is here.
  *
  * The HTTP transport is `fetch`; tests swap it with setCrmFetch() so nothing here ever
  * reaches a real CRM from a test run.
@@ -18,7 +18,7 @@
 import * as dns from 'dns';
 import { env } from '../core/config';
 import { getLogger } from '../core/logger';
-import { AsyncLock, isoformat, monotonic, nowIso, pyInt, pyJsonDumps, truthy } from '../core/py';
+import { AsyncLock, isoformat, nowIso, pyInt, truthy } from '../core/py';
 import * as dbm from '../db/db-manager';
 import { CALL_OUTCOMES, RETIRED_SPELLINGS } from '../services/call-outcomes';
 
@@ -64,6 +64,8 @@ export interface CrmResult {
   status_code: number | null;
   data: unknown;
   error: string | null;
+  /** Seconds a non-2xx answer's Retry-After header asked for (see parseRetryAfter). */
+  retry_after?: number | null;
 }
 
 /** test_connection result. */
@@ -83,7 +85,11 @@ export interface CrmConnectionTest {
 export interface HttpResponse {
   status_code: number;
   text: string;
+  headers?: Headers;
 }
+
+/** Redirect hops a followRedirects request takes before giving up (each one is vetted). */
+export const MAX_REDIRECTS = 5;
 
 /** A fetch-compatible function. `init` may carry an undici `dispatcher`. */
 export type FetchImpl = (url: string, init: RequestInit) => Promise<Response>;
@@ -162,13 +168,47 @@ export class AsyncHttpClient {
     }
   }
 
-  /** One request, no raise_for_status. Throws RequestError when no response arrived. */
+  /**
+   * One request, no raise_for_status. Throws RequestError when no response arrived.
+   *
+   * Redirects are never left to fetch: with `followRedirects` each Location is resolved,
+   * vetted by `vetHop` (the SSRF guard) and only then requested, at most MAX_REDIRECTS
+   * times; without it a 3xx comes back as the answer. A CRM that redirects into the
+   * metadata service or loopback is refused at the hop, not after the request was made.
+   */
   // NOTE(port): httpx applied the timeout to each of connect/read/write; here it bounds the
   // whole request.
   async request(
     method: string,
     url: string,
-    opts: { headers?: Record<string, string>; body?: string; followRedirects?: boolean } = {},
+    opts: {
+      headers?: Record<string, string>;
+      body?: string;
+      followRedirects?: boolean;
+      vetHop?: (url: string) => Promise<void>;
+    } = {},
+  ): Promise<HttpResponse> {
+    let target = url;
+    for (let hop = 0; ; hop++) {
+      const res = await this.requestOnce(method, target, opts);
+      const location = res.headers?.get('location');
+      if (!opts.followRedirects || res.status_code < 300 || res.status_code >= 400 || !location) return res;
+      if (hop >= MAX_REDIRECTS) throw new RequestError('TooManyRedirects', `Exceeded maximum allowed redirects (${MAX_REDIRECTS}).`);
+      let next: string;
+      try {
+        next = new URL(location, target).toString();
+      } catch {
+        return res;
+      }
+      if (opts.vetHop) await opts.vetHop(next);
+      target = next;
+    }
+  }
+
+  private async requestOnce(
+    method: string,
+    url: string,
+    opts: { headers?: Record<string, string>; body?: string },
   ): Promise<HttpResponse> {
     let scheme = '';
     try {
@@ -183,7 +223,7 @@ export class AsyncHttpClient {
       method,
       headers: opts.headers,
       body: opts.body,
-      redirect: opts.followRedirects ? 'follow' : 'manual',
+      redirect: 'manual',
       signal: AbortSignal.timeout(Math.max(1, this.timeout) * 1000),
     };
     let doFetch: FetchImpl = (u, i) => fetch(u, i);
@@ -195,7 +235,7 @@ export class AsyncHttpClient {
     try {
       const res = await doFetch(url, init);
       const text = method === 'HEAD' ? '' : await res.text();
-      return { status_code: res.status, text };
+      return { status_code: res.status, text, headers: res.headers };
     } catch (e) {
       throw toRequestError(e);
     }
@@ -250,6 +290,8 @@ export interface CRMConnectorOptions {
   timeout?: number;
   verifySsl?: boolean;
   customHeaders?: Record<string, string> | null;
+  /** SSRF posture for the send-time address check: also refuse RFC-1918 targets. */
+  blockPrivate?: boolean;
 }
 
 /**
@@ -265,6 +307,7 @@ export class CRMConnector {
   timeout: number;
   verifySsl: boolean;
   customHeaders: Record<string, string>;
+  blockPrivate: boolean;
 
   apiKey: string | null;
   apiKeyHeader: string;
@@ -290,6 +333,7 @@ export class CRMConnector {
     this.timeout = opts.timeout ?? 30;
     this.verifySsl = opts.verifySsl ?? true;
     this.customHeaders = opts.customHeaders || {};
+    this.blockPrivate = opts.blockPrivate ?? false;
 
     this.apiKey = opts.apiKey ?? null;
     this.apiKeyHeader = opts.apiKeyHeader ?? 'X-API-Key';
@@ -331,6 +375,35 @@ export class CRMConnector {
     }
   }
 
+  /**
+   * `{server_url}{path}`, refused unless it is still a URL on the CRM server: a path that
+   * moves the authority ('@169.254.169.254/x' turns the server URL into userinfo) or swaps
+   * the scheme is a CrmValueError, whatever validated the path on the way in.
+   */
+  targetUrl(path: string): string {
+    const url = `${this.serverUrl}${path}`;
+    let base: URL;
+    let target: URL;
+    try {
+      base = new URL(this.serverUrl);
+      target = new URL(url);
+    } catch {
+      throw new CrmValueError('CRM URL is not a valid URL');
+    }
+    if (target.origin !== base.origin || target.username !== base.username || target.password !== base.password) {
+      throw new CrmValueError('CRM endpoint path must stay on the CRM server');
+    }
+    return url;
+  }
+
+  /**
+   * The SSRF check again, at send time: what the host resolves to NOW, not what it resolved
+   * to when the settings were saved (a DNS answer can change in between).
+   */
+  async vetUrl(url: string): Promise<void> {
+    await validateCrmUrl(url, { blockPrivate: this.blockPrivate });
+  }
+
   /** Get or create the HTTP client, recreating it if closed. */
   private getClient(): AsyncHttpClient {
     if (this.client === null || this.client.isClosed) {
@@ -351,6 +424,7 @@ export class CRMConnector {
         return this.oauth2Token;
       }
       if (!this.oauth2TokenUrl) throw new CrmValueError('OAuth2 token URL is required to fetch token');
+      await this.vetUrl(this.oauth2TokenUrl);
 
       const form = new URLSearchParams();
       form.set('grant_type', 'client_credentials');
@@ -413,6 +487,7 @@ export class CRMConnector {
 
   /** A response as {success, status_code, data, error}; HTTP errors become success=false. */
   private async exchange(method: string, url: string, headers: Record<string, string>, body?: string): Promise<CrmResult> {
+    await this.vetUrl(url);
     try {
       const response = await this.getClient().request(method, url, { headers, body });
       raiseForStatus(response);
@@ -424,7 +499,13 @@ export class CRMConnector {
         // Sanitize error logging - don't expose response body which may contain secrets
         log.error('HTTP error from CRM: %s', e.response.status_code);
         if (log.isEnabledFor('DEBUG')) log.debug('Response body (truncated): %s...', e.response.text.slice(0, 200));
-        return { success: false, status_code: e.response.status_code, error: e.response.text, data: null };
+        return {
+          success: false,
+          status_code: e.response.status_code,
+          error: e.response.text,
+          data: null,
+          retry_after: parseRetryAfter(e.response.headers?.get('retry-after')),
+        };
       }
       if (e instanceof RequestError) {
         log.error('Request error talking to CRM: %s', e.name);
@@ -440,19 +521,27 @@ export class CRMConnector {
    *
    * `requireFields` (default true) rejects a body without caller/destination; the call-data
    * sync path passes false because the operator chooses exactly which fields to push.
+   * `extraHeaders` are per-request additions (the delivery queue's idempotency key), applied
+   * last; never credentials, those come from the config.
    *
-   * @throws CrmValueError when required fields are missing or no OAuth2 token can be obtained.
+   * @throws CrmValueError when required fields are missing, the target is refused by the
+   *   SSRF guard, or no OAuth2 token can be obtained.
    */
   async sendCallData(
     callData: Json,
-    opts: { endpointPath?: string | null; method?: string; requireFields?: boolean } = {},
+    opts: {
+      endpointPath?: string | null;
+      method?: string;
+      requireFields?: boolean;
+      extraHeaders?: Record<string, string> | null;
+    } = {},
   ): Promise<CrmResult> {
     if (opts.requireFields ?? true) {
       const missing = ['caller', 'destination'].filter((f) => !hasOwn(callData, f) || !truthy(callData[f]));
       if (missing.length) throw new CrmValueError(`Missing required fields: ${pyReprList(missing)}`);
     }
-    const url = `${this.serverUrl}${opts.endpointPath || this.endpointPath}`;
-    const headers = await this.authorizedHeaders();
+    const url = this.targetUrl(opts.endpointPath || this.endpointPath);
+    const headers = { ...(await this.authorizedHeaders()), ...(opts.extraHeaders ?? {}) };
     const result = await this.exchange(opts.method ?? 'POST', url, headers, JSON.stringify(callData));
     if (result.success) log.info('Successfully sent call data to CRM: %s', redactUrl(url));
     return result;
@@ -463,7 +552,7 @@ export class CRMConnector {
    * the path must arrive fully rendered ([Number] substituted and URL-encoded).
    */
   async getJson(endpointPath: string): Promise<CrmResult> {
-    const url = `${this.serverUrl}${endpointPath}`;
+    const url = this.targetUrl(endpointPath);
     const headers = await this.authorizedHeaders();
     delete headers['Content-Type'];
     return this.exchange('GET', url, headers);
@@ -471,14 +560,25 @@ export class CRMConnector {
 
   /**
    * Test the connection: a HEAD request first (lighter, no body); if that cannot be sent
-   * at all, a POST of a small test body.
+   * at all, a POST of a small test body. Redirects are followed for the HEAD, each hop
+   * through the SSRF guard. A target the guard refuses is reported, not attempted.
    */
   async testConnection(endpointPath: string | null = null): Promise<CrmConnectionTest> {
     const testEndpoint = endpointPath || this.endpointPath;
+    let url: string;
     try {
-      const url = `${this.serverUrl}${testEndpoint}`;
+      url = this.targetUrl(testEndpoint);
+      await this.vetUrl(url);
+    } catch (e) {
+      return { success: false, status_code: null, message: `Connection test failed: ${e instanceof Error ? e.message : String(e)}`, method: 'HEAD' };
+    }
+    try {
       const headers = await this.authorizedHeaders();
-      const response = await this.getClient().request('HEAD', url, { headers, followRedirects: true });
+      const response = await this.getClient().request('HEAD', url, {
+        headers,
+        followRedirects: true,
+        vetHop: (next) => this.vetUrl(next),
+      });
       const ok = response.status_code < 400;
       return {
         success: ok,
@@ -487,14 +587,18 @@ export class CRMConnector {
         method: 'HEAD',
       };
     } catch (e) {
+      // A redirect the SSRF guard refused is the answer, not a reason to try a POST.
+      if (e instanceof CrmValueError) {
+        return { success: false, status_code: null, message: `Connection test failed: ${e.message}`, method: 'HEAD' };
+      }
       log.debug('HEAD request error: %s, trying POST with test data', (e as Error)?.name ?? e);
     }
 
     const testData = { test: true, timestamp: nowIso(), message: 'Connection test from OpDesk CRM Connector' };
     try {
-      // PY-quirk: require_fields stays on, so this raises "Missing required fields" and the
-      // test reports that message (the HEAD path is the one that matters in practice).
-      const result = await this.sendCallData(testData, { endpointPath });
+      // The test body carries no caller/destination, so the required-field check is off: the
+      // POST is really sent and a transport failure reports its own error.
+      const result = await this.sendCallData(testData, { endpointPath, requireFields: false });
       return {
         success: result.success,
         status_code: result.status_code,
@@ -616,6 +720,7 @@ export function createCrmConnector(config: Json): CRMConnector {
     timeout: timeout === null ? 30 : timeout,
     verifySsl: config.verify_ssl === undefined ? true : Boolean(config.verify_ssl),
     customHeaders: (config.custom_headers as Record<string, string> | null | undefined) ?? null,
+    blockPrivate: truthy(config.block_private),
   };
   if (authType === AuthType.API_KEY) {
     opts.apiKey = str(config.api_key);
@@ -1037,6 +1142,115 @@ export function redactUrl(raw: string): string {
   }
 }
 
+/**
+ * Vet a path that is appended to the CRM server URL (endpoint_path, sync_endpoint,
+ * lookup_url). Only server_url goes through validateCrmUrl, so a path must not be able to
+ * move the request somewhere else: it has to start with '/' and carry no '@' (which turns
+ * the server URL into userinfo -- 'https://crm.example.com' + '@169.254.169.254/x' is a
+ * request to the metadata service), no '://', no backslash and no whitespace. An empty path
+ * is allowed (the caller's default applies).
+ *
+ * @throws CrmValueError naming `field`.
+ */
+export function validateCrmPath(raw: string | null | undefined, field: string): void {
+  const path = (raw || '').trim();
+  if (!path) return;
+  if (!path.startsWith('/') || path.includes('@') || path.includes('://') || path.includes('\\') || /\s/.test(path)) {
+    throw new CrmValueError(`${field} must be a path starting with '/' (no '@', '://' or spaces); it is appended to the CRM server URL`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Delivery retry policy
+//
+// Which failed pushes are worth sending again, and how long to wait. Pure functions: the
+// queue (db webhook_deliveries) and the worker (crm-delivery) both need this judgement and
+// neither should own it.
+//
+// The split that matters is retryable vs permanent. A 5xx or a refused connection is the
+// receiver's problem and will likely be gone in a minute; a 400 or 422 means the receiver
+// read the payload and rejected it, so re-sending the same bytes only produces the same
+// rejection. 401/403 are permanent on purpose -- a wrong credential is fixed in Settings,
+// and the operator resends from the deliveries log once it is.
+// ---------------------------------------------------------------------------
+
+/** 4xx codes that ARE worth another attempt: timeout, locked, too-early, rate limited. */
+export const RETRYABLE_4XX: ReadonlySet<number> = new Set([408, 423, 425, 429]);
+/** 30 s, 2 min, 10 min, 30 min; the last value repeats. */
+export const DEFAULT_RETRY_DELAYS: readonly number[] = [30, 120, 600, 1800];
+export const DEFAULT_RETRY_MAX_ATTEMPTS = 5;
+/** A queue, not an infinite loop. */
+export const MAX_RETRY_ATTEMPTS_CEILING = 20;
+/** 24 h between attempts is already a manual problem. */
+export const MAX_RETRY_DELAY = 86400;
+
+/**
+ * Whether a failed push should be attempted again. No status code means the request never
+ * got a response (DNS, refused, timeout): always retryable. 5xx and the transient 4xx codes
+ * are retryable; every other 4xx is a rejection of this payload.
+ */
+export function isRetryableFailure(statusCode: number | string | null | undefined): boolean {
+  if (statusCode === null || statusCode === undefined) return true;
+  const code = pyInt(statusCode);
+  if (code === null) return true;
+  return code >= 500 || RETRYABLE_4XX.has(code);
+}
+
+/**
+ * A Retry-After header in whole seconds, from either form (delta seconds or an HTTP date).
+ * null when absent or unparseable; clamped to 0..MAX_RETRY_DELAY so a hostile or mistaken
+ * header cannot park a delivery for a month (a past date is "retry now").
+ */
+export function parseRetryAfter(raw: string | null | undefined): number | null {
+  const value = (raw || '').trim();
+  if (!value) return null;
+  if (/^\d+(\.\d+)?$/.test(value)) return Math.max(0, Math.min(Math.trunc(Number(value)), MAX_RETRY_DELAY));
+  // An HTTP date always names its weekday or month; a bare number Date.parse would read as a year.
+  if (!/[A-Za-z]/.test(value)) return null;
+  const when = Date.parse(value);
+  if (Number.isNaN(when)) return null;
+  return Math.max(0, Math.min(Math.trunc((when - Date.now()) / 1000), MAX_RETRY_DELAY));
+}
+
+/**
+ * A stored backoff ladder ("30,120,600" or [30, 120, 600]) as positive second counts.
+ * Anything unusable falls back to DEFAULT_RETRY_DELAYS rather than to an empty ladder,
+ * which would mean "retry immediately, forever".
+ */
+export function parseRetryDelays(raw: string | readonly unknown[] | null | undefined): number[] {
+  const items: unknown[] = raw === null || raw === undefined ? [] : typeof raw === 'string' ? raw.split(',') : [...raw];
+  const out: number[] = [];
+  for (const item of items) {
+    const secs = pyInt(String(item ?? '').trim());
+    if (secs !== null && secs > 0) out.push(Math.min(secs, MAX_RETRY_DELAY));
+  }
+  return out.length ? out : [...DEFAULT_RETRY_DELAYS];
+}
+
+/**
+ * Seconds to wait before attempt `attempt + 1`, `attempt` attempts already made. The
+ * ladder's last value repeats. A Retry-After wins when it asks for MORE time than the
+ * ladder (the receiver knows its recovery window), never for less, so `Retry-After: 0`
+ * from an overloaded CRM cannot turn the queue into a hot loop.
+ */
+export function retryDelayFor(
+  attempt: number,
+  opts: { delays?: string | readonly unknown[] | null; retryAfter?: number | null } = {},
+): number {
+  const ladder = parseRetryDelays(opts.delays ?? null);
+  const idx = attempt ? Math.max(0, Math.trunc(attempt) - 1) : 0;
+  const base = idx < ladder.length ? ladder[idx] : ladder[ladder.length - 1];
+  const retryAfter = opts.retryAfter ?? null;
+  if (retryAfter !== null && retryAfter > base) return Math.min(retryAfter, MAX_RETRY_DELAY);
+  return base;
+}
+
+/** The push triggers: right at hangup, or once the answering agent's wrap-up is over. */
+export const CRM_SYNC_TRIGGERS: readonly string[] = ['hangup', 'wrapup'];
+export const DEFAULT_WRAPUP_TIMEOUT = 600;
+export const MIN_WRAPUP_TIMEOUT = 5;
+export const MAX_WRAPUP_TIMEOUT = 86400;
+
 // ---------------------------------------------------------------------------
 // Sync configuration + payload assembly
 // ---------------------------------------------------------------------------
@@ -1059,6 +1273,20 @@ export class CRMSyncConfig {
   statusMap: Record<string, string> = {};
   /** {defaultKey: newKey} */
   keyMap: Record<string, string> = {};
+  /**
+   * When the push fires: "hangup" (at once, from live call state) or "wrapup" (once the
+   * agent who took the call has finished wrap-up, or after wrapupTimeout seconds,
+   * whichever comes first; an unanswered call has no wrap-up and goes at once).
+   */
+  trigger = 'hangup';
+  wrapupTimeout = DEFAULT_WRAPUP_TIMEOUT;
+  /**
+   * Delivery retry policy. retryEnabled=false still records the delivery (so a failure is
+   * visible and can be resent by hand); it only stops the worker from re-sending on its own.
+   */
+  retryEnabled = true;
+  retryMaxAttempts = DEFAULT_RETRY_MAX_ATTEMPTS;
+  retryDelays: number[] = [...DEFAULT_RETRY_DELAYS];
 
   constructor(init: Partial<CRMSyncConfig> = {}) {
     Object.assign(this, init);
@@ -1328,24 +1556,46 @@ async function settingOrEnv(key: string, fallback = ''): Promise<string> {
 
 const isOn = (v: string | null | undefined) => ['true', '1', 'yes'].includes((v || '').toLowerCase());
 
+// Why the last initCrmConnector() built nothing although CRM_ENABLED is on (missing URL or
+// credential), or null. The push path reads it so an enabled-but-broken CRM records a failed
+// delivery per call instead of looking like "no calls happened".
+let unavailableReason: string | null = null;
+
+/** The reason CRM is enabled but has no connector, or null (disabled, or working). */
+export function crmUnavailableReason(): string | null {
+  return unavailableReason;
+}
+
 /**
  * Build the CRM connector from settings (DB, falling back to env). null when CRM is
- * disabled or its configuration is incomplete — the reason is logged.
+ * disabled or its configuration is incomplete — the reason is logged, and for an enabled
+ * CRM kept for crmUnavailableReason().
  */
 export async function initCrmConnector(): Promise<CRMConnector | null> {
+  unavailableReason = null;
   if (!isOn(await settingOrEnv('CRM_ENABLED'))) {
     log.info('CRM is disabled (set CRM_ENABLED=true to enable)');
     return null;
   }
+  const connector = await buildEnabledCrmConnector();
+  if (connector === null && unavailableReason === null) unavailableReason = 'CRM connector not configured';
+  return connector;
+}
+
+async function buildEnabledCrmConnector(): Promise<CRMConnector | null> {
+  const unavailable = (reason: string): null => {
+    unavailableReason = reason;
+    return null;
+  };
   const serverUrl = (await settingOrEnv('CRM_SERVER_URL')).trim();
   const authType = (await settingOrEnv('CRM_AUTH_TYPE')).trim().toLowerCase();
   if (!serverUrl) {
     log.warning('CRM_ENABLED is true but CRM_SERVER_URL is not set - CRM disabled');
-    return null;
+    return unavailable('CRM server URL is not set');
   }
   if (!authType) {
     log.warning('CRM_ENABLED is true but CRM_AUTH_TYPE is not set - CRM disabled');
-    return null;
+    return unavailable('CRM auth type is not set');
   }
   const timeout = pyInt(await settingOrEnv('CRM_TIMEOUT', '30'));
   const config: Json = {
@@ -1354,12 +1604,13 @@ export async function initCrmConnector(): Promise<CRMConnector | null> {
     endpoint_path: await settingOrEnv('CRM_ENDPOINT_PATH', '/api/calls'),
     timeout: timeout === null ? 30 : timeout,
     verify_ssl: isOn(await settingOrEnv('CRM_VERIFY_SSL', 'true')),
+    block_private: isOn(await settingOrEnv('CRM_BLOCK_PRIVATE', 'false')),
   };
   if (authType === 'api_key') {
     const apiKey = (await settingOrEnv('CRM_API_KEY')).trim();
     if (!apiKey) {
       log.warning("CRM_AUTH_TYPE is 'api_key' but CRM_API_KEY is not set - CRM disabled");
-      return null;
+      return unavailable('CRM API key is not set');
     }
     config.api_key = apiKey;
     const header = (await settingOrEnv('CRM_API_KEY_HEADER')).trim();
@@ -1369,7 +1620,7 @@ export async function initCrmConnector(): Promise<CRMConnector | null> {
     const password = (await settingOrEnv('CRM_PASSWORD')).trim();
     if (!username || !password) {
       log.warning("CRM_AUTH_TYPE is 'basic_auth' but CRM_USERNAME or CRM_PASSWORD is not set - CRM disabled");
-      return null;
+      return unavailable('CRM username or password is not set');
     }
     config.username = username;
     config.password = password;
@@ -1377,7 +1628,7 @@ export async function initCrmConnector(): Promise<CRMConnector | null> {
     const token = (await settingOrEnv('CRM_BEARER_TOKEN')).trim();
     if (!token) {
       log.warning("CRM_AUTH_TYPE is 'bearer_token' but CRM_BEARER_TOKEN is not set - CRM disabled");
-      return null;
+      return unavailable('CRM bearer token is not set');
     }
     config.bearer_token = token;
   } else if (authType === 'oauth2') {
@@ -1386,7 +1637,7 @@ export async function initCrmConnector(): Promise<CRMConnector | null> {
     const tokenUrl = (await settingOrEnv('CRM_OAUTH2_TOKEN_URL')).trim();
     if (!clientId || !clientSecret) {
       log.warning("CRM_AUTH_TYPE is 'oauth2' but CRM_OAUTH2_CLIENT_ID or CRM_OAUTH2_CLIENT_SECRET is not set - CRM disabled");
-      return null;
+      return unavailable('CRM OAuth2 client id or secret is not set');
     }
     config.oauth2_client_id = clientId;
     config.oauth2_client_secret = clientSecret;
@@ -1395,7 +1646,7 @@ export async function initCrmConnector(): Promise<CRMConnector | null> {
     if (scope) config.oauth2_scope = scope;
   } else {
     log.warning('Invalid CRM_AUTH_TYPE: %s. Must be one of: api_key, basic_auth, bearer_token, oauth2', authType);
-    return null;
+    return unavailable(`Invalid CRM auth type: ${authType}`);
   }
   try {
     const connector = createCrmConnector(config);
@@ -1403,7 +1654,7 @@ export async function initCrmConnector(): Promise<CRMConnector | null> {
     return connector;
   } catch (e) {
     log.error('Failed to initialize CRM connector: %s', e instanceof Error ? e.message : e);
-    return null;
+    return unavailable(e instanceof Error ? e.message : String(e));
   }
 }
 
@@ -1430,6 +1681,14 @@ export async function loadCrmSyncConfig(): Promise<CRMSyncConfig> {
   let durationFormat = ((await settingOrEnv('CRM_SYNC_DURATION_FORMAT', 'hms')) || 'hms').trim().toLowerCase();
   if (durationFormat !== 'hms' && durationFormat !== 'seconds') durationFormat = 'hms';
 
+  let trigger = ((await settingOrEnv('CRM_SYNC_TRIGGER', 'hangup')) || 'hangup').trim().toLowerCase();
+  if (!CRM_SYNC_TRIGGERS.includes(trigger)) trigger = 'hangup';
+  const wrapupTimeout = clampWrapupTimeout(await settingOrEnv('CRM_SYNC_WRAPUP_TIMEOUT', String(DEFAULT_WRAPUP_TIMEOUT)));
+
+  const retryEnabled = await flag('CRM_SYNC_RETRY_ENABLED');
+  // Retries off means exactly one attempt, whatever the stored number says.
+  const retryMaxAttempts = retryEnabled ? clampRetryMaxAttempts(await settingOrEnv('CRM_SYNC_RETRY_MAX_ATTEMPTS')) : 1;
+
   return new CRMSyncConfig({
     enabled: await flag('CRM_SYNC_ENABLED'),
     endpoint,
@@ -1442,7 +1701,24 @@ export async function loadCrmSyncConfig(): Promise<CRMSyncConfig> {
     durationFormat,
     statusMap: modernizeStatusMap(parseStatusMap(await dbm.getSetting('CRM_SYNC_STATUS_MAP', ''))),
     keyMap: parseKeyMap(await dbm.getSetting('CRM_SYNC_KEY_MAP', '')),
+    trigger,
+    wrapupTimeout,
+    retryEnabled,
+    retryMaxAttempts,
+    retryDelays: parseRetryDelays(await settingOrEnv('CRM_SYNC_RETRY_DELAYS')),
   });
+}
+
+/** A wrap-up fallback window in seconds, clamped to MIN..MAX_WRAPUP_TIMEOUT; the default on bad input. */
+export function clampWrapupTimeout(raw: unknown): number {
+  const n = pyInt(truthy(raw) ? raw : DEFAULT_WRAPUP_TIMEOUT);
+  return Math.max(MIN_WRAPUP_TIMEOUT, Math.min(n === null ? DEFAULT_WRAPUP_TIMEOUT : n, MAX_WRAPUP_TIMEOUT));
+}
+
+/** An attempt budget, clamped to 1..MAX_RETRY_ATTEMPTS_CEILING; the default on bad input. */
+export function clampRetryMaxAttempts(raw: unknown): number {
+  const n = pyInt(truthy(raw) ? raw : DEFAULT_RETRY_MAX_ATTEMPTS);
+  return Math.max(1, Math.min(n === null ? DEFAULT_RETRY_MAX_ATTEMPTS : n, MAX_RETRY_ATTEMPTS_CEILING));
 }
 
 /** The contact-lookup configuration from settings (rebuilt on every config save). */
@@ -1511,6 +1787,11 @@ export const CRM_DEFAULT_SETTINGS: Readonly<Record<string, string>> = {
   CRM_SYNC_DURATION_FORMAT: 'hms', // hms | seconds
   CRM_SYNC_STATUS_MAP: '{}', // {FROM: TO} call-status remap
   CRM_SYNC_KEY_MAP: '{}', // {defaultKey: customKey} rename
+  CRM_SYNC_TRIGGER: 'hangup', // hangup | wrapup
+  CRM_SYNC_WRAPUP_TIMEOUT: String(DEFAULT_WRAPUP_TIMEOUT), // seconds before a wrap-up push goes anyway
+  CRM_SYNC_RETRY_ENABLED: 'true',
+  CRM_SYNC_RETRY_MAX_ATTEMPTS: String(DEFAULT_RETRY_MAX_ATTEMPTS),
+  CRM_SYNC_RETRY_DELAYS: DEFAULT_RETRY_DELAYS.join(','), // backoff ladder, seconds; the last repeats
   CRM_LOOKUP_ENABLED: 'false',
   CRM_LOOKUP_URL: '',
   CRM_LOOKUP_NAME_TEMPLATE: '',
@@ -1527,7 +1808,7 @@ export function crmCallOutcomes(): string[] {
 }
 
 // ===========================================================================
-// Push + delivery log (ami.py _send_crm_data_async / _record_crm_delivery)
+// Push + delivery log: the sending itself lives in integrations/crm-delivery.
 // ===========================================================================
 
 /**
@@ -1545,102 +1826,6 @@ export interface CrmDeliveryMeta {
   attempt?: number | null;
   parent_id?: number | null;
   resent_by?: number | null;
-}
-
-/**
- * Send one call-data push and record the attempt in webhook_deliveries. Never throws: a
- * failure (including "connector not configured") is logged AND recorded, so a
- * misconfigured connector doesn't look like "no calls happened" in the deliveries view.
- *
- * The AMI monitor calls it fire-and-forget at hangup (after buildCrmPayload); the
- * deliveries resend route calls it with the stored body and the resend lineage in `meta`.
- */
-export async function sendCrmDataAsync(
-  connector: CRMConnector | null,
-  callData: Json,
-  opts: { method?: string; endpointPath?: string | null; meta?: CrmDeliveryMeta } = {},
-): Promise<CrmResult> {
-  const meta = opts.meta ?? {};
-  const method = opts.method || 'POST';
-  const caller = meta.caller || (callData.caller as string) || 'unknown';
-  const destination = meta.destination || (callData.destination as string) || 'unknown';
-  const started = monotonic();
-  let result: CrmResult;
-  try {
-    if (connector) {
-      log.info('📤 Sending call data to CRM: %s -> %s', caller, destination);
-      // requireFields=false: the operator chose the field set; the push must not throw if
-      // caller/destination were de-selected.
-      result = await connector.sendCallData(callData, { endpointPath: opts.endpointPath, method, requireFields: false });
-      if (result.success) {
-        log.info('✅ Successfully sent call data to CRM: %s -> %s', caller, destination);
-      } else {
-        log.error(
-          '❌ Failed to send call data to CRM: %s -> %s (HTTP %s): %s',
-          caller,
-          destination,
-          result.status_code ?? 'N/A',
-          result.error ?? 'Unknown error',
-        );
-      }
-    } else {
-      log.warning('CRM connector not available when trying to send call data: %s -> %s', caller, destination);
-      result = { success: false, status_code: null, data: null, error: 'CRM connector not configured' };
-    }
-  } catch (e) {
-    const name = e instanceof Error ? e.name : 'Exception';
-    const msg = e instanceof Error ? e.message : String(e);
-    log.error('❌ Error sending call data to CRM: %s', msg, e);
-    result = { success: false, status_code: null, data: null, error: `${name}: ${msg}` };
-  }
-  await recordCrmDelivery(connector, callData, result, {
-    method,
-    endpointPath: opts.endpointPath ?? null,
-    meta,
-    durationMs: Math.trunc((monotonic() - started) * 1000),
-  });
-  return result;
-}
-
-/**
- * Write one webhook_deliveries row. Never throws — this is observability riding on a
- * fire-and-forget hangup task, so a logging failure must not surface as a lost push.
- */
-export async function recordCrmDelivery(
-  connector: CRMConnector | null,
-  callData: Json,
-  result: CrmResult,
-  opts: { method: string; endpointPath: string | null; meta: CrmDeliveryMeta; durationMs: number },
-): Promise<void> {
-  try {
-    const base = connector ? connector.serverUrl : '';
-    const path = opts.endpointPath || (connector ? connector.endpointPath : '');
-    const url = `${base}${path}`;
-    const meta = opts.meta;
-    await dbm.insertWebhookDelivery({
-      callId: meta.call_id || null,
-      uniqueid: meta.uniqueid || null,
-      caller: meta.caller || null,
-      destination: meta.destination || null,
-      callType: meta.call_type || null,
-      callStatus: meta.call_status || null,
-      method: opts.method,
-      // redactUrl strips the query string and any embedded credentials.
-      url: url ? redactUrl(url) : url,
-      // json.dumps(call_data, default=str): the bytes the resend route replays.
-      requestBody: pyJsonDumps(callData, { defaultStr: true }),
-      statusCode: result.status_code,
-      success: Boolean(result.success),
-      responseBody: result.data !== null && result.data !== undefined ? pyJsonDumps(result.data, { defaultStr: true }) : null,
-      error: result.error,
-      durationMs: opts.durationMs,
-      attempt: pyInt(meta.attempt || 1) || 1,
-      parentId: meta.parent_id ?? null,
-      resentBy: meta.resent_by ?? null,
-    });
-  } catch (e) {
-    log.debug('webhook delivery log write failed: %s', e);
-  }
 }
 
 /** isoformat() of a DATETIME the DB layer may hand back as a Date. */
