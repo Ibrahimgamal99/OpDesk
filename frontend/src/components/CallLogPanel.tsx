@@ -5,7 +5,7 @@ import {
   Loader2, BarChart3, Route,
   PhoneIncoming, PhoneOutgoing, ListOrdered, PhoneCall, Share2, PhoneOff, PhoneMissed,
   Activity, History, ArrowLeftRight, ArrowUpRight, ArrowDownLeft, Gauge, RefreshCw,
-  Ear, Mic, MicOff, Users, Music, Clock,
+  Ear, Mic, MicOff, Users, Music, Clock, Copy, Check, Lock, ListTree, FileDown,
   Star, CheckCircle2, AlertTriangle, XCircle, type LucideIcon,
 } from 'lucide-react';
 import {
@@ -13,14 +13,17 @@ import {
   Badge, Loading, type Column, type DropdownOption,
 } from './ui';
 import type { CallLogRecord, QoSData, CallJourneyEvent } from '../types';
-import { getAuthHeaders, fetchWithAuth } from '../auth';
+import { fetchWithAuth, RecordingFetchError } from '../auth';
+import { downloadObjectUrl, useRecordingBlob } from '../hooks/useRecordingBlob';
+import { downloadWithAuth } from '../lib/download';
+import { messageOf } from '../lib/api';
 import { PageRange } from './PageRange';
 import type { DateRange } from './analyticsUtils';
 import { fmtTimer } from '../lib/format';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
 import { StatCard, StatRow } from './FigureCards';
 import { CallStatusBadge } from './CallStatusBadge';
-import { CALL_STATUS_ORDER, callStatusColor, callStatusLabel, canonicalCallStatus } from './callStatus';
+import { callStatusColor, callStatusLabel, callStatusRank } from './callStatus';
 import '../styles/work.css';
 
 // ---------------------------------------------------------------------------
@@ -30,8 +33,29 @@ import '../styles/work.css';
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
 
 /** A call's length, in the one clock format live calls use (`mm:ss`, `hh:mm:ss`). */
-function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number): string {
   return fmtTimer(seconds);
+}
+
+/** Journey events carry a naive ISO timestamp; render it in the viewer's locale. */
+function formatEventTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString(undefined, {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+}
+
+/** "Ended by agent 100" / "Ended by the customer" / "Ended by the system", or null. */
+function endedByLabel(
+  t: TFunction,
+  endedBy: 'agent' | 'customer' | 'system' | null | undefined,
+  agent: string | null | undefined,
+): string | null {
+  if (endedBy === 'agent') return t('callLog.journey.endedByAgent', { id: agent ?? '' });
+  if (endedBy === 'customer') return t('callLog.journey.endedByCustomer');
+  if (endedBy === 'system') return t('callLog.journey.endedBySystem');
+  return null;
 }
 
 function formatCallDate(dateStr: string, t: TFunction): { date: string; time: string } {
@@ -184,22 +208,33 @@ function CallDirectionBadge({ call }: { call: Pick<CallLogRecord, 'is_supervisio
 // ---------------------------------------------------------------------------
 // Audio Player Component
 // ---------------------------------------------------------------------------
-interface AudioPlayerProps {
+export interface AudioPlayerProps {
   recordingPath: string | null;
   recordingFile: string | null;
   onVadClick?: () => void;
 }
 
-function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerProps) {
+/**
+ * A recording's player: play/pause, download, voice activity, and a seek bar while it plays.
+ *
+ * The file is fetched on the first play or download, with the Authorization header, and
+ * played from a blob URL (useRecordingBlob): the recordings route takes no token in the
+ * query string, so the token never lands in a URL, an access log or browser history. A row
+ * whose call is outside the viewer's scope (403) shows a lock instead of a player.
+ */
+export function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerProps) {
   const { t } = useTranslation();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [loaded, setLoaded] = useState(false);
-  const [errored, setErrored] = useState(false);
+  const [failure, setFailure] = useState<'missing' | 'forbidden' | null>(null);
+  // True while the recording downloads (first play or download).
+  const [fetching, setFetching] = useState(false);
+  const { load } = useRecordingBlob();
 
-  if (!recordingPath || errored) {
+  if (!recordingPath || failure === 'missing') {
     return (
       <span className="cl-no-recording u-inline-row u-gap-1" title={t('callLog.noRecording')}>
         <Music size={14} aria-hidden />
@@ -207,18 +242,50 @@ function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerPr
       </span>
     );
   }
+  if (failure === 'forbidden') {
+    return (
+      <span className="cl-no-recording u-inline-row u-gap-1" title={t('callLog.recordingForbidden')}>
+        <Lock size={14} aria-hidden />
+        <span className="ui-visually-hidden">{t('callLog.recordingForbidden')}</span>
+      </span>
+    );
+  }
 
-  const token = getAuthHeaders().Authorization?.replace(/^Bearer\s+/i, '') || '';
-  const audioUrl = `/api/recordings/${encodeURIComponent(recordingPath)}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  /** The blob URL for this recording, attached to the <audio> element on first use. */
+  const ensureSource = async (): Promise<string | null> => {
+    setFetching(true);
+    try {
+      const url = await load(recordingPath);
+      const el = audioRef.current;
+      if (el && el.src !== url) el.src = url;
+      return url;
+    } catch (e) {
+      setFailure(e instanceof RecordingFetchError && e.status === 403 ? 'forbidden' : 'missing');
+      return null;
+    } finally {
+      setFetching(false);
+    }
+  };
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const el = audioRef.current;
     if (!el) return;
     if (playing) {
       el.pause();
-    } else {
-      el.play().catch(() => { setErrored(true); });
+      return;
     }
+    if (!(await ensureSource())) return;
+    el.play().catch((err: unknown) => {
+      // The download outlived the click's user activation: the audio is loaded, so the
+      // next press plays at once. Anything else means it cannot be played.
+      if (!(err instanceof DOMException && err.name === 'NotAllowedError')) setFailure('missing');
+    });
+  };
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = await ensureSource();
+    if (url) downloadObjectUrl(url, recordingFile || 'recording');
   };
 
   const handleTimeUpdate = () => {
@@ -228,7 +295,7 @@ function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerPr
     if (audioRef.current) {
       const d = audioRef.current.duration;
       if (!isFinite(d) || isNaN(d) || d <= 0) {
-        setErrored(true);
+        setFailure('missing');
         return;
       }
       setDuration(d);
@@ -238,7 +305,8 @@ function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerPr
   const handleEnded = () => setPlaying(false);
   const handlePlay = () => setPlaying(true);
   const handlePause = () => setPlaying(false);
-  const handleError = () => setErrored(true);
+  // An <audio> with no source yet fires no error; one that fails to decode the blob does.
+  const handleError = () => { if (audioRef.current?.getAttribute('src')) setFailure('missing'); };
 
   const seekTo = (seconds: number) => {
     if (!audioRef.current || !duration) return;
@@ -249,7 +317,9 @@ function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerPr
     if (!duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    seekTo(pct * duration);
+    // The bar fills from the inline start, so in RTL the click distance runs from the right.
+    const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+    seekTo((rtl ? 1 - pct : pct) * duration);
   };
 
   // The scrubber is a slider, so it answers the keys a slider is expected to answer.
@@ -278,7 +348,6 @@ function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerPr
     <div className="cl-rec">
       <audio
         ref={audioRef}
-        src={audioUrl}
         preload="metadata"
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
@@ -292,21 +361,23 @@ function AudioPlayer({ recordingPath, recordingFile, onVadClick }: AudioPlayerPr
           type="button"
           className="btn btn-ghost btn-sm btn-icon"
           onClick={togglePlay}
+          disabled={fetching}
+          aria-busy={fetching}
           title={`${playing ? t('common.pause') : t('callLog.play')}${fileHint}`}
           aria-label={playing ? t('common.pause') : t('callLog.play')}
         >
-          {playing ? <Pause size={14} /> : <Play size={14} />}
+          {fetching ? <Loader2 size={14} className="spinner" /> : playing ? <Pause size={14} /> : <Play size={14} />}
         </button>
-        <a
+        <button
+          type="button"
           className="btn btn-ghost btn-sm btn-icon"
-          href={audioUrl}
-          download={recordingFile || 'recording'}
+          onClick={handleDownload}
+          disabled={fetching}
           title={`${t('callLog.download')}${fileHint}`}
           aria-label={t('callLog.download')}
-          onClick={e => e.stopPropagation()}
         >
           <Download size={14} />
-        </a>
+        </button>
         {recordingFile && onVadClick && (
           <button
             type="button"
@@ -455,22 +526,72 @@ function QoSModal({ qos, call, onClose }: QoSModalProps) {
 const JOURNEY_EVENT_CONFIG: Record<string, { icon: React.ReactNode; color: string }> = {
   INBOUND:     { icon: <PhoneIncoming size={16} />, color: 'var(--journey-inbound)' },
   OUTBOUND:    { icon: <PhoneOutgoing size={16} />, color: 'var(--journey-outbound)' },
+  IVR:         { icon: <ListTree size={16} />,      color: 'var(--journey-queue)' },
   QUEUE_ENTER: { icon: <ListOrdered size={16} />,   color: 'var(--journey-queue)' },
   RING:        { icon: <Phone size={16} />,         color: 'var(--journey-ring)' },
   ANSWER:      { icon: <PhoneCall size={16} />,     color: 'var(--journey-answer)' },
-  NO_ANSWER:   { icon: <PhoneMissed size={16} />,   color: 'var(--journey-no-answer)' },
+  UNANSWERED:  { icon: <PhoneMissed size={16} />,   color: 'var(--journey-no-answer)' },
   TRANSFER:    { icon: <Share2 size={16} />,        color: 'var(--journey-transfer)' },
+  LISTEN:      { icon: <Ear size={16} />,           color: 'var(--journey-supervision)' },
+  WHISPER:     { icon: <Mic size={16} />,           color: 'var(--journey-supervision)' },
+  BARGE:       { icon: <Users size={16} />,         color: 'var(--journey-supervision)' },
   HANGUP:      { icon: <PhoneOff size={16} />,      color: 'var(--journey-hangup)' },
 };
+
+/** Why a journey could not be shown: the call is outside the viewer's scope, or the request failed. */
+export type JourneyError = 'forbidden' | 'failed';
 
 interface CallJourneyModalProps {
   call: CallLogRecord;
   journey: CallJourneyEvent[];
+  error?: JourneyError | null;
   onClose: () => void;
 }
 
-function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
+/**
+ * Open a call's journey: fetch its timeline, then hand back what CallJourneyModal needs.
+ * A failed fetch still opens the modal, saying why (a call outside the viewer's scope
+ * answers 403), rather than leaving the click with no answer.
+ */
+export function useCallJourney<C extends CallLogRecord = CallLogRecord>() {
+  const [journey, setJourney] = useState<{ call: C; journey: CallJourneyEvent[]; error: JourneyError | null } | null>(null);
+  const [loadingLinkedid, setLoadingLinkedid] = useState<string | null>(null);
+  const open = async (call: C) => {
+    const linkedid = call.linkedid;
+    if (!linkedid) return;
+    setLoadingLinkedid(linkedid);
+    try {
+      const res = await fetchWithAuth(`/api/call-log/journey?linkedid=${encodeURIComponent(linkedid)}`);
+      if (!res.ok) {
+        setJourney({ call, journey: [], error: res.status === 403 ? 'forbidden' : 'failed' });
+        return;
+      }
+      const json = await res.json();
+      setJourney({ call, journey: (json.journey || []) as CallJourneyEvent[], error: null });
+    } catch {
+      setJourney({ call, journey: [], error: 'failed' });
+    } finally {
+      setLoadingLinkedid(null);
+    }
+  };
+  return { journey, loadingLinkedid, open, close: () => setJourney(null) };
+}
+
+/** A call's journey: who it reached, in order, and who ended it. */
+export function CallJourneyModal({ call, journey, error = null, onClose }: CallJourneyModalProps) {
   const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+
+  // The Call ID is the call-log row identifier (linkedid): the same value the CRM stores and
+  // that the call-history search matches. One click copies it.
+  const callId = call.linkedid || call.uniqueid || '';
+  const copyCallId = useCallback(() => {
+    if (!callId) return;
+    navigator.clipboard?.writeText(callId).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }, [callId]);
 
   const summary = formatCallDate(call.calldate, t);
   const getEventConfig = (eventType: string) =>
@@ -489,7 +610,7 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
       icon={<Route size={16} />}
       width="md"
       className="cl-journey-modal"
-      headerAside={<span className="cl-journey-step-count">{stepsLabel}</span>}
+      headerAside={error ? undefined : <span className="cl-journey-step-count">{stepsLabel}</span>}
       footer={<button type="button" className="btn" onClick={onClose}>{t('common.close')}</button>}
     >
       <div className="cl-journey-body">
@@ -511,20 +632,43 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
           </div>
           <div className="cl-journey-badges">
             <CallDirectionBadge call={call} />
+            {call.status && <CallStatusBadge status={call.status} />}
             {call.extension && (
               <Badge tone="info">{t('callLog.journey.agent', { id: call.extension })}</Badge>
             )}
           </div>
+          {callId && (
+            <div className="cl-journey-summary-id">
+              <span className="cl-journey-summary-label">{t('callLog.journey.callId')}</span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={copyCallId}
+                title={t('callLog.journey.copyId')}
+                aria-label={t('callLog.journey.copyId')}
+              >
+                <code dir="ltr">{callId}</code>
+                {copied ? <Check size={14} /> : <Copy size={14} />}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="cl-journey-timeline-wrap">
-          {journey.length === 0 ? (
+          {error ? (
+            <EmptyState
+              icon={error === 'forbidden' ? Lock : AlertTriangle}
+              size="sm"
+              title={error === 'forbidden' ? t('callLog.journey.forbidden') : t('callLog.journey.loadFailed')}
+            />
+          ) : journey.length === 0 ? (
             <EmptyState icon={Route} size="sm" title={t('callLog.journey.noData')} />
           ) : (
             <ul className="cl-journey-timeline" role="list">
               {journey.map((e, i) => {
                 const cf = getEventConfig(e.event);
                 const isLast = i === journey.length - 1;
+                const endedBy = endedByLabel(t, e.ended_by, e.ended_by_agent);
                 return (
                   <li
                     key={i}
@@ -536,16 +680,20 @@ function CallJourneyModal({ call, journey, onClose }: CallJourneyModalProps) {
                       {!isLast && <span className="cl-journey-timeline-line" />}
                     </div>
                     <div className="cl-journey-timeline-content">
-                      <div className="cl-journey-event-time">{e.time}</div>
+                      <div className="cl-journey-event-time">{formatEventTime(e.time)}</div>
                       <div className="cl-journey-event-card">
                         <span className="cl-journey-event-name u-fg-var">{getEventLabel(e.event)}</span>
                         <div className="cl-journey-event-details">
+                          {e.ivr != null && <span className="cl-journey-detail-pill">{t('callLog.journey.ivr', { name: e.ivr })}</span>}
+                          {e.selection != null && <span className="cl-journey-detail-pill">{t('callLog.journey.selection', { key: e.selection })}</span>}
                           {e.agent != null && <span className="cl-journey-detail-pill">{t('callLog.journey.agent', { id: e.agent })}</span>}
                           {e.queue != null && <span className="cl-journey-detail-pill">{t('callLog.journey.queue', { id: e.queue })}</span>}
-                          {e.duration != null && e.duration > 0 && <span className="cl-journey-detail-pill u-mono">{e.duration}s</span>}
-                          {e.reason != null && <span className="cl-journey-detail-pill">{e.reason}</span>}
+                          {e.duration != null && e.duration > 0 && <span className="cl-journey-detail-pill u-mono">{formatDuration(e.duration)}</span>}
+                          {endedBy && <span className="cl-journey-detail-pill">{endedBy}</span>}
                           {e.from_number != null && <span className="cl-journey-detail-pill">{t('callLog.journey.from', { number: e.from_number })}</span>}
                           {e.to_number != null && <span className="cl-journey-detail-pill">{t('callLog.journey.to', { number: e.to_number })}</span>}
+                          {e.supervisor != null && <span className="cl-journey-detail-pill">{t('callLog.journey.supervisor', { id: e.supervisor })}</span>}
+                          {e.target != null && <span className="cl-journey-detail-pill">{t('callLog.journey.target', { id: e.target })}</span>}
                         </div>
                       </div>
                     </div>
@@ -727,8 +875,10 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   // QOS modal
   const [qosModal, setQosModal] = useState<{ qos: QoSData; call: CallLogRecord } | null>(null);
   // Call Journey modal
-  const [journeyModal, setJourneyModal] = useState<{ call: CallLogRecord; journey: CallJourneyEvent[] } | null>(null);
-  const [journeyLoadingLinkedid, setJourneyLoadingLinkedid] = useState<string | null>(null);
+  const { journey: journeyModal, loadingLinkedid: journeyLoadingLinkedid, open: handleOpenJourney, close: closeJourney } = useCallJourney();
+  // CSV export
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   // VAD modal
   const [vadModal, setVadModal] = useState<{ vad: VadData; recordingFile: string | null } | null>(null);
   const [vadLoadingUniqueid, setVadLoadingUniqueid] = useState<string | null>(null);
@@ -775,14 +925,10 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
   const valuesOf = (counts: Record<string, number>, selected: string) =>
     [...new Set([...Object.keys(counts), ...(selected ? [selected] : [])])];
 
-  const statusRank = (v: string) => {
-    const i = CALL_STATUS_ORDER.indexOf(canonicalCallStatus(v));
-    return i < 0 ? CALL_STATUS_ORDER.length : i;
-  };
   const statusCounts = countBy(listed, c => c.status || undefined);
   const statusOptions = presentOptions(
     valuesOf(statusCounts, statusFilter)
-      .sort((a, b) => statusRank(a) - statusRank(b) || a.localeCompare(b))
+      .sort((a, b) => callStatusRank(a) - callStatusRank(b) || a.localeCompare(b))
       .map(s => ({ value: s, label: callStatusLabel(t, s), dotColor: callStatusColor(s) })),
     statusCounts, statusFilter);
   const callTypeCounts = countBy(listed, c => c.call_type || undefined);
@@ -843,20 +989,31 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
     if (qos) setQosModal({ qos, call });
   };
 
-  const handleOpenJourney = async (call: CallLogRecord) => {
-    const linkedid = call.linkedid;
-    if (!linkedid) return;
-    setJourneyLoadingLinkedid(linkedid);
+  /**
+   * Download the calls on screen as CSV. The server applies the same filters as the list
+   * (date range, search, and the caller's scope) plus the status/direction/app filters
+   * picked here, and caps the file at 50,000 rows.
+   */
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError(null);
     try {
-      const res = await fetchWithAuth(`/api/call-log/journey?linkedid=${encodeURIComponent(linkedid)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      const journey = (json.journey || []) as CallJourneyEvent[];
-      setJourneyModal({ call, journey });
-    } catch {
-      setJourneyModal({ call, journey: [] });
+      const params = new URLSearchParams();
+      params.set('date_from', dateRange.from);
+      params.set('date_to', dateRange.to);
+      if (search) params.set('search', search);
+      if (statusFilter) params.set('status', statusFilter);
+      if (callTypeFilter) params.set('call_type', callTypeFilter);
+      if (appFilter) params.set('app', appFilter);
+      if (showSupervision) params.set('include_supervision', 'true');
+      await downloadWithAuth(
+        `/api/call-log/export?${params.toString()}`,
+        `call_history_${dateRange.from}_${dateRange.to}.csv`,
+      );
+    } catch (e) {
+      setExportError(messageOf(e, t('callLog.exportFailed')));
     } finally {
-      setJourneyLoadingLinkedid(null);
+      setExporting(false);
     }
   };
 
@@ -898,14 +1055,22 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       cell: call => <CallDirectionBadge call={call} />,
     },
     {
+      // The status, with who ended the call as its secondary line.
       key: 'status', header: t('common.status'),
-      cell: call => (
-        call.status === 'ANSWERED' && parseQoS(call.QoS) ? (
+      cell: call => {
+        const endedBy = endedByLabel(t, call.ended_by, call.ended_by_agent);
+        const badge = call.status === 'ANSWERED' && parseQoS(call.QoS) ? (
           <button type="button" className="cl-status-qos" onClick={() => handleOpenQos(call)} title={t('callLog.viewQoS')}>
             <CallStatusBadge status={call.status} />
           </button>
-        ) : <CallStatusBadge status={call.status} />
-      ),
+        ) : <CallStatusBadge status={call.status} />;
+        return endedBy ? (
+          <div className="cl-party">
+            {badge}
+            <span className="cl-secondary">{endedBy}</span>
+          </div>
+        ) : badge;
+      },
     },
     {
       key: 'agent', header: t('fields.agent'),
@@ -945,8 +1110,10 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       },
     },
     {
+      // Every call with a linkedid has a journey: even a single leg says who ended it.
+      // The leg count shows only when there is more than one.
       key: 'journey', header: t('callLog.journey.title'),
-      cell: call => (call.call_journey_count != null && call.call_journey_count > 1) ? (
+      cell: call => call.linkedid ? (
         <button
           type="button"
           className="btn btn-ghost btn-sm"
@@ -956,7 +1123,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
           aria-label={t('callLog.showJourney')}
         >
           {journeyLoadingLinkedid === call.linkedid ? <Loader2 size={14} className="spinner" /> : <Route size={14} />}
-          {call.call_journey_count}
+          {call.call_journey_count != null && call.call_journey_count > 1 && call.call_journey_count}
         </button>
       ) : (
         <span className="cl-no-qos">—</span>
@@ -1051,19 +1218,37 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
             </>
           }
           actions={
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => setSortAsc(!sortAsc)}
-              title={sortAsc ? t('callLog.sortOldest') : t('callLog.sortNewest')}
-            >
-              <ArrowUpDown size={14} />
-              {sortAsc ? t('callLog.sortOldestBtn') : t('callLog.sortNewestBtn')}
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setSortAsc(!sortAsc)}
+                title={sortAsc ? t('callLog.sortOldest') : t('callLog.sortNewest')}
+              >
+                <ArrowUpDown size={14} />
+                {sortAsc ? t('callLog.sortOldestBtn') : t('callLog.sortNewestBtn')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={handleExport}
+                disabled={exporting || loading}
+                aria-busy={exporting}
+                title={t('callLog.exportCsvHint')}
+              >
+                {exporting ? <Loader2 size={14} className="spinner" /> : <FileDown size={14} />}
+                {t('callLog.exportCsv')}
+              </button>
+            </>
           }
         />
       }
     >
+      {exportError && (
+        <div className="u-p-3">
+          <Alert onDismiss={() => setExportError(null)}>{exportError}</Alert>
+        </div>
+      )}
       {loading ? (
         <Loading label={t('callLog.loading')} />
       ) : error ? (
@@ -1124,7 +1309,8 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
         <CallJourneyModal
           call={journeyModal.call}
           journey={journeyModal.journey}
-          onClose={() => setJourneyModal(null)}
+          error={journeyModal.error}
+          onClose={closeJourney}
         />
       )}
 

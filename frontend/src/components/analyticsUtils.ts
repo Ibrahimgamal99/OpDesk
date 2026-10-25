@@ -96,7 +96,7 @@ export function fmtPct(v: number | null | undefined): string {
  * an optional `formula`. Every KPI explanation on Analytics goes through here, so
  * they stay one plain sentence with the arithmetic underneath.
  *
- * Same signature as echo's, plus `fallback`: the English text (and formula) used
+ * The usual signature, plus `fallback`: the English text (and formula) used
  * until the key exists in the translation files.
  */
 export function kpiTip(

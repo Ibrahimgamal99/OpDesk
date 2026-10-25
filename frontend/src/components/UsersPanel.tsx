@@ -20,8 +20,8 @@ export interface OpDeskUser {
   name?: string | null;
   role: string;
   is_active: number | boolean;
-  monitor_mode?: string;
-  /** Multiple monitor modes (listen, whisper, barge). */
+  /** Monitor modes (listen, whisper, barge). The API sends only this list; there is no
+   *  single `monitor_mode` field. Agents carry an empty list. */
   monitor_modes?: string[];
   /** Access via groups (agents/queues come from groups). */
   group_ids?: number[];
@@ -179,11 +179,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     setMessage(null);
     setEditingUser(u);
     setShowPassword(false);
-    let modes = u.monitor_modes;
-    if (!modes || !modes.length) {
-      const single = u.monitor_mode || 'listen';
-      modes = single === 'full' ? ['listen', 'whisper', 'barge'] : [single];
-    }
+    // An empty list (agents, or a supervisor saved before modes existed) opens on the
+    // default the server applies: everything for an admin, Listen otherwise.
+    let modes = (u.monitor_modes || []).filter(m => m === 'listen' || m === 'whisper' || m === 'barge');
+    if (!modes.length) modes = u.role === 'admin' ? ['listen', 'whisper', 'barge'] : ['listen'];
     setForm({
       username: u.username,
       password: '',

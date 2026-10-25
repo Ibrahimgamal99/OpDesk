@@ -19,6 +19,8 @@ import { fmtTimer, parseClock } from '../lib/format';
 import { Badge, Dropdown, EmptyState, FormField, Modal, Page, SearchInput, Toolbar, useConfirm } from './ui';
 import type { DropdownOption } from './ui';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
+import { getUser } from '../auth';
+import { usePauseReasons, WRAPUP_REASON } from '../hooks/usePauseReasons';
 import '../styles/live.css';
 
 interface QueuesPanelProps {
@@ -40,13 +42,22 @@ interface QueuesPanelProps {
  */
 type QueueStatusFilter = 'waiting' | 'noReady' | 'idle';
 
-/** A queue member's live status as a badge: Not Ready (with reason) / In Call / Unavailable /
- *  Ready, in the same colours the Extensions cards use for the same states. */
-function memberBadge(member: QueueMember, t: TFunction): { meta: StatusMeta; label: string } {
+/** A queue member's live status as a badge: Not Ready (with the reason's label) / Wrap-up /
+ *  In Call / Unavailable / Ready, in the same colours the Extensions cards use. The member
+ *  carries the reason CODE; `labelFor` names it (a raw code never reaches the screen). */
+function memberBadge(
+  member: QueueMember,
+  t: TFunction,
+  labelFor: (code?: string | null) => string | null,
+): { meta: StatusMeta; label: string } {
   switch (memberState(member)) {
     case 'paused': {
+      if (member.pause_reason === WRAPUP_REASON) {
+        return { meta: AGENT_STATE_META.wrap_up, label: t('agent.state.wrapUp', 'Wrap-up') };
+      }
       const base = t('agent.state.notReady', 'Not Ready');
-      return { meta: AGENT_STATE_META.not_ready, label: member.pause_reason ? `${base} · ${member.pause_reason}` : base };
+      const reason = labelFor(member.pause_reason);
+      return { meta: AGENT_STATE_META.not_ready, label: reason ? `${base} · ${reason}` : base };
     }
     case 'unavailable':
       return { meta: DEVICE_STATUS_META.unavailable, label: t('queues.memberUnavailable', 'Unavailable') };
@@ -60,6 +71,15 @@ function memberBadge(member: QueueMember, t: TFunction): { meta: StatusMeta; lab
 export function QueuesPanel({ queues, members, entries, extensions, sendAction, onSync }: QueuesPanelProps) {
   const { t } = useTranslation();
   const [confirm, confirmDialog] = useConfirm();
+  const { selectable, labelFor } = usePauseReasons();
+  // Queue membership is a supervisor's tool: the backend refuses add / remove / pause from
+  // the agent role, so the controls are not offered there.
+  const canManage = getUser()?.role !== 'agent';
+  // The member being paused: Not-Ready always names a reason, picked in a small dialog.
+  const [pauseTarget, setPauseTarget] = useState<QueueMember | null>(null);
+  const [pauseReason, setPauseReason] = useState('');
+  // The reason for a member added Not Ready.
+  const [newMemberReason, setNewMemberReason] = useState('');
   const [showAddMember, setShowAddMember] = useState<string | null>(null);
   const [newMemberInterface, setNewMemberInterface] = useState('');
   const [newMemberName, setNewMemberName] = useState('');
@@ -89,15 +109,24 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
     });
   }, [members]);
 
+  // The reasons a member may be paused under, each in its colour.
+  const reasonOptions: DropdownOption[] = selectable.map(r => ({
+    value: r.code,
+    label: r.label,
+    dotColor: r.color || 'var(--text-muted)',
+  }));
+
   const queueList = Object.values(queues).sort((a, b) => a.name.localeCompare(b.name));
 
   const resetAddForm = () => {
     setNewMemberInterface('');
     setNewMemberName('');
     setNewMemberPaused(false);
+    setNewMemberReason('');
   };
 
   const handleAddMember = (queueName: string) => {
+    if (newMemberPaused && !newMemberReason) return;
     if (newMemberInterface) {
       sendAction({
         action: 'queue_add',
@@ -107,6 +136,8 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
         // Log the extension into the queue with the chosen status: Ready (unpaused)
         // or Not Ready (paused). Backend maps this to QueueAdd's `paused` flag.
         paused: newMemberPaused,
+        // Not Ready always carries a reason, so adherence can split it into work and break.
+        ...(newMemberPaused ? { reason: newMemberReason } : {}),
       });
       resetAddForm();
       setShowAddMember(null);
@@ -130,10 +161,16 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
     });
   };
 
-  const handleTogglePause = (member: QueueMember) => {
+  const handleTogglePause = (member: QueueMember, reason?: string) => {
     const memberKey = `${member.queue}:${member.interface}`;
     if (processingPause.has(memberKey)) {
       return; // Already processing
+    }
+    // Pausing needs a reason: ask for one first.
+    if (!member.paused && !reason) {
+      setPauseReason('');
+      setPauseTarget(member);
+      return;
     }
 
     const target = !member.paused;
@@ -143,6 +180,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
       action: member.paused ? 'queue_unpause' : 'queue_pause',
       queue: member.queue,
       interface: member.interface,
+      ...(member.paused ? {} : { reason }),
     });
 
     // Fallback: clear processing state if no WebSocket update arrives.
@@ -342,15 +380,17 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                       <span className="u-text-xs u-upper u-fg-muted">
                         {t('queues.members', { count: membersByQueue[queueExt]?.length || 0 })}
                       </span>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm btn-icon"
-                        onClick={() => { resetAddForm(); setShowAddMember(queueExt); }}
-                        title={t('queues.addMember')}
-                        aria-label={t('queues.addMember')}
-                      >
-                        <UserPlus size={14} />
-                      </button>
+                      {canManage && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm btn-icon"
+                          onClick={() => { resetAddForm(); setShowAddMember(queueExt); }}
+                          title={t('queues.addMember')}
+                          aria-label={t('queues.addMember')}
+                        >
+                          <UserPlus size={14} />
+                        </button>
+                      )}
                     </div>
 
                     {/* Members list */}
@@ -360,7 +400,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
 
                     {membersByQueue[queueExt]?.map((member) => {
                       const processing = processingPause.has(`${member.queue}:${member.interface}`);
-                      const badge = memberBadge(member, t);
+                      const badge = memberBadge(member, t, labelFor);
                       return (
                         <div key={member.interface} className="queue-member">
                           <div className="queue-member-info">
@@ -375,6 +415,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                               </div>
                             </div>
                           </div>
+                          {canManage && (
                           <div className="queue-member-actions">
                             <button
                               type="button"
@@ -402,6 +443,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                               <UserMinus size={14} />
                             </button>
                           </div>
+                          )}
                         </div>
                       );
                     })}
@@ -429,7 +471,7 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                 type="button"
                 className="btn btn-primary"
                 onClick={() => handleAddMember(showAddMember)}
-                disabled={!newMemberInterface}
+                disabled={!newMemberInterface || (newMemberPaused && !newMemberReason)}
               >
                 {t('common.logIn')}
               </button>
@@ -486,6 +528,62 @@ export function QueuesPanel({ queues, members, entries, extensions, sendAction, 
                 {t('agent.state.notReady')}
               </button>
             </div>
+          </FormField>
+          {newMemberPaused && (
+            <FormField label={t('queues.pauseReason', 'Reason')} required>
+              <Dropdown
+                size="md"
+                options={reasonOptions}
+                value={newMemberReason}
+                onChange={setNewMemberReason}
+                placeholder={t('queues.pickReason', 'Pick a reason')}
+                emptyMessage={t('agent.noReasons', 'No reason codes')}
+                ariaLabel={t('queues.pauseReason', 'Reason')}
+              />
+            </FormField>
+          )}
+        </Modal>
+      )}
+      {pauseTarget && (
+        <Modal
+          open
+          onClose={() => setPauseTarget(null)}
+          icon={<Pause size={16} />}
+          title={t('queues.pauseTitle', {
+            member: pauseTarget.membername || memberExtension(pauseTarget.interface),
+            defaultValue: 'Set {{member}} Not Ready',
+          })}
+          footer={(
+            <>
+              <button type="button" className="btn" onClick={() => setPauseTarget(null)}>
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!pauseReason}
+                onClick={() => {
+                  const member = pauseTarget;
+                  setPauseTarget(null);
+                  handleTogglePause(member, pauseReason);
+                }}
+              >
+                <Pause size={14} />
+                {t('common.pause')}
+              </button>
+            </>
+          )}
+        >
+          <FormField label={t('queues.pauseReason', 'Reason')} required hint={t('queues.pauseHint', 'Not Ready is always recorded with a reason, so adherence can tell work from breaks.')}>
+            <Dropdown
+              size="md"
+              options={reasonOptions}
+              value={pauseReason}
+              onChange={setPauseReason}
+              placeholder={t('queues.pickReason', 'Pick a reason')}
+              emptyMessage={t('agent.noReasons', 'No reason codes')}
+              ariaLabel={t('queues.pauseReason', 'Reason')}
+            />
           </FormField>
         </Modal>
       )}

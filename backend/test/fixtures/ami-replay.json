@@ -1,0 +1,5176 @@
+{
+ "monitored": [
+  "1001",
+  "1002",
+  "1003",
+  "800"
+ ],
+ "steps": [
+  {
+   "raw": "Event: ExtensionStatus\r\nExten: 1001\r\nStatus: 0\r\nContext: ext-local\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: ExtensionStatus\r\nExten: 1002\r\nStatus: 0\r\nContext: ext-local\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "0",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1001-00000001\r\nUniqueid: 1000.1\r\nLinkedid: 1000.1\r\nChannelState: 4\r\nChannelStateDesc: Ring\r\nCallerIDNum: 1001\r\nCallerIDName: Alice\r\nConnectedLineNum: \r\nExten: 1002\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "0",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: VarSet\r\nChannel: PJSIP/1001-00000001\r\nUniqueid: 1000.1\r\nLinkedid: 1000.1\r\nVariable: DIAL_NUMBER\r\nValue: 1002\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "0",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1002-00000002\r\nUniqueid: 1000.2\r\nLinkedid: 1000.1\r\nChannelState: 0\r\nChannelStateDesc: Down\r\nCallerIDNum: 1002\r\nCallerIDName: Bob\r\nConnectedLineNum: 1001\r\nExten: s\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000002",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001",
+     "PJSIP/1002-00000002": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001",
+      "PJSIP/1002-00000002"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "0",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialBegin\r\nChannel: PJSIP/1001-00000001\r\nUniqueid: 1000.1\r\nLinkedid: 1000.1\r\nCallerIDNum: 1001\r\nCallerIDName: Alice\r\nDestChannel: PJSIP/1002-00000002\r\nDestUniqueid: 1000.2\r\nDestLinkedid: 1000.1\r\nDestExten: 1002\r\nDialString: 1002\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000002"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000002",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001",
+     "PJSIP/1002-00000002": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000002": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001",
+      "PJSIP/1002-00000002"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "0",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newstate\r\nChannel: PJSIP/1002-00000002\r\nUniqueid: 1000.2\r\nLinkedid: 1000.1\r\nChannelState: 5\r\nChannelStateDesc: Ringing\r\nCallerIDNum: 1002\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000002",
+      "dest_state": "Ringing"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000002",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001",
+     "PJSIP/1002-00000002": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000002": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001",
+      "PJSIP/1002-00000002"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "0",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: ExtensionStatus\r\nExten: 1002\r\nStatus: 8\r\nContext: ext-local\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000002",
+      "dest_state": "Ringing"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000002",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001",
+     "PJSIP/1002-00000002": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000002": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001",
+      "PJSIP/1002-00000002"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newstate\r\nChannel: PJSIP/1002-00000002\r\nUniqueid: 1000.2\r\nLinkedid: 1000.1\r\nChannelState: 6\r\nChannelStateDesc: Up\r\nCallerIDNum: 1002\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000002",
+      "dest_state": "Up"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000002",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001",
+     "PJSIP/1002-00000002": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000002": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001",
+      "PJSIP/1002-00000002"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialEnd\r\nChannel: PJSIP/1001-00000001\r\nUniqueid: 1000.1\r\nLinkedid: 1000.1\r\nDestChannel: PJSIP/1002-00000002\r\nDestUniqueid: 1000.2\r\nDestExten: 1002\r\nDialStatus: ANSWER\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000002",
+      "dest_state": "Up",
+      "dialstatus": "ANSWER"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000002",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "dialstatus": "ANSWER"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001",
+     "PJSIP/1002-00000002": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000002": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001",
+      "PJSIP/1002-00000002"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newstate\r\nChannel: PJSIP/1001-00000001\r\nUniqueid: 1000.1\r\nLinkedid: 1000.1\r\nChannelState: 6\r\nChannelStateDesc: Up\r\nCallerIDNum: 1001\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000002",
+      "dest_state": "Up",
+      "dialstatus": "ANSWER"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000002",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "dialstatus": "ANSWER"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001",
+     "PJSIP/1002-00000002": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000002": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1",
+     "PJSIP/1002-00000002": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001",
+      "PJSIP/1002-00000002"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1002-00000002\r\nUniqueid: 1000.2\r\nLinkedid: 1000.1\r\nCause: 16\r\nCause-txt: Normal Clearing\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000001",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "original_destination": "1002",
+      "dest_state": "Up",
+      "dialstatus": "ANSWER"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000001": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000001": "1000.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000001": "1000.1"
+    },
+    "linkedid2channels": {
+     "1000.1": [
+      "PJSIP/1001-00000001"
+     ]
+    },
+    "linkedid_crm_sent": [],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1001-00000001\r\nUniqueid: 1000.1\r\nLinkedid: 1000.1\r\nCause: 16\r\nCause-txt: Normal Clearing\r\n\r\n",
+   "crm": [
+    {
+     "caller": "1001",
+     "destination": "1002",
+     "duration": "<dur>",
+     "talk_time": "<dur>",
+     "datetime": "<dt>",
+     "call_type": "internal"
+    }
+   ],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1001-00000003\r\nUniqueid: 1001.1\r\nLinkedid: 1001.1\r\nChannelState: 4\r\nChannelStateDesc: Ring\r\nCallerIDNum: 1001\r\nCallerIDName: Alice\r\nExten: 1002\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000003",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000003": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000003": "1001.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000003": "1001.1"
+    },
+    "linkedid2channels": {
+     "1001.1": [
+      "PJSIP/1001-00000003"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1002-00000004\r\nUniqueid: 1001.2\r\nLinkedid: 1001.1\r\nChannelState: 0\r\nChannelStateDesc: Down\r\nCallerIDNum: 1002\r\nConnectedLineNum: 1001\r\nExten: s\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000003",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000004",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000003": "1001",
+     "PJSIP/1002-00000004": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.1"
+    },
+    "linkedid2channels": {
+     "1001.1": [
+      "PJSIP/1001-00000003",
+      "PJSIP/1002-00000004"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialBegin\r\nChannel: PJSIP/1001-00000003\r\nUniqueid: 1001.1\r\nLinkedid: 1001.1\r\nCallerIDNum: 1001\r\nCallerIDName: Alice\r\nDestChannel: PJSIP/1002-00000004\r\nDestUniqueid: 1001.2\r\nDestExten: 1002\r\nDialString: 1002\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000003",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000004"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000004",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000003": "1001",
+     "PJSIP/1002-00000004": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000004": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.1"
+    },
+    "linkedid2channels": {
+     "1001.1": [
+      "PJSIP/1001-00000003",
+      "PJSIP/1002-00000004"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newstate\r\nChannel: PJSIP/1002-00000004\r\nUniqueid: 1001.2\r\nLinkedid: 1001.1\r\nChannelState: 5\r\nChannelStateDesc: Ringing\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000003",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000004",
+      "dest_state": "Ringing"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000004",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000003": "1001",
+     "PJSIP/1002-00000004": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000004": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.1"
+    },
+    "linkedid2channels": {
+     "1001.1": [
+      "PJSIP/1001-00000003",
+      "PJSIP/1002-00000004"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialEnd\r\nChannel: PJSIP/1001-00000003\r\nUniqueid: 1001.1\r\nLinkedid: 1001.1\r\nDestChannel: PJSIP/1002-00000004\r\nDestUniqueid: 1001.2\r\nDestExten: 1002\r\nDialStatus: CANCEL\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000003",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000004",
+      "dest_state": "Ringing",
+      "dialstatus": "CANCEL"
+     },
+     "1002": {
+      "caller": "1001",
+      "original_destination": "1001",
+      "channel": "PJSIP/1002-00000004",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "dialstatus": "CANCEL"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000003": "1001",
+     "PJSIP/1002-00000004": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000004": "1001"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000003": "1001.1",
+     "PJSIP/1002-00000004": "1001.1"
+    },
+    "linkedid2channels": {
+     "1001.1": [
+      "PJSIP/1001-00000003",
+      "PJSIP/1002-00000004"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1002-00000004\r\nUniqueid: 1001.2\r\nLinkedid: 1001.1\r\nCause: 16\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1001": {
+      "channel": "PJSIP/1001-00000003",
+      "callerid": "1001",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "dest_state": "Ringing",
+      "dialstatus": "CANCEL"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000003": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000003": "1001.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000003": "1001.1"
+    },
+    "linkedid2channels": {
+     "1001.1": [
+      "PJSIP/1001-00000003"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1001-00000003\r\nUniqueid: 1001.1\r\nLinkedid: 1001.1\r\nCause: 16\r\n\r\n",
+   "crm": [
+    {
+     "caller": "1001",
+     "destination": "1002",
+     "duration": "<dur>",
+     "talk_time": "<dur>",
+     "datetime": "<dt>",
+     "call_type": "internal"
+    }
+   ],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1003-00000005\r\nUniqueid: 1002.1\r\nLinkedid: 1002.1\r\nChannelState: 4\r\nChannelStateDesc: Ring\r\nCallerIDNum: 1003\r\nExten: 1002\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1003": {
+      "channel": "PJSIP/1003-00000005",
+      "callerid": "1003",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     },
+     "1002": {
+      "caller": "1003",
+      "original_destination": "1003"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-00000005": "1003"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1003-00000005": "1002.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-00000005": "1002.1"
+    },
+    "linkedid2channels": {
+     "1002.1": [
+      "PJSIP/1003-00000005"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1002-00000006\r\nUniqueid: 1002.2\r\nLinkedid: 1002.1\r\nChannelState: 0\r\nChannelStateDesc: Down\r\nCallerIDNum: 1002\r\nConnectedLineNum: 1003\r\nExten: s\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1003": {
+      "channel": "PJSIP/1003-00000005",
+      "callerid": "1003",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     },
+     "1002": {
+      "caller": "1003",
+      "original_destination": "1003",
+      "channel": "PJSIP/1002-00000006",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-00000005": "1003",
+     "PJSIP/1002-00000006": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1003-00000005": "1002.1",
+     "PJSIP/1002-00000006": "1002.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-00000005": "1002.1",
+     "PJSIP/1002-00000006": "1002.1"
+    },
+    "linkedid2channels": {
+     "1002.1": [
+      "PJSIP/1002-00000006",
+      "PJSIP/1003-00000005"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialBegin\r\nChannel: PJSIP/1003-00000005\r\nUniqueid: 1002.1\r\nLinkedid: 1002.1\r\nCallerIDNum: 1003\r\nDestChannel: PJSIP/1002-00000006\r\nDestUniqueid: 1002.2\r\nDestExten: 1002\r\nDialString: 1002\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1003": {
+      "channel": "PJSIP/1003-00000005",
+      "callerid": "1003",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "destchannel": "PJSIP/1002-00000006"
+     },
+     "1002": {
+      "caller": "1003",
+      "original_destination": "1003",
+      "channel": "PJSIP/1002-00000006",
+      "callerid": "1002",
+      "exten": "",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-00000005": "1003",
+     "PJSIP/1002-00000006": "1002"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/1002-00000006": "1003"
+    },
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1003-00000005": "1002.1",
+     "PJSIP/1002-00000006": "1002.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-00000005": "1002.1",
+     "PJSIP/1002-00000006": "1002.1"
+    },
+    "linkedid2channels": {
+     "1002.1": [
+      "PJSIP/1002-00000006",
+      "PJSIP/1003-00000005"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1002-00000006\r\nUniqueid: 1002.2\r\nLinkedid: 1002.1\r\nCause: 17\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1003": {
+      "channel": "PJSIP/1003-00000005",
+      "callerid": "1003",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-00000005": "1003"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1003-00000005": "1002.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-00000005": "1002.1"
+    },
+    "linkedid2channels": {
+     "1002.1": [
+      "PJSIP/1003-00000005"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialEnd\r\nChannel: PJSIP/1003-00000005\r\nUniqueid: 1002.1\r\nLinkedid: 1002.1\r\nDestChannel: PJSIP/1002-00000006\r\nDestUniqueid: 1002.2\r\nDestExten: 1002\r\nDialStatus: BUSY\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "1003": {
+      "channel": "PJSIP/1003-00000005",
+      "callerid": "1003",
+      "exten": "1002",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "1002",
+      "dialstatus": "BUSY"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-00000005": "1003"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {
+     "PJSIP/1003-00000005": "1002.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-00000005": "1002.1"
+    },
+    "linkedid2channels": {
+     "1002.1": [
+      "PJSIP/1003-00000005"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1003-00000005\r\nUniqueid: 1002.1\r\nLinkedid: 1002.1\r\nCause: 17\r\n\r\n",
+   "crm": [
+    {
+     "caller": "1003",
+     "destination": "1002",
+     "duration": "<dur>",
+     "talk_time": "<dur>",
+     "datetime": "<dt>",
+     "call_type": "internal"
+    }
+   ],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {},
+    "queue_members": {},
+    "queue_entries": {},
+    "dynamic_members": [],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueMemberAdded\r\nQueue: 800\r\nMemberName: 1001\r\nInterface: PJSIP/1001\r\nStateInterface: PJSIP/1001\r\nMembership: dynamic\r\nPenalty: 0\r\nCallsTaken: 0\r\nLastCall: 0\r\nStatus: 1\r\nPaused: 0\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueMemberAdded\r\nQueue: 800\r\nMemberName: 1002\r\nInterface: Local/1002@from-queue/n\r\nStateInterface: hint:1002@ext-local\r\nMembership: dynamic\r\nPenalty: 0\r\nStatus: 1\r\nPaused: 0\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueMemberPaused\r\nQueue: 800\r\nMemberName: 1002\r\nInterface: Local/1002@from-queue/n\r\nPaused: 1\r\nReason: lunch\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": true,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": true,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueMemberStatus\r\nQueue: 800\r\nMemberName: 1001\r\nInterface: PJSIP/1001\r\nStatus: 2\r\nPaused: 0\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "In use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": true,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "In use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": true,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueMemberStatus\r\nQueue: 800\r\nMemberName: 1001\r\nInterface: PJSIP/1001\r\nStatus: 1\r\nPaused: 0\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": true,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": true,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueMemberPaused\r\nQueue: 800\r\nMemberName: 1002\r\nInterface: Local/1002@from-queue/n\r\nPaused: 0\r\nReason: \r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {},
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/trunk-00000007\r\nUniqueid: 1003.1\r\nLinkedid: 1003.1\r\nChannelState: 4\r\nChannelStateDesc: Ring\r\nCallerIDNum: 0791234567\r\nCallerIDName: Customer\r\nExten: 800\r\nContext: from-trunk\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueCallerJoin\r\nChannel: PJSIP/trunk-00000007\r\nUniqueid: 1003.1\r\nLinkedid: 1003.1\r\nCallerIDNum: 0791234567\r\nCallerIDName: Customer\r\nQueue: 800\r\nPosition: 1\r\nCount: 1\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1003.1": {
+      "queue": "800",
+      "callerid": "0791234567",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: AgentCalled\r\nChannel: PJSIP/trunk-00000007\r\nUniqueid: 1003.1\r\nLinkedid: 1003.1\r\nCallerIDNum: 0791234567\r\nDestChannel: Local/1001@from-queue-00000001;1\r\nQueue: 800\r\nInterface: PJSIP/1001\r\nMemberName: 1001\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1003.1": {
+      "queue": "800",
+      "callerid": "0791234567",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1001-00000008\r\nUniqueid: 1003.3\r\nLinkedid: 1003.1\r\nChannelState: 0\r\nChannelStateDesc: Down\r\nCallerIDNum: 1001\r\nConnectedLineNum: 0791234567\r\nExten: s\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "channel": "PJSIP/1001-00000008",
+      "callerid": "1001",
+      "exten": "",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791234567"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800",
+     "PJSIP/1001-00000008": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1003.1": {
+      "queue": "800",
+      "callerid": "0791234567",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.3"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/1001-00000008",
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newstate\r\nChannel: PJSIP/1001-00000008\r\nUniqueid: 1003.3\r\nLinkedid: 1003.1\r\nChannelState: 5\r\nChannelStateDesc: Ringing\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "channel": "PJSIP/1001-00000008",
+      "callerid": "1001",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791234567"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800",
+     "PJSIP/1001-00000008": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1003.1": {
+      "queue": "800",
+      "callerid": "0791234567",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.3"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/1001-00000008",
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newstate\r\nChannel: PJSIP/1001-00000008\r\nUniqueid: 1003.3\r\nLinkedid: 1003.1\r\nChannelState: 6\r\nChannelStateDesc: Up\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "channel": "PJSIP/1001-00000008",
+      "callerid": "1001",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "original_destination": "0791234567"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800",
+     "PJSIP/1001-00000008": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1003.1": {
+      "queue": "800",
+      "callerid": "0791234567",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.3"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/1001-00000008",
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: AgentConnect\r\nChannel: PJSIP/trunk-00000007\r\nUniqueid: 1003.1\r\nLinkedid: 1003.1\r\nCallerIDNum: 0791234567\r\nDestChannel: Local/1001@from-queue-00000001;1\r\nQueue: 800\r\nInterface: PJSIP/1001\r\nMemberName: 1001\r\nHoldTime: 5\r\nRingTime: 3\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "queue_caller": "0791234567",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "channel": "PJSIP/1001-00000008",
+      "callerid": "1001",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "original_destination": "0791234567",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800",
+     "PJSIP/1001-00000008": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1003.1": {
+      "queue": "800",
+      "callerid": "0791234567",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.3"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/1001-00000008",
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueCallerLeave\r\nChannel: PJSIP/trunk-00000007\r\nUniqueid: 1003.1\r\nLinkedid: 1003.1\r\nCallerIDNum: 0791234567\r\nQueue: 800\r\nPosition: 1\r\nCount: 0\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "queue_caller": "0791234567",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "channel": "PJSIP/1001-00000008",
+      "callerid": "1001",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "original_destination": "0791234567",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800",
+     "PJSIP/1001-00000008": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.3"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/1001-00000008",
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: AgentComplete\r\nChannel: PJSIP/trunk-00000007\r\nUniqueid: 1003.1\r\nLinkedid: 1003.1\r\nCallerIDNum: 0791234567\r\nQueue: 800\r\nInterface: PJSIP/1001\r\nMemberName: 1001\r\nTalkTime: 30\r\nReason: caller\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "800": {
+      "channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0791234567",
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "queue_caller": "0791234567",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001"
+     },
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "channel": "PJSIP/1001-00000008",
+      "callerid": "1001",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "original_destination": "0791234567",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000007": "800",
+     "PJSIP/1001-00000008": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.3"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000007": "1003.1",
+     "PJSIP/1001-00000008": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/1001-00000008",
+      "PJSIP/trunk-00000007"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/trunk-00000007\r\nUniqueid: 1003.1\r\nLinkedid: 1003.1\r\nCause: 16\r\nCallerIDNum: 0791234567\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "1001": {
+      "caller": "0791234567",
+      "queue_caller": "0791234567",
+      "queue": "800",
+      "linkedid": "1003.1",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "channel": "PJSIP/1001-00000008",
+      "callerid": "1001",
+      "exten": "",
+      "context": "from-internal",
+      "state": "Up",
+      "start_time": "<dt>",
+      "answer_time": "<dt>",
+      "original_destination": "0791234567",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1001-00000008": "1001"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1001-00000008": "1003.3"
+    },
+    "ch2linkedid": {
+     "PJSIP/1001-00000008": "1003.1"
+    },
+    "linkedid2channels": {
+     "1003.1": [
+      "PJSIP/1001-00000008"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1001-00000008\r\nUniqueid: 1003.3\r\nLinkedid: 1003.1\r\nCause: 16\r\n\r\n",
+   "crm": [
+    {
+     "caller": "0791234567",
+     "destination": "1001",
+     "duration": "<dur>",
+     "talk_time": "<dur>",
+     "datetime": "<dt>",
+     "call_type": "inbound",
+     "queue": "800"
+    }
+   ],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     }
+    },
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/trunk-00000009\r\nUniqueid: 1004.1\r\nLinkedid: 1004.1\r\nChannelState: 4\r\nChannelStateDesc: Ring\r\nCallerIDNum: 0797654321\r\nExten: 800\r\nContext: from-trunk\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "800": {
+      "channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0797654321"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000009": "800"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "linkedid2channels": {
+     "1004.1": [
+      "PJSIP/trunk-00000009"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueCallerJoin\r\nChannel: PJSIP/trunk-00000009\r\nUniqueid: 1004.1\r\nLinkedid: 1004.1\r\nCallerIDNum: 0797654321\r\nQueue: 800\r\nPosition: 1\r\nCount: 1\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "800": {
+      "channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0797654321",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000009": "800"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1004.1": {
+      "queue": "800",
+      "callerid": "0797654321",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "linkedid2channels": {
+     "1004.1": [
+      "PJSIP/trunk-00000009"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueCallerAbandon\r\nChannel: PJSIP/trunk-00000009\r\nUniqueid: 1004.1\r\nLinkedid: 1004.1\r\nQueue: 800\r\nPosition: 1\r\nOriginalPosition: 1\r\nHoldTime: 20\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "800": {
+      "channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0797654321",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000009": "800"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 1
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {
+     "1004.1": {
+      "queue": "800",
+      "callerid": "0797654321",
+      "position": 1,
+      "entry_time": "<dt>"
+     }
+    },
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "linkedid2channels": {
+     "1004.1": [
+      "PJSIP/trunk-00000009"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueCallerLeave\r\nChannel: PJSIP/trunk-00000009\r\nUniqueid: 1004.1\r\nLinkedid: 1004.1\r\nCallerIDNum: 0797654321\r\nQueue: 800\r\nPosition: 1\r\nCount: 0\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "800": {
+      "channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "exten": "800",
+      "context": "from-trunk",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "caller": "0797654321",
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/trunk-00000009": "800"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/trunk-00000009": "1004.1"
+    },
+    "linkedid2channels": {
+     "1004.1": [
+      "PJSIP/trunk-00000009"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/trunk-00000009\r\nUniqueid: 1004.1\r\nLinkedid: 1004.1\r\nCause: 16\r\nCallerIDNum: 0797654321\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     }
+    },
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/1003-0000000a\r\nUniqueid: 1005.1\r\nLinkedid: 1005.1\r\nChannelState: 4\r\nChannelStateDesc: Ring\r\nCallerIDNum: 1003\r\nExten: 0791112222\r\nContext: from-internal\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "1003": {
+      "channel": "PJSIP/1003-0000000a",
+      "callerid": "1003",
+      "exten": "0791112222",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791112222"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-0000000a": "1003"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1003-0000000a": "1005.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-0000000a": "1005.1"
+    },
+    "linkedid2channels": {
+     "1005.1": [
+      "PJSIP/1003-0000000a"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: UserEvent\r\nUserEvent: OpDeskRecording\r\nChannel: PJSIP/1003-0000000a\r\nUniqueid: 1005.1\r\nLinkedid: 1005.1\r\nRecbase: out-1003-0791112222-1005.1\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "1003": {
+      "channel": "PJSIP/1003-0000000a",
+      "callerid": "1003",
+      "exten": "0791112222",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791112222"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-0000000a": "1003"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1003-0000000a": "1005.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-0000000a": "1005.1"
+    },
+    "linkedid2channels": {
+     "1005.1": [
+      "PJSIP/1003-0000000a"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newchannel\r\nChannel: PJSIP/trunk-0000000b\r\nUniqueid: 1005.2\r\nLinkedid: 1005.1\r\nChannelState: 0\r\nChannelStateDesc: Down\r\nCallerIDNum: 0791112222\r\nExten: s\r\nContext: from-trunk\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "1003": {
+      "channel": "PJSIP/1003-0000000a",
+      "callerid": "1003",
+      "exten": "0791112222",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791112222"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-0000000a": "1003",
+     "PJSIP/trunk-0000000b": "0791112222"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.1"
+    },
+    "linkedid2channels": {
+     "1005.1": [
+      "PJSIP/1003-0000000a",
+      "PJSIP/trunk-0000000b"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialBegin\r\nChannel: PJSIP/1003-0000000a\r\nUniqueid: 1005.1\r\nLinkedid: 1005.1\r\nCallerIDNum: 1003\r\nDestChannel: PJSIP/trunk-0000000b\r\nDestUniqueid: 1005.2\r\nDestExten: 0791112222\r\nDialString: trunk/0791112222\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "1003": {
+      "channel": "PJSIP/1003-0000000a",
+      "callerid": "1003",
+      "exten": "0791112222",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791112222",
+      "destchannel": "PJSIP/trunk-0000000b"
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-0000000a": "1003",
+     "PJSIP/trunk-0000000b": "0791112222"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/trunk-0000000b": "1003"
+    },
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.1"
+    },
+    "linkedid2channels": {
+     "1005.1": [
+      "PJSIP/1003-0000000a",
+      "PJSIP/trunk-0000000b"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Newstate\r\nChannel: PJSIP/trunk-0000000b\r\nUniqueid: 1005.2\r\nLinkedid: 1005.1\r\nChannelState: 5\r\nChannelStateDesc: Ringing\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "1003": {
+      "channel": "PJSIP/1003-0000000a",
+      "callerid": "1003",
+      "exten": "0791112222",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791112222",
+      "destchannel": "PJSIP/trunk-0000000b",
+      "dest_state": "Ringing"
+     },
+     "0791112222": {
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-0000000a": "1003",
+     "PJSIP/trunk-0000000b": "0791112222"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/trunk-0000000b": "1003"
+    },
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.1"
+    },
+    "linkedid2channels": {
+     "1005.1": [
+      "PJSIP/1003-0000000a",
+      "PJSIP/trunk-0000000b"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: DialEnd\r\nChannel: PJSIP/1003-0000000a\r\nUniqueid: 1005.1\r\nLinkedid: 1005.1\r\nDestChannel: PJSIP/trunk-0000000b\r\nDestUniqueid: 1005.2\r\nDestExten: 0791112222\r\nDialStatus: NOANSWER\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "1003": {
+      "channel": "PJSIP/1003-0000000a",
+      "callerid": "1003",
+      "exten": "0791112222",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791112222",
+      "destchannel": "PJSIP/trunk-0000000b",
+      "dest_state": "Ringing",
+      "dialstatus": "NOANSWER"
+     },
+     "0791112222": {
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-0000000a": "1003",
+     "PJSIP/trunk-0000000b": "0791112222"
+    },
+    "ch_callerid": {},
+    "destch2ext": {
+     "PJSIP/trunk-0000000b": "1003"
+    },
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.2"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-0000000a": "1005.1",
+     "PJSIP/trunk-0000000b": "1005.1"
+    },
+    "linkedid2channels": {
+     "1005.1": [
+      "PJSIP/1003-0000000a",
+      "PJSIP/trunk-0000000b"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/trunk-0000000b\r\nUniqueid: 1005.2\r\nLinkedid: 1005.1\r\nCause: 19\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "1003": {
+      "channel": "PJSIP/1003-0000000a",
+      "callerid": "1003",
+      "exten": "0791112222",
+      "context": "from-internal",
+      "state": "New",
+      "start_time": "<dt>",
+      "answer_time": null,
+      "original_destination": "0791112222",
+      "dest_state": "Ringing",
+      "dialstatus": "NOANSWER"
+     },
+     "0791112222": {
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {
+     "PJSIP/1003-0000000a": "1003"
+    },
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {
+     "PJSIP/1003-0000000a": "1005.1"
+    },
+    "ch2linkedid": {
+     "PJSIP/1003-0000000a": "1005.1"
+    },
+    "linkedid2channels": {
+     "1005.1": [
+      "PJSIP/1003-0000000a"
+     ]
+    },
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: Hangup\r\nChannel: PJSIP/1003-0000000a\r\nUniqueid: 1005.1\r\nLinkedid: 1005.1\r\nCause: 19\r\n\r\n",
+   "crm": [
+    {
+     "caller": "1003",
+     "destination": "0791112222",
+     "duration": "<dur>",
+     "talk_time": "<dur>",
+     "datetime": "<dt>",
+     "call_type": "outbound"
+    }
+   ],
+   "vad": [
+    [
+     "out-1003-0791112222-1005.1",
+     "1005.1"
+    ]
+   ],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "0791112222": {
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "PJSIP/1001": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1001",
+        "dynamic": true
+       },
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:PJSIP/1001": {
+      "queue": "800",
+      "interface": "PJSIP/1001",
+      "membername": "1001",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true
+     },
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n",
+     "800:PJSIP/1001"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1",
+     "1005.1:1005.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  },
+  {
+   "raw": "Event: QueueMemberRemoved\r\nQueue: 800\r\nMemberName: 1001\r\nInterface: PJSIP/1001\r\n\r\n",
+   "crm": [],
+   "vad": [],
+   "notified": [],
+   "state": {
+    "active_calls": {
+     "0791234567": {
+      "queue": "800",
+      "queue_waiting": false,
+      "queue_caller_channel": "PJSIP/trunk-00000007",
+      "callerid": "0791234567",
+      "start_time": "<dt>",
+      "linkedid": "1003.1",
+      "dialstatus": "ANSWER",
+      "queue_answered": true,
+      "answered_agent": "1001",
+      "destination": "1001"
+     },
+     "0797654321": {
+      "queue": "800",
+      "queue_waiting": true,
+      "queue_caller_channel": "PJSIP/trunk-00000009",
+      "callerid": "0797654321",
+      "start_time": "<dt>",
+      "linkedid": "1004.1"
+     },
+     "0791112222": {
+      "state": "Ringing",
+      "start_time": "<dt>",
+      "answer_time": null
+     }
+    },
+    "ch2ext": {},
+    "ch_callerid": {},
+    "destch2ext": {},
+    "queues": {
+     "800": {
+      "members": {
+       "Local/1002@from-queue/n": {
+        "status": "Not in use",
+        "paused": false,
+        "membername": "1002",
+        "dynamic": true
+       }
+      },
+      "calls_waiting": 0
+     }
+    },
+    "queue_members": {
+     "800:Local/1002@from-queue/n": {
+      "queue": "800",
+      "interface": "Local/1002@from-queue/n",
+      "membername": "1002",
+      "status": "Not in use",
+      "paused": false,
+      "dynamic": true,
+      "pause_reason": "lunch"
+     }
+    },
+    "queue_entries": {},
+    "dynamic_members": [
+     "800:Local/1002@from-queue/n"
+    ],
+    "ch2uniqueid": {},
+    "ch2linkedid": {},
+    "linkedid2channels": {},
+    "linkedid_crm_sent": [
+     "1000.1:1000.1",
+     "1001.1:1001.1",
+     "1002.1:1002.1",
+     "1003.1:1003.3",
+     "1004.1:1004.1",
+     "1005.1:1005.1"
+    ],
+    "extensions": {
+     "1001": {
+      "Event": "ExtensionStatus",
+      "Exten": "1001",
+      "Status": "0",
+      "Context": "ext-local"
+     },
+     "1002": {
+      "Event": "ExtensionStatus",
+      "Exten": "1002",
+      "Status": "8",
+      "Context": "ext-local"
+     }
+    }
+   }
+  }
+ ]
+}

@@ -130,46 +130,64 @@ PY
 # --- Rules 4 + 5: the API contract -----------------------------------------
 hdr "Rules 4/5 — API contract"
 
-BE=backend
+BE=backend/src
+ROUTES=$BE/api/routes
 
-# Without this wiring none of the guarantees below hold.
-hard "install_contract wired into server.py" \
-  "$(grep -q 'install_contract(app)' "$BE"/server.py && echo 0 || echo 1)"
+# Every backend TypeScript file (the NestJS layout: backend/src/**/*.ts).
+be_ts() { find "$BE" -name '*.ts' -print0 2>/dev/null; }
 
-# Rule 5.4: handlers return domain errors; middleware renders them. A handler
-# building its own JSONResponse has bypassed the single error path.
-hard "handlers writing JSONResponse directly" \
-  "$(grep -c 'JSONResponse(' "$BE"/server.py || true)"
+# Without this wiring none of the guarantees below hold: the trace middleware gives every
+# response its trace id, the error handler renders every failure as the {error:{...}} envelope.
+has_wiring() { grep -q 'app.use(traceMiddleware)' "$BE"/main.ts && grep -q 'app.use(expressErrorHandler)' "$BE"/main.ts; }
+hard "error contract wired into main.ts" "$(has_wiring && printf 0 || printf 1)"
+
+# Rule 5.4: handlers throw domain errors (HttpError); the error handler renders them. A handler
+# writing to the Express response itself has bypassed the single error path.
+hard "handlers writing the response directly" \
+  "$(grep -hE '\bres\.(status|json|send|end)\(' "$ROUTES"/*.ts 2>/dev/null | grep -vE '^\s*(//|\*)' | wc -l)"
 
 # Rule 5.1: cursor pagination, never offset.
 hard "OFFSET pagination in queries" \
-  "$(grep -ohE 'OFFSET %s' "$BE"/*.py | wc -l)"
+  "$(be_ts | xargs -0 grep -ohE 'OFFSET \?' 2>/dev/null | wc -l)"
 
-# Rule 5.1: no `success` boolean as an envelope key. (A `success` field on a
-# diagnostic RESULT resource is fine and lives inside respond(...).)
-hard "success booleans as envelope keys" \
-  "$(grep -hE 'return \{"success"' "$BE"/*.py | grep -vE '^\s*#' | wc -l)"
+# Rule 5.1: a failure is an error status, never `{ success: false }` with a 200.
+# (Legacy `success: true` bodies kept for contract parity are counted below as backlog.)
+hard "failures returned as { success: false }" \
+  "$(grep -hE 'return \{ ?success: false' "$ROUTES"/*.ts 2>/dev/null | wc -l)"
 
-# The contract layer's own executable check.
-if (cd "$BE" && python3 -m api.selftest >/tmp/opdesk-selftest.log 2>&1); then
-  printf '  \033[32mPASS\033[0m  %-46s %s\n' "api.selftest" \
-    "$(grep -oE '[0-9]+/[0-9]+ passed' /tmp/opdesk-selftest.log | tail -1)"
+# The contract layer's own executable check (envelope, error rendering, cursors).
+if (cd backend && npx jest test/respond.spec.ts >/tmp/opdesk-selftest.log 2>&1); then
+  printf '  \033[32mPASS\033[0m  %-46s %s\n' "respond.spec (jest)" \
+    "$(grep -oE 'Tests: +[0-9]+ passed' /tmp/opdesk-selftest.log | tail -1)"
 else
-  printf '  \033[31mFAIL\033[0m  %-46s see /tmp/opdesk-selftest.log\n' "api.selftest"
+  printf '  \033[31mFAIL\033[0m  %-46s see /tmp/opdesk-selftest.log\n' "respond.spec (jest)"
   fail=1
 fi
 
+# --- Naming: the product is OpDesk --------------------------------------------
+# No trace of the project this backend was ported from may reach a tracked file. The pattern
+# is bracketed so this file does not match itself; the browser's getUserMedia constraint
+# (the [e]choCancellation audio option) is the one legitimate use.
+hdr "Naming"
+name_hits=$(git grep -IinE '[e]cho' -- . 2>/dev/null \
+            | sed -E 's/\b[eE][cC][hH][oO][cC]ancellation\b/__allowed__/g' | grep -iE '[e]cho')
+name_count=$(printf '%s' "$name_hits" | grep -c . || true)
+hard "forbidden former product name in the repo" "$name_count"
+[ "$name_count" -gt 0 ] && printf '%s\n' "$name_hits" | head -10 | sed 's/^/        /'
+
 hdr "Rules 4/5 — migration backlog (metrics, not gates)"
-soft "raise HTTPException (want AppError)" \
-  "$(grep -ohE 'raise HTTPException' "$BE"/*.py | wc -l)"
+soft "Nest built-in exceptions (want HttpError)" \
+  "$(be_ts | xargs -0 grep -ohE 'new (HttpException|BadRequestException|NotFoundException|ForbiddenException|UnauthorizedException|ConflictException)\(' 2>/dev/null | wc -l)"
 soft "routes on the {data} envelope" \
-  "$(grep -ohE 'return respond(_list)?\(' "$BE"/*.py | wc -l) / $(grep -ohE '@app\.(get|post|put|patch|delete)\(' "$BE"/*.py | wc -l)"
+  "$(grep -ohE 'respond(List)?\(' "$ROUTES"/*.ts 2>/dev/null | wc -l) / $(grep -ohE '@(Get|Post|Put|Patch|Delete)\(' "$ROUTES"/*.ts 2>/dev/null | wc -l)"
+soft "legacy { success: true } bodies" \
+  "$(grep -hE 'success: true' "$ROUTES"/*.ts 2>/dev/null | wc -l)"
 soft "frontend fetchWithAuth (want lib/api)" \
   "$(grep -ohE 'fetchWithAuth\(' "$SRC"/components/*.tsx "$SRC"/*.tsx "$SRC"/lib/*.ts "$SRC"/hooks/*.ts 2>/dev/null | wc -l)"
 soft "frontend .detail reads (want 0)" \
   "$(grep -ohE '\.detail\b' "$SRC"/components/*.tsx "$SRC"/*.tsx 2>/dev/null | wc -l)"
 soft "hand-written response types in types/" \
-  "$(grep -cE '^[[:space:]]*(export )?(interface|type) ' "$SRC"/types/index.ts 2>/dev/null || echo 0)"
+  "$(grep -cE '^[[:space:]]*(export )?(interface|type) ' "$SRC"/types/index.ts 2>/dev/null || printf 0)"
 
 # --- Rule 0 / A.1: one implementation per concept ---------------------------
 hdr "Rule 0 / A.1 — consolidation backlog (metrics, not gates)"
@@ -186,7 +204,7 @@ soft "@container queries (want > 0)" \
   "$(grep -hoE '@container' "$STYLES"/*.css | wc -l)"
 soft "jsx-a11y warnings" \
   "$(cd frontend && npx eslint src -f json 2>/dev/null \
-     | python3 -c 'import json,sys;d=json.load(sys.stdin);print(sum(1 for f in d for m in f["messages"] if (m.get("ruleId") or "").startswith("jsx-a11y")))' 2>/dev/null || echo '?')"
+     | python3 -c 'import json,sys;d=json.load(sys.stdin);print(sum(1 for f in d for m in f["messages"] if (m.get("ruleId") or "").startswith("jsx-a11y")))' 2>/dev/null || printf '?')"
 
 # ui/ adoption -- the reuse-rate health signal
 ui_users=$(grep -lE "from '\./ui|from '\.\./ui" "$SRC"/components/*.tsx "$SRC"/*.tsx 2>/dev/null | wc -l)

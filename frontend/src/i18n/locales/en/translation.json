@@ -47,7 +47,6 @@
     "callNotifications": "Call notifications",
     "newNotifications": "{{count}} new notifications",
     "notifications": "Notifications",
-    "missedBusyCalls": "Missed & busy calls",
     "noNewNotifications": "No new notifications",
     "ext": "Ext",
     "from": "From",
@@ -172,7 +171,11 @@
     "removeMember": "Remove member",
     "removeTitle": "Remove member?",
     "search": "Search queues",
-    "searchPlaceholder": "Search by queue name or number"
+    "searchPlaceholder": "Search by queue name or number",
+    "pauseReason": "Reason",
+    "pickReason": "Pick a reason",
+    "pauseTitle": "Set {{member}} Not Ready",
+    "pauseHint": "Not Ready is always recorded with a reason, so adherence can tell work from breaks."
   },
   "callLog": {
     "viewManage": "View and manage call records",
@@ -265,15 +268,25 @@
         "QUEUE_ENTER": "Queue",
         "RING": "Ringing",
         "ANSWER": "Answered",
-        "NO_ANSWER": "No answer",
         "TRANSFER": "Transfer",
         "HANGUP": "Hangup",
-        "ATTEMPT": "Attempt",
         "BARGE": "Barge",
         "LISTEN": "Listen",
         "UNANSWERED": "Unanswered",
-        "WHISPER": "Whisper"
-      }
+        "WHISPER": "Whisper",
+        "IVR": "IVR menu"
+      },
+      "callId": "Call ID",
+      "copyId": "Copy call ID",
+      "supervisor": "Supervisor {{id}}",
+      "target": "Monitoring {{id}}",
+      "endedByAgent": "Ended by agent {{id}}",
+      "endedByCustomer": "Ended by the customer",
+      "endedBySystem": "Ended by the system",
+      "forbidden": "You are not allowed to view this call.",
+      "loadFailed": "Could not load this call's journey.",
+      "ivr": "Menu {{name}}",
+      "selection": "Pressed {{key}}"
     },
     "emptyFiltered": "Clear the filters or try a different search.",
     "emptyRange": "Try a wider date range.",
@@ -296,7 +309,11 @@
       "speaker2": "Speaker 2 ({{count}} segments)",
       "speaker2Short": "Speaker 2",
       "title": "Voice activity"
-    }
+    },
+    "recordingForbidden": "You are not allowed to play this recording",
+    "exportCsv": "Download CSV",
+    "exportCsvHint": "Download these calls as a CSV file (up to 50,000 rows)",
+    "exportFailed": "Could not download the CSV file."
   },
   "softphone": {
     "title": "Softphone",
@@ -356,7 +373,8 @@
       "rest": "in a new tab, accept the certificate, then try again."
     },
     "levelMic": "Microphone (your voice)",
-    "levelSpeaker": "Speaker (incoming volume)"
+    "levelSpeaker": "Speaker (incoming volume)",
+    "lastCall": "Last call"
   },
   "users": {
     "title": "All users",
@@ -520,7 +538,7 @@
       "keyNamesHint": "Rename any field to the key your CRM expects. Leave blank to use the default.",
       "collisionWarn": "Two fields would be sent under the same key ({{keys}}). The duplicate rename is dropped and the field keeps its default key.",
       "outcomeMap": "Outcome values",
-      "outcomeMapHint": "Remap an outcome to what your CRM expects (e.g. BUSY → NO_ANSWER). Applies to both status and disposition. Leave blank to send unchanged.",
+      "outcomeMapHint": "Remap an outcome to what your CRM expects (e.g. BUSY → UNANSWERED). Applies to both status and disposition. Leave blank to send unchanged.",
       "stateLive": "Live",
       "stateOff": "Off",
       "offTitle": "CRM integration is off",
@@ -756,8 +774,10 @@
         "integrationApiKeys": "Machine-to-machine credentials for the integration API.",
         "mobileWake": "Push a wake-up before dialing so mobile apps can re-register.",
         "qos": "Capture call quality metrics into CDR records.",
-        "recordingMixMonitor": "Record every call with MixMonitor, in the format you choose.",
-        "sipTls": "Encrypted SIP on port 5061 for traditional softphones."
+        "sipTls": "Encrypted SIP on port 5061 for traditional softphones.",
+        "audit": "Who changed what, and when: every change made through the API.",
+        "recordingPolicy": "Record calls by direction and extension; where the files live and how long they are kept.",
+        "notReadyCodes": "Not-Ready reasons, the wrap-up ceiling and the daily shift reset."
       },
       "noMatches": "No settings match your search.",
       "searchPlaceholder": "Search settings…",
@@ -773,7 +793,8 @@
       "title": {
         "apiKeys": "API keys",
         "mobileWake": "Mobile wake",
-        "recording": "Call recording"
+        "recording": "Call recording",
+        "audit": "Audit log"
       }
     },
     "mobileWake": {
@@ -800,24 +821,92 @@
       "formatWav49": "wav49 (GSM in WAV)",
       "loadError": "Could not load the recording policy.",
       "master": "Record calls",
-      "masterDescMixMonitor": "Record every real call (internal, inbound and outbound trunk) with MixMonitor. The mixed file is saved to the default monitor folder and linked to the CDR."
+      "masterDescMixMonitor": "Record every real call (internal, inbound and outbound trunk) with MixMonitor. The mixed file is saved to the default monitor folder and linked to the CDR.",
+      "inbound": "Inbound",
+      "outbound": "Outbound",
+      "internal": "Internal",
+      "retentionLoadFailed": "Could not read the retention settings.",
+      "enabledMsg": "Call recording enabled.",
+      "disabledMsg": "Call recording disabled.",
+      "directionUpdateFailed": "Could not update {{direction}} recording.",
+      "extUpdateFailed": "Could not update recording for {{ext}}.",
+      "bulkEnabledCount": "Recording on for {{count}} extensions.",
+      "bulkDisabledCount": "Recording off for {{count}} extensions.",
+      "bulkEnabledAll": "Recording on for every extension.",
+      "bulkDisabledAll": "Recording off for every extension.",
+      "bulkFailed": "Bulk update failed.",
+      "retentionSaved": "Retention settings saved.",
+      "retentionSaveFailed": "Could not save the retention settings.",
+      "cleanupDone": "Cleanup done: {{n}} file(s) deleted.",
+      "cleanupFailed": "Cleanup failed.",
+      "cleanup": "Clean up now",
+      "saving": "Saving…",
+      "saveChanges": "Save changes",
+      "loading": "Loading the recording policy…",
+      "sections": "Call recording sections",
+      "tabPolicy": "Policy",
+      "tabLocal": "Local storage",
+      "byDirection": "Record by direction",
+      "perExtension": "Per extension: {{on}} of {{total}} recording",
+      "searchExtensions": "Search extensions",
+      "searchExtensionsPlaceholder": "Extension or name…",
+      "applyToMatches": "Apply to matches ({{n}}):",
+      "applyToAll": "Apply to all:",
+      "recordAll": "Record all",
+      "recordNone": "Record none",
+      "perExtensionCaption": "Per-extension recording",
+      "noExtensions": "No extensions",
+      "noExtensionMatches": "No matching extensions",
+      "colExtension": "Extension",
+      "colRecording": "Recording",
+      "on": "On",
+      "off": "Off",
+      "pageInfo": "{{from}}–{{to}} of {{total}}",
+      "perExtensionNote": "Per extension applies to calls that extension makes (outbound and internal). Inbound external calls follow the Inbound switch above.",
+      "storageUsed": "Storage used",
+      "ofGb": "of {{n}} GB",
+      "diskFree": "Disk free",
+      "ofSize": "of {{size}}",
+      "totalRecordings": "Recorded calls",
+      "location": "Location",
+      "directory": "Recordings directory",
+      "directoryHint": "Absolute path on the PBX where Asterisk writes recordings. Retention deletes from this tree.",
+      "retention": "Retention",
+      "localDays": "Delete recordings after (days)",
+      "keepForever": "Blank = keep forever",
+      "example": "e.g. {{value}}",
+      "localMax": "Maximum storage (GB)",
+      "localMaxHint": "The oldest recordings are deleted first once usage passes this. Blank = no cap.",
+      "vadFiles": "Voice activity files",
+      "vadDelete": "Delete per-speaker files after analysis",
+      "vadDeleteDesc": "The -sp1/-sp2 legs are only needed briefly to compute voice activity; on by default."
     },
     "webhooks": {
       "metaDirections": "{{method}} · {{active}}/{{total}} directions"
+    },
+    "contactCenter": {
+      "title": "Wrap-up and shift reset",
+      "description": "After-call work and the daily logout that closes each shift.",
+      "wrapUpLabel": "Wrap-up ceiling (seconds)",
+      "wrapUpHelp": "How long an agent stays paused after a queue call before returning to Ready. They can finish sooner from their status menu, so this is a ceiling, not a fixed delay. 0 turns the auto-release off. Applies from the next completed call.",
+      "shiftResetLabel": "Daily shift reset",
+      "shiftResetHelp": "At this time each day every signed-in agent is logged out of their queues, so a shift left open does not run into the next one and Agent Adherence reports one shift per day. An agent on a call is logged out when the call ends; an agent on Do Not Disturb is left alone. Clear the field to turn the reset off.",
+      "wrapUpLoadFailed": "Could not read the wrap-up setting.",
+      "shiftResetLoadFailed": "Could not read the shift reset time.",
+      "wrapUpOffSaved": "Wrap-up auto-release turned off: agents stay in wrap-up until they finish it.",
+      "wrapUpSaved": "Wrap-up ceiling set to {{n}} s. Applies from the next completed call.",
+      "wrapUpSaveFailed": "Could not save the wrap-up setting.",
+      "shiftResetSaved": "Agents are logged out of their queues at {{time}} each day.",
+      "shiftResetOffSaved": "Daily shift reset turned off: agents stay logged in until they log out.",
+      "shiftResetSaveFailed": "Could not save the shift reset time.",
+      "saving": "Saving…",
+      "save": "Save changes"
     }
   },
   "time": {
     "justNow": "Just now",
     "minutesAgo": "{{count}}m ago",
     "hoursAgo": "{{count}}h ago"
-  },
-  "reason": {
-    "busy": "Busy",
-    "noanswer": "No answer",
-    "failed": "Failed",
-    "switched_off": "Unavailable",
-    "invalid_number": "Invalid number",
-    "completed": "Completed"
   },
   "common": {
     "incomingCall": "Incoming call",
@@ -931,7 +1020,9 @@
       "rank": "#",
       "slaContrib": "SLA %",
       "trend7d": "7d trend",
-      "agents": "agents"
+      "agents": "agents",
+      "compareTitle": "Compare agents",
+      "compareBy": "Compare by"
     },
     "drilldown": {
       "title": "Drilldown explorer",
@@ -973,6 +1064,9 @@
       "agents": {
         "trend": {
           "text": "Calls answered per day, last 7 days."
+        },
+        "compare": {
+          "text": "Every agent on one figure at a time, highest first. Pick the figure from the menu."
         }
       },
       "kpi": {
@@ -1013,7 +1107,22 @@
           "formula": "answered in time ÷ answered",
           "text": "How often this queue’s answered calls were picked up within its SLA threshold. The goal is 80%."
         }
+      },
+      "drilldown": {
+        "status": {
+          "text": "How the call ended, in the same words Call History uses."
+        }
       }
+    },
+    "export": {
+      "csv": "Download CSV",
+      "failed": "The download failed. Please try again.",
+      "overviewTitle": "The period’s figures as a CSV file",
+      "trendCsv": "Daily CSV",
+      "trendTitle": "Calls per day as a CSV file",
+      "queuesTitle": "Every queue’s figures as a CSV file",
+      "heatmapTitle": "Calls by weekday and hour as a CSV file",
+      "agentsTitle": "Every agent’s figures as a CSV file"
     }
   },
   "agent": {
@@ -1027,7 +1136,50 @@
       "stillIn": "In",
       "empty": "No agent activity for this period",
       "exportCsv": "CSV",
-      "exportXlsx": "Excel"
+      "exportXlsx": "Excel",
+      "sessions": "Sessions",
+      "break": "Break",
+      "dnd": "DND",
+      "tip": {
+        "source": {
+          "text": "Based on the status agents set themselves, not on their phones."
+        },
+        "login": {
+          "text": "When the agent first logged in during the period."
+        },
+        "logout": {
+          "text": "When the agent last logged out. \"In\" while still signed in."
+        },
+        "sessions": {
+          "text": "How many times the agent logged in. A logout, or the daily shift reset, ends a session."
+        },
+        "loggedInTotal": {
+          "text": "Total time the agent was signed in.",
+          "formula": "ready + on call + wrap-up + not ready + DND"
+        },
+        "ready": {
+          "text": "Available: signed in and waiting for a call."
+        },
+        "onCall": {
+          "text": "On a call."
+        },
+        "wrapUp": {
+          "text": "Finishing up after a call."
+        },
+        "break": {
+          "text": "The unpaid part of Not Ready: reasons not marked productive, such as lunch. Hover the number for the reasons."
+        },
+        "notReady": {
+          "text": "Paused with any reason, productive or not. Hover the number for the reasons."
+        },
+        "dnd": {
+          "text": "Signed in but on Do Not Disturb: no queue or direct calls reach the agent."
+        },
+        "occupancy": {
+          "text": "Of the time they were available, how much was spent working. Over 85% for long is a burnout sign.",
+          "formula": "(on call + wrap-up) ÷ (on call + wrap-up + ready)"
+        }
+      }
     },
     "noReasons": "No reason codes",
     "unpaid": "break",
@@ -1039,13 +1191,33 @@
       "dnd": "Do not disturb",
       "available": "Available",
       "loggedOut": "Offline",
-      "wrapUp": "Wrap-up"
+      "wrapUp": "Wrap-up",
+      "queueLabel": "Queue: {{queue}}",
+      "deviceAsleep": "Ready, but the phone is asleep; it wakes on the next call"
     },
     "codes": {
       "deleteFailed": "Could not delete that reason code.",
       "deleteTitle": "Delete reason code?",
       "labelPlaceholder": "Break",
       "listTitle": "Reason codes"
+    },
+    "finishWrap": "Finish wrap-up",
+    "pickReason": "Not ready, with a reason",
+    "timeline": {
+      "open": "Show every status change",
+      "period": "{{from}} to {{to}}",
+      "stateWithReason": "{{state}} · {{reason}}",
+      "forbidden": "You are not allowed to see this agent's activity.",
+      "empty": "No activity for this period",
+      "emptyHint": "This agent did not log in during the selected dates.",
+      "leftOnDnd": "left on DND",
+      "sessionLength": "Session",
+      "queue": "Queue {{queue}}",
+      "ongoing": "ongoing · {{duration}}",
+      "source": {
+        "ami": "phone",
+        "supervisor": "supervisor"
+      }
     }
   },
   "logs": {
@@ -1133,7 +1305,9 @@
     "color": "Color",
     "order": "Sort order",
     "productiveHint": "Counts as paid work (e.g. Meeting, Training) rather than a break in adherence.",
-    "activeHint": "Inactive codes are hidden from the agent picker."
+    "activeHint": "Inactive codes are hidden from the agent picker.",
+    "systemHint": "Used by OpDesk itself; it cannot be edited or deleted.",
+    "reservedCode": "Codes starting with __ are reserved for the system."
   },
   "contacts": {
     "loading": "Loading contacts…",
@@ -1269,14 +1443,15 @@
   },
   "callStatus": {
     "ANSWERED": "Answered",
-    "NO_ANSWER": "No answer",
     "BUSY": "Busy",
-    "FAILURE": "Failed",
+    "FAILURE": "Failure",
     "ABANDONED": "Abandoned",
-    "CANCELED": "Canceled",
     "DROPPED": "Dropped",
-    "OUT_OF_REACH": "Out of reach",
-    "IN_PROGRESS": "In progress"
+    "UNANSWERED": "Unanswered",
+    "MISSED": "Missed",
+    "VOICEMAIL": "Voicemail",
+    "UNREACHABLE": "Unreachable",
+    "NETWORK_ERROR": "Network error"
   },
   "contactLookup": {
     "secMatching": "Number matching",
@@ -1420,5 +1595,46 @@
     "outbound": "Outbound",
     "internal": "Internal",
     "all": "All directions"
+  },
+  "callStatusTip": {
+    "ANSWERED": "Someone picked up and the two sides talked.",
+    "UNANSWERED": "It rang until it timed out, or our side gave up while it rang.",
+    "BUSY": "The callee was busy or declined the call.",
+    "MISSED": "The caller hung up while it was still ringing.",
+    "VOICEMAIL": "Voicemail took the call.",
+    "UNREACHABLE": "The phone was switched off, unregistered or out of service.",
+    "FAILURE": "The call could not be placed, for example a wrong number.",
+    "NETWORK_ERROR": "The route or the carrier failed: congestion or no circuit.",
+    "ABANDONED": "The caller hung up while waiting in a queue.",
+    "DROPPED": "The call was answered, then cut off abnormally."
+  },
+  "audit": {
+    "loadError": "Could not load the audit log.",
+    "time": "Time",
+    "actor": "Who",
+    "action": "Action",
+    "entity": "What",
+    "summary": "Details",
+    "ip": "IP",
+    "refresh": "Refresh",
+    "actorSearch": "Search by user",
+    "actorPlaceholder": "User name or extension…",
+    "allActions": "All actions",
+    "entityType": "Entity type",
+    "allEntities": "Everything",
+    "loading": "Loading the audit log…",
+    "caption": "Audit log",
+    "emptyTitle": "No audit entries",
+    "emptyDesc": "Nothing matches the current filters.",
+    "emptyRange": "Nothing was changed in this period.",
+    "loadMore": "Load more",
+    "actions": {
+      "create": "Create",
+      "update": "Update",
+      "delete": "Delete",
+      "apply": "Apply",
+      "login": "Sign in",
+      "logout": "Sign out"
+    }
   }
 }

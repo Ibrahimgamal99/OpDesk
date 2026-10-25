@@ -1,4 +1,4 @@
-/* Work pages (Call History, Contacts): what echo's sheets do not already cover. */
+/* Work pages (Call History, Contacts): what the shared sheets do not already cover. */
 
 /* Call History table. Sized to fit a 1440px desktop beside the sidebar; anything
    wider scrolls inside .ui-table-wrap, never the page. */

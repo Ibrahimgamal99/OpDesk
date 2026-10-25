@@ -1,0 +1,94 @@
+# OpDesk reverse proxy: EXAMPLE of the site install.sh generates (as nginx/opdesk.conf) for
+# HTTPS on 8443 with the self-signed certificate. For a Docker or hand-made setup, copy it to
+# /etc/nginx/conf.d/opdesk.conf (or sites-enabled/), then adjust ports, server_name and certificate.
+# upstream/map/zone names are opdesk_-prefixed: nginx's http{} namespace is shared with every
+# other site on the box, and a duplicate name fails the whole configuration.
+
+upstream opdesk_app { server 127.0.0.1:8765; keepalive 32; }
+# No keepalive here: this upstream only carries WebSocket upgrades, which take the connection
+# over, and pooled sockets go stale across an Asterisk reload (spurious 400s).
+upstream opdesk_asterisk_ws { server 127.0.0.1:8088; }
+
+map $http_upgrade $opdesk_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# SIP over WebSocket (Sec-WebSocket-Protocol: sip) on / or /ws goes to Asterisk; everything else
+# to OpDesk. A map instead of "if" inside a location, which can silently mis-route.
+map $http_sec_websocket_protocol $opdesk_root_proxy {
+    "sip"   "http://opdesk_asterisk_ws/ws";
+    default "http://opdesk_app";
+}
+
+server {
+    listen 8443 ssl http2;
+
+    server_name _;
+
+    ssl_certificate     /opt/OpDesk/cert/opdesk_cert.pem;
+    ssl_certificate_key /opt/OpDesk/cert/opdesk_key.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:opdesk_ssl:10m;
+    ssl_session_timeout 10m;
+
+    # Plain directives are inherited by every location below.
+    proxy_http_version 1.1;
+    proxy_read_timeout 3600s;
+
+    # proxy_set_header is NOT inherited by a location that sets any proxy_set_header itself, so
+    # each location repeats the full list.
+
+    # The app WebSocket. It authenticates with a token (query string or first message), never
+    # with cookies, and Asterisk's HTTP server rejects oversized headers, so cookies are dropped.
+    # No access log: the ?token= query string must not land in log files.
+    location = /ws {
+        proxy_pass         $opdesk_root_proxy;
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        $opdesk_connection_upgrade;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Host  $http_host;
+        proxy_set_header   Cookie            "";
+        access_log off;
+    }
+
+    # The softphone's SIP over WebSocket, straight to Asterisk's HTTP server.
+    location = /sip-ws {
+        proxy_pass         http://opdesk_asterisk_ws/ws;
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        $opdesk_connection_upgrade;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Host  $http_host;
+        proxy_set_header   Cookie            "";
+    }
+
+    location / {
+        proxy_pass         $opdesk_root_proxy;
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        $opdesk_connection_upgrade;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        # $http_host keeps the :port, which the backend needs when OpDesk is not on 443.
+        proxy_set_header   X-Forwarded-Host  $http_host;
+        client_max_body_size 25m;
+    }
+}
+
+# Port 80: Let's Encrypt HTTP-01 challenges (webroot renewals), everything else to HTTPS.
+server {
+    listen 80;
+
+    server_name _;
+
+    location /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location / { return 301 https://$host:8443$request_uri; }
+}

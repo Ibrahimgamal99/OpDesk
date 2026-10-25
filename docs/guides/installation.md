@@ -1,86 +1,156 @@
 # Installation and operations
 
-Installing OpDesk on an Issabel or FreePBX server, running it, and keeping it up to date.
-The short version is in the [README](../../README.md#install); this guide has the details.
+How to install OpDesk on an Issabel or FreePBX server, run it, and keep it up to date.
+The short version is in the [README](../../README.md#install). This guide has the details.
+
+## Supported systems
+
+| PBX | OS | Native install | Notes |
+|---|---|---|---|
+| **Issabel 5** | Rocky Linux 8 (glibc 2.28) | Yes | Asterisk 16, 18 or 20. Apache keeps ports 80 and 443, so OpDesk is served on **8443**. |
+| **FreePBX 17** | Debian 12 | Yes | Apache serves the FreePBX UI on 80, and on 443 if HTTPS is set up there. In that case OpDesk defaults to **8443**. |
+| **FreePBX 16** | Debian 10/11, Rocky/Alma 8 | Yes | Same port rules as FreePBX 17. |
+| **FreePBX 16** | Sangoma Linux 7 / CentOS 7 (glibc 2.17) | **Docker only** | Node.js 24 needs glibc 2.28 or newer. The installer stops with a message on these systems. |
+| Plain Asterisk | Debian 11+, Ubuntu 20.04+, RHEL family 8+ | Yes | Needs AMI and the Asterisk HTTP server. |
+
+Node.js is pinned to **24**. Node 27 and later need glibc 2.34, which EL8-based systems such as Issabel 5 do not have.
 
 ## Prerequisites
 
 | Requirement | Notes |
 |---|---|
-| **Issabel or FreePBX** | Asterisk with **AMI** enabled. The installer creates OpDesk's own AMI user. |
-| **Asterisk HTTP / WebSocket** | Plain WebSocket on `127.0.0.1:8088`. The installer checks for it. |
-| **MySQL / MariaDB** | The PBX's own database (`asterisk`, `asteriskcdrdb`). OpDesk adds its own database next to them. |
-| **OS** | Debian 12+, Ubuntu, or a RHEL family (CentOS, Rocky): whatever the PBX runs on. |
-| **Tools** | `sudo` and `curl`. The installer adds git, lsof, openssl, Python 3.11+, Node.js (via nvm) and Nginx if they are missing. |
-| **Browser** | Any current Chrome, Edge, Firefox or Safari. The softphone needs HTTPS, which Nginx provides. |
-| **Public install only** | A DNS name pointing at the server, and port 80 reachable for the Let's Encrypt challenge. |
+| **Asterisk with AMI** | The installer creates OpDesk's own AMI user. It creates `manager_custom.conf` first if the file is missing. |
+| **Asterisk HTTP / WebSocket** | Plain WebSocket on `127.0.0.1:8088`. Nginx proxies the softphone's `/sip-ws` to it. The installer warns if it is off. |
+| **MySQL / MariaDB** | The PBX's own server (`asterisk`, `asteriskcdrdb`). OpDesk adds an `OpDesk` database and an `OpDesk` user. The installer needs a privileged login; see [Database access](#database-access). |
+| **Root** | Run the installer as root (`sudo ./install.sh`). It adds git, curl, lsof, openssl, nginx, Node.js 24 (through nvm), a Python venv for voice-activity analysis, and certbot when a domain is used. |
+| **Resources** | About 1 GB of free RAM and 1.5 GB of disk for the first build. On 1–2 GB machines the build caps Node's heap at 1 GB; add swap if the build is killed. |
+| **Browser** | Any current Chrome, Edge, Firefox or Safari. The softphone needs HTTPS, which nginx provides. |
+| **Public install only** | A DNS name pointing at the server, with port 80 reachable for the Let's Encrypt challenge. |
 
 ### Ports
 
 | Port | Who | Purpose |
 |---|---|---|
-| `443/tcp` (or your choice) | Nginx | OpDesk over HTTPS, the app WebSocket `/ws`, and SIP over WebSocket `/sip-ws`. |
-| `80/tcp` | Nginx | Redirects to HTTPS; Let's Encrypt challenges. |
-| `127.0.0.1:8765` | uvicorn | The FastAPI backend. Loopback only. |
-| `127.0.0.1:8088` | Asterisk | Plain WebSocket that Nginx proxies `/sip-ws` to. |
+| `443/tcp`, or `8443` next to Apache | nginx | OpDesk over HTTPS, the app WebSocket `/ws`, and SIP over WebSocket `/sip-ws`. |
+| `80/tcp` (only if free) | nginx | Redirects to HTTPS and answers Let's Encrypt challenges. |
+| `127.0.0.1:8765` | Node.js | The OpDesk backend (NestJS). Loopback only. |
+| `127.0.0.1:8088` | Asterisk | Plain WebSocket that nginx proxies `/sip-ws` to. |
 | `127.0.0.1:5038` | Asterisk | AMI. |
 
-**FreePBX and Issabel already run Apache on 80 and 443.** The installer detects this and
-asks what to do:
+**Apache on the PBX.** FreePBX and Issabel run Apache for their own web UI. The installer handles it as follows:
 
-1. **Serve OpDesk on another port.** It suggests `8443`. OpDesk is then at
-   `https://<server>:8443`, and the PBX admin UI stays where it was.
-2. **Move Apache** to `4443` (and `8080` for HTTP) so OpDesk gets 443. The installer edits
-   the `httpd` config, updates SELinux and restarts Apache.
-3. **Cancel** and resolve it yourself.
-
-Re-running the installer keeps the port you chose last time.
+- **HTTPS port.** Port 443 is used if it is free. If Apache holds it, the installer suggests **8443** and OpDesk is at `https://<server>:8443`. The PBX UI stays where it was. On FreePBX and plain Asterisk it also offers to move Apache from 443 to 4443. On **Issabel it never moves Apache**: Issabel's UI, its HTTPS rewrite, its certbot module and the Asterisk certificate all assume Apache on 80/443.
+- **Port 80.** OpDesk adds an HTTP→HTTPS redirect only when port 80 is free. Apache keeps port 80 on FreePBX and Issabel, so there is no redirect there.
+- **Re-runs.** The installer keeps the port you chose last time.
 
 ## Option A: native install (`install.sh`)
 
 ```bash
 # LAN, self-signed certificate
-curl -k -O https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh
+curl -fsSLO https://raw.githubusercontent.com/Ibrahimgamal99/OpDesk/main/install.sh
 chmod +x install.sh && sudo ./install.sh
 
 # Public internet, Let's Encrypt (DNS must already point here)
 sudo OPDESK_DOMAIN=opdesk.example.com OPDESK_LE_EMAIL=admin@example.com ./install.sh
 ```
 
-The installer:
+All questions are asked first: the domain, the HTTPS port, and the `admin` password on a fresh install. After that the installer runs unattended:
 
-1. Detects the OS and installs any missing tools.
-2. Clones the repository to `/opt/OpDesk` (or pulls, if it is already there).
-3. Installs the Python and Node.js dependencies.
-4. Detects Issabel or FreePBX, creates OpDesk's database and AMI user.
-5. Asks for the HTTPS port and resolves any conflict (see [Ports](#ports)).
-6. Obtains a certificate: Let's Encrypt when `OPDESK_DOMAIN` is set, otherwise self-signed.
-7. Writes the Nginx site, `backend/.env` and the `opdesk` systemd unit, and starts it.
-   On start, `start.sh` builds the frontend whenever its sources are newer than the last build.
+1. **OS.** Detects the OS (Debian/Ubuntu or the RHEL family, including Rocky 8 under Issabel) and installs missing tools. It stops if glibc is older than 2.28.
+2. **Code.** Clones the repository to `/opt/OpDesk`, or pulls if it is already there. If the pull changed `install.sh`, it continues with the new version.
+3. **Node.js 24.** Installs it through nvm into `/root/.nvm` and pins it as the default.
+4. **Voice-activity analysis.** Creates a Python venv at `backend/vad/.venv` with `numpy`, `webrtcvad-wheels` and `onnxruntime`. It uses `python3.12`/`python3.11` from AppStream on Issabel and EL8, and the system `python3` on Debian 12. Nothing goes into the system Python. If this step fails, OpDesk runs without talk/silence analysis.
+5. **Database.** Detects Issabel or FreePBX and logs in to MySQL with a privileged account. It then:
+   - creates or repairs the `OpDesk` user, with the same grants as always: `SELECT, INSERT, UPDATE, DELETE` on `asterisk`, `SELECT` on `asteriskcdrdb`, `ALL` on `OpDesk`;
+   - applies `backend/schema.sql`, which is idempotent;
+   - turns the MariaDB `event_scheduler` on, both live and in a config drop-in.
+6. **AMI.** Adds an `[OpDesk]` user to `/etc/asterisk/manager_custom.conf` with a 32-character secret, permitted from `127.0.0.1` only. Existing users keep their secret. A short secret left by an older installer is replaced.
+7. **TLS.** Creates a self-signed certificate in `/opt/OpDesk/cert/`, unless one is already there.
+8. **nginx.** Installs nginx if needed: `apt` on Debian, or the `nginx:1.24` module stream on EL8. It then:
+   - writes the site and runs `nginx -t`, keeping the previous site if the test fails;
+   - with a domain, gets a Let's Encrypt certificate and adds a renewal hook that reloads nginx;
+   - opens the HTTPS port in firewalld or ufw, or tells you where to open it (see [Firewall](#firewall)).
+9. **Config.** Writes `backend/.env` (mode `600`). Existing values are kept, variables the installer does not manage are carried over, and the previous file is saved as `.env.bak`.
+10. **Build.** Runs `npm ci` and `npm run build` for `backend/` and `frontend/`.
+11. **Admin password.** Fresh install only. Hashes the password with bcrypt and stores it. If you pressed Enter at the question, a random password is generated and printed in the final report.
+12. **Service.** Writes `/etc/systemd/system/opdesk.service` on every run and (re)starts it.
 
-When it finishes, open **`https://<server-ip>`** or **`https://<your-domain>`**, adding
-`:<port>` if you did not use 443. Sign in as **`admin`** with the password the installer
-printed, then change it from the profile menu (**Change password**).
+When it finishes, open the URL from the report, for example `https://<server-ip>:8443`. Sign in as **`admin`**, then change the password from the profile menu (**Change password**). With a self-signed certificate the browser warns once. Accept the warning, or the softphone cannot connect.
 
-With a self-signed certificate the browser warns once. Accept it, or the softphone cannot
-connect.
+### Options
+
+| Option / variable | Effect |
+|---|---|
+| `--yes` | No questions. The domain comes from `OPDESK_DOMAIN` or `.env`, the port is the previous one, 443, or 8443 when 443 is taken, and the admin password comes from `OPDESK_ADMIN_PASSWORD` or is generated. |
+| `--no-pull` | Install the code already in `/opt/OpDesk` without `git pull`. |
+| `OPDESK_DOMAIN`, `OPDESK_LE_EMAIL` | Public name and Let's Encrypt contact address. |
+| `OPDESK_PUBLIC_HTTPS_PORT` | HTTPS port to use (mostly with `--yes`). |
+| `OPDESK_ADMIN_PASSWORD` | Admin password for a fresh install. |
+| `MYSQL_ROOT_PASSWORD` | Root password, when root cannot log in through the socket. |
+
+### What the installer does on each OS
+
+| | Debian 12 / Ubuntu (FreePBX 17) | Rocky 8 / EL8 (Issabel 5, FreePBX on EL) |
+|---|---|---|
+| nginx package | `apt-get install nginx` | `dnf module enable nginx:1.24`, then `dnf install nginx` (the default 1.14 is too old) |
+| nginx site | `/etc/nginx/sites-enabled/opdesk` → `/opt/OpDesk/nginx/opdesk.conf` (symlink) | `/etc/nginx/conf.d/opdesk.conf` (copy). The stock `server { listen 80 default_server; }` in `nginx.conf` is commented out (`#opdesk#`), and a backup is kept in `nginx.conf.opdesk-orig`. |
+| HTTP/2 and IPv6 | `listen … ssl http2` (nginx < 1.25.1), or `http2 on;` on newer nginx. IPv6 `listen` lines only when the kernel has IPv6. | same |
+| Python for VAD | system `python3` (3.11) + `python3-venv` | `python3.12` (or `python3.11`) from AppStream; the system `python3` is 3.6 |
+| MariaDB root login | unix socket as root | Issabel: `mysqlrootpwd=` from `/etc/issabel.conf`. Otherwise the socket, or `MYSQL_ROOT_PASSWORD`. |
+| `event_scheduler` drop-in | `/etc/mysql/mariadb.conf.d/90-opdesk.cnf` | `/etc/my.cnf.d/opdesk.cnf` |
+| Let's Encrypt | webroot through OpDesk's port-80 server, or Apache's `/var/www/html` when Apache holds 80 | certbot from EPEL. On Issabel, webroot `/var/www/html` (Apache serves the challenge). |
+| Firewall | ufw if active | firewalld if active; otherwise the Issabel firewall (see [Firewall](#firewall)) |
+
+### Database access
+
+The installer needs a MySQL account that can create users and databases. It tries these in order:
+
+1. `MYSQL_ROOT_PASSWORD` from the environment.
+2. `mysqlrootpwd=` in `/etc/issabel.conf` (Issabel).
+3. `root` through the unix socket, or with no password. This works on FreePBX and Debian, and on a fresh Issabel netinstall.
+4. The PBX's own account from `/etc/freepbx.conf`, `/etc/issabelpbx.conf` or `/etc/amportal.conf`.
+5. A typed root password (interactive runs only).
+
+Passwords go through a temporary `0600` option file, never on the command line. If nothing works, the installer prints the SQL to run by hand.
+
+### Firewall
+
+- **firewalld** or **ufw** active: the installer opens the HTTPS port itself.
+- **Issabel**: its firewall (iptables rules kept in `/var/www/db/iptables.db`) rewrites iptables on every apply, so the installer does not add raw rules. Add **TCP 8443** (or your port) under **Security → Firewall → Firewall Rules**.
+- **FreePBX firewall module**: add the port under **Connectivity → Firewall → Services → Custom Services**.
+
+The softphone also needs the Asterisk WebSocket and RTP ports. OpDesk proxies the WebSocket through nginx, so only RTP (usually `10000–20000/udp`) must be reachable. PBX firewalls allow it by default.
 
 ## Option B: Docker
 
+Docker is also the way to run OpDesk next to FreePBX 16 on Sangoma 7 / CentOS 7.
+
 ```bash
 git clone https://github.com/Ibrahimgamal99/OpDesk.git && cd OpDesk
-cp .env.example .env && nano .env      # DB_*, AMI_*, JWT_SECRET, OPDESK_DOMAIN
-mkdir -p cert && openssl req -x509 -newkey rsa:4096 \
-  -keyout cert/opdesk_key.pem -out cert/opdesk_cert.pem -days 365 -nodes -subj "/CN=localhost"
+cp .env.example .env && nano .env      # DB_*, AMI_*, JWT_SECRET, OPDESK_DOMAIN, CORS_ALLOWED_ORIGINS
 docker compose up --build -d
 ```
 
-- The container uses `network_mode: host`, so `127.0.0.1` in `.env` reaches the PBX's MariaDB
-  and AMI just like a native install. You do not need to add Docker subnets to `manager.conf`.
-- uvicorn serves plain HTTP on `127.0.0.1:8765`. **Nginx on the host** terminates TLS. Use
-  [`nginx/opdesk.conf`](../../nginx/opdesk.conf) as the site file.
-- Two-stage build: `node:22-bookworm-slim` builds the frontend, `python:3.11-slim` runs it.
-- Health check: `curl -fsS http://localhost:8765/` every 30 s.
+Before the first start, do these on the host:
+
+1. **Create the OpDesk database user and schema** as MySQL root. Use the same password as `DB_PASSWORD` in `.env`:
+   ```sql
+   CREATE USER 'OpDesk'@'localhost' IDENTIFIED BY '<DB_PASSWORD>';
+   GRANT SELECT, INSERT, UPDATE, DELETE ON asterisk.* TO 'OpDesk'@'localhost';
+   GRANT SELECT ON asteriskcdrdb.* TO 'OpDesk'@'localhost';
+   GRANT ALL PRIVILEGES ON OpDesk.* TO 'OpDesk'@'localhost';
+   ```
+   then `mysql < backend/schema.sql`.
+2. **Add the AMI user** to `/etc/asterisk/manager_custom.conf` (same secret as `AMI_SECRET`, `permit=127.0.0.1/255.255.255.255`), then run `asterisk -rx "manager reload"`.
+3. **Put nginx in front.** Copy [`nginx/opdesk.conf.example`](../../nginx/opdesk.conf.example) to `/etc/nginx/conf.d/opdesk.conf` (or `sites-enabled/`) and adjust the port, `server_name` and certificate.
+
+Container details:
+
+- `network_mode: host`: `127.0.0.1` in `.env` reaches MariaDB and AMI as in a native install.
+- **Image.** Three stages: the frontend build and the backend build both run on `node:24-bookworm-slim`. The runtime image has Node 24 and a Python venv for voice-activity analysis.
+- **Mounts.** `/var/spool/asterisk/monitor` is mounted for recordings (playback and retention), and `./secrets` for push credentials.
+- **Limits.** The container has no Asterisk CLI and no `/etc/asterisk`. Features that write Asterisk config or run `asterisk -rx` (dialplan install, recording policy, SIP TLS setup) need the native install.
+- **Health check.** An HTTP GET on the backend port every 30 s.
 
 ## Running
 
@@ -93,11 +163,18 @@ The installer enables `opdesk.service`, so OpDesk starts on boot and restarts on
 | Live logs | `sudo journalctl -u opdesk -f` |
 | Enable / disable on boot | `sudo systemctl {enable,disable} opdesk` |
 
+The unit runs `start.sh`, which:
+
+1. **Rebuilds what changed.** It rebuilds the frontend when anything in `frontend/src`, `public/`, `package*.json`, the Vite/TypeScript config or `frontend/.env*` is newer than `frontend/dist/index.html`. It rebuilds the backend when `backend/src`, `package*.json` or `tsconfig*.json` is newer than `backend/dist/main.js`.
+2. **Installs dependencies when needed.** It runs `npm ci --include=dev` only when `package-lock.json` is newer than the installed `node_modules`.
+3. **Keeps the last good build.** If a build fails, the previous `dist/` is restored and started, so a bad update does not take OpDesk down.
+4. **Starts Node.** It `exec`s `node backend/dist/main.js`, so Node is the service's main process. `systemctl stop` sends it SIGTERM and it shuts down cleanly. The unit uses `KillMode=mixed` and `TimeoutStopSec=30`.
+
 To run it by hand:
 
 ```bash
-./start.sh          # production: backend serves the built frontend
-./start.sh -d       # development: backend + Vite dev server with hot reload, no Nginx
+./start.sh          # production: build what changed, then run the backend (serves frontend/dist)
+./start.sh -d       # development: tsc --watch + node --watch backend, Vite dev server with hot reload
 ```
 
 ## Updating
@@ -108,9 +185,7 @@ Re-run the installer:
 cd /opt/OpDesk && sudo ./install.sh
 ```
 
-It pulls the latest code, regenerates the Nginx config with the
-same port and LAN/public mode, keeps your `backend/.env` values, and restarts the service
-(which rebuilds the frontend if it changed).
+It pulls the latest code, keeps `backend/.env`, `cert/`, the HTTPS port and the domain, regenerates the nginx site and the systemd unit, rebuilds, and restarts the service.
 
 To switch an existing LAN install to a public domain, run it once with the domain set:
 
@@ -120,14 +195,39 @@ sudo OPDESK_DOMAIN=opdesk.example.com OPDESK_LE_EMAIL=admin@example.com ./instal
 
 For Docker: `git pull && docker compose up --build -d`.
 
+### Upgrading from the Python backend (OpDesk 1.x)
+
+OpDesk 2 replaces the Python/FastAPI backend with a Node.js (NestJS) one. The database is reused as it is. API changes (mainly the 10-value call status, see [webhooks.md](../api/webhooks.md)) are listed in the [API reference](../api/endpoints.md). Older installers run `git pull` themselves and break on the new layout, so update in this order:
+
+```bash
+cd /opt/OpDesk
+git checkout -- nginx/opdesk.conf 2>/dev/null   # a generated file older releases kept in git
+git pull
+sudo ./install.sh --no-pull
+```
+
+The new installer:
+
+- stops the running Python backend before building;
+- keeps `backend/.env`, `cert/` and the HTTPS port;
+- adds `VAD_PYTHON`;
+- applies the schema;
+- re-applies the database grants;
+- replaces an 8-character AMI secret with a 32-character one;
+- rewrites `opdesk.service` (now `node backend/dist/main.js`).
+
+It also removes the `/usr/local/bin/python` symlink and `/usr/local/bin/pip` wrapper that the old installer created, but only when the wrapper is exactly the one it wrote. The Python packages it installed system-wide (fastapi, uvicorn, …) are no longer used, and you can remove them with pip.
+
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| Nginx will not start | Something else holds the port: `sudo ss -ltnp | grep -E ':(80|443) '`. Re-run the installer and pick another port, or move Apache. |
-| Page loads but shows no extensions | AMI is not connected. `sudo journalctl -u opdesk -f` shows the AMI login error; check `AMI_*` in `backend/.env` against `/etc/asterisk/manager_custom.conf`. |
-| Softphone stays "connecting" | The certificate is not trusted (open the site once and accept it), or Asterisk's HTTP server is off: `asterisk -rx "http show status"` should list port 8088. |
-| Let's Encrypt fails | DNS must resolve to this server and port 80 must be reachable from the internet. |
+| nginx does not start | Something else holds the port: `sudo ss -ltnp \| grep -E ':(80\|443\|8443) '`. On EL, check that the stock port-80 server in `/etc/nginx/nginx.conf` is commented out (`#opdesk#`). Run `sudo nginx -t` for the exact error. |
+| Service restarts in a loop | `sudo journalctl -u opdesk -n 200`. "build of backend failed and there is no previous build" means a TypeScript error after an update. Fix it, or check out the previous commit. |
+| Page loads but shows no extensions | AMI is not connected. The log shows the AMI login error. Check `AMI_*` in `backend/.env` against `/etc/asterisk/manager_custom.conf`, then run `asterisk -rx "manager show users"`. |
+| Softphone stays "connecting" | The certificate is not trusted (open the site once and accept it), or Asterisk's HTTP server is off. `asterisk -rx "http show status"` should list port 8088. |
+| Let's Encrypt fails | DNS must resolve to this server, and port 80 must be reachable from the internet. When Apache holds port 80, the challenge is served from `/var/www/html`. |
+| No talk/silence analysis on calls | `VAD_PYTHON` in `backend/.env` must point to a working venv. Check with `$VAD_PYTHON -c "import numpy, webrtcvad"`. To rebuild the venv, re-run `sudo ./install.sh --no-pull`. |
+| Build killed on a small box | The kernel's OOM killer stopped `tsc` or `vite`. Add swap (`fallocate -l 2G /swapfile && mkswap /swapfile && swapon /swapfile`) and restart the service. |
 
-For browser-side issues, open OpDesk once with `?debug=1`: the frontend then sends its
-lifecycle and SIP events to the backend log as `CLIENT[session]` lines.
+For browser-side issues, open OpDesk once with `?debug=1`. The frontend then sends its lifecycle and SIP events to the backend log as `CLIENT[session]` lines.

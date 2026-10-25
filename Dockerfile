@@ -1,56 +1,50 @@
+# OpDesk container image: NestJS backend (Node 24) serving the built React frontend.
+# Uses host networking (see docker-compose.yml): MariaDB and Asterisk AMI are reached on 127.0.0.1,
+# and nginx on the host terminates TLS in front of 127.0.0.1:8765.
 
-# Stage 1: Build frontend (Vite)
-FROM node:22-bookworm-slim AS frontend_builder
+# --- Stage 1: frontend (Vite) --------------------------------------------------------------------
+FROM node:24-bookworm-slim AS frontend
 WORKDIR /opt/opdesk/frontend
-
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci || npm install
-
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --include=dev --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
+# --- Stage 2: backend (tsc), then production-only node_modules -----------------------------------
+FROM node:24-bookworm-slim AS backend
+WORKDIR /opt/opdesk/backend
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci --include=dev --no-audit --no-fund
+COPY backend/ ./
+RUN npm run build && npm prune --omit=dev
 
-# Stage 2: Runtime (Python / FastAPI)
-FROM python:3.11-slim AS runtime
+# --- Stage 3: runtime ----------------------------------------------------------------------------
+FROM node:24-bookworm-slim AS runtime
+ENV NODE_ENV=production \
+    PYTHONDONTWRITEBYTECODE=1 \
+    VAD_PYTHON=/opt/opdesk/backend/vad/.venv/bin/python
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-# Minimal OS tools (curl used for basic checks; openssl sometimes handy)
-# gcc + python3-dev: required to build webrtcvad (C extension)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    openssl \
-    gcc \
-    python3-dev \
+# Python only for the voice-activity analysis (backend/vad), in its own venv.
+# webrtcvad-wheels ships prebuilt wheels, so no compiler is needed.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
   && rm -rf /var/lib/apt/lists/*
+COPY backend/vad/requirements.txt /tmp/vad-requirements.txt
+RUN python3 -m venv /opt/opdesk/backend/vad/.venv \
+  && /opt/opdesk/backend/vad/.venv/bin/pip install --no-cache-dir -r /tmp/vad-requirements.txt \
+  && rm -f /tmp/vad-requirements.txt
 
 WORKDIR /opt/opdesk
-
-# Install backend deps
-COPY backend/requirements.txt /opt/opdesk/backend/requirements.txt
-RUN pip install --no-cache-dir -r /opt/opdesk/backend/requirements.txt
-
-# Copy backend
-COPY backend/ /opt/opdesk/backend/
-
-# Copy built frontend into the location server.py expects: ../frontend/dist
-COPY --from=frontend_builder /opt/opdesk/frontend/dist /opt/opdesk/frontend/dist
-
-# API docs — GET /api/openapi.yaml resolves ../docs/api/openapi.yaml relative to
-# backend/, so the docs tree has to ship in the image or that route 404s.
-COPY docs/ /opt/opdesk/docs/
-
-# Optional: include start.sh (not required, but useful)
-COPY start.sh /opt/opdesk/start.sh
-RUN chmod +x /opt/opdesk/start.sh
+COPY --from=backend /opt/opdesk/backend/dist backend/dist
+COPY --from=backend /opt/opdesk/backend/node_modules backend/node_modules
+COPY backend/package.json backend/schema.sql backend/
+COPY backend/vad/ backend/vad/
+COPY --from=frontend /opt/opdesk/frontend/dist frontend/dist
+# GET /api/openapi.yaml serves docs/api/openapi.yaml, so the docs ship in the image.
+COPY docs/ docs/
 
 EXPOSE 8765
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.OPDESK_LISTEN_PORT || process.env.PORT || 8765) + '/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 
-# Uvicorn runs plain HTTP on 8765; Nginx on the host terminates TLS on 443.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -fsS http://localhost:8765/ >/dev/null || exit 1
-
-# Run the server exactly as the repo does
 WORKDIR /opt/opdesk/backend
-CMD ["python", "server.py"]
+CMD ["node", "dist/main.js"]

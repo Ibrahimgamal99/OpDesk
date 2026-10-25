@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, FileSpreadsheet, X, ArrowUpDown, Activity, PhoneCall, PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
-import { fetchWithAuth } from '../auth';
 import type { DateRange } from './analyticsUtils';
-import type { AnalyticsDrilldownRecord } from '../types';
+import type { AnalyticsDrilldownFacets, AnalyticsDrilldownRecord } from '../types';
 import { fmtSecs, analyticsGet, useAnalyticsFetch, kpiTip } from './analyticsUtils';
-import { Alert, Badge, Card, Dropdown, EmptyState, Pagination, SearchInput, Toolbar, Tooltip } from './ui';
-import { callStatusLabel } from './callStatus';
+import { Alert, Badge, Card, Dropdown, EmptyState, Pagination, SearchInput, Toolbar, Tooltip, type DropdownOption } from './ui';
+import { CALL_STATUS_ORDER, callStatusColor, callStatusLabel } from './callStatus';
+import { CallStatusBadge } from './CallStatusBadge';
+import { presentOptions } from '../lib/filters';
+import { downloadWithAuth } from '../lib/download';
 
-type DrilldownResponse = { calls: AnalyticsDrilldownRecord[]; total: number };
+type DrilldownResponse = { calls: AnalyticsDrilldownRecord[]; total: number; facets?: AnalyticsDrilldownFacets };
 
 const PAGE_SIZE = 50;
 
@@ -55,6 +57,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
       date_to: dateRange.to,
       page: String(p),
       page_size: String(PAGE_SIZE),
+      facets: '1',
     });
     if (queue)       params.set('queue', queue);
     if (agent)       params.set('agent', agent);
@@ -74,8 +77,24 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
   const calls = data?.calls ?? [];
   const total = data?.total ?? 0;
 
+  // Each filter offers only the values that occur under the other filters, with their
+  // counts, and keeps the picked one. Without facets (a failed load) both fall back to
+  // every choice. The status values are the ten call statuses (callStatus.ts), the same
+  // words Call History shows; the server filters on the call's status, not the raw CDR
+  // disposition.
+  const facets = error ? undefined : data?.facets;
+  const allDirections: DropdownOption[] = [
+    { value: 'IN',       label: t('direction.inbound', 'Inbound'),   dot: 'green'   },
+    { value: 'OUT',      label: t('direction.outbound', 'Outbound'), dot: 'blue'    },
+    { value: 'INTERNAL', label: t('direction.internal', 'Internal'), dot: 'neutral' },
+  ];
+  const directionOptions = facets?.direction ? presentOptions(allDirections, facets.direction, direction) : allDirections;
+  const allStatuses: DropdownOption[] = [...new Set([...CALL_STATUS_ORDER, ...Object.keys(facets?.status ?? {})])]
+    .map(s => ({ value: s, label: callStatusLabel(t, s), dotColor: callStatusColor(s) }));
+  const statusOptions = facets?.status ? presentOptions(allStatuses, facets.status, disposition) : allStatuses;
+
   // Both CSV and XLSX go through the backend export endpoint so the export covers
-  // ALL filtered records \u2014 not just the current page that the table is showing.
+  // ALL filtered records, not just the current page that the table is showing.
   async function downloadExport(format: 'csv' | 'xlsx') {
     setExporting(format);
     setExportError(null);
@@ -89,17 +108,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
       if (agent)       params.set('agent', agent);
       if (direction)   params.set('direction', direction);
       if (disposition) params.set('disposition', disposition);
-      const resp = await fetchWithAuth(`/api/analytics/export?${params}`);
-      if (!resp.ok) throw new Error('Export failed');
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `analytics_${dateRange.from}_${dateRange.to}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 100);
+      await downloadWithAuth(`/api/analytics/export?${params}`, `analytics_${dateRange.from}_${dateRange.to}.${format}`);
     } catch {
       setExportError(t('common.exportFailed', 'Export failed. Please try again.'));
     } finally {
@@ -109,8 +118,6 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // The same words the Disposition filter offers; anything else shows as the PBX sent it.
-  const dispositionLabel = (d: string) => callStatusLabel(t, d);
   const tip = (key: string, label: string, text: string, formula?: string) =>
     <Tooltip {...kpiTip(t, key, label, undefined, { text, formula })} />;
 
@@ -146,12 +153,7 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
                 size="md"
                 minWidth={140}
                 ariaLabel={t('fields.direction', 'Direction')}
-                options={[
-                  { value: '', label: t('direction.all', 'All Directions') },
-                  { value: 'IN',       label: t('direction.inbound',       'Inbound'),  dot: 'green'   },
-                  { value: 'OUT',      label: t('direction.outbound',      'Outbound'), dot: 'blue'    },
-                  { value: 'INTERNAL', label: t('direction.internal', 'Internal'), dot: 'neutral' },
-                ]}
+                options={[{ value: '', label: t('direction.all', 'All Directions') }, ...directionOptions]}
               />
             </div>
             <div data-active={disposition || undefined}>
@@ -161,14 +163,8 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
                 icon={Activity}
                 size="md"
                 minWidth={156}
-                ariaLabel={t('analytics.drilldown.disposition', 'Disposition')}
-                options={[
-                  { value: '',          label: t('common.allStatuses') },
-                  { value: 'ANSWERED',  label: callStatusLabel(t, 'ANSWERED'),  dot: 'green'  },
-                  { value: 'NO ANSWER', label: callStatusLabel(t, 'NO ANSWER'), dot: 'orange' },
-                  { value: 'BUSY',      label: callStatusLabel(t, 'BUSY'),      dot: 'orange' },
-                  { value: 'FAILED',    label: callStatusLabel(t, 'FAILED'),    dot: 'red'    },
-                ]}
+                ariaLabel={t('common.status', 'Status')}
+                options={[{ value: '', label: t('common.allStatuses') }, ...statusOptions]}
               />
             </div>
             {hasFilters && (
@@ -245,9 +241,9 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
                       'How long the caller waited before someone picked up. Queue calls only.', 'duration − talk')}
                   </th>
                   <th>
-                    {t('analytics.drilldown.disposition', 'Disposition')}
-                    {tip('analytics.tip.drilldown.disposition', t('analytics.drilldown.disposition', 'Disposition'),
-                      'How the call ended.')}
+                    {t('common.status', 'Status')}
+                    {tip('analytics.tip.drilldown.status', t('common.status', 'Status'),
+                      'How the call ended, in the same words Call History uses.')}
                   </th>
                   <th>
                     {t('analytics.drilldown.slaMet')}
@@ -275,12 +271,10 @@ export function AnalyticsDrilldown({ dateRange }: Props) {
                     <td className="num">{fmtSecs(r.talk)}</td>
                     <td className="num">{fmtSecs(r.wait_secs)}</td>
                     <td>
-                      <Badge tone={r.disposition === 'ANSWERED' ? 'success' : 'danger'}>
-                        {dispositionLabel(r.disposition)}
-                      </Badge>
+                      <CallStatusBadge status={r.status || r.disposition} />
                     </td>
                     <td>
-                      {r.disposition === 'ANSWERED' ? (
+                      {r.status === 'ANSWERED' ? (
                         <Badge tone={r.sla_met ? 'success' : 'danger'}>
                           {r.sla_met ? t('analytics.drilldown.slaMet') : t('analytics.drilldown.slaFailed')}
                         </Badge>

@@ -7,17 +7,7 @@ import {
 } from './ui';
 import { raiseFor } from '../lib/api';
 import type { SectionCard } from './SettingsPanel';
-
-interface PauseReason {
-  id: number;
-  code: string;
-  label: string;
-  productive: number | boolean;
-  color?: string | null;
-  sort_order: number;
-  is_active: number | boolean;
-  is_system: number | boolean;
-}
+import type { PauseReason } from '../types';
 
 const truthy = (v: number | boolean | undefined) => v === true || v === 1;
 
@@ -32,7 +22,10 @@ interface ReasonForm { code: string; label: string; productive: boolean; color: 
 // eslint-disable-next-line no-restricted-syntax -- persisted data value, see above
 const DEFAULT_REASON_COLOR = '#d29922';
 
-const blank: ReasonForm = { code: '', label: '', productive: false, color: DEFAULT_REASON_COLOR, active: true, sort_order: 100 };
+const blank: ReasonForm = { code: '', label: '', productive: false, color: DEFAULT_REASON_COLOR, active: true, sort_order: 0 };
+
+/** Codes starting with this prefix belong to the system (`__WRAPUP`); the backend refuses them. */
+const RESERVED_PREFIX = '__';
 
 export interface PauseReasonsPanelProps {
   /** The section's Card header, from Settings. Without it the Card is titled "Reason codes". */
@@ -44,7 +37,8 @@ export interface PauseReasonsPanelProps {
 /**
  * Admin CRUD for Not-Ready / pause reason codes (table + modal). Agents pick
  * these when going Not-Ready; the `productive` flag separates paid work from
- * breaks in the Agent Adherence report. System codes are read-only.
+ * breaks in the Agent Adherence report. The list asks for the system codes too
+ * (`include_system=true`, e.g. the wrap-up pause), which are shown read-only.
  */
 export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProps = {}) {
   const { t } = useTranslation();
@@ -60,13 +54,14 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
   useEffect(() => { onCountRef.current = onCountChange; });
 
   const load = useCallback(() => {
-    fetchWithAuth('/api/pause-reasons')
+    fetchWithAuth('/api/pause-reasons?include_system=true')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d) return;
         const list: PauseReason[] = d.reasons || [];
         setItems(list);
-        onCountRef.current?.(list.filter(r => truthy(r.is_active)).length);
+        // The Settings card counts what agents can pick: active, not system-owned.
+        onCountRef.current?.(list.filter(r => truthy(r.is_active) && !truthy(r.is_system)).length);
       })
       .catch(() => { /* transient — table just stays as-is */ });
   }, []);
@@ -87,8 +82,10 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
     setModal('edit');
   };
 
+  const reservedCode = modal === 'create' && form.code.trim().startsWith(RESERVED_PREFIX);
+
   const save = async () => {
-    if (!form.label.trim() || (modal === 'create' && !form.code.trim())) return;
+    if (!form.label.trim() || (modal === 'create' && !form.code.trim()) || reservedCode) return;
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
@@ -136,7 +133,7 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
     if (ok) load();
   };
 
-  const canSave = !!form.label.trim() && (modal !== 'create' || !!form.code.trim());
+  const canSave = !!form.label.trim() && (modal !== 'create' || !!form.code.trim()) && !reservedCode;
 
   const addButton = (
     <button type="button" className="btn" onClick={openCreate}>
@@ -177,7 +174,11 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
               <>
                 <span className="agent-bar-dot pr-code-dot" style={{ '--dot-color': r.color || 'var(--text-muted)' } as React.CSSProperties} />
                 <span dir="ltr">{r.code}</span>
-                {truthy(r.is_system) && <Badge className="u-ms-1h">{t('notReady.system', 'System')}</Badge>}
+                {truthy(r.is_system) && (
+                  <Badge className="u-ms-1h" title={t('notReady.systemHint', 'Used by OpDesk itself; it cannot be edited or deleted.')}>
+                    {t('notReady.system', 'System')}
+                  </Badge>
+                )}
               </>
             ),
           },
@@ -235,7 +236,11 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
 
         <FormSection title={t('notReady.basic', 'Basic')} first>
           <FormRow>
-            <FormField label={t('notReady.code', 'Code')} required>
+            <FormField
+              label={t('notReady.code', 'Code')}
+              required
+              hint={reservedCode ? t('notReady.reservedCode', 'Codes starting with __ are reserved for the system.') : undefined}
+            >
               <input className="form-input" dir="ltr" value={form.code} disabled={modal === 'edit'}
                 onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.replace(/\s+/g, '_').toLowerCase() }))}
                 placeholder="break" />

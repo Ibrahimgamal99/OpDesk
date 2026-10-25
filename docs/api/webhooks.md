@@ -8,15 +8,18 @@ Configure it under **Settings → Integrations / CRM**.
 
 > ### ⚠️ Breaking change for existing integrations
 >
-> The payload now uses **camelCase wire keys** (`talkTime`, `status`, `startTime`,
+> The payload uses **camelCase wire keys** (`talkTime`, `status`, `startTime`,
 > `agentExt`, …). Earlier versions sent the raw internal names (`talk_time`,
 > `call_status`, `datetime`, `agent`).
 >
-> The `call_status` and `disposition` **values** also changed, from
-> `completed`/`noanswer`/`switched_off`/`invalid_number` and `ANSWERED`/`NO ANSWER` to a
-> single canonical enum — see [Outcome values](#outcome-values).
+> The `call_status` and `disposition` **values** are now the 10-value outcome
+> vocabulary — see [Outcome values](#outcome-values). The old words are gone:
+> `NO_ANSWER` is `UNANSWERED`, `CANCELED` is `MISSED` (or `UNANSWERED` on an outbound
+> call), `OUT_OF_REACH` is `UNREACHABLE`, and network faults that used to read `FAILURE`
+> are `NETWORK_ERROR`. Older still, `completed`/`noanswer`/`switched_off`/`invalid_number`
+> map the same way.
 >
-> If your receiver parses the old names, either update it or use the
+> If your receiver parses the old names or values, either update it or use the
 > [key map](#renaming-keys) and [outcome map](#remapping-outcome-values) to reproduce the
 > previous wire format without changing your CRM.
 
@@ -131,8 +134,10 @@ destination. When the CDR row is not yet available at hangup, live AMI values ar
 instead.
 
 The **outcome** is always the live cause-derived value, never the CDR's. The CDR carries
-only a coarse disposition, so letting it win would erase `CANCELED`, `DROPPED`,
-`OUT_OF_REACH` and `ABANDONED`.
+only a coarse disposition, so letting it win would erase `MISSED`, `UNREACHABLE`,
+`NETWORK_ERROR`, `VOICEMAIL`, `DROPPED` and `ABANDONED`. Call History derives the same
+value after the fact from the hangup facts Asterisk writes to CEL, so the CRM and the
+Call History page agree.
 
 ---
 
@@ -150,22 +155,31 @@ minutes. Switching the mode changes both the key and the type.
 
 ## Outcome values
 
-`status` and `disposition` both carry OpDesk's canonical outcome enum. It is the same
-vocabulary the Call History page and the analytics drilldown use.
+`status` and `disposition` both carry OpDesk's canonical outcome enum, always upper
+case. It is the same vocabulary Call History, Call Journey, the missed-call bell, the
+analytics drill-down and the WebSocket use, and `GET /api/crm/config` lists it as
+`call_outcomes`.
 
 | Value | Meaning | Typically produced by |
 |---|---|---|
-| `ANSWERED` | Connected and had talk time | Any answered call |
-| `NO_ANSWER` | Rang, nobody picked up | Cause 18, 19, 127; DialStatus `NOANSWER` |
-| `BUSY` | Called party busy | Cause 17, 0; DialStatus `BUSY` |
-| `FAILURE` | Rejected, invalid number, congestion, channel unavailable | Cause 21, 28, 31, 34; DialStatus `CONGESTION`/`CHANUNAVAIL` |
-| `ABANDONED` | Caller left the queue before an agent answered | Queue abandon |
-| `CANCELED` | Caller hung up before it rang out | Cause 16 with no answer |
+| `ANSWERED` | A person picked up and there was talk time | Any answered call |
+| `UNANSWERED` | The callee never picked up: it rang out, or our agent ended an **outbound** call before the customer answered | DialStatus `NOANSWER`; cause 18, 19, 26, 127; cause 16 on an outbound call |
+| `BUSY` | The callee refused the call: line busy or declined | Cause 17, 21; DialStatus `BUSY` |
+| `MISSED` | Someone calling **us** gave up while it rang | Cause 16 / DialStatus `CANCEL` on an inbound or internal call |
+| `VOICEMAIL` | Voicemail answered instead of a person | Last application `VoiceMail` |
+| `UNREACHABLE` | The number is right, the phone is not there (off, out of coverage, unregistered) | Cause 20, 27; DialStatus `CHANUNAVAIL` |
+| `FAILURE` | The number is wrong (unallocated, invalid format), or nothing better is known | Cause 1, 28, 31 |
+| `NETWORK_ERROR` | Number and phone are fine; the network failed | Cause 3, 34, 38, 41, 42, 44, 58; DialStatus `CONGESTION` |
+| `ABANDONED` | The caller left the queue before an agent answered | Queue abandon |
 | `DROPPED` | Answered, then torn down abnormally | Cause 38, 41, 44 after answer |
-| `OUT_OF_REACH` | Subscriber absent, device switched off | Cause 20 |
 
-Precedence: answered (→ `DROPPED` if the cause says the call collapsed) → queue abandon →
-DialStatus → hangup cause → CDR disposition → `FAILURE`.
+Precedence: voicemail → answered (→ `DROPPED` if the cause says the call collapsed) →
+queue abandon → DialStatus → caller hung up (`MISSED` / `UNANSWERED` by direction) →
+hangup cause → CDR disposition → `FAILURE`. A hangup cause of `0` means Asterisk reported
+none, so it falls through to the disposition rather than reading as `BUSY`.
+
+`MISSED` and `UNANSWERED` differ only in whose call it was. Who actually hung up is not
+part of the status: Call History and Call Journey report it separately as `ended_by`.
 
 ---
 
@@ -194,10 +208,16 @@ vocabulary. Matching is case-insensitive on the source; unmapped values pass thr
 unchanged.
 
 ```json
-{ "BUSY": "NO_ANSWER", "CANCELED": "NO_ANSWER", "DROPPED": "ANSWERED" }
+{ "BUSY": "UNANSWERED", "MISSED": "UNANSWERED", "DROPPED": "ANSWERED" }
 ```
 
 The remap is applied to both `status` and `disposition`, before the key rename.
+
+A remap saved against an old spelling keeps working: a `CANCELED` key also applies to
+`MISSED`, and a `NO_ANSWER` key to `UNANSWERED`, unless the new value has a mapping of
+its own. Other old keys (`OUT_OF_REACH`) no longer match anything. To send the old
+words to a CRM that expects them, map the new values back, e.g.
+`{"UNANSWERED": "NO_ANSWER", "MISSED": "CANCELED", "UNREACHABLE": "OUT_OF_REACH", "NETWORK_ERROR": "FAILURE"}`.
 
 ---
 
@@ -290,7 +310,7 @@ Rows are pruned daily, `WEBHOOK_LOG_RETENTION_DAYS` days after creation (default
 **Settings → Integrations → Test connection** performs a `HEAD` (falling back to a small
 `POST`) against the configured endpoint and reports the result without saving anything.
 
-For an end-to-end check, `echo/crm_test.py` is a dependency-free fake CRM that listens on
-port 8099, enforces its own `X-API-Key`, and pretty-prints whatever it receives. Point
-OpDesk at your host's **LAN address** rather than `127.0.0.1` — the SSRF guard blocks
-loopback.
+For an end-to-end check, point OpDesk at any small HTTP listener on another machine that
+prints the requests it receives, and make a test call. Use that host's **LAN address**
+rather than `127.0.0.1` — the SSRF guard blocks loopback. Every attempt, with the body
+OpDesk sent and the response it got, also appears under **Logs → CRM Deliveries**.

@@ -16,7 +16,7 @@ import { callStatusLabel } from './callStatus';
  * an agent's dashboard from their own call log (figuresFromCalls). Analytics passes the
  * previous period too, for the deltas.
  *
- * Two rates, as echo draws them. ANSWER RATE counts people: distinct outside numbers that
+ * Two rates. ANSWER RATE counts people: distinct outside numbers that
  * were answered over distinct outside numbers involved, so ten tries to one person who
  * finally picks up is one person reached. CONTACT RATE counts calls: answered over all.
  */
@@ -51,7 +51,7 @@ export interface QueueFigures {
 export interface PeriodFigures {
   all: DirectionFigures;
   /** Calls that are neither inbound nor outbound: extension to extension, feature codes and
-   *  echo tests. Part of `all`, so in + out + internal is the total. */
+   *  audio loopback tests. Part of `all`, so in + out + internal is the total. */
   internal: number;
   inbound: DirectionFigures;
   outbound: DirectionFigures;
@@ -124,8 +124,15 @@ function distinctCounterparties(calls: CallLogRecord[]): number {
   return keys.size;
 }
 
+/** A call-log row's status: the backend's call status (callStatus.ts), or, from a row
+ *  that carries none, its CDR disposition in the same words. */
+function statusOf(c: CallLogRecord): string {
+  const s = (c.status || c.disposition || '').trim().toUpperCase();
+  return s === 'NO ANSWER' ? 'UNANSWERED' : s === 'FAILED' ? 'FAILURE' : s;
+}
+
 function directionFromCalls(calls: CallLogRecord[], withTalk = false): DirectionFigures {
-  const answeredRows = calls.filter((c) => (c.disposition || '').toUpperCase() === 'ANSWERED');
+  const answeredRows = calls.filter((c) => statusOf(c) === 'ANSWERED');
   const talk = answeredRows.map((c) => c.talk || 0).filter((x) => x > 0);
   const talkSum = talk.reduce((a, b) => a + b, 0);
   const people = distinctCounterparties(calls);
@@ -140,9 +147,9 @@ function directionFromCalls(calls: CallLogRecord[], withTalk = false): Direction
     ahtSecs: talk.length ? Math.round(talkSum / talk.length) : null,
     talkSecs: withTalk ? talkSum : null,
     outcomes: withTalk ? {
-      noAnswer: calls.filter((c) => (c.disposition || '').toUpperCase() === 'NO ANSWER').length,
-      busy: calls.filter((c) => (c.disposition || '').toUpperCase() === 'BUSY').length,
-      failed: calls.filter((c) => (c.disposition || '').toUpperCase() === 'FAILED').length,
+      noAnswer: calls.filter((c) => statusOf(c) === 'UNANSWERED').length,
+      busy: calls.filter((c) => statusOf(c) === 'BUSY').length,
+      failed: calls.filter((c) => statusOf(c) === 'FAILURE').length,
     } : undefined,
   };
 }
@@ -279,7 +286,7 @@ export function DirectionCards({ figures: f, previous: p, periodLabel }: Omit<Ca
         period={f.outbound.calls}
         periodDelta={change(f.outbound.calls, p?.outbound.calls)}
         periodParts={o ? [
-          { label: callStatusLabel(t, 'NO_ANSWER'), n: o.noAnswer },
+          { label: callStatusLabel(t, 'UNANSWERED'), n: o.noAnswer },
           { label: callStatusLabel(t, 'BUSY'), n: o.busy },
           { label: callStatusLabel(t, 'FAILURE'), n: o.failed },
         ] : []}

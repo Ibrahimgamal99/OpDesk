@@ -663,7 +663,7 @@ export function Dropdown(props: DropdownProps) {
           {visible.length === 0 ? (
             <div className="ui-dd-empty">
               <span>{emptyMessage}</span>
-              {/* Echo the query: "No options" alone reads as an empty data set
+              {/* Repeat the query: "No options" alone reads as an empty data set
                   rather than a filter that matched nothing. */}
               {query.trim() && <span className="ui-dd-empty-query">“{query.trim()}”</span>}
             </div>

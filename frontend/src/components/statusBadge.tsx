@@ -3,7 +3,7 @@ import {
   MinusCircle, CheckCircle2, LogOut, CircleDot, Clock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { ExtensionStatus } from '../types';
+import type { AgentState, ExtensionStatus } from '../types';
 import { Badge } from './ui';
 
 /**
@@ -13,9 +13,8 @@ import { Badge } from './ui';
  * StatusMeta and render through the one <StatusBadge> pill (the shared Badge).
  * Keeps ExtensionsPanel, AgentBoardPanel and AgentStatusHeader in sync.
  */
-/** Agent presence as the UI shows it. OpDesk derives it from queue membership,
- *  pause state and DND (see App's memberPresence), not from a server field. */
-export type AgentState = 'ready' | 'on_call' | 'wrap_up' | 'not_ready' | 'dnd' | 'logged_out' | 'available';
+/** Agent presence, as the backend's agent-state manager reports it (`agent_states`). */
+export type { AgentState };
 
 export interface StatusMeta {
   /** color token, e.g. '--danger' */

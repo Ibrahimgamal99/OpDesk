@@ -1,13 +1,27 @@
-
 .git
 .github
 .vscode
+.claude
 
-frontend/node_modules
+**/node_modules
 frontend/dist
+frontend/dist.prev
+backend/dist
+backend/dist.prev
+backend/coverage
+backend/vad/.venv
+**/__pycache__
+**/*.pyc
 
-backend/__pycache__/
-backend/**/*.pyc
-
+# Host-specific and secret: mounted or passed at runtime, never baked into the image
 cert/
+secrets/
+nginx/opdesk.conf
 .env
+.env.bak
+backend/.env
+backend/.env.bak
+backend/.admin_init_hash
+
+screenshots/
+scripts/

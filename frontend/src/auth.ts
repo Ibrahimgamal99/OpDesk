@@ -105,3 +105,33 @@ export async function fetchWithAuth(input: RequestInfo | URL, init?: RequestInit
   }
   return res;
 }
+
+/** Thrown by fetchRecordingBlob; `status` is the HTTP status, 0 for a network failure. */
+export class RecordingFetchError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Recording request failed (${status || 'network'})`);
+    this.name = 'RecordingFetchError';
+    this.status = status;
+  }
+}
+
+/**
+ * Fetch a recording with the Bearer header and return an object URL for it.
+ *
+ * `/api/recordings/...` does not take a token in the query string (a token in a URL
+ * ends up in access logs, browser history and copied links), so `<audio src>` and
+ * download links point at a blob instead. The caller owns the URL and must
+ * `URL.revokeObjectURL` it.
+ */
+export async function fetchRecordingBlob(path: string, signal?: AbortSignal): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetchWithAuth(`/api/recordings/${encodeURIComponent(path)}`, { signal });
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    throw new RecordingFetchError(0);
+  }
+  if (!res.ok) throw new RecordingFetchError(res.status);
+  return URL.createObjectURL(await res.blob());
+}
