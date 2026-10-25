@@ -398,10 +398,22 @@ CREATE TABLE IF NOT EXISTS api_keys (
     INDEX idx_api_key_prefix (key_prefix)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- CRM webhook delivery log
--- One row per CRM push attempt (Logs -> Deliveries in the UI). The push is
--- fire-and-forget with no automatic retry, so this is the only record an operator
--- has of a failed delivery, and the source a manual Resend replays from.
+-- CRM webhook delivery log + retry queue
+-- One row per CRM push (Logs -> Deliveries in the UI): recorded BEFORE the first
+-- attempt, so a CRM that is down or 500-ing costs a retry rather than the call. The
+-- retry worker re-sends a row while it is 'pending' and due; a manual Resend makes a
+-- new row (attempt + 1, parent_id = the original) from the stored request_body.
+--
+-- status: pending   -> queued; next_attempt_at is when the worker may try again
+--         delivered -> the CRM answered 2xx
+--         failed    -> permanent rejection (a 4xx the CRM will reject again)
+--         abandoned -> retryable, but max_attempts is spent
+-- `attempts` counts the sends of THIS row (bumped when the worker claims it, and the
+-- claim leases the row by pushing next_attempt_at forward, so a process that dies
+-- mid-send leaves nothing stuck); `attempt` is the resend lineage (1 = original).
+-- `delivery_uuid` goes out as the Idempotency-Key / X-OpDesk-Delivery-Id header, so a
+-- receiver can discard a retry of a push whose first attempt landed but whose
+-- response never came back.
 --
 -- PRIVACY: rows contain call metadata (phone numbers, caller/agent names,
 -- extensions) and the full request body, so this table inherits the database's
@@ -429,20 +441,35 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     parent_id     BIGINT        NULL,      -- the delivery a resend derives from
     resent_by     INT           NULL,      -- users.id who clicked Resend
     truncated     TINYINT(1)    NOT NULL DEFAULT 0,      -- request_body was clipped => not resendable
+    delivery_uuid CHAR(36)      NULL,      -- idempotency key sent with every attempt
+    status        VARCHAR(12)   NOT NULL DEFAULT 'pending',  -- pending | delivered | failed | abandoned
+    attempts      SMALLINT UNSIGNED NOT NULL DEFAULT 1,  -- sends of this row so far
+    max_attempts  SMALLINT UNSIGNED NOT NULL DEFAULT 1,  -- the retry budget stamped at push time
+    next_attempt_at DATETIME    NULL,      -- when the worker may send again; NULL once terminal
+    endpoint_path VARCHAR(255)  NULL,      -- path as resolved at push time (retries reuse it)
+    trigger_kind  VARCHAR(16)   NOT NULL DEFAULT 'hangup',   -- hangup | wrapup | resend
+    delivered_at  DATETIME      NULL,
     INDEX idx_created (created_at),
     INDEX idx_call (call_id),
     INDEX idx_success_created (success, created_at),
-    INDEX idx_parent (parent_id)
+    INDEX idx_parent (parent_id),
+    UNIQUE KEY uq_delivery_uuid (delivery_uuid),
+    -- The worker's hot query: due pending rows, oldest deadline first.
+    INDEX idx_due (status, next_attempt_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Contacts (system phonebook). One row per phone number; the single source of
--- truth for caller names on dashboards and the softphone. source says where
--- the row came from: 'manual' = created/edited by an admin in the Contacts
--- page, 'crm' = auto-inserted by the CRM lookup the first time a number
--- resolved. A CRM lookup never overwrites an existing row, so manual data
--- always wins; editing a crm row flips it to manual (it is curated now).
--- phone_key is the normalized match key (digits only, reduced to the last N
--- per CRM_LOOKUP_MATCH_DIGITS for crm rows).
+-- truth for caller names on dashboards and the softphone. source is the
+-- precedence ladder, highest first: 'manual' (created/edited by an admin in the
+-- Contacts page) > 'api' (pushed by an external system over an API key with
+-- contacts:write) > 'crm' (auto-inserted by the CRM lookup the first time a
+-- number resolved). A lower source never overwrites a higher one, so curated
+-- data always wins; editing a row in the UI flips it to manual.
+-- phone_key is the normalized match key: digits only, reduced to the last N per
+-- CRM_LOOKUP_MATCH_DIGITS, for every source, so the UNIQUE below means what the
+-- resolver's in-memory map means.
+-- external_id + source_system are the pushing system's own identity, so a contact
+-- whose number changed upstream updates its row instead of stranding it.
 -- PRIVACY: contains customer phone numbers and names.
 CREATE TABLE IF NOT EXISTS contacts (
     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -451,10 +478,16 @@ CREATE TABLE IF NOT EXISTS contacts (
     phone_key  VARCHAR(32)  NOT NULL,     -- normalized digits (match key)
     company    VARCHAR(255) NULL,
     notes      TEXT NULL,
-    source     ENUM('manual','crm') NOT NULL DEFAULT 'manual',
+    source     ENUM('manual','api','crm') NOT NULL DEFAULT 'manual',
+    external_id   VARCHAR(128) NULL,      -- id in the pushing system
+    source_system VARCHAR(48)  NULL,      -- which system pushed it
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uniq_phone_key (phone_key)
+    UNIQUE KEY uniq_phone_key (phone_key),
+    -- (48 + 128) * 4 bytes stays under MariaDB 5.5's 767-byte index limit.
+    UNIQUE KEY uniq_contact_external (source_system, external_id),
+    -- Keyset paging walks (name, id); a prefix keeps the key under the same limit.
+    INDEX idx_contact_name (name(150), id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- =============================================================================

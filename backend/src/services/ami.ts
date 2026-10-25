@@ -32,7 +32,9 @@ import { getLogger, pyStr } from '../core/logger';
 import { createTask, isoformat, monotonic, pyInt, sleep } from '../core/py';
 import * as dbm from '../db/db-manager';
 import { query } from '../db/pool';
-import { CRMConnector, CRMSyncConfig, buildCrmPayload, redactUrl } from '../integrations/crm';
+import { CRMConnector, CRMSyncConfig, buildCrmPayload, crmUnavailableReason } from '../integrations/crm';
+import type { CrmDeliveryMeta } from '../integrations/crm';
+import { parkForWrapup, sendCrmDataAsync as deliverCrmPush } from '../integrations/crm-delivery';
 import { crmIdentityFromCdr, mapCallOutcome } from './call-log';
 import * as vadRunner from './vad-runner';
 import {
@@ -1301,7 +1303,9 @@ export class AMIExtensionsMonitor {
         }
       }
 
-      if (!this.crmConnector) {
+      // CRM off: nothing to push. CRM on but its connector could not be built (missing URL
+      // or credential): carry on, so the push is recorded as a failed delivery.
+      if (!this.crmConnector && !crmUnavailableReason()) {
         log.info(`⏸️ CRM connector not available - skipping CRM send for extension ${ext}`);
         return;
       }
@@ -1408,6 +1412,13 @@ export class AMIExtensionsMonitor {
       log.info(`📤 Preparing CRM push: ${caller} -> ${destination} (status: ${callStatus}, type: ${callType}, ` +
         `fields: ${Object.keys(callData).length}, method: ${method}, queue: ${queue || 'N/A'})`);
 
+      // "After wrap-up" trigger: park the call; integrations/crm-delivery pushes it once
+      // the agent's wrap-up is over (or its fallback window ends).
+      if (syncCfg && syncCfg.trigger === 'wrapup' && fullFields.call_id) {
+        parkForWrapup(fullFields, meta);
+        return;
+      }
+
       // Fire-and-forget — never block hangup processing.
       createTask(this.sendCrmDataAsync(callData, { method, endpointPath: endpoint, meta }), (e) =>
         log.error('CRM send failed: %s', errText(e)),
@@ -1418,86 +1429,20 @@ export class AMIExtensionsMonitor {
   }
 
   /**
-   * Send the CRM push and record the attempt in webhook_deliveries (the single point where
-   * both the outbound body and the transport result are known). Also used by the
-   * delivery-log resend route.
+   * Send the CRM push: queued in webhook_deliveries before the first attempt, retried by
+   * the delivery worker on a transient failure (integrations/crm-delivery).
    */
   async sendCrmDataAsync(
     callData: Record<string, unknown>,
     opts: { method?: string; endpointPath?: string | null; meta?: Record<string, unknown> | null } = {},
   ): Promise<Record<string, any>> {
-    const method = opts.method || 'POST';
-    const endpointPath = opts.endpointPath ?? null;
-    const meta = opts.meta || {};
-    const caller = meta.caller || callData.caller || 'unknown';
-    const destination = meta.destination || callData.destination || 'unknown';
-    const started = monotonic();
-    let result: Record<string, any> = {};
-    try {
-      if (this.crmConnector) {
-        log.info(`📤 Sending call data to CRM: ${pyStr(caller)} -> ${pyStr(destination)}`);
-        result = (await this.crmConnector.sendCallData(callData, {
-          endpointPath,
-          method,
-          requireFields: false,
-        })) as Record<string, any>;
-        if (result && result.success) {
-          log.info(`✅ Successfully sent call data to CRM: ${pyStr(caller)} -> ${pyStr(destination)}`);
-        } else {
-          log.error(`❌ Failed to send call data to CRM: ${pyStr(caller)} -> ${pyStr(destination)} ` +
-            `(HTTP ${pyStr(result?.status_code ?? 'N/A')}): ${pyStr(result?.error ?? 'Unknown error')}`);
-        }
-      } else {
-        log.warning(`CRM connector not available when trying to send call data: ${pyStr(caller)} -> ${pyStr(destination)}`);
-        result = { success: false, status_code: null, error: 'CRM connector not configured' };
-      }
-    } catch (e) {
-      log.error(`❌ Error sending call data to CRM: ${errText(e)}`);
-      result = { success: false, status_code: null, error: `${e instanceof Error ? e.name : 'Error'}: ${errText(e)}` };
-    }
-    await this.recordCrmDelivery(callData, result, {
-      method,
-      endpointPath,
-      meta,
-      durationMs: Math.trunc((monotonic() - started) * 1000),
+    return deliverCrmPush(this.crmConnector, callData, {
+      method: opts.method || 'POST',
+      endpointPath: opts.endpointPath ?? null,
+      meta: (opts.meta || {}) as CrmDeliveryMeta,
+      syncCfg: this.crmSyncConfig,
+      trigger: 'hangup',
     });
-    return result;
-  }
-
-  /** Write one webhook_deliveries row. Never raises. */
-  async recordCrmDelivery(
-    callData: Record<string, unknown>,
-    result: Record<string, any>,
-    opts: { method: string; endpointPath: string | null; meta: Record<string, unknown>; durationMs: number },
-  ): Promise<void> {
-    try {
-      const conn = this.crmConnector as unknown as { serverUrl?: string; server_url?: string; endpointPath?: string; endpoint_path?: string } | null;
-      const base = pyStr(conn?.serverUrl ?? conn?.server_url ?? '');
-      const path = opts.endpointPath || pyStr(conn?.endpointPath ?? conn?.endpoint_path ?? '');
-      const url = `${base}${path}`;
-      const meta = opts.meta;
-      await dbm.insertWebhookDelivery({
-        call_id: (meta.call_id as string) || null,
-        uniqueid: (meta.uniqueid as string) || null,
-        caller: (meta.caller as string) || null,
-        destination: (meta.destination as string) || null,
-        call_type: (meta.call_type as string) || null,
-        call_status: (meta.call_status as string) || null,
-        method: opts.method,
-        url: url ? redactUrl(url) : url,
-        request_body: JSON.stringify(callData, (_k, v) => (v instanceof Date ? isoformat(v, ' ') : v)),
-        status_code: result.status_code ?? null,
-        success: !!result.success,
-        response_body: result.data !== undefined && result.data !== null ? JSON.stringify(result.data) : null,
-        error: result.error ?? null,
-        duration_ms: opts.durationMs,
-        attempt: pyInt(meta.attempt) || 1,
-        parent_id: (meta.parent_id as number | null | undefined) ?? null,
-        resent_by: (meta.resent_by as string | null | undefined) ?? null,
-      });
-    } catch (e) {
-      log.debug('webhook delivery log write failed: %s', errText(e));
-    }
   }
 
   // ------------------------------------------------------------------

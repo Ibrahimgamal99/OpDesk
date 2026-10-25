@@ -60,9 +60,19 @@ test('get: 404 for an unknown id', async () => {
 describe('create', () => {
   test('stores the user, its groups, and syncs the PBX extension', async () => {
     mocked(dbm.createUser).mockResolvedValue(7);
-    const out = await ctl.apiCreateUser(
-      req({ body: { username: ' ann ', password: 'pw123456', name: 'Ann', extension: '100', monitor_modes: ['whisper'], group_ids: [2] } }),
-    );
+    const r = req({ body: { username: ' ann ', password: 'pw123456', name: 'Ann', extension: '100', monitor_modes: ['whisper'], group_ids: [2] } });
+    const out = await ctl.apiCreateUser(r);
+    // The audit detail names the user and says a password was set, never which.
+    expect((r as { auditDetail?: unknown }).auditDetail).toEqual({
+      id: 7,
+      username: 'ann',
+      name: 'Ann',
+      extension: '100',
+      role: 'supervisor',
+      monitor_modes: ['whisper'],
+      group_ids: [2],
+      password: '********',
+    });
     expect(dbm.createUser).toHaveBeenCalledWith('ann', 'pw123456', {
       name: 'Ann',
       extension: '100',
@@ -113,7 +123,12 @@ describe('update', () => {
   });
 
   test('a password goes to the existing extension as its SIP secret', async () => {
-    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { password: 'newpass1' } }));
+    const r = req({ params: { user_id: '7' }, body: { password: 'newpass1' } });
+    await ctl.apiUpdateUser(r);
+    expect((r as { auditDetail?: unknown }).auditDetail).toEqual({
+      before: { username: 'ann', extension: '100', role: 'supervisor' },
+      changed: { password: '********' },
+    });
     expect(dbm.setExtensionSecretInPbx).toHaveBeenCalledWith('100', 'newpass1');
     expect(reloadAsteriskSip).toHaveBeenCalledTimes(1);
   });
@@ -182,7 +197,9 @@ describe('delete', () => {
 
   test('ok / 404 / 500', async () => {
     mocked(dbm.deleteUser).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    expect(await ctl.apiDeleteUser(req({ params: { user_id: '7' } }))).toEqual({ ok: true });
+    const r = req({ params: { user_id: '7' } });
+    expect(await ctl.apiDeleteUser(r)).toEqual({ ok: true });
+    expect((r as { auditDetail?: unknown }).auditDetail).toEqual({ deleted: { id: 7, username: 'ann', extension: '100', role: 'supervisor' } });
     await expect(ctl.apiDeleteUser(req({ params: { user_id: '7' } }))).rejects.toMatchObject({ status: 500, message: 'Failed to delete user' });
     mocked(dbm.getUserById).mockResolvedValue(null);
     await expect(ctl.apiDeleteUser(req({ params: { user_id: '7' } }))).rejects.toMatchObject({ status: 404 });

@@ -560,6 +560,23 @@ export interface WebhookDelivery {
   parent_id?: number | null;
   resent_by?: number | null;
   truncated: boolean;      // request body was clipped when logged => not resendable
+  /** pending (retries due) | delivered | failed (rejected) | abandoned (retries spent). */
+  status?: WebhookDeliveryStatus;
+  attempts?: number;       // sends of this delivery so far
+  max_attempts?: number;   // its retry budget
+  next_attempt_at?: string | null;
+  delivered_at?: string | null;
+  trigger_kind?: string | null;   // hangup | wrapup | resend
+  delivery_uuid?: string | null;  // the Idempotency-Key every attempt carries
+  endpoint_path?: string | null;
+}
+
+export type WebhookDeliveryStatus = 'pending' | 'delivered' | 'failed' | 'abandoned';
+
+/** Per-value counts of the deliveries list's filters under the current query. */
+export interface WebhookDeliveryFacets {
+  status: Partial<Record<WebhookDeliveryStatus, number>>;
+  call_type: Record<string, number>;
 }
 
 /** Full delivery row, fetched lazily when a row is expanded. */
@@ -578,8 +595,14 @@ export interface Contact {
   phone_key: string;    // normalized digits (match key)
   company?: string | null;
   notes?: string | null;
-  /** 'manual' = admin-created/edited; 'crm' = auto-added by the CRM lookup. */
-  source: 'manual' | 'crm';
+  /**
+   * Precedence, highest first: 'manual' = admin-created/edited; 'api' = pushed by an
+   * external system over an API key; 'crm' = auto-added by the CRM lookup.
+   */
+  source: 'manual' | 'api' | 'crm';
+  /** The pushing system's own id for this contact, and which system that is. */
+  external_id?: string | null;
+  source_system?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -617,6 +640,11 @@ export interface AuditLogEntry {
   summary?: string | null;
   ip?: string | null;
   created_at?: string | null;
+  /**
+   * What the change carried, when the route recorded it (secrets already masked by the
+   * server): any JSON value, or the raw text when it was not JSON.
+   */
+  detail?: unknown;
 }
 
 // ---------------------------------------------------------------------------

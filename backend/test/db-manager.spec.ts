@@ -15,6 +15,7 @@ jest.mock('../src/db/pool', () => {
     execute: jest.fn(),
     withConnection: jest.fn(),
     withTransaction: jest.fn(),
+    keysetPage: jest.fn(),
   };
 });
 
@@ -390,10 +391,143 @@ describe('webhook deliveries', () => {
     route([[/^INSERT INTO webhook_deliveries/, () => ({ insertId: 9, affectedRows: 1 })]]);
     const big = 'x'.repeat(platform.DELIVERY_BODY_MAX + 5);
     expect(await platform.insertWebhookDelivery({ url: 'https://crm/x', request_body: big, call_id: 'L1' })).toBe(9);
-    const p = ex.mock.calls[0][1];
-    expect(p[0]).toBe('L1');
-    expect(String(p[8]).endsWith('…[truncated]')).toBe(true);
-    expect(p[17]).toBe(1);
+    const [sql, p] = ex.mock.calls[0];
+    const cols = /\(([^)]*)\) VALUES/.exec(String(sql))![1].split(', ');
+    const at = (c: string) => p[cols.indexOf(c)];
+    expect(at('call_id')).toBe('L1');
+    expect(String(at('request_body')).endsWith('…[truncated]')).toBe(true);
+    expect(at('truncated')).toBe(1);
+    // An untracked attempt is a finished row: failed, one attempt, no retry budget.
+    expect([at('status'), at('attempts'), at('max_attempts')]).toEqual(['failed', 1, 1]);
+  });
+
+  it('enqueues a pending row under a lease with a fresh idempotency key; a clipped body gets one attempt', async () => {
+    route([[/^INSERT INTO webhook_deliveries/, () => ({ insertId: 21, affectedRows: 1 })]]);
+    const queued = await platform.enqueueWebhookDelivery({ url: 'https://crm/x', requestBody: '{}', maxAttempts: 5, triggerKind: 'wrapup' });
+    expect(queued).toEqual({ id: 21, delivery_uuid: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+    const [sql, p] = ex.mock.calls[0];
+    expect(sql).toMatch(/next_attempt_at\) VALUES \(.*DATE_ADD\(NOW\(\), INTERVAL \? SECOND\)\)$/);
+    expect(p.slice(-5)).toEqual([queued!.delivery_uuid, 'pending', 0, 5, platform.DELIVERY_LEASE_SECONDS]);
+    expect(p).toContain('wrapup');
+    await platform.enqueueWebhookDelivery({ url: 'https://crm/x', requestBody: 'x'.repeat(platform.DELIVERY_BODY_MAX + 1), maxAttempts: 5 });
+    expect(ex.mock.calls[1][1].slice(-2)).toEqual([1, platform.DELIVERY_LEASE_SECONDS]);
+    ex.mockRejectedValueOnce(dbError(1054, "Unknown column 'delivery_uuid'"));
+    expect(await platform.enqueueWebhookDelivery({ url: 'x' })).toBeNull();
+  });
+
+  it('claims due rows in one transaction: lock, count the attempt, lease, re-read', async () => {
+    withTx.mockImplementation(async (fn: (c: unknown) => unknown) => fn(CONN));
+    route([
+      [/^SELECT id FROM webhook_deliveries WHERE status = 'pending'.*FOR UPDATE$/, () => [{ id: 4 }, { id: 5 }]],
+      [/^UPDATE webhook_deliveries SET attempts = attempts \+ 1/, () => ({ affectedRows: 2 })],
+      [/^SELECT .*request_body.* FROM webhook_deliveries WHERE id IN \(\?, \?\)/, () => [{ id: 4, success: 0, truncated: 0 }]],
+    ]);
+    expect(await platform.claimWebhookDeliveries(500)).toEqual([{ id: 4, success: false, truncated: false }]);
+    expect(q.mock.calls[0][1]).toEqual([200]);
+    expect(ex.mock.calls[0][1]).toEqual([platform.DELIVERY_LEASE_SECONDS, 4, 5]);
+    expect(ex.mock.calls[0][2]).toBe(CONN);
+    withTx.mockRejectedValueOnce(dbError(1146));
+    expect(await platform.claimWebhookDeliveries()).toEqual([]);
+  });
+
+  it('marks an attempt: delivered, pending with a backoff, abandoned or failed', async () => {
+    route([[/^UPDATE webhook_deliveries/, () => ({ affectedRows: 1 })]]);
+    await platform.markWebhookDeliveryAttempt(7, { delivered: true, statusCode: 200, countAttempt: true });
+    await platform.markWebhookDeliveryAttempt(7, { delivered: false, statusCode: 503, error: 'busy', retryIn: 120, retryable: true });
+    await platform.markWebhookDeliveryAttempt(7, { delivered: false, statusCode: 500, retryable: true });
+    await platform.markWebhookDeliveryAttempt(7, { delivered: false, statusCode: 422, retryable: false });
+    const calls = ex.mock.calls.map(([sql, p]) => [String(sql), p as unknown[]]);
+    expect(calls[0][0]).toMatch(/^UPDATE webhook_deliveries SET attempts = attempts \+ 1, status = \?.*next_attempt_at = NULL, delivered_at = NOW\(\)/);
+    expect(calls[0][1][0]).toBe('delivered');
+    expect(calls[1][0]).toMatch(/next_attempt_at = DATE_ADD\(NOW\(\), INTERVAL \? SECOND\), delivered_at = NULL/);
+    expect(calls[1][1]).toEqual(['pending', 0, 503, null, 'busy', null, 120, 7]);
+    expect(calls[2][1][0]).toBe('abandoned');
+    expect(calls[3][1][0]).toBe('failed');
+    expect(calls[1][0]).not.toMatch(/attempts = attempts/);
+  });
+
+  it('requeue never revives a delivered or clipped row; prune never drops a pending one', async () => {
+    route([
+      [/^UPDATE webhook_deliveries SET status = 'pending'/, () => ({ affectedRows: 0 })],
+      [/^DELETE FROM webhook_deliveries/, () => ({ affectedRows: 3 })],
+    ]);
+    expect(await platform.requeueWebhookDelivery(9)).toBe(false);
+    expect(executed()[0]).toMatch(/WHERE id = \? AND status <> 'delivered' AND truncated = 0$/);
+    expect(ex.mock.calls[0][1]).toEqual([3, 9]);
+    expect(await platform.pruneWebhookDeliveries(10)).toBe(3);
+    expect(executed()[1]).toMatch(/WHERE status <> 'pending' AND created_at </);
+  });
+
+  it('status filter, zero-filled counts, and facets that ignore their own filter', async () => {
+    route([
+      [/^SELECT status, COUNT/, () => [{ status: 'failed', n: 2 }, { status: 'bogus', n: 1 }]],
+      [/^SELECT status AS v/, () => [{ v: 'failed', n: 2 }, { v: 'pending', n: 1 }]],
+      [/^SELECT call_type AS v/, () => [{ v: 'inbound', n: 3 }, { v: null, n: 1 }]],
+      [/^SELECT id, created_at/, () => []],
+    ]);
+    expect(await platform.webhookDeliveryCounts()).toEqual({ pending: 0, delivered: 0, failed: 2, abandoned: 0 });
+    const facets = await platform.webhookDeliveryFacets({ status: 'failed', callType: 'inbound' });
+    expect(facets).toEqual({ status: { failed: 2, pending: 1 }, call_type: { inbound: 3 } });
+    const sqls = q.mock.calls.map((c) => [String(c[0]), c[1]]);
+    expect(sqls[1]).toEqual([expect.stringMatching(/WHERE call_type = \? GROUP BY status$/), ['inbound']]);
+    expect(sqls[2]).toEqual([expect.stringMatching(/WHERE status = \? GROUP BY call_type$/), ['failed']]);
+    await platform.listWebhookDeliveries({ status: 'unresolved', search: '10%' });
+    expect(String(q.mock.calls[3][0])).toMatch(/status IN \('pending', 'failed', 'abandoned'\)/);
+    expect(q.mock.calls[3][1]).toContain('%10\\%%');
+  });
+});
+
+describe('contacts', () => {
+  it('pages alphabetically with a (name, id) keyset and searches the number by its digits', async () => {
+    const ks = (pool.keysetPage as jest.Mock).mockResolvedValue({ items: [{ id: 1 }], next_cursor: 'c' });
+    expect(await platform.contactsPage({ search: '+20 100', limit: 2, cursor: 'x' })).toEqual({ items: [{ id: 1 }], next_cursor: 'c' });
+    expect(ks).toHaveBeenCalledWith(
+      'app',
+      expect.stringContaining('external_id, source_system'),
+      'contacts',
+      ['(name LIKE ? OR company LIKE ? OR phone LIKE ? OR phone_key LIKE ?)'],
+      ['%+20 100%', '%+20 100%', '%+20 100%', '%20100%'],
+      'name ASC, id ASC',
+      ['name', 'id'],
+      2,
+      'x',
+    );
+    await platform.contactsPage({ search: 'ali_' });
+    expect(ks.mock.calls[1][3]).toEqual(['(name LIKE ? OR company LIKE ? OR phone LIKE ?)']);
+    expect(ks.mock.calls[1][4]).toEqual(['%ali\\_%', '%ali\\_%', '%ali\\_%']);
+    ks.mockRejectedValueOnce(new Error('down'));
+    expect(await platform.contactsPage()).toEqual({ items: [], next_cursor: null });
+  });
+
+  it('upsert: precedence manual > api > crm, external id before number, a taken number is a skip', async () => {
+    let existing: Record<string, unknown> | null = null;
+    route([
+      [/^SELECT .* FROM contacts WHERE source_system=\? AND external_id=\?/, () => null],
+      [/^SELECT .* FROM contacts WHERE phone_key=\?/, () => existing],
+      [/^INSERT INTO contacts/, () => ({ insertId: 11, affectedRows: 1 })],
+      [/^UPDATE contacts/, () => ({ affectedRows: 1 })],
+    ]);
+    expect(await platform.contactUpsert('A', '1', '1', { source: 'api', externalId: 'e', sourceSystem: 'hub' })).toEqual({
+      id: 11,
+      action: 'created',
+      error: null,
+    });
+    existing = { id: 4, source: 'manual' };
+    expect(await platform.contactUpsert('A', '1', '1', { source: 'api' })).toEqual({
+      id: 4,
+      action: 'skipped',
+      error: "existing contact is source 'manual'",
+    });
+    existing = { id: 4, source: 'crm' };
+    expect(await platform.contactUpsert('A', '1', '1', { source: 'api' })).toEqual({ id: 4, action: 'updated', error: null });
+    existing = { id: 4, source: 'api' };
+    expect(await platform.contactUpsert('A', '1', '1', { source: 'manual' })).toMatchObject({ action: 'updated' });
+    ex.mockRejectedValueOnce(dbError(1062, 'Duplicate entry'));
+    expect(await platform.contactUpsert('A', '1', '1', { source: 'manual' })).toEqual({
+      id: null,
+      action: 'skipped',
+      error: 'phone number belongs to another contact',
+    });
   });
 });
 

@@ -9,6 +9,7 @@
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { liveExtensions, liveQueues } from '../../core/event-bridge';
+import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import { isoformat } from '../../core/py';
 import { runtime } from '../../core/runtime';
@@ -120,6 +121,7 @@ export class LiveController {
     const ok = await monitor.transferCall(sourceExt, dest);
     if (!ok) throw new HttpError(500, 'Failed to transfer call');
     await broadcastStateNow();
+    setRedactedAuditDetail(req, { source: sourceExt, destination: dest });
     return { ok: true, source: sourceExt, destination: dest };
   }
 
@@ -220,6 +222,9 @@ export class LiveController {
     const [ok, msg] = await monitor.originateCall(ext, num, { context: ctx, timeoutMs: timeoutS * 1000, callerId: body.caller_id ?? null });
     if (!ok) throw new HttpError(502, `Asterisk rejected the call: ${msg}`);
     log.info('Click-to-call accepted: %s -> %s (by %s)', ext, num, user.username);
+    // The number an external system (or a user) made OpDesk dial: the method and path
+    // alone cannot say which.
+    setRedactedAuditDetail(req, { extension: ext, number: num, action_id: msg, timeout: timeoutS });
     return { accepted: true, action_id: msg, extension: ext, number: num };
   }
 }

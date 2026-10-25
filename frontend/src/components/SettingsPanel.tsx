@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2, Signal, Power, PowerOff, BarChart3, ShieldCheck, Smartphone, Disc, Settings, Pause,
-  Search, ChevronRight, Plug, KeyRound, ArrowLeft,
+  Search, ChevronRight, Plug, KeyRound, ArrowLeft, AudioLines,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
@@ -15,6 +15,7 @@ import { MobileWakePanel, type PushConfig } from './MobileWakePanel';
 import { CrmSettings, type CRMConfig } from './CrmConfigForm';
 import { RecordingSettings } from './RecordingSettings';
 import { ContactCenterSettings } from './ContactCenterSettings';
+import { CodecSettings } from './CodecSettings';
 import {
   Alert, Badge, Card, EmptyState, FormSection, Page, SearchInput, Toggle, Toolbar,
   matches, prepareQuery,
@@ -27,7 +28,7 @@ import type { CardProps } from './ui';
 export type SectionCard = Pick<CardProps, 'icon' | 'title' | 'description' | 'actions'>;
 
 export type SettingsTab =
-  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'mobile-wake' | 'recording' | 'not-ready-codes';
+  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'codecs' | 'mobile-wake' | 'recording' | 'not-ready-codes';
 
 /* ── Settings Home ─────────────────────────────────────────────────────
    The panel opens on a searchable grid of every section rather than on one
@@ -35,7 +36,7 @@ export type SettingsTab =
    unknown one) is the home grid. The ids are the ones the old tab bar used,
    so existing `/settings?tab=` links keep working.                        */
 const SETTINGS_TABS: SettingsTab[] = [
-  'integrations', 'api-keys', 'qos', 'analytics', 'sip-tls', 'mobile-wake', 'recording', 'not-ready-codes',
+  'integrations', 'api-keys', 'qos', 'analytics', 'sip-tls', 'codecs', 'mobile-wake', 'recording', 'not-ready-codes',
 ];
 
 type SettingsCategory = 'telephony' | 'recording' | 'access' | 'contact-center' | 'analytics';
@@ -61,6 +62,9 @@ const SECTION_META: {
   { tab: 'sip-tls', cat: 'telephony', Icon: ShieldCheck,
     titleKey: 'settings.sipTls.tab', titleFallback: 'SIP TLS',
     descKey: 'settings.home.desc.sipTls', descFallback: 'Encrypted SIP on port 5061 for traditional softphones.' },
+  { tab: 'codecs', cat: 'telephony', Icon: AudioLines, adminOnly: true,
+    titleKey: 'settings.home.title.codecs', titleFallback: 'Audio Codecs',
+    descKey: 'settings.home.desc.codecs', descFallback: 'The codecs every extension offers, in order of preference.' },
   { tab: 'qos', cat: 'telephony', Icon: Signal,
     titleKey: 'settings.qualityOfService', titleFallback: 'Quality of Service',
     descKey: 'settings.home.desc.qos', descFallback: 'Capture call quality metrics into CDR records.' },
@@ -109,6 +113,10 @@ export function SettingsPanel() {
   const [pauseCodeCount, setPauseCodeCount] = useState<number | null>(null);
   const [slaDefaultSecs, setSlaDefaultSecs] = useState<number | null>(null);
   const [wakeSummary, setWakeSummary] = useState<PushConfig['mobile_wake'] | null>(null);
+  /** The PBX-wide codec list, for the home card's status; null until loaded. */
+  const [codecSummary, setCodecSummary] = useState<string[] | null>(null);
+  /** Issabel keeps codecs per peer: /api/codecs answers 404 and the card is hidden. */
+  const [codecsUnsupported, setCodecsUnsupported] = useState(false);
 
   // ── QoS ──
   const [qosEnabled, setQosEnabled] = useState<boolean | null>(null);
@@ -119,6 +127,9 @@ export function SettingsPanel() {
   const [sipTlsDomain, setSipTlsDomain] = useState('');
   const [sipTlsLoading, setSipTlsLoading] = useState(false);
   const [sipTlsMessage, setSipTlsMessage] = useState<Message>(null);
+  // SIP_UDP_TCP_PUBLIC: whether /api/extension-config may hand 5060 UDP/TCP to apps.
+  const [sipUdpTcpPublic, setSipUdpTcpPublic] = useState(false);
+  const [sipUdpTcpSaving, setSipUdpTcpSaving] = useState(false);
   // ── Recording (home card summary; the section itself is RecordingSettings) ──
   const [recordingEnabled, setRecordingEnabled] = useState<boolean | null>(null);
   const [recordingSavedFormat, setRecordingSavedFormat] = useState('wav');
@@ -132,6 +143,9 @@ export function SettingsPanel() {
         .then(d => setApiKeyCount((d.api_keys || []).filter(k => k.enabled === true || k.enabled === 1).length))
         .catch(() => {});
       api<PushConfig>('/api/push/config').then(d => setWakeSummary(d.mobile_wake)).catch(() => {});
+      api<{ codecs: string[] }>('/api/codecs')
+        .then(d => { setCodecSummary(d.codecs); setCodecsUnsupported(false); })
+        .catch(e => { if (toApiError(e).status === 404) setCodecsUnsupported(true); });
     }
     api<{ reasons: { is_active: number | boolean }[] }>('/api/pause-reasons')
       .then(d => setPauseCodeCount((d.reasons || []).filter(r => r.is_active === true || r.is_active === 1).length))
@@ -148,8 +162,8 @@ export function SettingsPanel() {
   }, [t]);
 
   const loadSipTlsStatus = useCallback(() => {
-    api<{ enabled: boolean; domain?: string }>('/api/sip-tls/status')
-      .then(d => { setSipTlsEnabled(d.enabled); setSipTlsDomain(d.domain || ''); })
+    api<{ enabled: boolean; domain?: string; udp_tcp_public?: boolean }>('/api/sip-tls/status')
+      .then(d => { setSipTlsEnabled(d.enabled); setSipTlsDomain(d.domain || ''); setSipUdpTcpPublic(d.udp_tcp_public === true); })
       .catch(e => setSipTlsMessage({ type: 'error', text: messageOf(e, t('settings.sipTls.statusError', 'Could not read SIP TLS status.')) }));
   }, [t]);
 
@@ -221,6 +235,21 @@ export function SettingsPanel() {
     }
   };
 
+  /* Only a flag for /api/extension-config: Asterisk always listens on 5060;
+     this says whether a phone outside the network can actually reach it. */
+  const setUdpTcpPublic = async (next: boolean) => {
+    setSipUdpTcpSaving(true);
+    setSipTlsMessage(null);
+    try {
+      await api('/api/settings', { method: 'POST', body: { SIP_UDP_TCP_PUBLIC: next ? 'true' : 'false' } });
+      setSipUdpTcpPublic(next);
+    } catch (e) {
+      setSipTlsMessage({ type: 'error', text: messageOf(e, t('settings.sipTls.udpTcpError', 'Could not save the UDP/TCP setting.')) });
+    } finally {
+      setSipUdpTcpSaving(false);
+    }
+  };
+
   /* ── Home-grid status lines ────────────────────────────────────────── */
   const on = (text: string): CardStatus => ({ tone: 'on', text });
   const off = (text: string): CardStatus => ({ tone: 'off', text });
@@ -235,6 +264,8 @@ export function SettingsPanel() {
         return sipTlsEnabled
           ? on(sipTlsDomain ? `${enabledLabel} · ${sipTlsDomain}:5061` : `${enabledLabel} · 5061`)
           : off(disabledLabel);
+      case 'codecs':
+        return codecSummary?.length ? on(codecSummary.join(' · ')) : unknown;
       case 'qos':
         if (qosEnabled === null) return unknown;
         return qosEnabled ? on(enabledLabel) : off(disabledLabel);
@@ -277,6 +308,7 @@ export function SettingsPanel() {
   // card and "5061" finds SIP TLS.
   const visibleSections = SECTION_META
     .filter(s => !s.adminOnly || isAdmin)
+    .filter(s => s.tab !== 'codecs' || !codecsUnsupported)
     .map(s => ({ ...s, title: t(s.titleKey, s.titleFallback), desc: t(s.descKey, s.descFallback) }))
     .filter(s => !homeQuery || matches(homeQuery, s.title, s.desc));
 
@@ -429,8 +461,24 @@ export function SettingsPanel() {
               </p>
             )}
           </FormSection>
+          {isAdmin && (
+            <FormSection title={t('settings.sipTls.appsSection', 'Apps')}>
+              <Toggle
+                checked={sipUdpTcpPublic}
+                onChange={setUdpTcpPublic}
+                disabled={sipUdpTcpSaving}
+                label={t('settings.sipTls.udpTcpLabel', 'Offer UDP/TCP 5060 to apps')}
+                description={t('settings.sipTls.udpTcpDesc')}
+              />
+            </FormSection>
+          )}
           <Alert tone={sipTlsMessage?.type === 'success' ? 'success' : 'error'} className="u-mt-4">{sipTlsMessage?.text}</Alert>
         </Card>
+      )}
+
+      {/* ── Audio codecs (admin only, FreePBX only) ── */}
+      {sectionCard && activeTab === 'codecs' && (
+        isAdmin ? <CodecSettings card={sectionCard} onLoaded={setCodecSummary} /> : adminOnlyCard
       )}
 
       {/* ── Mobile Wake (admin only) ── */}

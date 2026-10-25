@@ -19,6 +19,7 @@ jest.mock(
     getUserWebrtcCredentials: jest.fn(),
     getExtensionSecretFromDb: jest.fn(async () => 's3cret'),
     getExtensionNamesFromDb: jest.fn(async () => ({ '100': 'PBX Ann' })),
+    getExtensionMaxContacts: jest.fn(async () => 2),
     setExtensionSecretInPbx: jest.fn(async () => true),
     getExtensionSipProfile: jest.fn(),
     parseCodecList: (value: string | null | undefined) => [
@@ -262,9 +263,17 @@ describe('extensions and WebRTC', () => {
       password: 's3cret',
       name: 'PBX Ann',
       webrtc: 'yes',
+      max_contacts: 2,
     });
     mocked(dbm.getExtensionSecretFromDb).mockResolvedValueOnce(null);
-    expect(await ctl.extensionCredentials(req({ params: { extension: '555' } }))).toEqual({ username: '555', password: '', name: '', webrtc: 'no' });
+    mocked(dbm.getExtensionMaxContacts).mockResolvedValueOnce(null);
+    expect(await ctl.extensionCredentials(req({ params: { extension: '555' } }))).toEqual({
+      username: '555',
+      password: '',
+      name: '',
+      webrtc: 'no',
+      max_contacts: null,
+    });
   });
 
   test('switch: own allowed, others 403, unknown 404', async () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   BookUser, Plus, Pencil, Trash2, Save, Loader2, PhoneCall,
 } from 'lucide-react';
@@ -9,7 +9,7 @@ import type { Contact } from '../types';
 import { raiseFor } from '../lib/api';
 import {
   SearchInput, Alert, Page, Toolbar, EmptyState, Badge, type BadgeTone, Table, Modal, Loading,
-  FormSection, FormRow, FormField, useConfirm,
+  FormSection, FormRow, FormField, Pagination, useConfirm,
 } from './ui';
 
 export interface ContactsPanelProps {
@@ -19,9 +19,12 @@ export interface ContactsPanelProps {
 
 const EMPTY_FORM = { name: '', phone: '', company: '', notes: '' };
 
+const PAGE_SIZE = 100;
+
 /**
  * The shared contacts phonebook. Every user reads it and can click to call; only
- * admins see add/edit/delete. The list is loaded whole and searched in the browser.
+ * admins see add/edit/delete. Searched and paged on the server (name, company or
+ * number, in any prefix form), so a phonebook an external system fills stays fast.
  */
 export function ContactsPanel({ onDial }: ContactsPanelProps) {
   const { t } = useTranslation();
@@ -34,17 +37,27 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
   // The add/edit form is a modal over the list; the list is the only view.
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Contact | null>(null);
+  // `search` is already the settled term — ui/SearchInput owns the debounce.
   const [search, setSearch] = useState('');
+  // Cursor pagination: `stack` holds the cursor of each visited page so Previous can
+  // go back; stack[0] is the first page.
+  const [stack, setStack] = useState<(string | null)[]>([null]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchWithAuth('/api/contacts');
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      const cur = stack[stack.length - 1];
+      if (cur) params.set('cursor', cur);
+      if (search.trim()) params.set('search', search.trim());
+      const res = await fetchWithAuth(`/api/contacts?${params}`);
       if (res.ok) {
         const d = await res.json();
         setContacts(d.contacts || []);
+        setNextCursor(d.next_cursor || null);
       } else {
         setMessage({ type: 'error', text: t('contacts.loadError') });
       }
@@ -53,18 +66,11 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, stack, search]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return contacts;
-    return contacts.filter(c =>
-      c.name.toLowerCase().includes(q)
-      || c.phone.toLowerCase().includes(q)
-      || (c.company || '').toLowerCase().includes(q));
-  }, [contacts, search]);
+  // A new search invalidates every cursor: they point into the old result set.
+  useEffect(() => { setStack([null]); }, [search]);
 
   const resetForm = useCallback(() => {
     setEditing(null);
@@ -142,6 +148,7 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
 
   const sourceBadge = (source: Contact['source']): { tone: BadgeTone; label: string } => {
     if (source === 'crm') return { tone: 'info', label: t('contacts.sourceCrm') };
+    if (source === 'api') return { tone: 'neutral', label: t('contacts.sourceApi', 'API') };
     return { tone: 'success', label: t('contacts.sourceManual') };
   };
 
@@ -149,7 +156,6 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
     <Page
       icon={BookUser}
       title={t('nav.contacts')}
-      count={loading ? undefined : contacts.length}
       actions={isAdmin ? (
         <button type="button" className="btn btn-primary" onClick={openCreate}>
           <Plus size={14} />
@@ -164,8 +170,6 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
               onChange={setSearch}
               label={t('contacts.searchLabel', 'Search contacts')}
               placeholder={t('contacts.searchPlaceholder')}
-              // Filters an already-loaded list, so there is no request to coalesce.
-              debounceMs={0}
               urlSync={false}
             />
           }
@@ -188,9 +192,9 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
         <Table
           framed
           caption={t('nav.contacts')}
-          rows={filtered}
+          rows={contacts}
           rowKey={c => c.id}
-          empty={contacts.length > 0 ? (
+          empty={search.trim() ? (
             <EmptyState
               icon={BookUser}
               title={t('contacts.noMatchesTitle', 'No matching contacts')}
@@ -225,7 +229,9 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
               key: 'source', header: t('contacts.source', 'Source'),
               cell: c => {
                 const badge = sourceBadge(c.source);
-                return <Badge tone={badge.tone}>{badge.label}</Badge>;
+                // A pushed contact names the system (and its id there) it came from.
+                const origin = c.source_system ? [c.source_system, c.external_id].filter(Boolean).join(' · ') : undefined;
+                return <Badge tone={badge.tone} title={origin}>{badge.label}</Badge>;
               },
             },
             {
@@ -270,6 +276,19 @@ export function ContactsPanel({ onDial }: ContactsPanelProps) {
             },
           ]}
         />
+      )}
+
+      {(stack.length > 1 || nextCursor) && (
+        <div className="u-mt-3">
+          <Pagination
+            mode="cursor"
+            hasPrev={stack.length > 1}
+            hasNext={!!nextCursor}
+            onPrev={() => setStack(st => st.slice(0, -1))}
+            onNext={() => setStack(st => [...st, nextCursor])}
+            info={t('contacts.showingCount', 'Showing {{count}}', { count: contacts.length })}
+          />
+        </div>
       )}
 
       {isAdmin && (
