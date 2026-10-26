@@ -113,18 +113,85 @@ describe('/api/me/sip-password', () => {
 });
 
 describe('mobile setup', () => {
-  test('own: enveloped, host from publicHost', async () => {
+  test('own: enveloped; a DTLS extension gets the full WebRTC account', async () => {
     mocked(publicHost).mockResolvedValue('pbx.example.com');
     process.env.OPDESK_DOMAIN = 'pbx.example.com';
     expect(await ctl.myMobileSetup(req())).toEqual({
-      data: { extension: '100', display_name: 'Ann', password: 's3cret', host: 'pbx.example.com', verify_tls: true },
+      data: {
+        extension: '100',
+        display_name: 'Ann',
+        password: 's3cret',
+        host: 'pbx.example.com',
+        verify_tls: true,
+        account: {
+          name: 'OpDesk 100',
+          uri: '100@pbx.example.com',
+          password: 's3cret',
+          display_name: 'Ann',
+          auth_user: '100',
+          transport: 'wss',
+          server_url: 'wss://pbx.example.com/sip-ws',
+          media_enc: 'dtls_srtp',
+          ice_enabled: true,
+          stun_server: 'stun:stun.l.google.com:19302',
+          verify_tls: true,
+        },
+      },
     });
   });
 
-  test('host falls back to the WSS URL; name to the PBX name', async () => {
+  test('no domain: WSS on the request host and port, self-signed so verify_tls false', async () => {
+    process.env.NGINX_HTTPS_PORT = '8443';
     mocked(dbm.getUserById).mockResolvedValue({ ...USER_ROW, name: null });
     const out = (await ctl.userMobileSetup(req({ params: { user_id: '7' } }))) as { data: Record<string, unknown> };
     expect(out.data).toMatchObject({ host: '10.0.0.5', display_name: 'PBX Ann', verify_tls: false });
+    expect(out.data.account).toMatchObject({
+      uri: '100@10.0.0.5',
+      display_name: 'PBX Ann',
+      transport: 'wss',
+      server_url: 'wss://10.0.0.5:8443/sip-ws',
+      verify_tls: false,
+    });
+  });
+
+  test('an SDES extension gets TLS on 5061 with SRTP, ICE off and no STUN', async () => {
+    settings.OPDESK_DOMAIN = 'pbx.example.com';
+    settings.SIP_TLS_ENABLED = 'true';
+    mocked(dbm.getExtensionSipProfile).mockResolvedValue({ ...PROFILE, media_encryption: 'sdes', icesupport: 'no' });
+    const out = (await ctl.myMobileSetup(req())) as { data: { account: Record<string, unknown> } };
+    expect(out.data.account).toEqual({
+      name: 'OpDesk 100',
+      uri: '100@pbx.example.com:5061',
+      password: 's3cret',
+      display_name: 'Ann',
+      auth_user: '100',
+      transport: 'tls',
+      media_enc: 'sdes',
+      ice_enabled: false,
+      verify_tls: true,
+    });
+  });
+
+  test('a plain extension with no public SIP transport falls back to UDP, unencrypted', async () => {
+    mocked(dbm.getExtensionSipProfile).mockResolvedValue({ ...PROFILE, media_encryption: 'no', icesupport: 'no' });
+    const out = (await ctl.myMobileSetup(req())) as { data: { account: Record<string, unknown> } };
+    expect(out.data.account).toMatchObject({ uri: '100@10.0.0.5', transport: 'udp', media_enc: 'none', ice_enabled: false });
+    expect(out.data.account).not.toHaveProperty('server_url');
+  });
+
+  test('a configured TURN server and a separate auth user are carried', async () => {
+    settings.WEBRTC_TURN_URL = 'turn:turn.example.com:3478';
+    settings.WEBRTC_TURN_USER = 'medut';
+    settings.WEBRTC_TURN_PASS = 'tp';
+    mocked(dbm.getExtensionSipProfile).mockResolvedValue({ ...PROFILE, username: 'auth-100' });
+    const out = (await ctl.myMobileSetup(req())) as { data: { account: Record<string, unknown> } };
+    expect(out.data.account).toMatchObject({
+      auth_user: 'auth-100',
+      turn_server: 'turn:turn.example.com:3478',
+      turn_user: 'medut',
+      turn_pass: 'tp',
+    });
+    expect(out.data.account).not.toHaveProperty('stun_server'); // only TURN configured
   });
 
   test('404s', async () => {

@@ -114,20 +114,45 @@ APNs is called directly from the server; the key never leaves it.
 
 ## Signing a phone in with a QR code
 
-- **Everyone:** profile menu (top right) → **Mobile app QR**, for their own extension.
+- **Everyone:** their profile (click your name in the top-right menu) → **Mobile app QR**, for
+  their own extension.
 - **Admins:** **Users** → the QR button on any user with an extension.
 
-The code is Medut's [account JSON](https://github.com/Ibrahimgamal99/medut-softphone/blob/main/docs/account-setup.md)
-with no `transport`, so Medut signs in on *Auto*: it tries TLS, TCP, UDP and secure WebSocket
-at once and keeps the first that registers (for WebSocket it finds OpDesk's `/sip-ws` on 443).
-The code carries no port, so when OpDesk runs on another HTTPS port (such as 8443 next to
-FreePBX's Apache) the WebSocket attempt misses it and the phone uses TLS, TCP or UDP.
+The code is Medut's full [account JSON](https://github.com/Ibrahimgamal99/medut-softphone/blob/main/docs/account-setup.md),
+built from the extension's PBX settings (the same answer as `/api/extension-config`), so the
+phone connects the way the endpoint accepts calls:
+
+| Extension's `media_encryption` | The code carries |
+|---|---|
+| `dtls` (WebRTC) | `transport: "wss"`, `server_url` = OpDesk's `/sip-ws` (with its real port, e.g. 8443), `media_enc: "dtls_srtp"`, `ice_enabled: true`, STUN/TURN |
+| `sdes` | the first SIP transport OpDesk offers (TLS on 5061 when SIP TLS is on), `media_enc: "sdes"` |
+| none | the first SIP transport offered, else UDP; `media_enc: "none"` |
+
+An extension pinned to one PJSIP transport gets that transport. `auth_user` and
+`verify_tls` are always written (`false` without `OPDESK_DOMAIN`, i.e. a self-signed
+certificate). STUN and TURN come from Settings → WebRTC (Google's public STUN by default),
+written only when ICE is on.
+
+The transport is always written on purpose. Without it Medut signs in on *Auto* and keeps
+whichever transport registers first; on a DTLS extension that is often UDP, which
+registers but has every call refused, because the media is not DTLS-SRTP.
 
 ```json
-{"name": "OpDesk 100", "uri": "100@pbx.example.com", "password": "…", "display_name": "Sara"}
+{
+  "name": "OpDesk 100",
+  "uri": "100@pbx.example.com",
+  "password": "…",
+  "display_name": "Sara",
+  "auth_user": "100",
+  "transport": "wss",
+  "server_url": "wss://pbx.example.com/sip-ws",
+  "media_enc": "dtls_srtp",
+  "ice_enabled": true,
+  "stun_server": "stun:stun.l.google.com:19302",
+  "verify_tls": true
+}
 ```
 
-Without `OPDESK_DOMAIN` (self-signed certificate) the code adds `"verify_tls": false`.
 *Include the password* is on by default: one scan signs in, so treat the code like the
 password. Turn it off for a code you print or share; the app then asks for the password.
 

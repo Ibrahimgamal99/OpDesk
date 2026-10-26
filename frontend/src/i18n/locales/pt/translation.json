@@ -1532,7 +1532,7 @@
     "download": "PNG",
     "formatLink": "Referência do formato da conta",
     "button": "QR do app móvel",
-    "introAuto": "Leia este código no Medut Softphone (tela de login → Ler QR) para adicionar o ramal {{ext}}. O app escolhe sozinho a melhor conexão."
+    "intro": "Escaneie este código no Medut Softphone (tela de login → Escanear QR) para adicionar o ramal {{ext}}. Ele traz a conexão que o PBX espera para este ramal: transporte, criptografia e ICE."
   },
   "mobileWake": {
     "saved": "Salvo. Plano de discagem do Asterisk recarregado.",
