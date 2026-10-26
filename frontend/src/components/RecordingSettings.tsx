@@ -34,6 +34,8 @@ interface RecPolicy {
   mixed_dir?: string;
   directions: Record<RecDirection, boolean>;
   extensions: ExtRecPolicy[];
+  /** Predial hooks another dialplan file keeps: OpDesk's recorder never runs while any is listed. */
+  hook_conflicts?: { context: string; file: string | null }[] | null;
 }
 
 interface RetentionConfig {
@@ -344,6 +346,14 @@ export function RecordingSettings({ card, isAdmin, onStatus }: RecordingSettings
                 icon={<Power size={14} />}
                 iconOff={<PowerOff size={14} />}
               />
+              {policy.enabled && !!policy.hook_conflicts?.length && (
+                <Alert tone="error" className="u-mt-2">
+                  {t('settings.recording.hookConflict', {
+                    files: [...new Set(policy.hook_conflicts.map(c => c.file).filter(Boolean))].join(', ') || '?',
+                    defaultValue: 'Recording is switched on, but OpDesk is not the one recording: {{files}} already defines the PBX predial hooks (another call recorder is installed). The direction and extension switches below have no effect until that recorder is turned off.',
+                  })}
+                </Alert>
+              )}
 
               <FormSection title={t('settings.recording.format', 'Format')}>
                 <FormRow single>

@@ -15,7 +15,7 @@ import { getLogger, pyStr } from '../core/logger';
 import { AsyncLock, monotonic, pyInt, time, truthy } from '../core/py';
 import * as dbm from '../db/db-manager';
 import type { Row } from '../db/pool';
-import { getRecordingPolicy, RECORD_MIX_DIR, RECORD_SINGLE_DIR } from './dialplan';
+import { getRecordingPolicy, RECORD_MIX_DIR, RECORD_SINGLE_DIR, recordingHookConflicts } from './dialplan';
 import { refused, shadowMode } from '../core/shadow';
 
 const log = getLogger('services.recording');
@@ -386,6 +386,9 @@ export async function recordingPolicySnapshot(): Promise<Row> {
     mixed_dir: await recordingRoot(),
     single_dir: RECORD_SINGLE_DIR,
     directions: pol.directions,
+    // Hooks another dialplan file keeps (OpDesk's recorder then never runs); only asked while
+    // recording is on. null = Asterisk could not be asked.
+    hook_conflicts: enabled ? await recordingHookConflicts() : [],
     extensions: exts.map((e) => ({
       extension: String(e),
       name: String(e) in names ? names[String(e)] : '',

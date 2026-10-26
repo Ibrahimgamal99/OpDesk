@@ -963,7 +963,8 @@
       "localMaxHint": "The oldest recordings are deleted first once usage passes this. Blank = no cap.",
       "vadFiles": "Voice activity files",
       "vadDelete": "Delete per-speaker files after analysis",
-      "vadDeleteDesc": "The -sp1/-sp2 legs are only needed briefly to compute voice activity; on by default."
+      "vadDeleteDesc": "The -sp1/-sp2 legs are only needed briefly to compute voice activity; on by default.",
+      "hookConflict": "Recording is switched on, but OpDesk is not the one recording: {{files}} already defines the PBX predial hooks (another call recorder is installed). The direction and extension switches below have no effect until that recorder is turned off."
     },
     "webhooks": {
       "metaDirections": "{{method}} · {{active}}/{{total}} directions"

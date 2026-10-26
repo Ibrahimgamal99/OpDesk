@@ -22,7 +22,7 @@ import { closeCrmRuntime, initCrmRuntime } from '../integrations/crm-lookup';
 import { loadCrmSyncConfig } from '../integrations/crm';
 import * as pushService from '../integrations/push-service';
 import { setContactNameResolver } from '../services/call-log';
-import { enableMobileWake, enableQos, enableRecording } from '../services/dialplan';
+import { enableMobileWake, enableQos, enableRecording, recordingHookConflicts } from '../services/dialplan';
 import { startRealtime, stopRealtime } from '../services/realtime';
 import * as sipPush from '../services/sip-push';
 import { stopVadWorker } from '../services/vad-runner';
@@ -131,8 +131,16 @@ export async function startup(): Promise<void> {
   await optional('call recording', async () => {
     if (!truthy(await dbm.getSetting('RECORDING_ENABLED', env('RECORDING_ENABLED', '')))) return;
     const format = (await dbm.getSetting('RECORDING_FORMAT', env('RECORDING_FORMAT', 'wav'))) || 'wav';
-    if (await enableRecording({ mixFormat: format })) log.info('Call recording dialplan enabled on startup (format=%s)', format);
-    else log.warning('Failed to enable call recording dialplan on startup');
+    if (!(await enableRecording({ mixFormat: format }))) {
+      log.warning('Failed to enable call recording dialplan on startup');
+      return;
+    }
+    log.info('Call recording dialplan enabled on startup (format=%s)', format);
+    const conflicts = await recordingHookConflicts();
+    if (conflicts && conflicts.length) {
+      // Left as is (an admin's choice is not undone at boot); Settings -> Recordings shows it.
+      log.warning('Call recording is on but not wired: the predial hooks are defined by %s', JSON.stringify(conflicts));
+    }
   });
 
   // 6. AMI monitor, state bridge, agent presence and the background jobs.
