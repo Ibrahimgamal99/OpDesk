@@ -862,6 +862,8 @@ function VadModal({ vad, recordingFile, onClose }: VadModalProps) {
 interface CallLogPanelProps {
   dateRange: DateRange;
   onDateRangeChange: (r: DateRange) => void;
+  /** Call History's Calls/Recordings tab bar, from App; admins only. */
+  tabs?: React.ReactNode;
 }
 
 const DIRECTIONS: { value: CallSide; dot: DropdownOption['dot'] }[] = [
@@ -871,7 +873,7 @@ const DIRECTIONS: { value: CallSide; dot: DropdownOption['dot'] }[] = [
 ];
 const APPS = ['queue', 'ivr', 'direct'];
 
-export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps) {
+export function CallLogPanel({ dateRange, onDateRangeChange, tabs }: CallLogPanelProps) {
   const { t } = useTranslation();
   // Supervisors' Listen/Whisper/Barge calls are never shown to an agent (the server
   // drops them), so the toggle is offered only to those who can see them.
@@ -1168,6 +1170,7 @@ export function CallLogPanel({ dateRange, onDateRangeChange }: CallLogPanelProps
       title={t('nav.callHistory')}
       count={totalCount}
       scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
+      tabs={tabs}
       flush
       toolbar={
         <Toolbar

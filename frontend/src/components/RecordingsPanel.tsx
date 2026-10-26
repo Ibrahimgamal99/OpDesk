@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileAudio, RefreshCw, Trash2 } from 'lucide-react';
+import { FileAudio, History, RefreshCw, Trash2 } from 'lucide-react';
 import {
   Alert, EmptyState, Loading, Page, Pagination, SearchInput, Table, Toolbar, useConfirm, type Column,
 } from './ui';
@@ -38,15 +38,17 @@ const PAGE_SIZE = 25;
 interface RecordingsPanelProps {
   dateRange: DateRange;
   onDateRangeChange: (r: DateRange) => void;
+  /** Call History's Calls/Recordings tab bar, from App. */
+  tabs?: React.ReactNode;
 }
 
 /**
- * The admin Recordings page: every recorded call, newest first, with its player, a
+ * The admin Recordings tab of Call History: every recorded call, newest first, with its player, a
  * download and a delete. Filters (number or Call ID, date range) are applied by the
  * server, which pages with a cursor: `stack` keeps the cursor of each visited page so
  * Previous can go back.
  */
-export function RecordingsPanel({ dateRange, onDateRangeChange }: RecordingsPanelProps) {
+export function RecordingsPanel({ dateRange, onDateRangeChange, tabs }: RecordingsPanelProps) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<RecordingRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -158,10 +160,11 @@ export function RecordingsPanel({ dateRange, onDateRangeChange }: RecordingsPane
 
   return (
     <Page
-      icon={FileAudio}
-      title={t('nav.recordings', 'Recordings')}
+      icon={History}
+      title={t('nav.callHistory')}
       count={total}
       scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
+      tabs={tabs}
       flush
       toolbar={
         <Toolbar
