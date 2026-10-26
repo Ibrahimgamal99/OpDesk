@@ -9,6 +9,10 @@
   min-width: 0;
 }
 
+/* A badge above a secondary line keeps its own width instead of stretching to the line's. */
+.cl-log-table .cl-party > .badge,
+.cl-log-table .cl-party > .cl-status-qos { align-self: flex-start; }
+
 .cl-log-table .cl-phone { white-space: nowrap; }
 
 /* The contact name under a number: one line, the full name in its tooltip. */

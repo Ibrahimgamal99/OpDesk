@@ -646,7 +646,7 @@ function App({ onLogout }: AppProps) {
       (!isAgentRole || Object.keys(state?.queues || {}).length > 0) && { tab: 'queues', label: t('nav.queues'), Icon: Users, badge: stats.total_waiting, badgeTone: 'ringing' },
     ] },
     { key: 'work', label: t('nav.group.work', 'Work'), items: [
-      { tab: 'call-log', label: t('nav.callHistory'), Icon: History },
+      { tab: 'call-log', also: ['recordings'], label: t('nav.callHistory'), Icon: History },
       { tab: 'contacts', label: t('nav.contacts', 'Contacts'), Icon: BookUser },
     ] },
     { key: 'reports', label: t('nav.group.reports', 'Reports'), items: [
@@ -654,7 +654,6 @@ function App({ onLogout }: AppProps) {
     ] },
     { key: 'admin', label: t('nav.admin', 'Admin'), items: [
       isAdminRole && { tab: 'users', also: ['groups'], label: t('nav.teams', 'Teams'), Icon: Users },
-      isAdminRole && { tab: 'recordings', label: t('nav.recordings', 'Recordings'), Icon: FileAudio },
       (isAdminRole || role === 'supervisor') && { tab: 'settings', label: t('header.settings', 'Settings'), Icon: Settings },
       isAdminRole && { tab: 'logs', label: t('nav.logs', 'Logs'), Icon: ScrollText },
     ] },
@@ -675,6 +674,20 @@ function App({ onLogout }: AppProps) {
       onChange={(k) => selectTab(k as TabType)}
     />
   );
+
+  // Recordings is a tab of Call History, admins only, so other roles get no strip.
+  // It stays its own route so /recordings links keep working, as Teams does.
+  const callHistoryTabs = isAdminRole ? (
+    <Tabs
+      ariaLabel={t('nav.callHistory')}
+      tabs={[
+        { key: 'call-log', label: t('nav.calls', 'Calls'), icon: <History size={14} /> },
+        { key: 'recordings', label: t('nav.recordings', 'Recordings'), icon: <FileAudio size={14} /> },
+      ]}
+      active={activeTab}
+      onChange={(k) => selectTab(k as TabType)}
+    />
+  ) : undefined;
 
   return (
     <WebPhoneProvider value={webPhone}>
@@ -975,7 +988,7 @@ function App({ onLogout }: AppProps) {
               onSync={() => sendAction({ action: isAdminRole ? 'sync' : 'sync_queues' })}
             />
           )}
-          {activeTab === 'call-log' && <CallLogPanel dateRange={dateRange} onDateRangeChange={setDateRange} />}
+          {activeTab === 'call-log' && <CallLogPanel tabs={callHistoryTabs} dateRange={dateRange} onDateRangeChange={setDateRange} />}
           {activeTab === 'contacts' && (
             <ContactsPanel
               onDial={(phone) => {
@@ -1005,7 +1018,7 @@ function App({ onLogout }: AppProps) {
             />
           )}
           {activeTab === 'recordings' && getUser()?.role === 'admin' && (
-            <RecordingsPanel dateRange={dateRange} onDateRangeChange={setDateRange} />
+            <RecordingsPanel tabs={callHistoryTabs} dateRange={dateRange} onDateRangeChange={setDateRange} />
           )}
           {activeTab === 'logs' && getUser()?.role === 'admin' && <LogsPanel />}
           {activeTab === 'profile' && <ProfilePanel />}
