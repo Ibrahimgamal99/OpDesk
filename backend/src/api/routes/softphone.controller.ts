@@ -14,7 +14,7 @@ import { truthy } from '../../core/py';
 import type { Principal } from '../../core/security';
 import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
-import { reloadAsteriskSip } from '../../services/dialplan';
+import { pbxApplyCommand, reloadAsteriskSip } from '../../services/dialplan';
 import { publicHost } from '../../services/sip-push';
 import { HttpError } from '../http-error';
 import { respond } from '../respond';
@@ -370,7 +370,7 @@ export function generateSipSecret(length = SIP_SECRET_LENGTH): string {
 }
 
 /** The PBX flavour for a reload: the PBX setting, else env PBX. */
-async function pbxSetting(): Promise<string | null> {
+export async function pbxSetting(): Promise<string | null> {
   return (await dbm.getSetting('PBX', env('PBX', ''))) || process.env.PBX || null;
 }
 
@@ -470,7 +470,10 @@ export class SoftphoneController {
     const pw = body.new_password || '';
     if (!isValidSipSecret(pw)) throw new HttpError(400, SIP_SECRET_RULE);
     if (!(await dbm.setExtensionSecretInPbx(ext, pw))) throw new HttpError(500, 'Could not save the SIP password');
-    await reloadAsteriskSip();
+    const pbx = await pbxSetting();
+    if (!(await reloadAsteriskSip(pbx))) {
+      throw new HttpError(502, `The SIP password was saved but the PBX did not apply it. Ask an admin to run '${pbxApplyCommand(pbx)}'.`);
+    }
     setRedactedAuditDetail(req, { extension: ext, secret: 'changed' });
     return respond({ message: 'SIP password changed. Sign your phones in again.' });
   }
@@ -589,7 +592,10 @@ export class SoftphoneController {
       if (!isValidSipSecret(secret)) throw new HttpError(400, SIP_SECRET_RULE);
     }
     if (!(await dbm.setExtensionSecretInPbx(ext, secret))) throw new HttpError(502, 'Could not update the SIP secret in the PBX');
-    await reloadAsteriskSip(await pbxSetting());
+    const pbx = await pbxSetting();
+    if (!(await reloadAsteriskSip(pbx))) {
+      throw new HttpError(502, `The SIP secret was saved but the PBX did not apply it. Run '${pbxApplyCommand(pbx)}'.`);
+    }
     setRedactedAuditDetail(req, { extension: ext, secret: 'changed', regenerated: body.regenerate });
     log.info('SIP secret changed for extension %s by user %s', ext, principal(req).id ?? null);
     return extensionCredentialsOut(ext);
