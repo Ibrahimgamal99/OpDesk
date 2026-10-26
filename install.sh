@@ -5,6 +5,10 @@
 #   sudo ./install.sh              install, or update an existing /opt/OpDesk
 #   sudo ./install.sh --yes        non-interactive: accept every default (see --help)
 #   sudo ./install.sh --no-pull    use the code already in /opt/OpDesk (skip `git pull`)
+#   sudo ./install.sh --uninstall  remove OpDesk from this server (backups first)
+#
+# Fresh install or update: no backend/.env, or no OpDesk database, means a fresh install. On an
+# existing installation it asks: 1) update  2) uninstall.
 #
 # Supported: Issabel 5 (Rocky Linux 8), FreePBX 16/17 (Sangoma Linux 7, Debian 12) and plain
 # Asterisk on Debian/Ubuntu or a RHEL-family OS.
@@ -44,6 +48,7 @@ ASTERISK_ETC="${ASTERISK_ETC:-/etc/asterisk}"
 
 ASSUME_YES="${OPDESK_ASSUME_YES:-0}"
 DO_PULL=1
+ACTION=""   # install | uninstall; empty = ask on an existing installation
 
 # Output helpers: say interprets backslash escapes (colors, \n), out prints its arguments verbatim.
 say() { printf '%b\n' "$*"; }
@@ -58,13 +63,19 @@ command_exists() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
     cat <<'EOF'
-Usage: sudo ./install.sh [--yes] [--no-pull]
+Usage: sudo ./install.sh [--yes] [--no-pull] [--update | --uninstall]
 
   -y, --yes       Non-interactive. Defaults are used for every question:
                     domain        OPDESK_DOMAIN (env) or the one in backend/.env, else none (self-signed)
                     HTTPS port    OPDESK_PUBLIC_HTTPS_PORT (env), the previous port, 443, or 8443 when 443 is taken
                     admin pass    OPDESK_ADMIN_PASSWORD (env), else a random one (printed at the end)
       --no-pull   Do not `git pull`; install the code that is already in /opt/OpDesk.
+      --update    Update an existing installation without asking (the default choice).
+      --uninstall Remove everything the installer set up: service, nginx site, Let's Encrypt
+                  certificate, firewall rule, database and its MySQL user, AMI user, backend/.env,
+                  cert/ and the builds (backups go to /var/backups first). The PBX databases,
+                  nginx, Node.js and certbot stay. Asks whether to delete the code too; --yes
+                  skips the questions and keeps the code.
   -h, --help      This help.
 
 Environment: OPDESK_DOMAIN, OPDESK_LE_EMAIL, OPDESK_PUBLIC_HTTPS_PORT, OPDESK_ADMIN_PASSWORD,
@@ -367,18 +378,22 @@ MYSQL_ROOT_CNF=""
 MYSQL_ROOT_DESC=""
 
 _mysql_cnf() {  # <file> <user> [password]
-    umask 077
-    {
-        out "[client]"
-        out "user=$2"
-        if [ -n "${3:-}" ]; then
-            local p="${3//\\/\\\\}"; p="${p//\"/\\\"}"
-            out "password=\"$p\""
-        fi
-    } > "$1"
+    # Subshell: a bare umask 077 would leak into every later step (dropin, ACME webroot, ...).
+    (
+        umask 077
+        {
+            out "[client]"
+            out "user=$2"
+            if [ -n "${3:-}" ]; then
+                local p="${3//\\/\\\\}"; p="${p//\"/\\\"}"
+                out "password=\"$p\""
+            fi
+        } > "$1"
+    )
 }
 
 resolve_mysql_root() {
+    [ -n "$MYSQL_ROOT_CNF" ] && return 0   # resolved earlier in this run (a typed password is asked once)
     command_exists mysql || return 1
     local cnf="$TMPD/root.cnf" pw
     _try() { _mysql_cnf "$cnf" "$1" "${2:-}"; mysql --defaults-extra-file="$cnf" -N -e "SELECT 1" >/dev/null 2>&1; }
@@ -401,6 +416,25 @@ resolve_mysql_root() {
 
 mysql_root() { mysql --defaults-extra-file="$MYSQL_ROOT_CNF" "$@"; }
 
+# app_db_state: "yes" / "no" for whether OpDesk's database exists, empty when no login can tell
+# (MySQL down, no credentials). The app account from backend/.env is tried first (no prompt); a
+# "not there" from it is confirmed as root, since an account without grants sees no schema at all.
+app_db_state() {
+    local db user host port n="" cnf="$TMPD/check.cnf" q
+    command_exists mysql || return 0
+    db=$(env_get "$ENV_FILE" DB_OpDesk); db="${db:-OpDesk}"
+    [[ "$db" =~ ^[A-Za-z0-9_]+$ ]] || return 0
+    q="SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='$db'"
+    user=$(env_get "$ENV_FILE" DB_USER)
+    host=$(env_get "$ENV_FILE" DB_HOST); port=$(env_get "$ENV_FILE" DB_PORT)
+    if [ -n "$user" ]; then
+        _mysql_cnf "$cnf" "$user" "$(env_get "$ENV_FILE" DB_PASSWORD)"
+        n=$(mysql --defaults-extra-file="$cnf" -h "${host:-localhost}" -P "${port:-3306}" -N -e "$q" 2>/dev/null)
+    fi
+    if [ "$n" != "1" ] && resolve_mysql_root; then n=$(mysql_root -N -e "$q" 2>/dev/null); fi
+    case "$n" in 1) out "yes" ;; 0) out "no" ;; esac
+}
+
 # db_login_ok <user> <pass>: the app account can log in with these credentials.
 db_login_ok() {
     local cnf="$TMPD/app.cnf"
@@ -418,13 +452,22 @@ step_preflight() {
     trap 'rm -rf "$TMPD"' EXIT
 
     if [ -e "$PROJECT_ROOT/.git" ]; then IS_UPDATE=true; else IS_UPDATE=false; fi
+    # A checkout is not an installation: a clone with no backend/.env, or whose OpDesk database is
+    # gone, is set up as a fresh install (admin password question included). IS_UPDATE only
+    # decides clone vs pull.
+    FRESH_SETUP=true
+    if [ -e "$ENV_FILE" ] && [ "$(app_db_state)" != "no" ]; then FRESH_SETUP=false; fi
 
     clear 2>/dev/null || true
     note "================================================================="
     note "                       OpDesk setup"
     note "================================================================="
-    if [ "$IS_UPDATE" = "true" ]; then
+    if [ "$ACTION" = "uninstall" ]; then
+        say "  Mode:    ${RED}UNINSTALL${NC} ($PROJECT_ROOT)"
+    elif [ "$FRESH_SETUP" != "true" ]; then
         say "  Mode:    ${YELLOW}UPDATE${NC} (existing installation in $PROJECT_ROOT)"
+    elif [ "$IS_UPDATE" = "true" ]; then
+        say "  Mode:    ${GREEN}FRESH INSTALL${NC} using the code in $PROJECT_ROOT"
     else
         say "  Mode:    ${GREEN}FRESH INSTALL${NC} into $PROJECT_ROOT"
     fi
@@ -492,7 +535,7 @@ step_repo() {
         if [ "$self_before" != "$(sha256sum "$PROJECT_ROOT/install.sh" | cut -d' ' -f1)" ]; then
             warn "install.sh changed; continuing with the new version."
             rm -rf "$TMPD"
-            local args=(--no-pull)
+            local args=(--no-pull --update)
             [ "$ASSUME_YES" = "1" ] && args+=(--yes)
             exec bash "$PROJECT_ROOT/install.sh" "${args[@]}"
         fi
@@ -706,6 +749,8 @@ step_database() {
             "[mysqld]" "event_scheduler = ON" > "$dropin"
         info "event_scheduler persisted in $dropin"
     fi
+    # mysqld runs as mysql and skips an unreadable dropin silently; older installers wrote it 0600.
+    [ -f "$dropin" ] && chmod 644 "$dropin"
 
     if db_login_ok "$DB_USER" "$DB_PASS"; then DB_STATUS="connected"; else DB_STATUS="login FAILED"; fi
     info "Database user $DB_USER@$DB_HOST:$DB_PORT: $DB_STATUS"
@@ -853,7 +898,7 @@ step_questions() {
 
     # Admin password: fresh installs only. Enter = a random one, printed in the summary.
     ADMIN_PASSWORD=""; ADMIN_PASSWORD_GENERATED=0
-    if [ "$IS_UPDATE" != "true" ]; then
+    if [ "$FRESH_SETUP" = "true" ]; then
         ADMIN_PASSWORD="${OPDESK_ADMIN_PASSWORD:-}"
         if [ -z "$ADMIN_PASSWORD" ] && [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
             local p1 p2
@@ -1359,17 +1404,291 @@ step_summary() {
     [ "$TLS_MODE" = "self-signed" ] && note "The certificate is self-signed: open the URL once and accept it, or the softphone cannot connect."
 }
 
+# =================================================================================================
+# Uninstall
+# =================================================================================================
+
+# The comments the installer writes above the AMI section it creates and above the
+# `#include manager_custom.conf` it adds to manager.conf.
+AMI_MARKER="; OpDesk operator panel (written by install.sh)"
+AMI_INCLUDE_MARKER="; Added by the OpDesk installer"
+
+# choose_action: on an existing installation, update (default; also --yes / no terminal) or uninstall.
+choose_action() {
+    [ -n "$ACTION" ] && return 0
+    ACTION="install"
+    [ "$FRESH_SETUP" = "true" ] && return 0
+    out "  1) update   2) uninstall (remove OpDesk from this server)"
+    [ "$(ask 'Choose [1/2] (default 1): ' 1)" = "2" ] && ACTION="uninstall"
+    return 0
+}
+
+# remove_ami_section <file> <user>: drop the [user] section and the installer comment above it.
+# Other sections and comments are kept as they are; blank lines left at the end of the file go.
+remove_ami_section() {
+    local tmp="$TMPD/manager_custom.conf"
+    awk -v sec="[$2]" -v marker="$AMI_MARKER" '
+        function flush() { printf "%s%s", buf, mk; buf = ""; mk = "" }
+        { line=$0; sub(/[[:space:]]*;.*/, "", line); gsub(/^[[:space:]]+|[[:space:]]+$/, "", line) }
+        line ~ /^\[/ { skip = (line == sec || index(line, sec "(") == 1); if (skip) { mk = ""; next } }
+        skip { next }
+        $0 == marker { mk = $0 "\n"; next }
+        $0 ~ /^[[:space:]]*$/ { buf = buf $0 "\n"; next }
+        { flush(); print }
+    ' "$1" > "$tmp" && cat "$tmp" > "$1"   # cat >: keeps the file's owner and mode
+}
+
+# uninstall_database <backup dir>: dump and drop OpDesk's database, then its MySQL account when
+# that account has no grants beyond the installer's three; the event_scheduler dropin goes when no
+# other database has EVENTs.
+uninstall_database() {
+    local backup="$1" grants others events dropin
+    if ! [[ "$DB_APP$DB_USER$DB_NAME$DB_CDR" =~ ^[A-Za-z0-9_]+$ ]]; then
+        warn "Unexpected database names in $ENV_FILE; the database and its user were left alone."
+        return
+    fi
+    case "$DB_APP" in
+        "$DB_NAME"|"$DB_CDR"|mysql|sys|information_schema|performance_schema)
+            warn "DB_OpDesk is '$DB_APP', a database OpDesk does not own; left alone." ;;
+        *)
+            if [ -n "$(mysql_root -N -e "SELECT 1 FROM information_schema.schemata WHERE schema_name='$DB_APP'")" ]; then
+                if mysqldump --defaults-extra-file="$MYSQL_ROOT_CNF" --single-transaction --routines --triggers --events \
+                    --databases "$DB_APP" > "$backup/$DB_APP.sql"; then
+                    mysql_root -e "DROP DATABASE \`$DB_APP\`;" && info "Dropped database $DB_APP (dump: $backup/$DB_APP.sql)"
+                else
+                    warn "mysqldump of $DB_APP failed; the database was NOT dropped."
+                fi
+            fi ;;
+    esac
+
+    pbx_db_credentials
+    if [ "$DB_USER" = "root" ] || [ "$DB_USER" = "$PBX_DB_USER" ]; then
+        warn "DB_USER '$DB_USER' is not OpDesk's own account; left alone."
+    elif grants=$(mysql_root -N -e "SHOW GRANTS FOR '$DB_USER'@'localhost'" 2>/dev/null); then
+        others=$(out "$grants" | grep -vE '^GRANT USAGE ON \*\.\* ' | grep -vE " ON \`($DB_NAME|$DB_CDR|$DB_APP)\`\.\* ")
+        if [ -z "$others" ]; then
+            out "$grants" | sed 's/$/;/' > "$backup/grants.sql"
+            mysql_root -e "DROP USER '$DB_USER'@'localhost'; FLUSH PRIVILEGES;" && info "Dropped MySQL user $DB_USER@localhost"
+        else
+            warn "MySQL user $DB_USER@localhost has grants beyond OpDesk's; left alone."
+        fi
+    fi
+
+    # Other applications' EVENTs may rely on the scheduler this dropin turns on.
+    events=$(mysql_root -N -e "SELECT COUNT(*) FROM information_schema.events" 2>/dev/null)
+    for dropin in /etc/mysql/mariadb.conf.d/90-opdesk.cnf /etc/my.cnf.d/opdesk.cnf /etc/mysql/conf.d/90-opdesk.cnf; do
+        [ -f "$dropin" ] || continue
+        if [ "$events" = "0" ]; then
+            cp -p "$dropin" "$backup/"; rm -f "$dropin"; info "Removed $dropin"
+        else
+            warn "Kept $dropin: ${events:-some} EVENT(s) in other databases need event_scheduler."
+        fi
+    done
+}
+
+# uninstall_firewall <port>: close the port the installer opened, once nothing listens on it.
+uninstall_firewall() {
+    local port="$1" owner
+    [ -n "$port" ] || return 0
+    owner=$(listening_comm "$port")
+    if [ -n "$owner" ]; then
+        info "Kept the firewall rule for $port/tcp: $owner listens on it."
+        return 0
+    fi
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+        firewall-cmd --permanent --query-port="$port/tcp" >/dev/null 2>&1 \
+            && firewall-cmd --permanent --remove-port="$port/tcp" >/dev/null && firewall-cmd --reload >/dev/null \
+            && info "firewalld: closed $port/tcp"
+    elif command_exists ufw && ufw status 2>/dev/null | grep -q '^Status: active'; then
+        ufw status 2>/dev/null | grep -qE "^$port/tcp[[:space:]]" && ufw delete allow "$port/tcp" >/dev/null \
+            && info "ufw: closed $port/tcp"
+    fi
+    return 0
+}
+
+# uninstall_nginx <backup dir>: the OpDesk site, the stock port-80 server the installer commented
+# out in nginx.conf (back when :80 is free), the certbot hook, certificate and ACME webroot.
+# nginx itself stays: other sites may use it.
+uninstall_nginx() {
+    local backup="$1" f removed=0 owner80
+    [ -f "$PROJECT_ROOT/nginx/opdesk.conf" ] && cp -p "$PROJECT_ROOT/nginx/opdesk.conf" "$backup/nginx-opdesk.conf"
+    for f in /etc/nginx/sites-enabled/opdesk /etc/nginx/sites-available/opdesk /etc/nginx/conf.d/opdesk.conf; do
+        if [ -e "$f" ] || [ -L "$f" ]; then rm -f "$f"; removed=1; fi
+    done
+    if grep -q '^#opdesk# ' /etc/nginx/nginx.conf 2>/dev/null; then
+        owner80=$(port_owner 80)
+        if [ -z "$owner80" ] || [ "$owner80" = "ours" ]; then
+            cp -p /etc/nginx/nginx.conf "$backup/nginx.conf"
+            sed -i 's/^#opdesk# //' /etc/nginx/nginx.conf
+            if nginx -t >/dev/null 2>&1; then
+                removed=1
+                info "Re-enabled the stock port-80 server in /etc/nginx/nginx.conf"
+            else
+                cat "$backup/nginx.conf" > /etc/nginx/nginx.conf
+                warn "nginx -t fails with the stock port-80 server back; nginx.conf left as it was."
+            fi
+        else
+            info "The stock port-80 server in nginx.conf stays disabled: $owner80 listens on :80."
+        fi
+    fi
+    [ -f /etc/nginx/nginx.conf.opdesk-orig ] && mv /etc/nginx/nginx.conf.opdesk-orig "$backup/"
+    if [ "$removed" = 1 ] && command_exists nginx; then
+        if nginx -t >/dev/null 2>&1; then
+            systemctl is-active --quiet nginx && systemctl reload nginx
+            info "Removed the OpDesk nginx site"
+        else
+            warn "nginx -t fails without the OpDesk site; see: nginx -t"
+        fi
+    fi
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/opdesk-nginx.sh
+
+    # Let's Encrypt: the domain's certificate, unless another web server or Asterisk config uses it.
+    if [ -n "$OPDESK_DOMAIN" ] && [ -d "/etc/letsencrypt/live/$OPDESK_DOMAIN" ]; then
+        if grep -rqsF "/etc/letsencrypt/live/$OPDESK_DOMAIN/" /etc/nginx /etc/apache2 /etc/httpd "$ASTERISK_ETC"; then
+            info "Kept the Let's Encrypt certificate for $OPDESK_DOMAIN: another config uses it."
+        elif command_exists certbot; then
+            tar -czf "$backup/letsencrypt-$OPDESK_DOMAIN.tgz" -C /etc/letsencrypt "live/$OPDESK_DOMAIN" \
+                "archive/$OPDESK_DOMAIN" "renewal/$OPDESK_DOMAIN.conf" 2>/dev/null
+            certbot delete --cert-name "$OPDESK_DOMAIN" --non-interactive >/dev/null 2>&1 \
+                && info "Deleted the Let's Encrypt certificate for $OPDESK_DOMAIN"
+        fi
+    fi
+    if [ -d "$ACME_WEBROOT" ] && ! grep -rqsF "$ACME_WEBROOT" /etc/letsencrypt/renewal /etc/nginx /etc/apache2 /etc/httpd; then
+        rm -rf "$ACME_WEBROOT"
+    fi
+}
+
+# uninstall_ami <backup dir>: the installer's AMI user (the default name, or the section it marked),
+# then the `#include manager_custom.conf` it added to manager.conf once that file has no users left.
+uninstall_ami() {
+    local backup="$1" custom="$ASTERISK_ETC/manager_custom.conf" main="$ASTERISK_ETC/manager.conf" reload=0
+    if [ -f "$custom" ] && [[ "$AMI_USER" =~ ^[A-Za-z0-9_-]+$ ]] && grep -qE "^[[:space:]]*\[$AMI_USER\]" "$custom"; then
+        if [ "$AMI_USER" = "OpDesk" ] || grep -qxF "$AMI_MARKER" "$custom"; then
+            cp -p "$custom" "$backup/"
+            remove_ami_section "$custom" "$AMI_USER"
+            reload=1
+            info "Removed AMI user [$AMI_USER] from $custom"
+        else
+            warn "AMI user [$AMI_USER] was not created by the installer; left alone."
+        fi
+    fi
+    if [ -f "$custom" ] && ! grep -qE '^[[:space:]]*\[' "$custom" && grep -qxF "$AMI_INCLUDE_MARKER" "$main" 2>/dev/null; then
+        cp -p "$main" "$backup/"
+        awk -v marker="$AMI_INCLUDE_MARKER" '
+            $0 == marker { drop = 1; next }
+            drop && $0 ~ /^[[:space:]]*#(try)?include[[:space:]]+"?manager_custom\.conf"?/ { drop = 0; next }
+            { drop = 0; print }
+        ' "$main" > "$TMPD/manager.conf" && cat "$TMPD/manager.conf" > "$main"
+        rm -f "$custom"
+        reload=1
+        info "Removed the manager_custom.conf include the installer added to $main"
+    fi
+    [ "$reload" = 1 ] && asterisk -rx "manager reload" >/dev/null 2>&1
+    if grep -qsE 'opdesk_(cert|key)\.pem' "$ASTERISK_ETC"/*.conf; then
+        warn "Kept $ASTERISK_ETC/keys/opdesk_*.pem: the Asterisk config uses them."
+    else
+        rm -f "$ASTERISK_ETC/keys/opdesk_cert.pem" "$ASTERISK_ETC/keys/opdesk_key.pem"
+    fi
+    return 0
+}
+
+step_uninstall() {
+    step "Uninstall OpDesk"
+    local backup f https_port remove_code=0 reply
+    DB_APP=$(env_get "$ENV_FILE" DB_OpDesk); DB_APP="${DB_APP:-OpDesk}"
+    DB_USER=$(env_get "$ENV_FILE" DB_USER); DB_USER="${DB_USER:-OpDesk}"
+    DB_NAME=$(env_get "$ENV_FILE" DB_NAME); DB_NAME="${DB_NAME:-asterisk}"
+    DB_CDR=$(env_get "$ENV_FILE" DB_CDR); DB_CDR="${DB_CDR:-asteriskcdrdb}"
+    AMI_USER=$(env_get "$ENV_FILE" AMI_USERNAME); AMI_USER="${AMI_USER:-OpDesk}"
+    OPDESK_DOMAIN=$(env_get "$ENV_FILE" OPDESK_DOMAIN)
+    https_port=$(env_get "$ENV_FILE" NGINX_HTTPS_PORT)
+
+    note "This removes everything the installer set up:"
+    out "  - opdesk.service, the OpDesk nginx site and its Let's Encrypt certificate"
+    out "  - the '$DB_APP' database and the '$DB_USER' MySQL user"
+    out "  - the [$AMI_USER] AMI user and the firewall rule for the HTTPS port"
+    out "  - backend/.env, cert/, node_modules, the builds and the VAD venv in $PROJECT_ROOT"
+    out "Kept: the PBX databases ($DB_NAME, $DB_CDR), and nginx, Node.js and certbot (shared)."
+    out "Backups go to /var/backups/opdesk-uninstall-<date> first."
+    if [ "$ASSUME_YES" != "1" ]; then
+        [ -t 0 ] || die "uninstall asks for confirmation: run it from a terminal, or add --yes"
+        read -r -p "Type 'uninstall' to continue: " reply
+        [ "$reply" = "uninstall" ] || die "cancelled; nothing was changed"
+        if [ -n "$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null)" ]; then
+            warn "$PROJECT_ROOT has uncommitted changes (git status), so the code is kept."
+        elif [[ "$(ask "Also delete the code in $PROJECT_ROOT? [y/N]: " n)" =~ ^[Yy] ]]; then
+            remove_code=1
+        fi
+    fi
+
+    mkdir -p /var/backups
+    backup="/var/backups/opdesk-uninstall-$(date +%Y%m%d-%H%M%S)"
+    (umask 077; mkdir "$backup") || die "cannot create $backup"
+
+    # Service
+    systemctl stop opdesk.service 2>/dev/null
+    systemctl disable opdesk.service >/dev/null 2>&1
+    if [ -f "$UNIT_FILE" ]; then
+        cp -p "$UNIT_FILE" "$backup/"
+        rm -f "$UNIT_FILE"
+        systemctl daemon-reload
+        info "Removed opdesk.service"
+    fi
+    systemctl reset-failed opdesk.service 2>/dev/null
+
+    uninstall_nginx "$backup"
+    uninstall_firewall "$https_port"
+
+    if resolve_mysql_root; then
+        uninstall_database "$backup"
+    else
+        warn "No privileged MySQL login worked; remove them by hand:"
+        out "  DROP DATABASE \`$DB_APP\`; DROP USER '$DB_USER'@'localhost';"
+    fi
+
+    uninstall_ami "$backup"
+
+    # Generated files in the checkout, and the VAD model cache
+    for f in .env backend/.env backend/.env.bak; do
+        [ -f "$PROJECT_ROOT/$f" ] && cp -p "$PROJECT_ROOT/$f" "$backup/${f//\//_}"
+    done
+    [ -d "$PROJECT_ROOT/cert" ] && cp -a "$PROJECT_ROOT/cert" "$backup/cert"
+    for f in .env backend/.env backend/.env.bak backend/.admin_init_hash cert secrets nginx/opdesk.conf \
+             backend/node_modules frontend/node_modules backend/dist backend/dist.prev frontend/dist \
+             frontend/dist.prev backend/vad/.venv; do
+        rm -rf "${PROJECT_ROOT:?}/$f"
+    done
+    rm -rf "${SERVICE_HOME:?}/.cache/opdesk"
+    info "Removed backend/.env, cert/, node_modules, the builds and the VAD venv"
+    if [ "$remove_code" = 1 ] && [ "$PROJECT_ROOT" != "/" ] && [ -f "$PROJECT_ROOT/install.sh" ]; then
+        cd / && rm -rf "$PROJECT_ROOT" && info "Deleted $PROJECT_ROOT"
+    fi
+
+    say "\n${GREEN}OpDesk is uninstalled.${NC} Backups: $backup"
+    if [ -d "$PROJECT_ROOT" ]; then
+        note "The code is still in $PROJECT_ROOT: sudo ./install.sh installs it fresh; rm -rf $PROJECT_ROOT removes it."
+    fi
+    return 0
+}
+
 main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             -y|--yes) ASSUME_YES=1 ;;
             --no-pull) DO_PULL=0 ;;
+            --update) ACTION=install ;;
+            --uninstall) ACTION=uninstall ;;
             -h|--help) usage; exit 0 ;;
             *) usage; exit 1 ;;
         esac
         shift
     done
     step_preflight
+    choose_action
+    if [ "$ACTION" = "uninstall" ]; then
+        step_uninstall
+        exit 0
+    fi
     step_os
     step_repo
     step_migrate_legacy
