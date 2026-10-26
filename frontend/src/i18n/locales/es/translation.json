@@ -963,7 +963,8 @@
       "localMaxHint": "Se borran primero las grabaciones más antiguas cuando el uso supera este valor. Vacío = sin límite.",
       "vadFiles": "Archivos de actividad de voz",
       "vadDelete": "Borrar los archivos por interlocutor tras el análisis",
-      "vadDeleteDesc": "Los tramos -sp1/-sp2 solo se necesitan un momento para calcular la actividad de voz; activado por defecto."
+      "vadDeleteDesc": "Los tramos -sp1/-sp2 solo se necesitan un momento para calcular la actividad de voz; activado por defecto.",
+      "hookConflict": "La grabación está activada, pero no es OpDesk quien graba: {{files}} ya define los hooks predial de la PBX (hay otro grabador de llamadas instalado). Los interruptores de dirección y extensión de abajo no tienen efecto hasta que se desactive ese grabador."
     },
     "webhooks": {
       "metaDirections": "{{method}} · {{active}}/{{total}} direcciones"

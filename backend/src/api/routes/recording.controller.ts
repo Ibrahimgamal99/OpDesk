@@ -22,6 +22,8 @@ import {
   enableRecording,
   RECORD_SINGLE_DIR,
   RECORDING_FORMATS,
+  recordingHookConflicts,
+  type RecordingHookConflict,
   setRecordingDirection,
   setRecordingExtension,
 } from '../../services/dialplan';
@@ -72,6 +74,22 @@ async function pbxSetting(): Promise<string> {
   return (await dbm.getSetting('PBX', env('PBX', 'FreePBX'))) || env('PBX', 'FreePBX') || 'FreePBX';
 }
 
+/**
+ * What an admin is told when another dialplan file keeps the predial hooks: which file, and
+ * what to do about it. Asterisk keeps the first definition and only logs "already in use".
+ */
+export function hookConflictMessage(conflicts: RecordingHookConflict[]): string {
+  const files = [...new Set(conflicts.map((c) => c.file).filter((f): f is string => Boolean(f)))];
+  if (!files.length) {
+    return 'Call recording could not start: the PBX predial hooks did not load. Check extensions_custom.conf and the Asterisk log.';
+  }
+  return (
+    `Call recording could not start: ${files.join(', ')} already defines the PBX predial hooks ` +
+    '(another call recorder is installed), so OpDesk\'s recorder would never run. Turn that recorder off ' +
+    'or remove its #include from extensions_custom.conf, then enable recording again.'
+  );
+}
+
 @Controller()
 export class RecordingController {
   /** Master on/off + format (+ where the files are). Any signed-in user. */
@@ -106,6 +124,16 @@ export class RecordingController {
       throw new HttpError(500, 'Internal server error');
     }
     if (!ok) throw new HttpError(500, 'Failed to enable call recording. Check server logs.');
+    // The reload succeeding does not mean our hooks won: read back what Asterisk loaded.
+    const conflicts = await recordingHookConflicts();
+    if (conflicts && conflicts.length) {
+      log.warning('Call recording not wired: %s', JSON.stringify(conflicts));
+      // Leave the hooks as no-ops, so the recorder does not silently start later (once the
+      // other file goes) with the switch showing off.
+      await disableRecording(await pbxSetting());
+      await dbm.setSetting('RECORDING_ENABLED', 'false');
+      throw new HttpError(409, hookConflictMessage(conflicts));
+    }
     await dbm.setSetting('RECORDING_ENABLED', 'true');
     await dbm.setSetting('RECORDING_FORMAT', fmt);
     setRedactedAuditDetail(req, { recording: true, format: fmt });
