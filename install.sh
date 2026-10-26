@@ -37,6 +37,8 @@ NVM_VERSION="v0.40.3"
 ENV_FILE="$PROJECT_ROOT/backend/.env"
 UNIT_FILE="/etc/systemd/system/opdesk.service"
 ACME_WEBROOT="/var/www/letsencrypt"
+# The backend seeds admin with this same password (DEFAULT_ADMIN_PASSWORD_HASH in src/db/migrate.ts).
+ADMIN_DEFAULT_PASSWORD="OpDesk@2026"
 
 # Paths read during detection; overridable so the detection helpers can be tested on sample files.
 ISSABEL_CONF="${ISSABEL_CONF:-/etc/issabel.conf}"
@@ -68,7 +70,7 @@ Usage: sudo ./install.sh [--yes] [--no-pull] [--update | --uninstall]
   -y, --yes       Non-interactive. Defaults are used for every question:
                     domain        OPDESK_DOMAIN (env) or the one in backend/.env, else none (self-signed)
                     HTTPS port    OPDESK_PUBLIC_HTTPS_PORT (env), the previous port, 443, or 8443 when 443 is taken
-                    admin pass    OPDESK_ADMIN_PASSWORD (env), else a random one (printed at the end)
+                    admin pass    OPDESK_ADMIN_PASSWORD (env), else the default OpDesk@2026 (printed at the end)
       --no-pull   Do not `git pull`; install the code that is already in /opt/OpDesk.
       --update    Update an existing installation without asking (the default choice).
       --uninstall Remove everything the installer set up: service, nginx site, Let's Encrypt
@@ -896,14 +898,14 @@ step_questions() {
     done
     resolve_https_conflict
 
-    # Admin password: fresh installs only. Enter = a random one, printed in the summary.
-    ADMIN_PASSWORD=""; ADMIN_PASSWORD_GENERATED=0
+    # Admin password: fresh installs only. Enter = keep the default, printed in the summary.
+    ADMIN_PASSWORD=""; ADMIN_PASSWORD_DEFAULT=0
     if [ "$FRESH_SETUP" = "true" ]; then
         ADMIN_PASSWORD="${OPDESK_ADMIN_PASSWORD:-}"
         if [ -z "$ADMIN_PASSWORD" ] && [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
             local p1 p2
             while true; do
-                read -r -s -p "Password for the 'admin' user (Enter = generate one): " p1; out ""
+                read -r -s -p "Password for the 'admin' user (Enter = keep the default $ADMIN_DEFAULT_PASSWORD): " p1; out ""
                 [ -z "$p1" ] && break
                 [ ${#p1} -ge 8 ] || { err "Use at least 8 characters."; continue; }
                 read -r -s -p "Confirm: " p2; out ""
@@ -912,8 +914,8 @@ step_questions() {
             done
         fi
         if [ -z "$ADMIN_PASSWORD" ]; then
-            ADMIN_PASSWORD=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 16)
-            ADMIN_PASSWORD_GENERATED=1
+            ADMIN_PASSWORD="$ADMIN_DEFAULT_PASSWORD"
+            ADMIN_PASSWORD_DEFAULT=1
         fi
     fi
 }
@@ -1289,7 +1291,9 @@ step_build() {
 }
 
 # Hash with the backend's own bcrypt dependency (Python is VAD-only now) and store it directly.
-# The seed admin row exists once schema.sql ran. Without a privileged DB login, the hash goes to
+# schema.sql is DDL only: on a fresh install there is no admin row until the backend's first start
+# seeds one, so this is an upsert (a bare UPDATE matched 0 rows, still exited 0, and the backend
+# then seeded admin with the old default hash). Without a privileged DB login, the hash goes to
 # backend/.admin_init_hash, which the backend applies once at startup and deletes.
 step_admin_password() {
     ADMIN_STATUS="unchanged"
@@ -1301,10 +1305,10 @@ step_admin_password() {
     if ! [[ "$hash" =~ ^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$ ]]; then
         warn "Could not hash the admin password (backend dependencies missing?); set it later in the UI."
         ADMIN_STATUS="NOT set (hashing failed)"
-        ADMIN_PASSWORD_GENERATED=0
+        ADMIN_PASSWORD_DEFAULT=0
         return
     fi
-    if [ -n "$MYSQL_ROOT_CNF" ] && mysql_root -e "UPDATE \`$DB_APP\`.users SET password_hash='$hash' WHERE username='admin';" 2>/dev/null; then
+    if [ -n "$MYSQL_ROOT_CNF" ] && mysql_root -e "INSERT INTO \`$DB_APP\`.users (username, password_hash, name, role) VALUES ('admin', '$hash', 'Admin', 'admin') ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash);" 2>/dev/null; then
         ADMIN_STATUS="set"
     else
         (umask 077; out "$hash" > "$PROJECT_ROOT/backend/.admin_init_hash")
@@ -1393,8 +1397,8 @@ step_summary() {
     out "  Restart:        systemctl restart opdesk"
     note "ADMIN"
     out "  Username:       admin"
-    if [ "$ADMIN_PASSWORD_GENERATED" = "1" ] && [[ "$ADMIN_STATUS" == set* ]]; then
-        say "  Password:       ${YELLOW}$ADMIN_PASSWORD${NC}  (generated; change it after signing in)"
+    if [ "$ADMIN_PASSWORD_DEFAULT" = "1" ] && [[ "$ADMIN_STATUS" == set* ]]; then
+        say "  Password:       ${YELLOW}$ADMIN_PASSWORD${NC}  (default; change it after signing in)"
     elif [[ "$ADMIN_STATUS" == set* ]]; then
         out "  Password:       as entered ($ADMIN_STATUS)"
     else
