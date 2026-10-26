@@ -1532,7 +1532,7 @@
     "download": "PNG",
     "formatLink": "Referencia del formato de cuenta",
     "button": "QR de la app móvil",
-    "introAuto": "Escanea este código en Medut Softphone (pantalla de inicio de sesión → Escanear QR) para añadir la extensión {{ext}}. La app elige sola la mejor conexión."
+    "intro": "Escanee este código en Medut Softphone (pantalla de inicio de sesión → Escanear QR) para añadir la extensión {{ext}}. Incluye la conexión que la PBX espera para esta extensión: transporte, cifrado e ICE."
   },
   "mobileWake": {
     "saved": "Guardado. Plan de marcado de Asterisk recargado.",

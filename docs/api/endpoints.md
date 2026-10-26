@@ -721,7 +721,7 @@ proxy cannot be used to reach them from outside. They accept `GET` because Aster
 | `PUT /api/push/config` | admin | Save them, all or nothing. Every field is optional and one left out keeps its stored value; key files are sent as their contents (`null` keeps, `""` removes). An empty `client_marker` is stored as empty (only RFC 8599 contacts then count as mobile). Invalid input is one `422` `push.config.invalid` whose `fields` lists every wrong field (`hold_seconds`, `settle_seconds`, `fcm_project_id`, `fcm_service_account`, `apns_key_id`, `apns_team_id`, `apns_bundle_id`, `apns_auth_key`); nothing is written then. A failed write is a `500` with nothing changed |
 | `POST /api/push/vapid/rotate` | admin | New VAPID key pair; deletes every browser subscription in the same transaction (a `500` changes nothing, subscriptions included) |
 | `DELETE /api/push/bindings/{id}` | admin | Forget one RFC 8599 binding |
-| `GET /api/mobile-setup` | JWT | The caller's own QR data: extension, SIP password, host |
+| `GET /api/mobile-setup` | JWT | The caller's own QR data: extension, SIP password, host, and `account`, the full Medut account JSON (transport, `server_url`, `media_enc`, `ice_enabled`, STUN/TURN, `verify_tls`) built from the extension's PBX settings |
 | `POST /api/me/password` | JWT | Change the caller's OpDesk sign-in password: `{current_password, new_password}` |
 | `POST /api/me/sip-password` | JWT | Change the SIP secret of the caller's extension (same body; reloads Asterisk) |
 | `GET /api/settings/users/{id}/mobile-setup` | admin | The same for any user |

@@ -1532,7 +1532,7 @@
     "download": "PNG",
     "formatLink": "Account format reference",
     "button": "Mobile app QR",
-    "introAuto": "Scan this code in Medut Softphone (sign-in screen → Scan QR) to add extension {{ext}}. The app finds the best connection by itself."
+    "intro": "Scan this code in Medut Softphone (sign-in screen → Scan QR) to add extension {{ext}}. It carries the connection the PBX expects for this extension: transport, encryption and ICE."
   },
   "mobileWake": {
     "saved": "Saved. Asterisk dialplan reloaded.",
