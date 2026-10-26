@@ -108,7 +108,7 @@ Then:
 2. Sign in as **`admin`** with the password you entered, or the one the installer generated and printed. Change it from the profile menu.
 3. Under **Users**, link users to their extensions so they get a softphone.
 
-**To update**, re-run `sudo ./install.sh` from `/opt/OpDesk`. Your settings and port are kept. Upgrading from the Python backend (1.x)? See [the upgrade notes](docs/guides/installation.md#upgrading-from-the-python-backend-opdesk-1x).
+**To update**, re-run `sudo ./install.sh` from `/opt/OpDesk`. Your settings and port are kept. **To uninstall**, run `sudo ./install.sh --uninstall` ([what it removes](docs/guides/installation.md#uninstalling)). Upgrading from the Python backend (1.x)? See [the upgrade notes](docs/guides/installation.md#upgrading-from-the-python-backend-opdesk-1x).
 
 **Docker**:
 

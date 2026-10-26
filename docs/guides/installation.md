@@ -83,6 +83,8 @@ When it finishes, open the URL from the report, for example `https://<server-ip>
 |---|---|
 | `--yes` | No questions. The domain comes from `OPDESK_DOMAIN` or `.env`, the port is the previous one, 443, or 8443 when 443 is taken, and the admin password comes from `OPDESK_ADMIN_PASSWORD` or is generated. |
 | `--no-pull` | Install the code already in `/opt/OpDesk` without `git pull`. |
+| `--update` | Update an existing install without asking "update or uninstall". |
+| `--uninstall` | Remove OpDesk from the server. See [Uninstalling](#uninstalling). |
 | `OPDESK_DOMAIN`, `OPDESK_LE_EMAIL` | Public name and Let's Encrypt contact address. |
 | `OPDESK_PUBLIC_HTTPS_PORT` | HTTPS port to use (mostly with `--yes`). |
 | `OPDESK_ADMIN_PASSWORD` | Admin password for a fresh install. |
@@ -185,7 +187,7 @@ Re-run the installer:
 cd /opt/OpDesk && sudo ./install.sh
 ```
 
-It pulls the latest code, keeps `backend/.env`, `cert/`, the HTTPS port and the domain, regenerates the nginx site and the systemd unit, rebuilds, and restarts the service.
+On an existing install it first asks **1) update 2) uninstall**. Enter (and `--yes`) means update. When `backend/.env` or the OpDesk database is missing, it runs as a fresh install instead, admin password question included. It pulls the latest code, keeps `backend/.env`, `cert/`, the HTTPS port and the domain, regenerates the nginx site and the systemd unit, rebuilds, and restarts the service.
 
 To switch an existing LAN install to a public domain, run it once with the domain set:
 
@@ -217,6 +219,26 @@ The new installer:
 - rewrites `opdesk.service` (now `node backend/dist/main.js`).
 
 It also removes the `/usr/local/bin/python` symlink and `/usr/local/bin/pip` wrapper that the old installer created, but only when the wrapper is exactly the one it wrote. The Python packages it installed system-wide (fastapi, uvicorn, …) are no longer used, and you can remove them with pip.
+
+## Uninstalling
+
+```bash
+cd /opt/OpDesk && sudo ./install.sh --uninstall
+```
+
+Or run `sudo ./install.sh` and choose **2) uninstall**. It lists what goes, asks you to type `uninstall`, and asks whether to delete the code in `/opt/OpDesk` too. The code is always kept when it has uncommitted changes. `--yes` skips both questions and keeps the code. Then it removes everything the installer set up:
+
+- `opdesk.service`;
+- the OpDesk nginx site, the certbot reload hook, the Let's Encrypt certificate for `OPDESK_DOMAIN` and `/var/www/letsencrypt`. Each is kept if another config still uses it;
+- the stock port-80 server the installer commented out in an EL `nginx.conf`, which is re-enabled when nothing else holds port 80;
+- the firewalld/ufw rule for the HTTPS port, once nothing listens on that port;
+- the OpDesk database. Its MySQL user is dropped too if that user has no grants other than OpDesk's;
+- the `event_scheduler` MySQL drop-in, unless other databases have EVENTs that need it;
+- the OpDesk AMI user, and the `#include manager_custom.conf` the installer added to `manager.conf` once no AMI users are left in that file;
+- `/etc/asterisk/keys/opdesk_*.pem`, unless the Asterisk config uses them;
+- `backend/.env`, `cert/`, `node_modules`, the builds, the VAD venv and its model cache.
+
+Backups of the database dump, `.env`, the certificates and every file it edits go to `/var/backups/opdesk-uninstall-<date>`. It never touches the PBX databases, nginx, Node.js or certbot themselves, since other software may use them. If the code is kept, `sudo ./install.sh` installs OpDesk fresh again.
 
 ## Troubleshooting
 
