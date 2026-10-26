@@ -472,7 +472,12 @@
     "searchPlaceholder": "Utilizador, nome, extensão, grupo…",
     "noMatches": "Nenhum utilizador corresponde a \"{{query}}\"",
     "deleteTitle": "Excluir usuário?",
-    "searchExtension": "Pesquisar ramal…"
+    "searchExtension": "Pesquisar ramal…",
+    "loginPasswordHint": "Apenas para entrar no OpDesk. Não altera a senha SIP.",
+    "sipPassword": "Nova senha SIP",
+    "sipPasswordHint": "Com a qual os telefones e softphones se registram. Deixe em branco para manter a atual. Alterá-la desconecta todos os telefones do ramal.",
+    "sipPasswordRule": "A senha SIP precisa de 8 a 64 caracteres, com letras e dígitos, sem espaços nem aspas.",
+    "sipSaveFailed": "Usuário salvo, mas a alteração da senha SIP falhou."
   },
   "groups": {
     "title": "Todos os grupos",

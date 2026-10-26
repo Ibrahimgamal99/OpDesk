@@ -472,7 +472,12 @@
     "searchPlaceholder": "Username, name, extension, group…",
     "noMatches": "No users match \"{{query}}\"",
     "deleteTitle": "Delete user?",
-    "searchExtension": "Search extension…"
+    "searchExtension": "Search extension…",
+    "loginPasswordHint": "For signing in to OpDesk only. It does not change the SIP password.",
+    "sipPassword": "New SIP password",
+    "sipPasswordHint": "What phones and softphones register with. Leave blank to keep the current one. Changing it signs out every phone on the extension.",
+    "sipPasswordRule": "The SIP password needs 8 to 64 characters, with letters and digits, and no spaces or quotes.",
+    "sipSaveFailed": "User saved, but changing the SIP password failed."
   },
   "groups": {
     "title": "All groups",

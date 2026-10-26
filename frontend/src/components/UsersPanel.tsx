@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Save, Users, UserPlus, Pencil, Trash2, Shield, Plus, Phone, Eye, EyeOff, Radio, QrCode, Smartphone,
+  Save, Users, UserPlus, Pencil, Trash2, Shield, Plus, Phone, Eye, EyeOff, Radio, QrCode, Smartphone, Wand2,
 } from 'lucide-react';
 import { MobileSetupQR } from './MobileSetupQR';
+import { generateSipPassword } from './ChangePasswordModal';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
@@ -58,9 +59,17 @@ const ROLE_TONE: Record<string, BadgeTone> = {
   agent: 'success',
 };
 
+// The server's SIP secret rule (api/shared.ts), checked before the user is saved so a bad
+// SIP password never leaves a half-applied save behind.
+const SIP_SECRET_RE = /^[A-Za-z0-9!#$%*+\-.=?@^_~]{8,64}$/;
+const isValidSipSecret = (pw: string) => SIP_SECRET_RE.test(pw) && /[A-Za-z]/.test(pw) && /\d/.test(pw);
+
 const EMPTY_FORM = {
   username: '',
+  /** The OpDesk sign-in password. Never the SIP secret: that is `sipPassword`. */
   password: '',
+  /** A new SIP secret for the linked extension; '' keeps the one it has. */
+  sipPassword: '',
   name: '',
   extension: '',
   role: 'supervisor' as Role,
@@ -109,7 +118,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
 
   /**
    * Load the extension's PBX state into the form. An answer for an extension the form has
-   * since moved off is dropped. `prefill` also fills username/password/name (a new user).
+   * since moved off is dropped. `prefill` also fills username/name (a new user). The SIP
+   * secret is never copied into the sign-in password: the two are separate.
    */
   const loadExtensionState = useCallback(async (ext: string, prefill: boolean) => {
     try {
@@ -120,7 +130,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       const multiDevice = multiDeviceOf(data.max_contacts);
       setForm(f => (f.extension !== ext ? f : {
         ...f,
-        ...(prefill ? { username: data.username || ext, password: data.password || '', name: data.name || f.name } : {}),
+        ...(prefill ? { username: data.username || ext, name: data.name || f.name } : {}),
         webrtc,
         multiDevice,
         loaded: { webrtc, multiDevice },
@@ -129,7 +139,8 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   }, []);
 
   const handleExtensionSelect = useCallback(async (ext: string) => {
-    setForm(f => ({ ...f, extension: ext, webrtc: null, multiDevice: null, loaded: { webrtc: null, multiDevice: null } }));
+    // A SIP password typed for the previous extension is not carried to another one.
+    setForm(f => ({ ...f, extension: ext, sipPassword: '', webrtc: null, multiDevice: null, loaded: { webrtc: null, multiDevice: null } }));
     if (ext) await loadExtensionState(ext, !editingUser);
   }, [editingUser, loadExtensionState]);
 
@@ -139,6 +150,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     setForm({
       username: pendingUserForm.username,
       password: pendingUserForm.password,
+      sipPassword: pendingUserForm.sipPassword ?? '',
       name: pendingUserForm.name,
       extension: pendingUserForm.extension,
       role: pendingUserForm.role,
@@ -215,6 +227,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     setForm({
       username: u.username,
       password: '',
+      sipPassword: '',
       name: u.name || '',
       extension: u.extension || '',
       role: (u.role as Role) || 'supervisor',
@@ -237,6 +250,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     }
     if (!editingUser && !form.password) {
       setMessage({ type: 'error', text: t('users.passwordRequired') });
+      return;
+    }
+    if (form.extension && form.sipPassword && !isValidSipSecret(form.sipPassword)) {
+      setMessage({ type: 'error', text: t('users.sipPasswordRule', 'The SIP password needs 8 to 64 characters, with letters and digits, and no spaces or quotes.') });
       return;
     }
     try {
@@ -276,6 +293,21 @@ export function UsersPanel(props: UsersPanelProps = {}) {
         if (!res.ok) await raiseFor(res);
         saved = t('users.userCreated');
       }
+      // A new SIP secret for the linked extension, on its own: the sign-in password above
+      // never touches it. Every phone on the extension signs in again with the new one.
+      let sipFailed = false;
+      if (form.extension && form.sipPassword) {
+        try {
+          const sp = await fetchWithAuth(`/api/settings/extensions/${form.extension}/credentials`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: form.sipPassword }),
+          });
+          if (!sp.ok) sipFailed = true;
+        } catch {
+          sipFailed = true;
+        }
+      }
       // Persist the WebRTC toggle for the linked extension (best-effort; the user save already
       // succeeded), only when it is known and changed: each write reloads the PBX.
       let webrtcFailed = false;
@@ -308,7 +340,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       }
       resetForm();
       loadData({ keepMessage: true });
-      setMessage(webrtcFailed
+      setMessage(sipFailed
+        ? { type: 'error', text: t('users.sipSaveFailed', 'User saved, but changing the SIP password failed.') }
+        : webrtcFailed
         ? { type: 'error', text: t('users.webrtcSaveFailed') }
         : multiDeviceFailed
           ? { type: 'error', text: t('users.multiDeviceSaveFailed', 'User saved, but updating the device limit failed.') }
@@ -559,7 +593,12 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   placeholder={t('fields.username')}
                 />
               </FormField>
-              <FormField label={editingUser ? t('users.newPassword') : t('fields.password')} htmlFor="up-user-password" required={!editingUser}>
+              <FormField
+                label={editingUser ? t('users.newPassword') : t('fields.password')}
+                htmlFor="up-user-password"
+                hint={t('users.loginPasswordHint', 'For signing in to OpDesk only. It does not change the SIP password.')}
+                required={!editingUser}
+              >
                 <div className="u-row u-gap-2">
                   <input
                     id="up-user-password"
@@ -618,6 +657,36 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 )}
               </FormField>
             </FormRow>
+            {form.extension && (
+              <FormRow single>
+                <FormField
+                  label={t('users.sipPassword', 'New SIP password')}
+                  htmlFor="up-user-sip-password"
+                  hint={t('users.sipPasswordHint', 'What phones and softphones register with. Leave blank to keep the current one. Changing it signs out every phone on the extension.')}
+                >
+                  <div className="u-row u-gap-2">
+                    <input
+                      id="up-user-sip-password"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      className="form-input u-flex-1 u-min-w-0"
+                      value={form.sipPassword}
+                      onChange={e => setForm(f => ({ ...f, sipPassword: e.target.value }))}
+                      placeholder={t('users.keepBlank')}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-icon"
+                      onClick={() => { setForm(f => ({ ...f, sipPassword: generateSipPassword() })); setShowPassword(true); }}
+                      title={t('account.generate', 'Generate')}
+                      aria-label={t('account.generate', 'Generate')}
+                    >
+                      <Wand2 size={14} />
+                    </button>
+                  </div>
+                </FormField>
+              </FormRow>
+            )}
             {form.extension && form.webrtc !== null && (
               <FormRow single>
                 <Toggle
@@ -707,6 +776,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                             {
                               username: form.username,
                               password: form.password,
+                              sipPassword: form.sipPassword,
                               name: form.name,
                               extension: form.extension,
                               role: form.role,

@@ -688,7 +688,7 @@ the admin role. None are key-reachable.
 
 | Area | Paths |
 |---|---|
-| Users, groups, agents, queues | `/api/settings/users*`, `/api/settings/groups*`, `/api/settings/agents`, `/api/settings/queues`. A username, extension or group name already in use is `409`. |
+| Users, groups, agents, queues | `/api/settings/users*`, `/api/settings/groups*`, `/api/settings/agents`, `/api/settings/queues`. A username, extension or group name already in use is `409`. A user's `password` (8+ characters) is the OpDesk sign-in password only and never changes the extension's SIP secret; that is `PUT /api/settings/extensions/{extension}/credentials`. Unlinking or moving a user off an extension, deactivating them, or deleting them gives that extension a fresh random SIP secret (its phones sign out), so the person can no longer register with the one they knew. A save that landed in OpDesk but not in the PBX (name, secret or reload) is a `502` that says what did not apply. |
 | Contacts phonebook | `GET /api/contacts?search=&limit=&cursor=`, `GET /api/contacts/{id}` (any role; key: `contacts:read`), `POST /api/contacts`, `POST /api/contacts/bulk` (admin; key: `contacts:write`, upsert with precedence manual > api > crm, max 500 per request), `PUT|DELETE /api/contacts/{id}` (admin) — see [contact-lookup.md](contact-lookup.md) |
 | Raw settings key/value store | `GET|POST /api/settings`, `GET /api/settings/{key}` — secrets read back as `"********"`, and posting the mask keeps the stored value |
 | WebRTC provisioning | `GET /api/webrtc/config`, `GET /api/settings/extensions/webrtc`, `GET /api/settings/extensions/{extension}/credentials` (admin; includes `max_contacts`, `null` when the PBX database cannot be read), `PUT /api/settings/extensions/{extension}/webrtc` |

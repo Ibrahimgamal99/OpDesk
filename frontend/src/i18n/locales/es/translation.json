@@ -472,7 +472,12 @@
     "searchPlaceholder": "Usuario, nombre, extensión, grupo…",
     "noMatches": "Ningún usuario coincide con \"{{query}}\"",
     "deleteTitle": "¿Eliminar usuario?",
-    "searchExtension": "Buscar extensión…"
+    "searchExtension": "Buscar extensión…",
+    "loginPasswordHint": "Solo para iniciar sesión en OpDesk. No cambia la contraseña SIP.",
+    "sipPassword": "Nueva contraseña SIP",
+    "sipPasswordHint": "Con la que se registran los teléfonos y softphones. Déjela en blanco para conservar la actual. Cambiarla cierra la sesión de todos los teléfonos de la extensión.",
+    "sipPasswordRule": "La contraseña SIP necesita de 8 a 64 caracteres, con letras y dígitos, sin espacios ni comillas.",
+    "sipSaveFailed": "Usuario guardado, pero no se pudo cambiar la contraseña SIP."
   },
   "groups": {
     "title": "Todos los grupos",

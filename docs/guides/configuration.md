@@ -60,8 +60,13 @@ Settings changes apply **live**, with no restart.
 | **Agent** | Live panels for their own extension plus the agents and queues of the groups they belong to. History (call log, recordings, call journey) is limited to their **own** extension. They also get the contacts phonebook and the softphone. |
 
 Admins create users under **Users** (link a user to an extension to give them a softphone)
-and build agent and queue scopes under **Groups**. Every user can change their own sign-in
-password and SIP password from the profile menu.
+and build agent and queue scopes under **Groups**. The sign-in password and the extension's
+SIP password are separate: a user's password signs in to OpDesk only, and the SIP password
+(what phones register with) is set in its own field on the user form, or kept as the PBX has
+it. Unlinking a user from their extension, deactivating or deleting them gives that extension a
+new random SIP password, so their phones sign out and the old password stops working. Every
+user can change their own sign-in password and SIP password from their profile (click your
+name in the top-right menu).
 
 ## Debugging
 

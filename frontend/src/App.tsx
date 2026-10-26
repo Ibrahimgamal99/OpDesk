@@ -107,6 +107,8 @@ const isOutsideNumber = (n: string) => n.replace(/\D/g, '').length > 5;
 export interface PendingUserFormSnapshot {
   username: string;
   password: string;
+  /** A new SIP secret typed for the extension ('' keeps the current one). */
+  sipPassword?: string;
   name: string;
   extension: string;
   role: 'admin' | 'supervisor' | 'agent';
