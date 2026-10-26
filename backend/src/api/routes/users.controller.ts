@@ -7,12 +7,12 @@ import { getLogger } from '../../core/logger';
 import { runtime } from '../../core/runtime';
 import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
-import { reloadAsteriskSip } from '../../services/dialplan';
+import { pbxApplyCommand, reloadAsteriskSip } from '../../services/dialplan';
 import { HttpError } from '../http-error';
-import { isValidSipSecret, SIP_SECRET_RULE } from '../shared';
 import { Auth, Delete, Get, Post, Put, principal } from '../routing';
 import { parseBody, pInt, v } from '../validation';
 import { refreshLiveScopes } from './groups.controller';
+import { generateSipSecret, pbxSetting } from './softphone.controller';
 
 export const log = getLogger('api.routes.users');
 
@@ -48,12 +48,12 @@ export const ALL_MONITOR_MODES = ['listen', 'whisper', 'barge'];
 const CONFLICT = 'Username or extension already in use';
 
 /**
- * A password that is about to become an extension's SIP secret must pass the same rule as
- * POST /api/me/sip-password: the secret is reachable from the internet, and spaces or
- * quotes break the PJSIP config. Checked before anything is written.
+ * The OpDesk sign-in password an admin sets: the same floor as POST /api/me/password. It is
+ * the sign-in password only; the extension's SIP secret is set on its own
+ * (PUT /api/settings/extensions/:ext/credentials), so the two never have to match.
  */
-function assertSipSecretFor(ext: string | null | undefined, password: string | null | undefined): void {
-  if (ext && password && !isValidSipSecret(password)) throw new HttpError(400, SIP_SECRET_RULE);
+function assertLoginPassword(password: string | null | undefined): void {
+  if (password && Array.from(password).length < 8) throw new HttpError(400, 'The password needs at least 8 characters');
 }
 
 /**
@@ -88,21 +88,44 @@ export function monitoredExtensions(): string[] | null {
 }
 
 /**
- * Write the account's password and display name to its PBX extension, then reload SIP
- * once if anything changed. An OpDesk password doubles as the extension's SIP secret.
+ * Apply a user save to the PBX with at most one reload, and say what did not apply ([] when
+ * everything did):
+ *
+ *   * `name` becomes the display name of `nameExt`;
+ *   * every extension in `retire` gets a fresh random SIP secret nobody knows. These are the
+ *     extensions the person must no longer reach -- unlinked, moved off, deactivated or
+ *     deleted -- whose secret they may still have (My Profile, the mobile QR). Every phone
+ *     on such an extension signs out; an admin sets a new SIP password for whoever takes it.
+ *
+ * The sign-in password is never written here: it and the SIP secret are separate.
  */
-async function syncPbxExtension(ext: string | null | undefined, password: string | null | undefined, name: string | null | undefined): Promise<void> {
-  if (!ext) return;
+async function applyToPbx(opts: { nameExt?: string | null; name?: string | null; retire?: string[] }): Promise<string[]> {
+  const problems: string[] = [];
   let changed = false;
-  if (password) {
-    await dbm.setExtensionSecretInPbx(ext, password);
-    changed = true;
+  if (opts.nameExt && opts.name) {
+    if (await dbm.setExtensionNameInPbx(opts.nameExt, opts.name)) changed = true;
+    else problems.push(`the display name of extension ${opts.nameExt} was not updated in the PBX`);
   }
-  if (name) {
-    await dbm.setExtensionNameInPbx(ext, name);
-    changed = true;
+  for (const ext of opts.retire ?? []) {
+    const exists = await dbm.extensionExistsInPbx(ext);
+    if (exists === false) continue; // gone from the PBX: nothing to lock
+    if (exists && (await dbm.setExtensionSecretInPbx(ext, generateSipSecret()))) {
+      log.info('SIP secret of extension %s replaced: its user no longer holds it', ext);
+      changed = true;
+    } else {
+      problems.push(`the SIP password of extension ${ext} could not be replaced, so its old one still works`);
+    }
   }
-  if (changed) await reloadAsteriskSip();
+  if (changed) {
+    const pbx = await pbxSetting();
+    if (!(await reloadAsteriskSip(pbx))) problems.push(`the PBX reload failed (run '${pbxApplyCommand(pbx)}')`);
+  }
+  return problems;
+}
+
+/** The 502 for a save that landed in OpDesk but not (fully) in the PBX. */
+function pbxProblem(what: string, problems: string[]): HttpError {
+  return new HttpError(502, `${what}, but ${problems.join('; ')}.`);
 }
 
 @Controller()
@@ -128,8 +151,8 @@ export class UsersController {
   }
 
   /**
-   * Create a user and assign their groups. With an extension, the password becomes the
-   * extension's SIP secret and the name its PBX display name. A taken username or
+   * Create a user and assign their groups. With an extension, the name becomes its PBX
+   * display name; the extension keeps its SIP secret (the password is for OpDesk only). A taken username or
    * extension is a 409 user.record.conflict (FastAPI answered 400 with the same code).
    * Answers 200, not 201, as before.
    */
@@ -144,7 +167,7 @@ export class UsersController {
     let monitorModes = modeList(body.monitor_modes);
     if (monitorModes === null && body.monitor_mode) monitorModes = [body.monitor_mode];
     if (role === 'admin') monitorModes = [...ALL_MONITOR_MODES];
-    assertSipSecretFor((body.extension ?? '').trim(), body.password);
+    assertLoginPassword(body.password);
     const userId = await dbm.createUser(username, body.password, {
       name: body.name ?? null,
       extension: body.extension ?? null,
@@ -154,7 +177,7 @@ export class UsersController {
     });
     if (!userId) throw new HttpError(409, CONFLICT);
     await dbm.setUserGroups(userId, body.group_ids || []);
-    await syncPbxExtension(body.extension, body.password, body.name);
+    const problems = await applyToPbx({ nameExt: (body.extension ?? '').trim(), name: body.name });
     await refreshLiveScopes();
     // `password` is masked by the redaction: the row says one was set, never what.
     setRedactedAuditDetail(req, {
@@ -167,6 +190,7 @@ export class UsersController {
       group_ids: body.group_ids || [],
       password: body.password,
     });
+    if (problems.length) throw pbxProblem('User created', problems);
     const user = await dbm.getUserById(userId);
     if (!user) throw new HttpError(404, 'User not found');
     return userOut(user);
@@ -201,7 +225,7 @@ export class UsersController {
     // The extension the save leaves the user with: an explicit '' unlinks it, so nothing
     // may be written to the extension they had.
     const effectiveExt = body.extension === null || body.extension === undefined ? user.extension : wantedExt;
-    assertSipSecretFor(effectiveExt, body.password);
+    assertLoginPassword(body.password);
 
     const effectiveRole = body.role !== null && body.role !== undefined ? body.role : user.role;
     let monitorModes = modeList(body.monitor_modes);
@@ -218,14 +242,26 @@ export class UsersController {
     });
     if (!ok) throw new HttpError(500, { code: 'user.record.update_failed', message: 'Failed to update user' });
     if (body.group_ids !== null && body.group_ids !== undefined) await dbm.setUserGroups(userId, body.group_ids);
-    await syncPbxExtension(effectiveExt, body.password, body.name);
+    // Extensions this save takes away from the person: the one they had, when it is unlinked or
+    // replaced, and the one they keep, when the account is switched off.
+    const oldExt = String(user.extension ?? '').trim();
+    const keptExt = String(effectiveExt ?? '').trim();
+    const retire: string[] = [];
+    if (oldExt && oldExt !== keptExt) retire.push(oldExt);
+    if (body.is_active === false && user.is_active && keptExt) retire.push(keptExt);
+    const problems = await applyToPbx({ nameExt: keptExt, name: body.name, retire });
     await refreshLiveScopes();
     // Only the fields the request carried; a password is reported as set, never shown.
     const sent: Record<string, unknown> = {};
     for (const k of ['username', 'name', 'extension', 'role', 'is_active', 'monitor_mode', 'monitor_modes', 'group_ids', 'password'] as const) {
       if (body[k] !== null && body[k] !== undefined) sent[k] = body[k];
     }
-    setRedactedAuditDetail(req, { before: { username: user.username, extension: user.extension ?? null, role: user.role }, changed: sent });
+    setRedactedAuditDetail(req, {
+      before: { username: user.username, extension: user.extension ?? null, role: user.role },
+      changed: sent,
+      ...(retire.length ? { sip_locked_extensions: retire } : {}),
+    });
+    if (problems.length) throw pbxProblem('User saved', problems);
     const updated = await dbm.getUserById(userId);
     if (!updated) throw new HttpError(404, 'User not found');
     return userOut(updated);
@@ -240,8 +276,15 @@ export class UsersController {
     const user = await dbm.getUserById(userId);
     if (!user) throw new HttpError(404, 'User not found');
     if (!(await dbm.deleteUser(userId))) throw new HttpError(500, 'Failed to delete user');
+    // The person keeps no way onto their extension: its secret is one they may still have.
+    const ext = String(user.extension ?? '').trim();
+    const problems = ext ? await applyToPbx({ retire: [ext] }) : [];
     await refreshLiveScopes();
-    setRedactedAuditDetail(req, { deleted: { id: userId, username: user.username, extension: user.extension ?? null, role: user.role } });
+    setRedactedAuditDetail(req, {
+      deleted: { id: userId, username: user.username, extension: user.extension ?? null, role: user.role },
+      ...(ext ? { sip_locked_extensions: [ext] } : {}),
+    });
+    if (problems.length) throw pbxProblem('User deleted', problems);
     return { ok: true };
   }
 

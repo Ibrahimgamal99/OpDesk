@@ -14,7 +14,7 @@ import { truthy } from '../../core/py';
 import type { Principal } from '../../core/security';
 import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
-import { reloadAsteriskSip } from '../../services/dialplan';
+import { pbxApplyCommand, reloadAsteriskSip } from '../../services/dialplan';
 import { publicHost } from '../../services/sip-push';
 import { HttpError } from '../http-error';
 import { respond } from '../respond';
@@ -370,7 +370,7 @@ export function generateSipSecret(length = SIP_SECRET_LENGTH): string {
 }
 
 /** The PBX flavour for a reload: the PBX setting, else env PBX. */
-async function pbxSetting(): Promise<string | null> {
+export async function pbxSetting(): Promise<string | null> {
   return (await dbm.getSetting('PBX', env('PBX', ''))) || process.env.PBX || null;
 }
 
@@ -402,29 +402,84 @@ async function checkCurrentPassword(currentUser: Principal, password: string): P
   return user;
 }
 
+/** Medut's media_enc for the PBX's media_encryption. */
+const MEDUT_MEDIA_ENC: Record<SipMediaOut['encryption'], string> = { none: 'none', sdes: 'sdes', dtls: 'dtls_srtp' };
+
 /**
- * What the Medut setup QR is built from: the user's extension, SIP password and the PBX
- * host. The QR leaves the transport out on purpose, so Medut's sign-in finds the
- * connection itself (TLS, TCP, UDP and WSS at once; first to register wins).
+ * The full Medut account (medut-softphone docs/account-setup.md) for one extension, built
+ * from the same answer as /api/extension-config, so the phone connects the way the PBX
+ * endpoint actually accepts calls. Every connection key is written: with no `transport`
+ * Medut signs in on "Auto" and keeps whichever transport registers first -- on a DTLS
+ * (WebRTC) extension that is often UDP, which registers but every call is then refused
+ * because the media is not DTLS-SRTP.
+ *
+ *   * transport: the first one the extension can use (cfg.transports is most secure first:
+ *     WSS for a DTLS extension, else TLS / TCP / UDP as offered). With none offered, the
+ *     extension's own transport, else WSS for DTLS and UDP for the rest.
+ *   * media_enc / ice_enabled: the endpoint's media_encryption and icesupport; WebSocket
+ *     always gets ICE, which WebRTC needs.
+ *   * stun_server / turn_*: the first STUN and TURN server of OpDesk's ICE list, with ICE on.
+ *   * verify_tls: false without a public domain (self-signed certificate).
+ */
+export function medutAccount(cfg: ExtensionConfigOut, opts: { verifyTls: boolean }): Record<string, unknown> {
+  const ext = String(cfg.extension ?? '');
+  const media = cfg.media ?? { encryption: 'none' as const, ice: false, avpf: false, rtcp_mux: false, codecs: null };
+  const fallbackType: SipTransportType = media.encryption === 'dtls' ? 'wss' : 'udp';
+  const chosen = cfg.transports[0] ?? null;
+  const type: SipTransportType = chosen?.type ?? fallbackType;
+  const host = chosen?.host || cfg.domain;
+  const ws = type === 'wss' || type === 'ws';
+  // TLS always names its port (as Medut's own TLS example does); UDP/TCP only a non-default
+  // one; a WebSocket carries its port in server_url.
+  const sipPort = chosen?.port ?? (type === 'tls' ? SIP_TLS_PORT : SIP_PLAIN_PORT);
+  const port = ws ? '' : type === 'tls' || sipPort !== SIP_PLAIN_PORT ? `:${sipPort}` : '';
+  const uri = `${ext}@${host}${port}`;
+  const iceEnabled = media.ice || ws;
+
+  const account: Record<string, unknown> = {
+    name: `OpDesk ${ext}`,
+    uri,
+    password: cfg.secret || '',
+    display_name: cfg.display_name || '',
+    auth_user: cfg.auth_username || ext,
+    transport: type,
+  };
+  if (ws && chosen) account.server_url = chosen.uri;
+  account.media_enc = MEDUT_MEDIA_ENC[media.encryption];
+  account.ice_enabled = iceEnabled;
+  if (iceEnabled) {
+    const stun = cfg.ice_servers.find((s) => /^stuns?:/i.test(s.urls));
+    const turn = cfg.ice_servers.find((s) => /^turns?:/i.test(s.urls));
+    if (stun) account.stun_server = stun.urls;
+    if (turn) {
+      account.turn_server = turn.urls;
+      if (turn.username) account.turn_user = turn.username;
+      if (turn.credential) account.turn_pass = turn.credential;
+    }
+  }
+  account.verify_tls = opts.verifyTls;
+  return account;
+}
+
+/**
+ * What the Medut setup QR is built from: the user's extension, SIP password, the PBX host,
+ * and `account`, the full Medut account JSON (medutAccount) the QR encodes.
  */
 export async function mobileSetup(req: Request, user: Row): Promise<Record<string, unknown>> {
   const ext = String(user.extension ?? '').trim();
   if (!ext) throw new HttpError(404, 'This user has no extension');
-  const secret = await dbm.getExtensionSecretFromDb(ext);
-  let host = String((await publicHost()) || '');
-  if (!host) {
-    const wss = await webrtcServerUrl(req);
-    host = (wss ? urlparse(wss).hostname : '') || '';
-  }
   let displayName = user.name ? String(user.name) : '';
   if (!displayName) displayName = (await dbm.getExtensionNamesFromDb())[ext] || '';
+  const cfg = await extensionConfigFor(req, { ...user, name: displayName || null }, 'active');
+  // A self-signed certificate (no public domain) would fail the app's TLS / WSS checks.
+  const verifyTls = Boolean(await settingOrEnv('OPDESK_DOMAIN'));
   return {
     extension: ext,
     display_name: displayName,
-    password: secret || '',
-    host,
-    // A self-signed certificate (no OPDESK_DOMAIN) would fail the app's TLS / WSS checks.
-    verify_tls: Boolean(env('OPDESK_DOMAIN', '').trim()),
+    password: cfg.secret || '',
+    host: cfg.domain,
+    verify_tls: verifyTls,
+    account: medutAccount(cfg, { verifyTls }),
   };
 }
 
@@ -470,7 +525,10 @@ export class SoftphoneController {
     const pw = body.new_password || '';
     if (!isValidSipSecret(pw)) throw new HttpError(400, SIP_SECRET_RULE);
     if (!(await dbm.setExtensionSecretInPbx(ext, pw))) throw new HttpError(500, 'Could not save the SIP password');
-    await reloadAsteriskSip();
+    const pbx = await pbxSetting();
+    if (!(await reloadAsteriskSip(pbx))) {
+      throw new HttpError(502, `The SIP password was saved but the PBX did not apply it. Ask an admin to run '${pbxApplyCommand(pbx)}'.`);
+    }
     setRedactedAuditDetail(req, { extension: ext, secret: 'changed' });
     return respond({ message: 'SIP password changed. Sign your phones in again.' });
   }
@@ -589,7 +647,10 @@ export class SoftphoneController {
       if (!isValidSipSecret(secret)) throw new HttpError(400, SIP_SECRET_RULE);
     }
     if (!(await dbm.setExtensionSecretInPbx(ext, secret))) throw new HttpError(502, 'Could not update the SIP secret in the PBX');
-    await reloadAsteriskSip(await pbxSetting());
+    const pbx = await pbxSetting();
+    if (!(await reloadAsteriskSip(pbx))) {
+      throw new HttpError(502, `The SIP secret was saved but the PBX did not apply it. Run '${pbxApplyCommand(pbx)}'.`);
+    }
     setRedactedAuditDetail(req, { extension: ext, secret: 'changed', regenerated: body.regenerate });
     log.info('SIP secret changed for extension %s by user %s', ext, principal(req).id ?? null);
     return extensionCredentialsOut(ext);

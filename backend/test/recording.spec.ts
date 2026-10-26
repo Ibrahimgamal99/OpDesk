@@ -21,6 +21,7 @@ jest.mock('../src/services/dialplan', () => ({
     directions: { inbound: true, outbound: false, internal: true },
     extensions_opted_out: ['101'],
   })),
+  recordingHookConflicts: jest.fn(async () => []),
 }));
 jest.mock('../src/db/db-manager', () => ({
   getSetting: jest.fn(async (k: string, d: unknown) => (k in mockSettings ? mockSettings[k] : d)),
@@ -211,6 +212,7 @@ describe('policy snapshot', () => {
       mixed_dir: MIX,
       single_dir: SINGLE,
       directions: { inbound: true, outbound: false, internal: true },
+      hook_conflicts: [],
       extensions: [
         { extension: '100', name: 'Ibrahim', recording: true },
         { extension: '101', name: 'Sara', recording: false },

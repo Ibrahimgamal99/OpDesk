@@ -8,7 +8,7 @@ import '../styles/account.css';
 export type PasswordKind = 'login' | 'sip';
 
 /** 16 characters from letters and digits: always passes the server's SIP rule. */
-function generateSipPassword(): string {
+export function generateSipPassword(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   let out = Array.from(bytes, (b) => chars[b % chars.length]).join('');

@@ -688,7 +688,7 @@ the admin role. None are key-reachable.
 
 | Area | Paths |
 |---|---|
-| Users, groups, agents, queues | `/api/settings/users*`, `/api/settings/groups*`, `/api/settings/agents`, `/api/settings/queues`. A username, extension or group name already in use is `409`. |
+| Users, groups, agents, queues | `/api/settings/users*`, `/api/settings/groups*`, `/api/settings/agents`, `/api/settings/queues`. A username, extension or group name already in use is `409`. A user's `password` (8+ characters) is the OpDesk sign-in password only and never changes the extension's SIP secret; that is `PUT /api/settings/extensions/{extension}/credentials`. Unlinking or moving a user off an extension, deactivating them, or deleting them gives that extension a fresh random SIP secret (its phones sign out), so the person can no longer register with the one they knew. A save that landed in OpDesk but not in the PBX (name, secret or reload) is a `502` that says what did not apply. |
 | Contacts phonebook | `GET /api/contacts?search=&limit=&cursor=`, `GET /api/contacts/{id}` (any role; key: `contacts:read`), `POST /api/contacts`, `POST /api/contacts/bulk` (admin; key: `contacts:write`, upsert with precedence manual > api > crm, max 500 per request), `PUT|DELETE /api/contacts/{id}` (admin) — see [contact-lookup.md](contact-lookup.md) |
 | Raw settings key/value store | `GET|POST /api/settings`, `GET /api/settings/{key}` — secrets read back as `"********"`, and posting the mask keeps the stored value |
 | WebRTC provisioning | `GET /api/webrtc/config`, `GET /api/settings/extensions/webrtc`, `GET /api/settings/extensions/{extension}/credentials` (admin; includes `max_contacts`, `null` when the PBX database cannot be read), `PUT /api/settings/extensions/{extension}/webrtc` |
@@ -721,7 +721,7 @@ proxy cannot be used to reach them from outside. They accept `GET` because Aster
 | `PUT /api/push/config` | admin | Save them, all or nothing. Every field is optional and one left out keeps its stored value; key files are sent as their contents (`null` keeps, `""` removes). An empty `client_marker` is stored as empty (only RFC 8599 contacts then count as mobile). Invalid input is one `422` `push.config.invalid` whose `fields` lists every wrong field (`hold_seconds`, `settle_seconds`, `fcm_project_id`, `fcm_service_account`, `apns_key_id`, `apns_team_id`, `apns_bundle_id`, `apns_auth_key`); nothing is written then. A failed write is a `500` with nothing changed |
 | `POST /api/push/vapid/rotate` | admin | New VAPID key pair; deletes every browser subscription in the same transaction (a `500` changes nothing, subscriptions included) |
 | `DELETE /api/push/bindings/{id}` | admin | Forget one RFC 8599 binding |
-| `GET /api/mobile-setup` | JWT | The caller's own QR data: extension, SIP password, host |
+| `GET /api/mobile-setup` | JWT | The caller's own QR data: extension, SIP password, host, and `account`, the full Medut account JSON (transport, `server_url`, `media_enc`, `ice_enabled`, STUN/TURN, `verify_tls`) built from the extension's PBX settings |
 | `POST /api/me/password` | JWT | Change the caller's OpDesk sign-in password: `{current_password, new_password}` |
 | `POST /api/me/sip-password` | JWT | Change the SIP secret of the caller's extension (same body; reloads Asterisk) |
 | `GET /api/settings/users/{id}/mobile-setup` | admin | The same for any user |

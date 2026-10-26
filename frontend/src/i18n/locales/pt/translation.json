@@ -472,7 +472,12 @@
     "searchPlaceholder": "Utilizador, nome, extensão, grupo…",
     "noMatches": "Nenhum utilizador corresponde a \"{{query}}\"",
     "deleteTitle": "Excluir usuário?",
-    "searchExtension": "Pesquisar ramal…"
+    "searchExtension": "Pesquisar ramal…",
+    "loginPasswordHint": "Apenas para entrar no OpDesk. Não altera a senha SIP.",
+    "sipPassword": "Nova senha SIP",
+    "sipPasswordHint": "Com a qual os telefones e softphones se registram. Deixe em branco para manter a atual. Alterá-la desconecta todos os telefones do ramal.",
+    "sipPasswordRule": "A senha SIP precisa de 8 a 64 caracteres, com letras e dígitos, sem espaços nem aspas.",
+    "sipSaveFailed": "Usuário salvo, mas a alteração da senha SIP falhou."
   },
   "groups": {
     "title": "Todos os grupos",
@@ -958,7 +963,8 @@
       "localMaxHint": "As gravações mais antigas são excluídas primeiro quando o uso passa deste valor. Vazio = sem limite.",
       "vadFiles": "Arquivos de atividade de voz",
       "vadDelete": "Excluir os arquivos por interlocutor após a análise",
-      "vadDeleteDesc": "As partes -sp1/-sp2 só são necessárias por pouco tempo para calcular a atividade de voz; ativado por padrão."
+      "vadDeleteDesc": "As partes -sp1/-sp2 só são necessárias por pouco tempo para calcular a atividade de voz; ativado por padrão.",
+      "hookConflict": "A gravação está ligada, mas não é o OpDesk que está gravando: {{files}} já define os hooks predial do PBX (outro gravador de chamadas está instalado). Os controles de direção e ramal abaixo não têm efeito até que esse gravador seja desligado."
     },
     "webhooks": {
       "metaDirections": "{{method}} · {{active}}/{{total}} direções"
@@ -1526,7 +1532,7 @@
     "download": "PNG",
     "formatLink": "Referência do formato da conta",
     "button": "QR do app móvel",
-    "introAuto": "Leia este código no Medut Softphone (tela de login → Ler QR) para adicionar o ramal {{ext}}. O app escolhe sozinho a melhor conexão."
+    "intro": "Escaneie este código no Medut Softphone (tela de login → Escanear QR) para adicionar o ramal {{ext}}. Ele traz a conexão que o PBX espera para este ramal: transporte, criptografia e ICE."
   },
   "mobileWake": {
     "saved": "Salvo. Plano de discagem do Asterisk recarregado.",

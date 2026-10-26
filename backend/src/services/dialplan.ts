@@ -865,6 +865,45 @@ export async function removeRecordingConf(pbx: string | null = null): Promise<bo
   }
 }
 
+/** The predial hooks [opdesk-record] runs from (see renderRecordingConf). */
+export const RECORD_HOOK_CONTEXTS: readonly string[] = ['macro-dialout-one-predial-hook', 'macro-dialout-trunk-predial-hook'];
+
+/** A predial hook that, in the loaded dialplan, does not run [opdesk-record]. */
+export interface RecordingHookConflict {
+  context: string;
+  /** The file whose definition won (e.g. another recorder's), null when the hook is missing. */
+  file: string | null;
+}
+
+/**
+ * The predial hooks that do NOT reach [opdesk-record] in the dialplan Asterisk has loaded:
+ * [] when recording is wired, null when Asterisk could not be asked.
+ *
+ * Duplicate contexts are first-wins: a file #included before extensions_opdesk_record.conf
+ * that defines the same hooks (another recorder, such as Echo) keeps them, Asterisk only
+ * logs "already in use", and every call goes unrecorded by OpDesk -- or recorded by the
+ * other product under its own policy. Writing the file and reloading cannot tell; reading
+ * back what was loaded can.
+ */
+export async function recordingHookConflicts(): Promise<RecordingHookConflict[] | null> {
+  const out: RecordingHookConflict[] = [];
+  for (const context of RECORD_HOOK_CONTEXTS) {
+    let text: string;
+    try {
+      const r = await subprocessRun(['sudo', 'asterisk', '-rx', `dialplan show s@${context}`], { timeout: 10 });
+      if (r.returncode !== 0) return null;
+      text = r.stdout || '';
+    } catch (e) {
+      log.warning('Could not read the %s dialplan: %s', context, e);
+      return null;
+    }
+    if (text.includes('opdesk-record')) continue;
+    const m = /\[([^\]:\s]+\.conf):\d+\]/.exec(text);
+    out.push({ context, file: m ? m[1] : null });
+  }
+  return out;
+}
+
 /** Enable full-call MixMonitor recording (+ post-call VAD) and reload the dialplan. */
 export async function enableRecording(
   opts: { mixFormat?: string | null; vad?: boolean; pbx?: string | null } = {},

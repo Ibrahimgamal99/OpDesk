@@ -472,7 +472,12 @@
     "searchPlaceholder": "Username, name, extension, group…",
     "noMatches": "No users match \"{{query}}\"",
     "deleteTitle": "Delete user?",
-    "searchExtension": "Search extension…"
+    "searchExtension": "Search extension…",
+    "loginPasswordHint": "For signing in to OpDesk only. It does not change the SIP password.",
+    "sipPassword": "New SIP password",
+    "sipPasswordHint": "What phones and softphones register with. Leave blank to keep the current one. Changing it signs out every phone on the extension.",
+    "sipPasswordRule": "The SIP password needs 8 to 64 characters, with letters and digits, and no spaces or quotes.",
+    "sipSaveFailed": "User saved, but changing the SIP password failed."
   },
   "groups": {
     "title": "All groups",
@@ -958,7 +963,8 @@
       "localMaxHint": "The oldest recordings are deleted first once usage passes this. Blank = no cap.",
       "vadFiles": "Voice activity files",
       "vadDelete": "Delete per-speaker files after analysis",
-      "vadDeleteDesc": "The -sp1/-sp2 legs are only needed briefly to compute voice activity; on by default."
+      "vadDeleteDesc": "The -sp1/-sp2 legs are only needed briefly to compute voice activity; on by default.",
+      "hookConflict": "Recording is switched on, but OpDesk is not the one recording: {{files}} already defines the PBX predial hooks (another call recorder is installed). The direction and extension switches below have no effect until that recorder is turned off."
     },
     "webhooks": {
       "metaDirections": "{{method}} · {{active}}/{{total}} directions"
@@ -1526,7 +1532,7 @@
     "download": "PNG",
     "formatLink": "Account format reference",
     "button": "Mobile app QR",
-    "introAuto": "Scan this code in Medut Softphone (sign-in screen → Scan QR) to add extension {{ext}}. The app finds the best connection by itself."
+    "intro": "Scan this code in Medut Softphone (sign-in screen → Scan QR) to add extension {{ext}}. It carries the connection the PBX expects for this extension: transport, encryption and ICE."
   },
   "mobileWake": {
     "saved": "Saved. Asterisk dialplan reloaded.",

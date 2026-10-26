@@ -15,6 +15,8 @@ jest.mock(
     setUserGroups: jest.fn(),
     setExtensionSecretInPbx: jest.fn(async () => true),
     setExtensionNameInPbx: jest.fn(async () => true),
+    extensionExistsInPbx: jest.fn(async () => true),
+    getSetting: jest.fn(async (_k: string, d: unknown) => d),
     getExtensionNamesFromDb: jest.fn(async () => ({ '100': 'Ann' })),
     syncAgentsFromExtensions: jest.fn(),
     getAgentsList: jest.fn(),
@@ -22,7 +24,10 @@ jest.mock(
   }));
 jest.mock('../src/core/security', () => ({ principalOf: (req: { principal?: unknown }) => req.principal ?? null }));
 jest.mock('../src/core/runtime', () => ({ runtime: { monitor: null } }));
-jest.mock('../src/services/dialplan', () => ({ reloadAsteriskSip: jest.fn(async () => true) }));
+jest.mock('../src/services/dialplan', () => ({
+  reloadAsteriskSip: jest.fn(async () => true),
+  pbxApplyCommand: jest.fn(() => 'fwconsole reload'),
+}));
 
 import * as dbm from '../src/db/db-manager';
 import { runtime } from '../src/core/runtime';
@@ -42,6 +47,10 @@ beforeEach(() => {
   mocked(dbm.getUserByUsername).mockResolvedValue(null);
   mocked(dbm.getUserByExtension).mockResolvedValue(null);
   mocked(dbm.updateUser).mockResolvedValue(true);
+  mocked(dbm.extensionExistsInPbx).mockResolvedValue(true);
+  mocked(dbm.setExtensionSecretInPbx).mockResolvedValue(true);
+  mocked(dbm.setExtensionNameInPbx).mockResolvedValue(true);
+  mocked(reloadAsteriskSip).mockResolvedValue(true);
   (runtime as { monitor: unknown }).monitor = null;
 });
 
@@ -58,7 +67,7 @@ test('get: 404 for an unknown id', async () => {
 });
 
 describe('create', () => {
-  test('stores the user, its groups, and syncs the PBX extension', async () => {
+  test('stores the user, its groups, and syncs the PBX display name', async () => {
     mocked(dbm.createUser).mockResolvedValue(7);
     const r = req({ body: { username: ' ann ', password: 'pw123456', name: 'Ann', extension: '100', monitor_modes: ['whisper'], group_ids: [2] } });
     const out = await ctl.apiCreateUser(r);
@@ -81,7 +90,8 @@ describe('create', () => {
       monitorModes: ['whisper'],
     });
     expect(dbm.setUserGroups).toHaveBeenCalledWith(7, [2]);
-    expect(dbm.setExtensionSecretInPbx).toHaveBeenCalledWith('100', 'pw123456');
+    // The sign-in password is OpDesk's only: the extension keeps its SIP secret.
+    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
     expect(dbm.setExtensionNameInPbx).toHaveBeenCalledWith('100', 'Ann');
     expect(reloadAsteriskSip).toHaveBeenCalledTimes(1);
     expect(out.monitor_mode).toBe('whisper');
@@ -89,9 +99,9 @@ describe('create', () => {
 
   test('an admin gets every monitor mode; the legacy single mode still works', async () => {
     mocked(dbm.createUser).mockResolvedValue(7);
-    await ctl.apiCreateUser(req({ body: { username: 'a', password: 'p', role: 'admin', monitor_modes: [] } }));
+    await ctl.apiCreateUser(req({ body: { username: 'a', password: 'pw123456', role: 'admin', monitor_modes: [] } }));
     expect(mocked(dbm.createUser).mock.calls[0][2].monitorModes).toEqual(['listen', 'whisper', 'barge']);
-    await ctl.apiCreateUser(req({ body: { username: 'b', password: 'p', monitor_mode: 'barge' } }));
+    await ctl.apiCreateUser(req({ body: { username: 'b', password: 'pw123456', monitor_mode: 'barge' } }));
     expect(mocked(dbm.createUser).mock.calls[1][2].monitorModes).toEqual(['barge']);
     // No extension: nothing to sync, no reload.
     expect(reloadAsteriskSip).not.toHaveBeenCalled();
@@ -100,13 +110,14 @@ describe('create', () => {
   test.each([
     [{ username: ' ', password: 'p' }, 'Username required'],
     [{ username: 'a', password: ' ' }, 'Password required'],
+    [{ username: 'a', password: 'short1' }, 'The password needs at least 8 characters'],
   ])('%j -> 400 %s', async (body, message) => {
     await expect(ctl.apiCreateUser(req({ body }))).rejects.toMatchObject({ status: 400, message });
   });
 
   test('a taken username or extension is a 409 (user.record.conflict)', async () => {
     mocked(dbm.createUser).mockResolvedValue(null);
-    await expect(ctl.apiCreateUser(req({ body: { username: 'ann', password: 'p' } }))).rejects.toMatchObject({
+    await expect(ctl.apiCreateUser(req({ body: { username: 'ann', password: 'pw123456' } }))).rejects.toMatchObject({
       status: 409,
       message: 'Username or extension already in use',
     });
@@ -122,43 +133,95 @@ describe('update', () => {
     expect(dbm.setUserGroups).toHaveBeenCalledWith(7, []);
   });
 
-  test('a password goes to the existing extension as its SIP secret', async () => {
+  test('a password changes the sign-in password only, never the SIP secret', async () => {
     const r = req({ params: { user_id: '7' }, body: { password: 'newpass1' } });
     await ctl.apiUpdateUser(r);
     expect((r as { auditDetail?: unknown }).auditDetail).toEqual({
       before: { username: 'ann', extension: '100', role: 'supervisor' },
       changed: { password: '********' },
     });
-    expect(dbm.setExtensionSecretInPbx).toHaveBeenCalledWith('100', 'newpass1');
-    expect(reloadAsteriskSip).toHaveBeenCalledTimes(1);
-  });
-
-  test.each(['1234', 'onlyletters', '12345678', 'has space1', 'quote"d12'])(
-    'a weak or unsafe SIP secret (%s) is a 400 before anything is written',
-    async (password) => {
-      const err = await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { password } })).catch((e) => e);
-      expect(err).toMatchObject({ status: 400 });
-      expect(dbm.updateUser).not.toHaveBeenCalled();
-      expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
-      expect(reloadAsteriskSip).not.toHaveBeenCalled();
-    },
-  );
-
-  test('an account without an extension keeps the sign-in password rule only', async () => {
-    mocked(dbm.getUserById).mockResolvedValue({ ...USER, extension: null });
-    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { password: '1234' } }));
-    expect(dbm.updateUser).toHaveBeenCalled();
+    expect(dbm.updateUser).toHaveBeenCalledWith(7, expect.objectContaining({ password: 'newpass1' }));
     expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
-  });
-
-  test('unlinking the extension writes nothing to the old one', async () => {
-    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { extension: '', password: 'newpass1', name: 'Bob' } }));
-    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
-    expect(dbm.setExtensionNameInPbx).not.toHaveBeenCalled();
+    // Nothing reached the PBX, so nothing to reload.
     expect(reloadAsteriskSip).not.toHaveBeenCalled();
   });
 
-  test('create with an extension refuses a weak SIP secret', async () => {
+  test('the SIP rules no longer apply to the sign-in password', async () => {
+    // Spaces, quotes and no digits are fine for signing in; the SIP secret is set elsewhere.
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { password: 'has "space' } }));
+    expect(dbm.updateUser).toHaveBeenCalledWith(7, expect.objectContaining({ password: 'has "space' }));
+  });
+
+  test('a sign-in password under 8 characters is a 400 before anything is written', async () => {
+    const err = await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { password: '1234' } })).catch((e) => e);
+    expect(err).toMatchObject({ status: 400, message: 'The password needs at least 8 characters' });
+    expect(dbm.updateUser).not.toHaveBeenCalled();
+  });
+
+  test('unlinking the extension locks the person out of it: a fresh random SIP secret, no name', async () => {
+    const r = req({ params: { user_id: '7' }, body: { extension: '', password: 'newpass1', name: 'Bob' } });
+    await ctl.apiUpdateUser(r);
+    expect(dbm.setExtensionNameInPbx).not.toHaveBeenCalled();
+    expect(dbm.setExtensionSecretInPbx).toHaveBeenCalledTimes(1);
+    const [ext, secret] = mocked(dbm.setExtensionSecretInPbx).mock.calls[0];
+    expect(ext).toBe('100');
+    expect(secret).toMatch(/^[A-Za-z0-9]{16}$/);
+    expect(secret).not.toBe('newpass1');
+    expect(reloadAsteriskSip).toHaveBeenCalledTimes(1);
+    expect((r as { auditDetail?: { sip_locked_extensions?: unknown } }).auditDetail?.sip_locked_extensions).toEqual(['100']);
+  });
+
+  test('moving to another extension replaces the old one\'s secret and names the new one', async () => {
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { extension: '101', name: 'Ann' } }));
+    expect(mocked(dbm.setExtensionSecretInPbx).mock.calls.map((c) => c[0])).toEqual(['100']);
+    expect(dbm.setExtensionNameInPbx).toHaveBeenCalledWith('101', 'Ann');
+    expect(reloadAsteriskSip).toHaveBeenCalledTimes(1); // one reload for both
+  });
+
+  test('re-saving the same extension touches no secret', async () => {
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { extension: '100', role: 'agent' } }));
+    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
+    expect(reloadAsteriskSip).not.toHaveBeenCalled();
+  });
+
+  test('deactivating replaces the secret of the extension they keep; reactivating does not', async () => {
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { is_active: false } }));
+    expect(mocked(dbm.setExtensionSecretInPbx).mock.calls.map((c) => c[0])).toEqual(['100']);
+    jest.clearAllMocks();
+    mocked(dbm.getUserById).mockResolvedValue({ ...USER, is_active: 0 });
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { is_active: true } }));
+    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
+  });
+
+  test('an extension already gone from the PBX is skipped, not an error', async () => {
+    mocked(dbm.extensionExistsInPbx).mockResolvedValue(false);
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { extension: '' } }));
+    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
+    expect(reloadAsteriskSip).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['the secret write fails', () => mocked(dbm.setExtensionSecretInPbx).mockResolvedValue(false), /SIP password of extension 100 could not be replaced/],
+    ['the PBX database is unreachable', () => mocked(dbm.extensionExistsInPbx).mockResolvedValue(null), /SIP password of extension 100 could not be replaced/],
+    ['the reload fails', () => mocked(reloadAsteriskSip).mockResolvedValue(false), /PBX reload failed \(run 'fwconsole reload'\)/],
+  ])('a save that misses the PBX is a 502 that says so (%s)', async (_label, arrange, message) => {
+    arrange();
+    const err = await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { extension: '' } })).catch((e) => e);
+    expect(err).toMatchObject({ status: 502 });
+    expect(err.message).toMatch(/^User saved, but /);
+    expect(err.message).toMatch(message);
+    expect(dbm.updateUser).toHaveBeenCalled(); // OpDesk's side did land
+  });
+
+  test('a display name the PBX refuses is a 502', async () => {
+    mocked(dbm.setExtensionNameInPbx).mockResolvedValue(false);
+    await expect(ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { name: 'Bob' } }))).rejects.toMatchObject({
+      status: 502,
+      message: 'User saved, but the display name of extension 100 was not updated in the PBX.',
+    });
+  });
+
+  test('create refuses a sign-in password under 8 characters', async () => {
     const err = await ctl.apiCreateUser(req({ body: { username: 'bo', password: '1234', extension: '101' } })).catch((e) => e);
     expect(err).toMatchObject({ status: 400 });
     expect(dbm.createUser).not.toHaveBeenCalled();
@@ -195,11 +258,25 @@ describe('delete', () => {
     await expect(ctl.apiDeleteUser(req({ params: { user_id: '1' } }))).rejects.toMatchObject({ status: 400, message: 'Cannot delete yourself' });
   });
 
+  test('a user without an extension: nothing to lock, no reload', async () => {
+    mocked(dbm.getUserById).mockResolvedValue({ ...USER, extension: null });
+    mocked(dbm.deleteUser).mockResolvedValueOnce(true);
+    await ctl.apiDeleteUser(req({ params: { user_id: '7' } }));
+    expect(dbm.setExtensionSecretInPbx).not.toHaveBeenCalled();
+    expect(reloadAsteriskSip).not.toHaveBeenCalled();
+  });
+
   test('ok / 404 / 500', async () => {
     mocked(dbm.deleteUser).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     const r = req({ params: { user_id: '7' } });
     expect(await ctl.apiDeleteUser(r)).toEqual({ ok: true });
-    expect((r as { auditDetail?: unknown }).auditDetail).toEqual({ deleted: { id: 7, username: 'ann', extension: '100', role: 'supervisor' } });
+    expect((r as { auditDetail?: unknown }).auditDetail).toEqual({
+      deleted: { id: 7, username: 'ann', extension: '100', role: 'supervisor' },
+      sip_locked_extensions: ['100'],
+    });
+    // The deleted person's secret no longer works on their extension.
+    expect(mocked(dbm.setExtensionSecretInPbx).mock.calls.map((c) => c[0])).toEqual(['100']);
+    expect(reloadAsteriskSip).toHaveBeenCalledTimes(1);
     await expect(ctl.apiDeleteUser(req({ params: { user_id: '7' } }))).rejects.toMatchObject({ status: 500, message: 'Failed to delete user' });
     mocked(dbm.getUserById).mockResolvedValue(null);
     await expect(ctl.apiDeleteUser(req({ params: { user_id: '7' } }))).rejects.toMatchObject({ status: 404 });

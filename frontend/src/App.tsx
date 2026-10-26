@@ -55,7 +55,6 @@ import {
   X,
   ScrollText,
   BookUser,
-  UserCircle,
   FileAudio,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -107,6 +106,8 @@ const isOutsideNumber = (n: string) => n.replace(/\D/g, '').length > 5;
 export interface PendingUserFormSnapshot {
   username: string;
   password: string;
+  /** A new SIP secret typed for the extension ('' keeps the current one). */
+  sipPassword?: string;
   name: string;
   extension: string;
   role: 'admin' | 'supervisor' | 'agent';
@@ -823,8 +824,13 @@ function App({ onLogout }: AppProps) {
 
             {profileMenuOpen && (
               <div className="header-profile-dropdown">
-                {/* Identity */}
-                <div className="header-profile-identity">
+                {/* Identity: opens the profile page (passwords, SIP, mobile QR, language). */}
+                <button
+                  type="button"
+                  className="header-profile-identity"
+                  onClick={() => { setProfileMenuOpen(false); selectTab('profile'); }}
+                  title={t('profile.title', 'My Profile')}
+                >
                   <span className="header-profile-avatar header-profile-avatar-lg"><User size={20} /></span>
                   <div className="header-profile-identity-text">
                     <div className="header-profile-identity-name">{getUser()?.name || getUser()?.username || getUser()?.extension}</div>
@@ -833,14 +839,7 @@ function App({ onLogout }: AppProps) {
                       {getUser()?.extension && <span className="header-profile-ext">· {t('header.ext')} {getUser()?.extension}</span>}
                     </div>
                   </div>
-                </div>
-
-                <div className="header-profile-divider" />
-                <div className="header-profile-section-label">{t('common.account', 'Account')}</div>
-                {/* Passwords, SIP, mobile QR and language all live on the My Profile page. */}
-                <button type="button" className="header-profile-item"
-                  onClick={() => { setProfileMenuOpen(false); selectTab('profile'); }}>
-                  <UserCircle size={15} />{t('profile.title', 'My Profile')}
+                  <ChevronRight size={15} className="header-profile-identity-go" />
                 </button>
 
                 <div className="header-profile-divider" />

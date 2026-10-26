@@ -15,20 +15,19 @@ interface MobileSetup {
   password: string;
   host: string;
   verify_tls: boolean;
+  /** The full Medut account JSON, built by the server from the extension's PBX settings. */
+  account: Record<string, unknown>;
 }
 
 /**
- * The Medut account JSON (medut-softphone docs/account-setup.md) with no transport:
- * the app then signs in on "Auto", trying TLS, TCP, UDP and secure WebSocket at once
- * and keeping the first that registers. The text must not contain the word
- * "transport" anywhere, or the app stops auto-detecting.
+ * The Medut account JSON (medut-softphone docs/account-setup.md) as the server built it:
+ * transport, web link, media encryption, ICE, STUN/TURN and the certificate check all
+ * written, so the phone connects the way the extension accepts calls instead of "Auto"
+ * keeping whichever transport registers first. Without the password, the app asks for it.
  */
 export function buildMedutAccount(s: MobileSetup, includePassword: boolean): Record<string, unknown> {
-  const account: Record<string, unknown> = { name: `OpDesk ${s.extension}`, uri: `${s.extension}@${s.host}` };
-  if (includePassword && s.password) account.password = s.password;
-  if (s.display_name) account.display_name = s.display_name;
-  // Without a public certificate (self-signed), TLS and WSS would fail the app's check.
-  if (!s.verify_tls) account.verify_tls = false;
+  const account = { ...s.account };
+  if (!includePassword || !account.password) delete account.password;
   return account;
 }
 
@@ -109,7 +108,7 @@ export function MobileSetupBody({ userId }: { userId?: number }) {
   return (
     <div className="u-col u-gap-4">
       <p className="u-text-sm u-fg-secondary u-mt-0 u-mb-0">
-        {t('mobileSetup.introAuto', 'Scan this code in Medut Softphone (sign-in screen → Scan QR) to add extension {{ext}}. The app finds the best connection by itself.', { ext: setup.extension })}{' '}
+        {t('mobileSetup.intro', 'Scan this code in Medut Softphone (sign-in screen → Scan QR) to add extension {{ext}}. It carries the connection the PBX expects for this extension: transport, encryption and ICE.', { ext: setup.extension })}{' '}
         <a href={MEDUT_REPO_URL} target="_blank" rel="noopener noreferrer" className="acct-link">
           {t('mobileSetup.getApp', 'Get Medut Softphone')} <ExternalLink size={12} />
         </a>

@@ -472,7 +472,12 @@
     "searchPlaceholder": "Usuario, nombre, extensión, grupo…",
     "noMatches": "Ningún usuario coincide con \"{{query}}\"",
     "deleteTitle": "¿Eliminar usuario?",
-    "searchExtension": "Buscar extensión…"
+    "searchExtension": "Buscar extensión…",
+    "loginPasswordHint": "Solo para iniciar sesión en OpDesk. No cambia la contraseña SIP.",
+    "sipPassword": "Nueva contraseña SIP",
+    "sipPasswordHint": "Con la que se registran los teléfonos y softphones. Déjela en blanco para conservar la actual. Cambiarla cierra la sesión de todos los teléfonos de la extensión.",
+    "sipPasswordRule": "La contraseña SIP necesita de 8 a 64 caracteres, con letras y dígitos, sin espacios ni comillas.",
+    "sipSaveFailed": "Usuario guardado, pero no se pudo cambiar la contraseña SIP."
   },
   "groups": {
     "title": "Todos los grupos",
@@ -958,7 +963,8 @@
       "localMaxHint": "Se borran primero las grabaciones más antiguas cuando el uso supera este valor. Vacío = sin límite.",
       "vadFiles": "Archivos de actividad de voz",
       "vadDelete": "Borrar los archivos por interlocutor tras el análisis",
-      "vadDeleteDesc": "Los tramos -sp1/-sp2 solo se necesitan un momento para calcular la actividad de voz; activado por defecto."
+      "vadDeleteDesc": "Los tramos -sp1/-sp2 solo se necesitan un momento para calcular la actividad de voz; activado por defecto.",
+      "hookConflict": "La grabación está activada, pero no es OpDesk quien graba: {{files}} ya define los hooks predial de la PBX (hay otro grabador de llamadas instalado). Los interruptores de dirección y extensión de abajo no tienen efecto hasta que se desactive ese grabador."
     },
     "webhooks": {
       "metaDirections": "{{method}} · {{active}}/{{total}} direcciones"
@@ -1526,7 +1532,7 @@
     "download": "PNG",
     "formatLink": "Referencia del formato de cuenta",
     "button": "QR de la app móvil",
-    "introAuto": "Escanea este código en Medut Softphone (pantalla de inicio de sesión → Escanear QR) para añadir la extensión {{ext}}. La app elige sola la mejor conexión."
+    "intro": "Escanee este código en Medut Softphone (pantalla de inicio de sesión → Escanear QR) para añadir la extensión {{ext}}. Incluye la conexión que la PBX espera para esta extensión: transporte, cifrado e ICE."
   },
   "mobileWake": {
     "saved": "Guardado. Plan de marcado de Asterisk recargado.",
