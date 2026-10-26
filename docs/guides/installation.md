@@ -72,7 +72,7 @@ All questions are asked first: the domain, the HTTPS port, and the `admin` passw
    - opens the HTTPS port in firewalld or ufw, or tells you where to open it (see [Firewall](#firewall)).
 9. **Config.** Writes `backend/.env` (mode `600`). Existing values are kept, variables the installer does not manage are carried over, and the previous file is saved as `.env.bak`.
 10. **Build.** Runs `npm ci` and `npm run build` for `backend/` and `frontend/`.
-11. **Admin password.** Fresh install only. Hashes the password with bcrypt and stores it. If you pressed Enter at the question, a random password is generated and printed in the final report.
+11. **Admin password.** Fresh install only. Hashes the password with bcrypt and stores it. If you pressed Enter at the question, the default password `OpDesk@2026` is kept and printed in the final report.
 12. **Service.** Writes `/etc/systemd/system/opdesk.service` on every run and (re)starts it.
 
 When it finishes, open the URL from the report, for example `https://<server-ip>:8443`. Sign in as **`admin`**, then change the password from the profile menu (**Change password**). With a self-signed certificate the browser warns once. Accept the warning, or the softphone cannot connect.
@@ -81,7 +81,7 @@ When it finishes, open the URL from the report, for example `https://<server-ip>
 
 | Option / variable | Effect |
 |---|---|
-| `--yes` | No questions. The domain comes from `OPDESK_DOMAIN` or `.env`, the port is the previous one, 443, or 8443 when 443 is taken, and the admin password comes from `OPDESK_ADMIN_PASSWORD` or is generated. |
+| `--yes` | No questions. The domain comes from `OPDESK_DOMAIN` or `.env`, the port is the previous one, 443, or 8443 when 443 is taken, and the admin password comes from `OPDESK_ADMIN_PASSWORD` or is the default `OpDesk@2026`. |
 | `--no-pull` | Install the code already in `/opt/OpDesk` without `git pull`. |
 | `--update` | Update an existing install without asking "update or uninstall". |
 | `--uninstall` | Remove OpDesk from the server. See [Uninstalling](#uninstalling). |
