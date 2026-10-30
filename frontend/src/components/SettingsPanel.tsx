@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Loader2, Signal, Power, PowerOff, BarChart3, ShieldCheck, Smartphone, Disc, Settings, Pause,
-  Search, ChevronRight, Plug, KeyRound, ArrowLeft, AudioLines,
+  Search, ChevronRight, Plug, KeyRound, ArrowLeft, AudioLines, BrickWall,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
@@ -16,6 +16,7 @@ import { CrmSettings, type CRMConfig } from './CrmConfigForm';
 import { RecordingSettings } from './RecordingSettings';
 import { ContactCenterSettings } from './ContactCenterSettings';
 import { CodecSettings } from './CodecSettings';
+import { FirewallSettings, type GeoipStatus } from './FirewallSettings';
 import {
   Alert, Badge, Card, EmptyState, FormSection, Page, SearchInput, Toggle, Toolbar,
   matches, prepareQuery,
@@ -28,7 +29,8 @@ import type { CardProps } from './ui';
 export type SectionCard = Pick<CardProps, 'icon' | 'title' | 'description' | 'actions'>;
 
 export type SettingsTab =
-  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'codecs' | 'mobile-wake' | 'recording' | 'not-ready-codes';
+  | 'integrations' | 'api-keys' | 'qos' | 'analytics' | 'sip-tls' | 'codecs' | 'mobile-wake' | 'recording' | 'not-ready-codes'
+  | 'firewall';
 
 /* ── Settings Home ─────────────────────────────────────────────────────
    The panel opens on a searchable grid of every section rather than on one
@@ -37,12 +39,14 @@ export type SettingsTab =
    so existing `/settings?tab=` links keep working.                        */
 const SETTINGS_TABS: SettingsTab[] = [
   'integrations', 'api-keys', 'qos', 'analytics', 'sip-tls', 'codecs', 'mobile-wake', 'recording', 'not-ready-codes',
+  'firewall',
 ];
 
-type SettingsCategory = 'telephony' | 'recording' | 'access' | 'contact-center' | 'analytics';
+type SettingsCategory = 'telephony' | 'security' | 'recording' | 'access' | 'contact-center' | 'analytics';
 
 const CATEGORIES: { key: SettingsCategory; labelKey: string; fallback: string }[] = [
   { key: 'telephony',      labelKey: 'settings.home.cat.telephony',     fallback: 'Telephony & Network' },
+  { key: 'security',       labelKey: 'settings.home.cat.security',      fallback: 'Security' },
   { key: 'recording',      labelKey: 'settings.home.cat.recording',     fallback: 'Recording & Compliance' },
   { key: 'access',         labelKey: 'settings.home.cat.access',        fallback: 'Integrations & Access' },
   { key: 'contact-center', labelKey: 'settings.home.cat.contactCenter', fallback: 'Contact Center' },
@@ -71,6 +75,9 @@ const SECTION_META: {
   { tab: 'mobile-wake', cat: 'telephony', Icon: Smartphone, adminOnly: true,
     titleKey: 'settings.home.title.mobileWake', titleFallback: 'Mobile Wake',
     descKey: 'settings.home.desc.mobileWake', descFallback: 'Push a wake-up before dialing so mobile apps can re-register.' },
+  { tab: 'firewall', cat: 'security', Icon: BrickWall, adminOnly: true,
+    titleKey: 'settings.home.title.firewall', titleFallback: 'Firewall',
+    descKey: 'settings.home.desc.firewall', descFallback: 'Allow only chosen countries (GeoIP) and ban addresses that keep failing to sign in (fail2ban).' },
   { tab: 'recording', cat: 'recording', Icon: Disc,
     titleKey: 'settings.home.title.recording', titleFallback: 'Call Recording',
     descKey: 'settings.home.desc.recordingPolicy', descFallback: 'Record calls by direction and extension; where the files live and how long they are kept.' },
@@ -117,6 +124,7 @@ export function SettingsPanel() {
   const [codecSummary, setCodecSummary] = useState<string[] | null>(null);
   /** Issabel keeps codecs per peer: /api/codecs answers 404 and the card is hidden. */
   const [codecsUnsupported, setCodecsUnsupported] = useState(false);
+  const [firewallSummary, setFirewallSummary] = useState<Pick<GeoipStatus, 'enabled' | 'countries'> | null>(null);
 
   // ── QoS ──
   const [qosEnabled, setQosEnabled] = useState<boolean | null>(null);
@@ -143,6 +151,7 @@ export function SettingsPanel() {
         .then(d => setApiKeyCount((d.api_keys || []).filter(k => k.enabled === true || k.enabled === 1).length))
         .catch(() => {});
       api<PushConfig>('/api/push/config').then(d => setWakeSummary(d.mobile_wake)).catch(() => {});
+      api<GeoipStatus>('/api/firewall/geoip').then(setFirewallSummary).catch(() => {});
       api<{ codecs: string[] }>('/api/codecs')
         .then(d => { setCodecSummary(d.codecs); setCodecsUnsupported(false); })
         .catch(e => { if (toApiError(e).status === 404) setCodecsUnsupported(true); });
@@ -274,6 +283,11 @@ export function SettingsPanel() {
         return wakeSummary.enabled
           ? on(t('settings.home.status.wakeHold', { defaultValue: '{{n}}s hold', n: wakeSummary.hold_seconds }))
           : off(disabledLabel);
+      case 'firewall':
+        if (!firewallSummary) return unknown;
+        return firewallSummary.enabled
+          ? on(t('settings.home.status.geoip', { defaultValue: 'GeoIP · {{list}}', list: firewallSummary.countries.join(', ') }))
+          : off(t('settings.home.status.geoipOff', 'GeoIP off'));
       case 'recording':
         if (recordingEnabled === null) return unknown;
         return recordingEnabled ? on(`${enabledLabel} · ${recordingSavedFormat}`) : off(disabledLabel);
@@ -484,6 +498,11 @@ export function SettingsPanel() {
       {/* ── Mobile Wake (admin only) ── */}
       {sectionCard && activeTab === 'mobile-wake' && (
         isAdmin ? <MobileWakePanel card={sectionCard} onLoaded={c => setWakeSummary(c.mobile_wake)} /> : adminOnlyCard
+      )}
+
+      {/* ── Firewall (admin only): GeoIP allow-list + fail2ban ── */}
+      {sectionCard && activeTab === 'firewall' && (
+        isAdmin ? <FirewallSettings card={sectionCard} onStatus={setFirewallSummary} /> : adminOnlyCard
       )}
 
       {/* ── Recording ── master switch + format; for admins the opt-out policy and storage */}

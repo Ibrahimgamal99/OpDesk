@@ -10,6 +10,7 @@ import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
+import { logAuthFailure } from '../../core/security-log';
 import {
   checkLoginRateLimit,
   clearLoginFailures,
@@ -80,6 +81,7 @@ export class AuthController {
     const user = await dbm.authenticateUser(login, password);
     if (!user) {
       recordLoginFailure(clientIp);
+      void logAuthFailure('login', clientHost(req), login);
       throw new HttpError(401, 'Invalid extension/username or password');
     }
     clearLoginFailures(clientIp);

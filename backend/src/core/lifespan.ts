@@ -24,6 +24,7 @@ import * as pushService from '../integrations/push-service';
 import { setContactNameResolver } from '../services/call-log';
 import { enableMobileWake, enableQos, enableRecording, recordingHookConflicts } from '../services/dialplan';
 import { startRealtime, stopRealtime } from '../services/realtime';
+import * as firewallGeoip from '../services/firewall-geoip';
 import * as sipPush from '../services/sip-push';
 import { stopVadWorker } from '../services/vad-runner';
 import { env } from './config';
@@ -143,7 +144,11 @@ export async function startup(): Promise<void> {
     }
   });
 
-  // 6. AMI monitor, state bridge, agent presence and the background jobs.
+  // 6. GeoIP firewall: the kernel forgets the rules on reboot, so re-apply them; a timer
+  //    re-hooks the chain if something flushes INPUT and refreshes the data weekly.
+  await optional('GeoIP firewall', () => firewallGeoip.start());
+
+  // 7. AMI monitor, state bridge, agent presence and the background jobs.
   await optional('realtime', async () => {
     await startRealtime({ crmConnector: runtime.crmConnector, crmSyncConfig: await loadCrmSyncConfig() });
   });
@@ -168,6 +173,8 @@ export async function shutdown(): Promise<void> {
   await step('websockets', () => closeWebSockets());
   await step('CRM runtime', () => closeCrmRuntime());
   await step('SIP push', () => sipPush.stop());
+  // Only the timer: the rules stay in the kernel across an OpDesk restart.
+  await step('GeoIP firewall', () => firewallGeoip.stop());
   await step('push service', () => pushService.close());
   await step('SIP trace', () => sipTracer.stop());
   await step('VAD worker', () => stopVadWorker());
