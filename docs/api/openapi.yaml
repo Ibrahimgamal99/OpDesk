@@ -960,6 +960,38 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/call-log/recording/{call_id}:
+    get:
+      tags: [CDR]
+      summary: Download a call's recording by Call ID
+      description: |
+        Scope: `cdr:read`. `call_id` is the call-log `linkedid` (the Call ID the CRM push
+        carries) or the `uniqueid` of any leg; a leg's own recording wins over another
+        leg's. Served like `GET /api/recordings/{path}` (header credential only, `Range`
+        for seeking) as an attachment. `403` when the call is outside the caller's history
+        scope (or unknown to a scoped user); `404` when the call is unknown, was not
+        recorded, or its file is gone.
+      parameters:
+        - name: call_id
+          in: path
+          required: true
+          schema: { type: string, example: "1792247515.42" }
+        - name: Range
+          in: header
+          schema: { type: string, example: "bytes=0-65535" }
+      responses:
+        '200':
+          description: The audio file
+          content:
+            audio/wav: { schema: { type: string, format: binary } }
+        '206':
+          description: The requested byte range
+          content:
+            audio/wav: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/recordings/{path}:
     get:
       tags: [CDR]
@@ -1019,19 +1051,32 @@ paths:
 
   /api/recordings:
     get:
-      tags: [Recording]
+      tags: [CDR]
       summary: List recorded calls
-      security: [{ bearerAuth: [] }]
+      description: |
+        Admin JWT, or an API key with `cdr:read`. Every recorded call leg, newest first,
+        keyset-paged; not scoped, so a supervisor or agent JWT is `403`. Pass
+        `next_cursor` as `cursor` for the next page. `recording_path` and `size_bytes` are
+        null when the file is no longer on disk.
       parameters:
         - name: limit
           in: query
           schema: { type: integer, default: 25 }
-        - name: offset
+        - name: cursor
           in: query
-          schema: { type: integer, default: 0 }
+          description: The previous page's `next_cursor`.
+          schema: { type: string }
         - name: search
           in: query
+          description: A number, uniqueid or linkedid.
           schema: { type: string }
+        - name: date_from
+          in: query
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          description: Inclusive.
+          schema: { type: string, format: date }
       responses:
         '200':
           description: OK
@@ -1049,11 +1094,15 @@ paths:
                         src: { type: string }
                         dst: { type: string }
                         duration: { type: integer }
+                        billsec: { type: integer }
+                        disposition: { type: string }
                         recordingfile: { type: string }
                         uniqueid: { type: string }
+                        linkedid: { type: string }
                         recording_path: { type: string, nullable: true }
                         size_bytes: { type: integer, nullable: true }
                   total: { type: integer }
+                  next_cursor: { type: string, nullable: true }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
