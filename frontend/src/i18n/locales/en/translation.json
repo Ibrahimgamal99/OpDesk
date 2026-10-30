@@ -1840,7 +1840,7 @@
       "notApplied": "On, not applied",
       "dropped": "Dropped packets: {{n}}",
       "dataDate": "Data: {{date}}",
-      "noData": "No country data yet (downloaded on first save)",
+      "noData": "No country data yet: use Update data",
       "you": "You: {{ip}}",
       "missingTool": "{{tool}} is not installed on this server; GeoIP filtering cannot be applied.",
       "conflicts": "Also running: {{list}}. It may reset the rules; OpDesk re-checks them every 5 minutes.",
@@ -1850,7 +1850,8 @@
       "countries": "Allowed countries",
       "countriesHint": "Everything else is dropped while filtering is on.",
       "pickCountries": "Pick countries…",
-      "searchCountries": "Search countries…"
+      "searchCountries": "Search countries…",
+      "downloading": "Downloading country list…"
     },
     "saved": "Saved and applied.",
     "f2b": {
@@ -1897,6 +1898,20 @@
       "hint": "One per line, e.g. 203.0.113.10 or 198.51.100.0/24. Always allowed through GeoIP and never banned by fail2ban. Add SIP trunk providers and remote offices here.",
       "addMine": "Add my address ({{ip}})",
       "wouldBlock": "Your own address is not allowed by these settings; saving will be refused."
+    },
+    "logs": {
+      "tab": "Logs",
+      "loginFailed": "Login failed",
+      "apiKeyFailed": "Bad API key",
+      "detected": "Failure detected",
+      "banned": "Banned",
+      "unbanned": "Unbanned",
+      "time": "Time",
+      "event": "Event",
+      "detail": "Jail / user",
+      "description": "Failed OpDesk sign-ins and rejected API keys, and what fail2ban detected, banned and unbanned. Newest first.",
+      "empty": "No security events yet.",
+      "files": "Files on the server:"
     }
   }
 }

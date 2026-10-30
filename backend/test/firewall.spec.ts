@@ -143,3 +143,25 @@ describe('GeoIP config', () => {
     expect((await wouldBlock(null, cfg)).blocked).toBe(false);
   });
 });
+
+describe('security events', () => {
+  // Imported here so the file's other suites do not depend on it.
+  const { parseFail2banLine, parseSecurityLine } = jest.requireActual('../src/services/firewall-logs');
+
+  test('OpDesk security log lines', () => {
+    expect(parseSecurityLine('2026-10-30 10:36:01 opdesk: login failure from 203.0.113.9 (user=admin)')).toEqual({
+      time: '2026-10-30 10:36:01', kind: 'login_failed', ip: '203.0.113.9', jail: null, user: 'admin',
+    });
+    expect(parseSecurityLine('2026-10-30 10:36:01 opdesk: api-key failure from 2001:db8::5')).toMatchObject({ kind: 'api_key_failed', ip: '2001:db8::5', user: null });
+    expect(parseSecurityLine('garbage')).toBeNull();
+  });
+
+  test('fail2ban log lines', () => {
+    expect(parseFail2banLine('2026-10-30 10:36:51,755 fail2ban.actions        [1933]: NOTICE  [recidive] Ban 203.0.113.77')).toEqual({
+      time: '2026-10-30 10:36:51', kind: 'banned', ip: '203.0.113.77', jail: 'recidive', user: null,
+    });
+    expect(parseFail2banLine('2026-10-30 10:36:51,867 fail2ban.actions        [1933]: NOTICE  [recidive] Unban 203.0.113.77')?.kind).toBe('unbanned');
+    expect(parseFail2banLine('2026-10-30 10:36:50,001 fail2ban.filter         [1933]: INFO    [asterisk-iptables] Found 198.51.100.4 - 2026-10-30 10:36:50')).toMatchObject({ kind: 'detected', jail: 'asterisk-iptables', ip: '198.51.100.4' });
+    expect(parseFail2banLine('2026-10-30 10:36:51,794 fail2ban.jailreader     [6455]: WARNING No actions were defined for sshd')).toBeNull();
+  });
+});

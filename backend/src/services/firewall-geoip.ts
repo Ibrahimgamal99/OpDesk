@@ -410,20 +410,22 @@ let lastRefreshAttempt = 0;
 
 async function tick(startup = false): Promise<void> {
   const cfg = await loadConfig();
-  if (!cfg.enabled) return;
   const stamp = await dataUpdatedAt();
-  const stale = !stamp || Date.now() - Date.parse(stamp) > REFRESH_AFTER_MS;
+  // With GeoIP off, still fetch the data once so Settings has countries to pick from;
+  // with it on, keep the data fresh.
+  const stale = !stamp || (cfg.enabled && Date.now() - Date.parse(stamp) > REFRESH_AFTER_MS);
   // One refresh attempt a day at most: a dead mirror must not be hit every 5 minutes.
   if (stale && Date.now() - lastRefreshAttempt > 24 * 3600 * 1000) {
     lastRefreshAttempt = Date.now();
     try {
       await updateData();
-      await apply(cfg);
+      if (cfg.enabled) await apply(cfg);
       return;
     } catch (e) {
-      log.warning('GeoIP weekly refresh failed (keeping the current data): %s', (e as Error)?.message || e);
+      log.warning('GeoIP data download failed (keeping the current data): %s', (e as Error)?.message || e);
     }
   }
+  if (!cfg.enabled) return;
   if (startup || !(await isApplied())) {
     if (!startup) log.warning('GeoIP firewall chain was missing (flushed by another tool?); re-applying');
     await apply(cfg);
@@ -431,8 +433,9 @@ async function tick(startup = false): Promise<void> {
 }
 
 export async function start(): Promise<void> {
-  // The timer starts even when this first apply fails: the next tick retries it.
-  await tick(true).catch((e) => log.warning('GeoIP firewall not applied at startup: %s', (e as Error)?.message || e));
+  // Not awaited: a first download can take a while and must not hold up startup. The timer
+  // starts even when this first apply fails: the next tick retries it.
+  void tick(true).catch((e) => log.warning('GeoIP firewall not applied at startup: %s', (e as Error)?.message || e));
   timer = setInterval(() => {
     tick().catch((e) => log.warning('GeoIP check failed: %s', (e as Error)?.message || e));
   }, CHECK_EVERY_MS);

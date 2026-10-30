@@ -12,11 +12,12 @@ import { setRedactedAuditDetail } from '../../core/audit';
 import { getLogger } from '../../core/logger';
 import * as f2b from '../../services/firewall-fail2ban';
 import * as geo from '../../services/firewall-geoip';
+import { recentEvents } from '../../services/firewall-logs';
 import { parseIp } from '../../services/firewall-net';
 import { HttpError } from '../http-error';
 import { respond } from '../respond';
 import { Auth, clientHost, Get, Post, Put, principal } from '../routing';
-import { parseBody, pStr, v } from '../validation';
+import { parseBody, pStr, qInt, v } from '../validation';
 
 export const log = getLogger('api.routes.firewall');
 
@@ -156,6 +157,20 @@ export class FirewallController {
   @Auth('admin')
   async getFail2ban() {
     return respond(await fail2banStatus());
+  }
+
+  /**
+   * Recent security events, newest first: failed OpDesk sign-ins and rejected API keys,
+   * and what fail2ban detected, banned and unbanned. ?limit= 1..1000 (default 200).
+   */
+  @Get('/api/firewall/logs')
+  @Auth('admin')
+  async getLogs(@Req() req: Request) {
+    const limit = Math.min(1000, Math.max(1, qInt(req.query, 'limit', 200)));
+    const { events, files } = await recentEvents(limit);
+    const countries = new Map<string, string | null>();
+    for (const e of events) if (!countries.has(e.ip)) countries.set(e.ip, await geo.countryOf(e.ip));
+    return respond({ events: events.map((e) => ({ ...e, country: countries.get(e.ip) ?? null })), files });
   }
 
   /** Change one jail's enabled flag or thresholds (persisted in jail.d/opdesk.local). */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Loader2, Save, RefreshCw, Globe, ShieldBan, Pencil, Ban, Undo2, Plus, Download,
+  Loader2, Save, RefreshCw, Globe, ShieldBan, Pencil, Ban, Undo2, Plus, Download, ScrollText,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api, toApiError } from '../lib/api';
@@ -47,7 +47,23 @@ interface Fail2banStatus {
   bans: BanRow[];
 }
 
-type FirewallTab = 'geoip' | 'fail2ban';
+type SecurityEventKind = 'login_failed' | 'api_key_failed' | 'detected' | 'banned' | 'unbanned';
+
+interface SecurityEvent {
+  time: string;
+  kind: SecurityEventKind;
+  ip: string;
+  jail: string | null;
+  user: string | null;
+  country: string | null;
+}
+
+interface SecurityLogs {
+  events: SecurityEvent[];
+  files: { security: string; fail2ban: string | null };
+}
+
+type FirewallTab = 'geoip' | 'fail2ban' | 'logs';
 type Message = { type: 'success' | 'error'; text: string } | null;
 
 /** 🇪🇬 from "EG" (regional indicator symbols). */
@@ -111,10 +127,37 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
     onStatusRef.current?.(s);
   }, []);
 
+  /** Download the country lists. Keeps unsaved edits: only the status half is refreshed. */
+  const fetchCountryData = useCallback(async (quiet: boolean) => {
+    setUpdating(true);
+    if (!quiet) setMessage(null);
+    try {
+      const s = await api<GeoipStatus>('/api/firewall/geoip/update', { method: 'POST' });
+      setGeo(s);
+      onStatusRef.current?.(s);
+      if (!quiet) setMessage({ type: 'success', text: t('firewall.geoip.updated', 'Country data updated.') });
+    } catch (e) {
+      setMessage({ type: 'error', text: toApiError(e).message });
+    } finally {
+      setUpdating(false);
+    }
+  }, [t]);
+
+  // The country picker is empty until the lists are on the server: fetch them the first
+  // time the section finds none, instead of waiting for a save that needs them.
+  const autoFetched = useRef(false);
   const loadGeo = useCallback(() => {
     setLoadError(null);
-    api<GeoipStatus>('/api/firewall/geoip').then(applyGeo).catch(e => setLoadError(toApiError(e).message));
-  }, [applyGeo]);
+    api<GeoipStatus>('/api/firewall/geoip')
+      .then(s => {
+        applyGeo(s);
+        if (!s.data.countries.length && !autoFetched.current) {
+          autoFetched.current = true;
+          fetchCountryData(true);
+        }
+      })
+      .catch(e => setLoadError(toApiError(e).message));
+  }, [applyGeo, fetchCountryData]);
 
   useEffect(() => { loadGeo(); }, [loadGeo]);
 
@@ -145,21 +188,7 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
     }
   };
 
-  const updateData = async () => {
-    setUpdating(true);
-    setMessage(null);
-    try {
-      const s = await api<GeoipStatus>('/api/firewall/geoip/update', { method: 'POST' });
-      // Keep unsaved edits: only the status half is refreshed.
-      setGeo(s);
-      onStatusRef.current?.(s);
-      setMessage({ type: 'success', text: t('firewall.geoip.updated', 'Country data updated.') });
-    } catch (e) {
-      setMessage({ type: 'error', text: toApiError(e).message });
-    } finally {
-      setUpdating(false);
-    }
-  };
+  const updateData = () => fetchCountryData(false);
 
   // ── fail2ban ──
   const [f2b, setF2b] = useState<Fail2banStatus | null>(null);
@@ -180,6 +209,22 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
   }, []);
 
   useEffect(() => { if (tab === 'fail2ban' && !f2b) loadF2b(); }, [tab, f2b, loadF2b]);
+
+  // ── Logs ──
+  const [logs, setLogs] = useState<SecurityLogs | null>(null);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [logsBusy, setLogsBusy] = useState(false);
+
+  const loadLogs = useCallback(() => {
+    setLogsError(null);
+    setLogsBusy(true);
+    api<SecurityLogs>('/api/firewall/logs?limit=300')
+      .then(setLogs)
+      .catch(e => setLogsError(toApiError(e).message))
+      .finally(() => setLogsBusy(false));
+  }, []);
+
+  useEffect(() => { if (tab === 'logs' && !logs) loadLogs(); }, [tab, logs, loadLogs]);
 
   const runningJails = (f2b?.jails || []).filter(j => j.running);
   const defaultJail = runningJails.some(j => j.name === 'opdesk') ? 'opdesk' : (runningJails[0]?.name ?? '');
@@ -315,6 +360,25 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
     },
   ];
 
+  const eventLabel: Record<SecurityEventKind, { text: string; tone: 'danger' | 'warning' | 'success' | 'neutral' }> = {
+    login_failed: { text: t('firewall.logs.loginFailed', 'Login failed'), tone: 'warning' },
+    api_key_failed: { text: t('firewall.logs.apiKeyFailed', 'Bad API key'), tone: 'warning' },
+    detected: { text: t('firewall.logs.detected', 'Failure detected'), tone: 'neutral' },
+    banned: { text: t('firewall.logs.banned', 'Banned'), tone: 'danger' },
+    unbanned: { text: t('firewall.logs.unbanned', 'Unbanned'), tone: 'success' },
+  };
+
+  const logColumns: Column<SecurityEvent>[] = [
+    { key: 'time', header: t('firewall.logs.time', 'Time'), cell: e => <span className="u-mono u-text-sm">{e.time}</span> },
+    { key: 'event', header: t('firewall.logs.event', 'Event'), primary: true, cell: e => <Badge tone={eventLabel[e.kind].tone}>{eventLabel[e.kind].text}</Badge> },
+    { key: 'ip', header: t('firewall.f2b.ip', 'IP address'), cell: e => <code className="u-mono">{e.ip}</code> },
+    { key: 'country', header: t('firewall.country', 'Country'), cell: e => countryName(e.country) },
+    {
+      key: 'detail', header: t('firewall.logs.detail', 'Jail / user'), hideOnMobile: true,
+      cell: e => (e.jail ? <Badge>{e.jail}</Badge> : e.user ? <span className="u-mono u-text-sm">{e.user}</span> : '—'),
+    },
+  ];
+
   const footer = tab === 'geoip' ? (
     <button type="button" className="btn btn-primary" onClick={saveGeo} disabled={saving || !!missingTool}>
       {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
@@ -331,8 +395,8 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
           {updating ? <Loader2 size={14} className="spinner" /> : <Download size={14} />} {t('firewall.geoip.update', 'Update data')}
         </button>
       ) : (
-        <button type="button" className="btn btn-ghost" onClick={loadF2b} disabled={f2bBusy}>
-          {f2bBusy ? <Loader2 size={14} className="spinner" /> : <RefreshCw size={14} />} {t('common.refresh', 'Refresh')}
+        <button type="button" className="btn btn-ghost" onClick={tab === 'logs' ? loadLogs : loadF2b} disabled={tab === 'logs' ? logsBusy : f2bBusy}>
+          {(tab === 'logs' ? logsBusy : f2bBusy) ? <Loader2 size={14} className="spinner" /> : <RefreshCw size={14} />} {t('common.refresh', 'Refresh')}
         </button>
       )}
     </>
@@ -346,6 +410,7 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
         tabs={[
           { key: 'geoip', label: t('firewall.geoip.tab', 'GeoIP'), icon: <Globe size={14} /> },
           { key: 'fail2ban', label: t('firewall.f2b.tab', 'Fail2ban'), icon: <ShieldBan size={14} />, count: f2b?.bans.length },
+          { key: 'logs', label: t('firewall.logs.tab', 'Logs'), icon: <ScrollText size={14} /> },
         ]}
         active={tab}
         onChange={k => { setTab(k as FirewallTab); setMessage(null); }}
@@ -367,7 +432,9 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
             <Badge tone={geo.data.updated_at ? 'neutral' : 'warning'}>
               {geo.data.updated_at
                 ? t('firewall.geoip.dataDate', { defaultValue: 'Data: {{date}}', date: new Date(geo.data.updated_at).toLocaleDateString() })
-                : t('firewall.geoip.noData', 'No country data yet (downloaded on first save)')}
+                : updating
+                  ? t('firewall.geoip.downloading', 'Downloading country list…')
+                  : t('firewall.geoip.noData', 'No country data yet: use Update data')}
             </Badge>
             {geo.client.ip && (
               <Badge tone={geo.client.allowed ? 'success' : 'danger'}>
@@ -486,6 +553,33 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
                 </p>
                 <Table columns={jailColumns} rows={f2b.jails} rowKey={j => j.name} density="compact" framed />
               </FormSection>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'logs' && (
+        <div id="tabpanel-logs" role="tabpanel" aria-labelledby="tab-logs">
+          {logsError && <Alert tone="error" className="u-mb-3">{logsError}</Alert>}
+          {!logs && !logsError && <Loading size="sm" label={t('settings.loading', 'Loading…')} />}
+          {logs && (
+            <>
+              <p className="u-text-sm u-fg-secondary u-mb-3">
+                {t('firewall.logs.description', 'Failed OpDesk sign-ins and rejected API keys, and what fail2ban detected, banned and unbanned. Newest first.')}
+              </p>
+              <Table
+                columns={logColumns}
+                rows={logs.events}
+                rowKey={(e, i) => `${e.time}:${e.kind}:${e.ip}:${i}`}
+                density="compact"
+                framed
+                empty={<span className="u-fg-muted u-text-sm">{t('firewall.logs.empty', 'No security events yet.')}</span>}
+              />
+              <p className="u-text-xs u-fg-muted u-mt-3">
+                {t('firewall.logs.files', 'Files on the server:')}{' '}
+                <code className="u-mono">{logs.files.security}</code>
+                {logs.files.fail2ban && <>{' · '}<code className="u-mono">{logs.files.fail2ban}</code></>}
+              </p>
             </>
           )}
         </div>
