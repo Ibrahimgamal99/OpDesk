@@ -31,6 +31,7 @@ interface QueueOption {
 interface UserOption {
   id: number;
   username: string;
+  role: string;
 }
 
 export interface GroupsPanelProps {
@@ -103,7 +104,7 @@ export function GroupsPanel(props: GroupsPanelProps) {
       }
       if (usersRes.ok) {
         const d = await usersRes.json();
-        setUsers((d.users || []).map((u: { id: number; username: string }) => ({ id: u.id, username: u.username })));
+        setUsers((d.users || []).map((u: UserOption) => ({ id: u.id, username: u.username, role: u.role })));
       }
       if (!groupsRes.ok && groupsRes.status === 403) {
         setMessage({ type: 'error', text: t('groups.adminRequired') });
@@ -258,7 +259,15 @@ export function GroupsPanel(props: GroupsPanelProps) {
     value: q.extension,
     label: `${q.extension} ${q.queue_name !== q.extension ? q.queue_name : ''}`.trim() || q.extension,
   }));
-  const userOptions = users.map(u => ({ value: String(u.id), label: u.username }));
+  // The picker offers supervisors: an agent reaches the team through its extension
+  // in Members, and an admin already sees everything. Anyone else already in the
+  // group stays listed, tagged with their role, so saving never drops them silently.
+  const supervisorOptions = users
+    .filter(u => u.role === 'supervisor' || form.user_ids.includes(String(u.id)))
+    .map(u => ({
+      value: String(u.id),
+      label: u.role === 'supervisor' ? u.username : `${u.username} · ${t(`users.roles.${u.role}`, u.role)}`,
+    }));
 
   const toggleExpanded = (id: number) => setExpandedGroupId(prev => (prev === id ? null : id));
 
@@ -335,10 +344,10 @@ export function GroupsPanel(props: GroupsPanelProps) {
             },
           },
           {
-            key: 'agents', header: t('groups.agentsLabel'),
+            key: 'agents', header: t('groups.membersLabel'),
             cell: g => memberCell(
               expandedGroupId === g.id,
-              t('groups.agentsCount', { count: g.agent_extensions?.length ?? 0 }),
+              t('groups.membersCount', { count: g.agent_extensions?.length ?? 0 }),
               agentLabelsFor(g).map((label, i) => <Badge key={i} tone="primary" title={label}>{label}</Badge>),
             ),
           },
@@ -351,10 +360,10 @@ export function GroupsPanel(props: GroupsPanelProps) {
             ),
           },
           {
-            key: 'users', header: t('nav.users'),
+            key: 'users', header: t('groups.supervisors'),
             cell: g => memberCell(
               expandedGroupId === g.id,
-              t('groups.usersCount', { count: g.user_ids?.length ?? 0 }),
+              t('groups.supervisorsCount', { count: g.user_ids?.length ?? 0 }),
               userLabelsFor(g).map((label, i) => <Badge key={i} title={label}>{label}</Badge>),
             ),
           },
@@ -422,22 +431,22 @@ export function GroupsPanel(props: GroupsPanelProps) {
             </FormRow>
           </FormSection>
 
-          <FormSection title={t('groups.agentsQueues')}>
+          <FormSection title={t('groups.membersLabel')}>
             <FormRow single>
-              <FormField label={t('groups.agents')}>
+              <FormField label={t('groups.members')} hint={t('groups.membersHint')}>
                 <Dropdown multiple size="md"
                   icon={Phone}
                   options={agentOptions}
                   value={form.agent_extensions}
                   onChange={agent_extensions => setForm(f => ({ ...f, agent_extensions }))}
-                  placeholder={t('groups.selectAgents')}
+                  placeholder={t('groups.selectMembers')}
                   emptyMessage={t('groups.noAgents')}
-                  ariaLabel={t('groups.agents')}
+                  ariaLabel={t('groups.members')}
                 />
               </FormField>
             </FormRow>
             <FormRow single>
-              <FormField label={t('groups.queues')}>
+              <FormField label={t('groups.queues')} hint={t('groups.queuesHint')}>
                 <Dropdown multiple size="md"
                   icon={List}
                   options={queueOptions}
@@ -451,17 +460,17 @@ export function GroupsPanel(props: GroupsPanelProps) {
             </FormRow>
           </FormSection>
 
-          <FormSection title={t('nav.users')}>
+          <FormSection title={t('groups.supervisors')}>
             <FormRow single>
-              <FormField label={t('groups.usersInGroup')}>
+              <FormField label={t('groups.supervisors')} hint={t('groups.supervisorsHint')}>
                 <Dropdown multiple size="md"
-                  icon={Users}
-                  options={userOptions}
+                  icon={Shield}
+                  options={supervisorOptions}
                   value={form.user_ids}
                   onChange={user_ids => setForm(f => ({ ...f, user_ids }))}
-                  placeholder={t('groups.selectUsers')}
-                  emptyMessage={t('groups.noUsers')}
-                  ariaLabel={t('groups.usersInGroup')}
+                  placeholder={t('groups.selectSupervisors')}
+                  emptyMessage={t('groups.noSupervisors')}
+                  ariaLabel={t('groups.supervisors')}
                 />
               </FormField>
             </FormRow>
