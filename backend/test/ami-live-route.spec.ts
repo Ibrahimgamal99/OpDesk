@@ -65,3 +65,26 @@ test('every call row of the state frame carries its route; an ended entry is not
   // The extension whose leg ended is left to its device hint.
   expect(state.extensions['1002'].call_info).toBeNull();
 });
+
+test("status_since holds while an extension's status stays put and restarts when it changes", () => {
+  jest.useFakeTimers({ now: new Date('2026-10-30T10:00:00Z') });
+  try {
+    const m = monitor();
+    m.monitored = new Set(['1001']);
+    m.extensions.set('1001', { Status: '0' });
+    const bridge = new AMIEventBridge(m);
+    const since = () => (bridge.buildState(null, null) as { extensions: Record<string, { status_since: string }> })
+      .extensions['1001'].status_since;
+    expect(since()).toBe('2026-10-30T10:00:00.000Z');
+    jest.setSystemTime(new Date('2026-10-30T10:05:00Z'));
+    expect(since()).toBe('2026-10-30T10:00:00.000Z'); // still Idle
+    m.dnd.add('1001');
+    expect(since()).toBe('2026-10-30T10:05:00.000Z'); // DND on: a new status
+    jest.setSystemTime(new Date('2026-10-30T10:06:00Z'));
+    m.dnd.delete('1001');
+    m.extensions.set('1001', { Status: '4' });
+    expect(since()).toBe('2026-10-30T10:06:00.000Z'); // offline
+  } finally {
+    jest.useRealTimers();
+  }
+});

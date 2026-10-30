@@ -794,6 +794,22 @@ export async function updateCallNotificationStatus(notificationId: number, statu
 }
 
 /**
+ * Mark every NEW notification matching the filters (extension / extensions scope) read.
+ * Returns the number of rows updated (0 on error).
+ */
+export async function markCallNotificationsRead(opts: Omit<CallNotificationQuery, 'statusFlag'> = {}): Promise<number> {
+  try {
+    const w = notificationsWhere({ ...opts, statusFlag: 'new' });
+    if (w === null) return 0;
+    const res = await execute(`UPDATE call_notifications SET status_flag = 'read'${w[0]}`, w[1]);
+    return res.affectedRows;
+  } catch (e) {
+    log.warning('⚠️  Database error marking call notifications read: %s', e);
+    return 0;
+  }
+}
+
+/**
  * Delete READ notifications older than `days` (7 by default): the job schema.sql's
  * evt_cleanup_read_call_notifications EVENT was meant to do, which never runs on installs
  * where the MySQL event_scheduler is off (the default). Run once a day from the background

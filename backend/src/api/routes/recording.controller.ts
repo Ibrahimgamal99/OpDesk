@@ -116,21 +116,22 @@ export class RecordingController {
     const body = parseBody(RecordingMasterBody, req.body === undefined || req.body === null ? {} : req.body);
     const fmt = (body.format || 'wav').trim().toLowerCase();
     if (!RECORDING_FORMATS.includes(fmt)) throw new HttpError(400, `Unsupported recording format: ${fmt}`);
+    const pbx = await pbxSetting();
     let ok: boolean;
     try {
-      ok = await enableRecording({ mixFormat: fmt, vad: true, pbx: await pbxSetting() });
+      ok = await enableRecording({ mixFormat: fmt, vad: true, pbx });
     } catch (e) {
       log.error('Failed to enable call recording: %s', e);
       throw new HttpError(500, 'Internal server error');
     }
     if (!ok) throw new HttpError(500, 'Failed to enable call recording. Check server logs.');
     // The reload succeeding does not mean our hooks won: read back what Asterisk loaded.
-    const conflicts = await recordingHookConflicts();
+    const conflicts = await recordingHookConflicts(pbx);
     if (conflicts && conflicts.length) {
       log.warning('Call recording not wired: %s', JSON.stringify(conflicts));
       // Leave the hooks as no-ops, so the recorder does not silently start later (once the
       // other file goes) with the switch showing off.
-      await disableRecording(await pbxSetting());
+      await disableRecording(pbx);
       await dbm.setSetting('RECORDING_ENABLED', 'false');
       throw new HttpError(409, hookConflictMessage(conflicts));
     }

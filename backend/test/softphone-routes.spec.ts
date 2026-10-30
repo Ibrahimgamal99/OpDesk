@@ -31,6 +31,7 @@ jest.mock(
       { extension: '101', name: 'Bob', webrtc: 'no' },
     ]),
     setExtensionWebrtc: jest.fn(async () => true),
+    setSetting: jest.fn(async () => true),
   }));
 jest.mock('../src/core/security', () => ({ principalOf: (req: { principal?: unknown }) => req.principal ?? null }));
 jest.mock('../src/services/dialplan', () => ({ reloadAsteriskSip: jest.fn(async () => true) }));
@@ -123,6 +124,8 @@ describe('mobile setup', () => {
         password: 's3cret',
         host: 'pbx.example.com',
         verify_tls: true,
+        pbx_sip_port: null,
+        saved_sip_port: null,
         account: {
           name: 'OpDesk 100',
           uri: '100@pbx.example.com',
@@ -177,6 +180,35 @@ describe('mobile setup', () => {
     const out = (await ctl.myMobileSetup(req())) as { data: { account: Record<string, unknown> } };
     expect(out.data.account).toMatchObject({ uri: '100@10.0.0.5', transport: 'udp', media_enc: 'none', ice_enabled: false });
     expect(out.data.account).not.toHaveProperty('server_url');
+  });
+
+  test('a saved per-transport SIP port replaces the PBX port in the uri', async () => {
+    settings.MOBILE_SIP_PORT_UDP = '5162';
+    settings.MOBILE_SIP_PORT_TLS = '5163'; // another transport's port is not used
+    mocked(dbm.getExtensionSipProfile).mockResolvedValue({ ...PROFILE, media_encryption: 'no', icesupport: 'no' });
+    const out = (await ctl.myMobileSetup(req())) as { data: Record<string, unknown> & { account: Record<string, unknown> } };
+    expect(out.data).toMatchObject({ pbx_sip_port: 5060, saved_sip_port: 5162 });
+    expect(out.data.account).toMatchObject({ uri: '100@10.0.0.5:5162', transport: 'udp' });
+  });
+
+  test('a saved TLS port replaces 5061', async () => {
+    settings.OPDESK_DOMAIN = 'pbx.example.com';
+    settings.SIP_TLS_ENABLED = 'true';
+    settings.MOBILE_SIP_PORT_TLS = '15061';
+    mocked(dbm.getExtensionSipProfile).mockResolvedValue({ ...PROFILE, media_encryption: 'sdes', icesupport: 'no' });
+    const out = (await ctl.myMobileSetup(req())) as { data: Record<string, unknown> & { account: Record<string, unknown> } };
+    expect(out.data).toMatchObject({ pbx_sip_port: 5061, saved_sip_port: 15061 });
+    expect(out.data.account.uri).toBe('100@pbx.example.com:15061');
+  });
+
+  test('saving the per-transport port: admin only, validated, null clears', async () => {
+    expect(Reflect.getMetadata(AUTH_POLICY, SoftphoneController.prototype.setMobileSipPort)).toBe('admin');
+    await expect(ctl.setMobileSipPort(req({ body: { transport: 'UDP', port: 5162 } }))).resolves.toEqual({ ok: true, transport: 'udp', port: 5162 });
+    expect(dbm.setSetting).toHaveBeenLastCalledWith('MOBILE_SIP_PORT_UDP', '5162');
+    await ctl.setMobileSipPort(req({ body: { transport: 'tls', port: null } }));
+    expect(dbm.setSetting).toHaveBeenLastCalledWith('MOBILE_SIP_PORT_TLS', null);
+    await expect(ctl.setMobileSipPort(req({ body: { transport: 'wss', port: 443 } }))).rejects.toMatchObject({ status: 400 });
+    await expect(ctl.setMobileSipPort(req({ body: { transport: 'udp', port: 70000 } }))).rejects.toMatchObject({ status: 400 });
   });
 
   test('a configured TURN server and a separate auth user are carried', async () => {

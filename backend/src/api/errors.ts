@@ -64,6 +64,8 @@ export const codes = {
   USER_EXTENSION_MISSING: reg('user.extension.missing'),
   USER_UPDATE_FAILED: reg('user.record.update_failed'),
   USER_DELETE_FAILED: reg('user.record.delete_failed'),
+  // Saved in OpDesk, but the PBX did not take all of it; the message says what to do.
+  USER_PBX_INCOMPLETE: reg('user.pbx.apply_incomplete', 'warning', true),
   USER_PASSWORD_INVALID: reg('user.password.invalid'),
   GROUP_RECORD_NOT_FOUND: reg('group.record.not_found'),
   GROUP_RECORD_CONFLICT: reg('group.record.conflict'),

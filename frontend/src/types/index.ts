@@ -31,6 +31,8 @@ export interface Extension {
   name?: string;
   status: ExtensionStatus;
   status_code: string;
+  /** ISO time the shown status (device status + DND) began; older servers omit it. */
+  status_since?: string;
   dnd?: boolean;
   call_info: CallInfo | null;
 }

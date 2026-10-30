@@ -23,6 +23,8 @@ import {
   pbxApplyCommand,
   pbxKind,
   QOS_OFF_CONTENT,
+  recordEntryPoints,
+  renderIssabelRecordOverrideConf,
   renderMobileWakeConf,
   renderQosConf,
   renderRecordingConf,
@@ -117,6 +119,31 @@ describe('recording dialplan', () => {
       '; OpDesk call recording disabled\n[macro-dialout-one-predial-hook]\nexten => s,1,MacroExit()\n\n' +
         '[macro-dialout-trunk-predial-hook]\nexten => s,1,MacroExit()\n',
     );
+  });
+});
+
+describe('Issabel [sub-record-check] override', () => {
+  const conf = renderIssabelRecordOverrideConf();
+
+  it('replaces only s,1 and hands off to its own context', () => {
+    expect(conf).toContain('[sub-record-check]\nexten => s,1,Gosub(opdesk-issabel-record-check,s,1)\n\n');
+    // no second priority in the override: the generated s,n lines keep numbering from 2
+    expect(conf.split('\n[sub-record-check]\n')[1].split('[')[0].match(/exten =>| same =>/g)).toHaveLength(1);
+  });
+
+  it("keeps the dropped s,1's job, records once, and Returns to sub-record-check", () => {
+    const sub = conf.split('\n[opdesk-issabel-record-check]\n')[1];
+    expect(sub.startsWith('exten => s,1,Set(REC_POLICY_MODE_SAVE=${REC_POLICY_MODE})\n')).toBe(true);
+    expect(sub).toContain('GosubIf($["${OPDESK_REC}"=""]?opdesk-record,s,1)');
+    expect(sub.trimEnd().endsWith('same => n,Return()')).toBe(true);
+  });
+
+  it('checks [sub-record-check] instead of the one-predial hook on Issabel only', () => {
+    expect(recordEntryPoints('Issabel').map((e) => e.context)).toEqual(['sub-record-check', 'macro-dialout-trunk-predial-hook']);
+    expect(recordEntryPoints('FreePBX').map((e) => e.context)).toEqual([
+      'macro-dialout-one-predial-hook',
+      'macro-dialout-trunk-predial-hook',
+    ]);
   });
 });
 

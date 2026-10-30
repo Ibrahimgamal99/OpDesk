@@ -559,18 +559,20 @@ export async function setExtensionMaxContacts(
 }
 
 /**
- * Update the display name of an extension in asterisk.users.
+ * Update the display name of an extension in asterisk.users. Returns the rows changed (0
+ * when the name was already that, or the extension has no users row), null on a DB error:
+ * the caller reloads the PBX only when something changed.
  *
  * UPDATE only, as OpDesk always did: an extension with no users row is left alone.
  * Inserting a bare users row would make FreePBX list it as a Virtual Extension.
  */
-export async function setExtensionNameInPbx(extension: string, name: string): Promise<boolean> {
+export async function setExtensionNameInPbx(extension: string, name: string): Promise<number | null> {
   try {
-    await execute('UPDATE users SET name = ? WHERE extension = ?', [name, extension], 'pbx');
-    return true;
+    const res = await execute('UPDATE users SET name = ? WHERE extension = ?', [name, extension], 'pbx');
+    return res.affectedRows ?? 0;
   } catch (e) {
     log.warning('⚠️  Database error set_extension_name_in_pbx: %s', e);
-    return false;
+    return null;
   }
 }
 

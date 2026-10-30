@@ -34,18 +34,6 @@ import { Badge } from './ui';
  * menu offers only the active, non-system reasons, and the backend refuses anything else.
  */
 
-/** Registration signal glyph: green bars when registered, red slashed when not. */
-function RegSignal({ on }: { on: boolean }) {
-  return (
-    <svg width="15" height="14" viewBox="0 0 20 18" fill="none" aria-hidden="true">
-      <rect x="1" y="12" width="3.4" height="5" rx="1" fill="currentColor" opacity={on ? 1 : 0.3} />
-      <rect x="6.3" y="8" width="3.4" height="9" rx="1" fill="currentColor" opacity={on ? 1 : 0.3} />
-      <rect x="11.6" y="4" width="3.4" height="13" rx="1" fill="currentColor" opacity={on ? 1 : 0.3} />
-      {!on && <path d="M2.5 16 L16 2.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
-    </svg>
-  );
-}
-
 /** Seconds since the state was entered: the server's `since` when it parses, else the
  *  snapshot's `duration_secs` (an older backend, or a clock it could not express). */
 function secondsInState(presence: AgentStateInfo | null, now: number): number {
@@ -254,12 +242,6 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
             </span>
           </button>
         )}
-        <span
-          className={`agent-header-reg ${isConnected ? 'on' : 'off'}`}
-          title={isConnected ? t('header.softphoneRegistered', 'Registered') : t('header.softphoneNotRegistered', 'Not registered')}
-        >
-          <RegSignal on={isConnected} />
-        </span>
         {!isConnected && onReconnect && (
           <button
             type="button"

@@ -8,6 +8,7 @@ import { runtime } from '../../core/runtime';
 import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
 import { pbxApplyCommand, reloadAsteriskSip } from '../../services/dialplan';
+import { codes } from '../errors';
 import { HttpError } from '../http-error';
 import { Auth, Delete, Get, Post, Put, principal } from '../routing';
 import { parseBody, pInt, v } from '../validation';
@@ -103,8 +104,10 @@ async function applyToPbx(opts: { nameExt?: string | null; name?: string | null;
   const problems: string[] = [];
   let changed = false;
   if (opts.nameExt && opts.name) {
-    if (await dbm.setExtensionNameInPbx(opts.nameExt, opts.name)) changed = true;
-    else problems.push(`the display name of extension ${opts.nameExt} was not updated in the PBX`);
+    const rows = await dbm.setExtensionNameInPbx(opts.nameExt, opts.name);
+    // Saving a user whose name did not change must not cost a full PBX reload.
+    if (rows) changed = true;
+    else if (rows === null) problems.push(`the display name of extension ${opts.nameExt} was not updated in the PBX`);
   }
   for (const ext of opts.retire ?? []) {
     const exists = await dbm.extensionExistsInPbx(ext);
@@ -125,7 +128,8 @@ async function applyToPbx(opts: { nameExt?: string | null; name?: string | null;
 
 /** The 502 for a save that landed in OpDesk but not (fully) in the PBX. */
 function pbxProblem(what: string, problems: string[]): HttpError {
-  return new HttpError(502, `${what}, but ${problems.join('; ')}.`);
+  // With its own code, so the renderer ships this message, not the generic 502 text.
+  return new HttpError(502, { code: codes.USER_PBX_INCOMPLETE, message: `${what}, but ${problems.join('; ')}.` });
 }
 
 @Controller()

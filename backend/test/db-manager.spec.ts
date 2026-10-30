@@ -107,7 +107,7 @@ describe('getExtensionNamesFromDb', () => {
 describe('setExtensionNameInPbx', () => {
   it('only ever UPDATEs asterisk.users (never inserts a bare row)', async () => {
     route([[/^UPDATE users SET name/, () => ({ affectedRows: 0 })]]);
-    expect(await pbx.setExtensionNameInPbx('1001', 'Alice')).toBe(true);
+    expect(await pbx.setExtensionNameInPbx('1001', 'Alice')).toBe(0);
     expect(executed()).toEqual(['UPDATE users SET name = ? WHERE extension = ?']);
     expect(ex.mock.calls[0][2]).toBe('pbx');
   });

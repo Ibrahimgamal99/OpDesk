@@ -353,6 +353,7 @@ export const ChangePasswordBody = v.model({
 
 /** `enabled: bool = Body(..., embed=True)` */
 export const EnabledBody = v.model({ enabled: v.bool() });
+export const MobileSipPortBody = v.model({ transport: v.str(), port: v.int().nullish() });
 
 export const ExtensionCredentialsBody = v.model({
   regenerate: v.bool().default(false), // generate a new random SIP secret
@@ -462,6 +463,39 @@ export function medutAccount(cfg: ExtensionConfigOut, opts: { verifyTls: boolean
 }
 
 /**
+ * The transports whose Medut uri carries a SIP port (a WebSocket's is in server_url). Each
+ * can have an admin-saved port the setup QR writes instead of the PBX's own: the port phones
+ * reach the PBX on through a NAT port forward. Unset = the PBX's port.
+ */
+export const MOBILE_SIP_PORT_TRANSPORTS = ['udp', 'tcp', 'tls'] as const;
+type MobileSipPortTransport = (typeof MOBILE_SIP_PORT_TRANSPORTS)[number];
+
+function isMobileSipPortTransport(t: unknown): t is MobileSipPortTransport {
+  return (MOBILE_SIP_PORT_TRANSPORTS as readonly unknown[]).includes(t);
+}
+
+function mobileSipPortSetting(t: MobileSipPortTransport): string {
+  return `MOBILE_SIP_PORT_${t.toUpperCase()}`;
+}
+
+function isValidPort(n: number): boolean {
+  return Number.isInteger(n) && n >= 1 && n <= 65535;
+}
+
+/** The admin-saved SIP port for a transport's setup QR; null when none is saved. */
+export async function mobileSipPortDefault(t: MobileSipPortTransport): Promise<number | null> {
+  const raw = ((await dbm.getSetting(mobileSipPortSetting(t), '')) || '').trim();
+  const n = Number(raw);
+  return raw && isValidPort(n) ? n : null;
+}
+
+/** The port in "ext@host[:port]", else the transport's default (5061 TLS, else 5060). */
+function uriSipPort(uri: string, t: MobileSipPortTransport): number {
+  const m = /:(\d+)$/.exec(uri);
+  return m ? Number(m[1]) : t === 'tls' ? SIP_TLS_PORT : SIP_PLAIN_PORT;
+}
+
+/**
  * What the Medut setup QR is built from: the user's extension, SIP password, the PBX host,
  * and `account`, the full Medut account JSON (medutAccount) the QR encodes.
  */
@@ -473,13 +507,25 @@ export async function mobileSetup(req: Request, user: Row): Promise<Record<strin
   const cfg = await extensionConfigFor(req, { ...user, name: displayName || null }, 'active');
   // A self-signed certificate (no public domain) would fail the app's TLS / WSS checks.
   const verifyTls = Boolean(await settingOrEnv('OPDESK_DOMAIN'));
+  const account = medutAccount(cfg, { verifyTls });
+  // The PBX's own port, and the admin-saved one for this transport written into the uri.
+  let pbxSipPort: number | null = null;
+  let savedSipPort: number | null = null;
+  if (isMobileSipPortTransport(account.transport)) {
+    const uri = String(account.uri ?? '');
+    pbxSipPort = uriSipPort(uri, account.transport);
+    savedSipPort = await mobileSipPortDefault(account.transport);
+    if (savedSipPort !== null) account.uri = `${uri.replace(/:\d+$/, '')}:${savedSipPort}`;
+  }
   return {
     extension: ext,
     display_name: displayName,
     password: cfg.secret || '',
     host: cfg.domain,
     verify_tls: verifyTls,
-    account: medutAccount(cfg, { verifyTls }),
+    pbx_sip_port: pbxSipPort,
+    saved_sip_port: savedSipPort,
+    account,
   };
 }
 
@@ -540,6 +586,26 @@ export class SoftphoneController {
     const user = await dbm.getUserById(principal(req).id as number);
     if (!user) throw new HttpError(404, 'User not found');
     return respond(await mobileSetup(req, user));
+  }
+
+  /**
+   * Save (port) or clear (port null) the SIP port every setup QR on `transport` (udp, tcp,
+   * tls) writes into the account uri, for phones that reach the PBX through a forwarded port.
+   */
+  @Put('/api/settings/mobile-sip-port')
+  @Auth('admin')
+  async setMobileSipPort(@Req() req: Request) {
+    const body = parseBody(MobileSipPortBody, req.body);
+    const transport = body.transport.trim().toLowerCase();
+    if (!isMobileSipPortTransport(transport)) throw new HttpError(400, "transport must be 'udp', 'tcp' or 'tls'");
+    const port = body.port ?? null;
+    if (port !== null && !isValidPort(port)) throw new HttpError(400, 'port must be 1 to 65535');
+    const key = mobileSipPortSetting(transport);
+    if (!(await dbm.setSetting(key, port === null ? null : String(port)))) {
+      throw new HttpError(500, 'Failed to save the SIP port');
+    }
+    setRedactedAuditDetail(req, { [key]: port });
+    return { ok: true, transport, port };
   }
 
   /** Medut setup data for any user's extension (admin only). */

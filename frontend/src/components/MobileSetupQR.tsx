@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
-import { QrCode, Loader2, Copy, ClipboardCheck, Download, ExternalLink } from 'lucide-react';
+import { QrCode, Loader2, Copy, ClipboardCheck, Download, ExternalLink, Save, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Alert, Loading, Modal, Toggle } from './ui';
+import { Alert, FormField, Loading, Modal, Toggle } from './ui';
 import { api, toApiError } from '../lib/api';
+import { getUser } from '../auth';
 import '../styles/account.css';
 
 export const MEDUT_REPO_URL = 'https://github.com/Ibrahimgamal99/medut-softphone';
@@ -15,6 +16,10 @@ interface MobileSetup {
   password: string;
   host: string;
   verify_tls: boolean;
+  /** The port the PBX transport listens on; null for a WebSocket transport. */
+  pbx_sip_port: number | null;
+  /** The admin-saved port for this transport, already written into account.uri; null = none. */
+  saved_sip_port: number | null;
   /** The full Medut account JSON, built by the server from the extension's PBX settings. */
   account: Record<string, unknown>;
 }
@@ -25,10 +30,32 @@ interface MobileSetup {
  * written, so the phone connects the way the extension accepts calls instead of "Auto"
  * keeping whichever transport registers first. Without the password, the app asks for it.
  */
-export function buildMedutAccount(s: MobileSetup, includePassword: boolean): Record<string, unknown> {
+export function buildMedutAccount(s: MobileSetup, includePassword: boolean, sipPort?: number | null): Record<string, unknown> {
   const account = { ...s.account };
   if (!includePassword || !account.password) delete account.password;
+  if (sipPort) account.uri = withSipPort(String(account.uri ?? ''), sipPort);
   return account;
+}
+
+/** WebSocket transports carry their port in server_url, not in the SIP uri. */
+function usesSipPort(account: Record<string, unknown>): boolean {
+  return account.transport !== 'ws' && account.transport !== 'wss';
+}
+
+/** The port written in "ext@host[:port]", or the transport's default (5061 TLS, else 5060). */
+function sipPortOf(account: Record<string, unknown>): number {
+  const m = /:(\d+)$/.exec(String(account.uri ?? ''));
+  if (m) return Number(m[1]);
+  return account.transport === 'tls' ? 5061 : 5060;
+}
+
+/** "ext@host[:port]" with the port replaced by `port`. */
+function withSipPort(uri: string, port: number): string {
+  return `${uri.replace(/:\d+$/, '')}:${port}`;
+}
+
+function isValidPort(v: string): boolean {
+  return /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 65535;
 }
 
 interface Props {
@@ -66,16 +93,36 @@ export function MobileSetupBody({ userId }: { userId?: number }) {
   const [includePassword, setIncludePassword] = useState(true);
   const [qr, setQr] = useState<string>('');
   const [copied, setCopied] = useState(false);
+  // The SIP port written into "uri"; '' until the setup loads. Edit it when the phone
+  // reaches the PBX on another port than it listens on (NAT port forward).
+  const [portInput, setPortInput] = useState('');
+  // The saved per-transport default, kept here so saving updates the screen without a refetch.
+  const [savedPort, setSavedPort] = useState<number | null>(null);
+  const [savingPort, setSavingPort] = useState(false);
+  const [portError, setPortError] = useState<string | null>(null);
+  const isAdmin = getUser()?.role === 'admin';
 
   useEffect(() => {
     let cancelled = false;
     api<MobileSetup>(userId != null ? `/api/settings/users/${userId}/mobile-setup` : '/api/mobile-setup')
-      .then((data) => { if (!cancelled) setSetup(data); })
+      .then((data) => {
+        if (cancelled) return;
+        setSetup(data);
+        setSavedPort(data.saved_sip_port ?? null);
+        setPortInput(String(sipPortOf(data.account)));
+      })
       .catch((e) => { if (!cancelled) setError(toApiError(e).message); });
     return () => { cancelled = true; };
   }, [userId]);
 
-  const account = useMemo(() => (setup ? buildMedutAccount(setup, includePassword) : null), [setup, includePassword]);
+  const showPort = setup ? usesSipPort(setup.account) : false;
+  const portValid = isValidPort(portInput);
+  // Only rewrite the uri when the port was changed; otherwise keep the server's.
+  const sipPort = showPort && portValid && setup && Number(portInput) !== sipPortOf(setup.account) ? Number(portInput) : null;
+  const account = useMemo(
+    () => (setup ? buildMedutAccount(setup, includePassword, sipPort) : null),
+    [setup, includePassword, sipPort],
+  );
   const json = account ? JSON.stringify(account, null, 2) : '';
 
   useEffect(() => {
@@ -87,6 +134,27 @@ export function MobileSetupBody({ userId }: { userId?: number }) {
       .catch(() => { if (!cancelled) setQr(''); });
     return () => { cancelled = true; };
   }, [account]);
+
+  const transport = String(setup?.account.transport ?? '');
+  const transportLabel = transport.toUpperCase();
+  const pbxPort = setup?.pbx_sip_port ?? null;
+  const defaultPort = savedPort ?? pbxPort;
+
+  /** Save `port` as this transport's default for every setup QR; null (or the PBX's own port) clears it. */
+  const saveDefaultPort = async (port: number | null) => {
+    const value = port === pbxPort ? null : port;
+    setSavingPort(true);
+    setPortError(null);
+    try {
+      await api('/api/settings/mobile-sip-port', { method: 'PUT', body: { transport, port: value } });
+      setSavedPort(value);
+      if (port === null && pbxPort !== null) setPortInput(String(pbxPort));
+    } catch (e) {
+      setPortError(toApiError(e).message);
+    } finally {
+      setSavingPort(false);
+    }
+  };
 
   const copy = async () => {
     try {
@@ -117,6 +185,37 @@ export function MobileSetupBody({ userId }: { userId?: number }) {
       <div className="acct-qr-code">
         {qr ? <img src={qr} alt={t('mobileSetup.qrAlt', 'Account QR code')} /> : <Loader2 size={20} className="spinner" />}
       </div>
+
+      {showPort && (
+        <FormField
+          label={t('mobileSetup.sipPort', 'SIP port')}
+          htmlFor="mobile-setup-port"
+          hint={savedPort !== null
+            ? t('mobileSetup.sipPortSavedHint', 'Saved default for {{transport}} extensions: {{port}} (the PBX listens on {{pbx}}). Change it here for this code only.', { transport: transportLabel, port: savedPort, pbx: pbxPort })
+            : t('mobileSetup.sipPortHint', 'The port the phone connects to. Change it when the PBX is reached through a forwarded port (e.g. 5162 instead of 5060).')}
+          error={!portValid ? t('mobileSetup.sipPortInvalid', 'Enter a port from 1 to 65535.') : portError ?? undefined}
+        >
+          <div className="u-row u-gap-2">
+            <input id="mobile-setup-port" type="number" className="form-input" dir="ltr" min={1} max={65535}
+              value={portInput} onChange={(e) => setPortInput(e.target.value)} />
+            {isAdmin && portValid && Number(portInput) !== defaultPort && (
+              <button type="button" className="btn btn-sm" disabled={savingPort}
+                onClick={() => saveDefaultPort(Number(portInput))}
+                title={t('mobileSetup.sipPortSaveHint', 'Every setup code for a {{transport}} extension uses this port.', { transport: transportLabel })}>
+                {savingPort ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+                {t('mobileSetup.sipPortSave', 'Save for all {{transport}}', { transport: transportLabel })}
+              </button>
+            )}
+            {isAdmin && savedPort !== null && (
+              <button type="button" className="btn btn-ghost btn-sm" disabled={savingPort}
+                onClick={() => saveDefaultPort(null)}>
+                <RotateCcw size={14} />
+                {t('mobileSetup.sipPortReset', 'Use PBX port ({{pbx}})', { pbx: pbxPort })}
+              </button>
+            )}
+          </div>
+        </FormField>
+      )}
 
       <Toggle
         checked={includePassword}

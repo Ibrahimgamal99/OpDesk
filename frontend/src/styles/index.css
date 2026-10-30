@@ -3903,15 +3903,6 @@ select.form-input option:checked {
   transition: inset-inline-start 0.15s ease;
 }
 .agent-dnd-toggle.on .agent-dnd-toggle-knob { inset-inline-start: 24px; }
-/* Registration signal glyph — green bars when registered, red slashed when not. */
-.agent-header-reg {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  color: var(--status-unavailable);
-}
-.agent-header-reg.on { color: var(--status-idle); }
-.agent-header-reg.off { color: var(--danger); }
 .agent-header-refresh {
   display: inline-flex;
   align-items: center;

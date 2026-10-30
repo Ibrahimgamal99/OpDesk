@@ -401,20 +401,12 @@ function App({ onLogout }: AppProps) {
   }, [fetchNewNotifCount]);
 
   const markAllRead = useCallback(async () => {
-    const ids = notifList.map((n) => n.id);
-    if (ids.length === 0) return;
-    const results = await Promise.all(ids.map((id) =>
-      fetchWithAuth(`/api/call-notifications/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status_flag: 'read' }),
-      }).then((r) => r.ok).catch(() => false)
-    ));
-    // Keep any row whose update failed, so it is not silently lost from view.
-    const failed = new Set(ids.filter((_, i) => !results[i]));
-    setNotifList((prev) => prev.filter((n) => failed.has(n.id)));
+    // One server-side update for every new notification, not just the page loaded here.
+    const ok = await fetchWithAuth('/api/call-notifications/mark-all-read', { method: 'POST' })
+      .then((r) => r.ok).catch(() => false);
+    if (ok) setNotifList([]);
     fetchNewNotifCount();
-  }, [notifList, fetchNewNotifCount]);
+  }, [fetchNewNotifCount]);
 
   // Auto-connect softphone when logged in and config is ready
   useEffect(() => {
@@ -969,6 +961,7 @@ function App({ onLogout }: AppProps) {
           {activeTab === 'calls' && (
             <ActiveCallsPanel
               calls={state?.active_calls || {}}
+              extensions={state?.extensions}
               onSupervisorAction={handleSupervisorAction}
               onHangup={(target) => sendAction({ action: 'hangup', target })}
               onTransfer={(source, destination, ext) => sendAction({ action: 'transfer', source, destination, ext })}

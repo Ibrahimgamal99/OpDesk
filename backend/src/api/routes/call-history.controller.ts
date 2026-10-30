@@ -38,7 +38,7 @@ import {
 } from '../../services/recording';
 import { HttpError } from '../http-error';
 import { FileResponse, RawResponse, spreadsheetSafe } from '../respond';
-import { Auth, Delete, Get, Patch, principal } from '../routing';
+import { Auth, Delete, Get, Patch, Post, principal } from '../routing';
 import { parseBody, pInt, pStr, qBool, qInt, qList, qStr, QueryParams, REQUIRED, v } from '../validation';
 import * as fs from 'fs';
 
@@ -417,6 +417,25 @@ export class CallHistoryController {
       log.error('Error fetching call notifications: %s', e);
       throw new HttpError(500, 'Failed to fetch call notifications');
     }
+  }
+
+  /**
+   * Mark every new notification on the caller's bell read, not just the page the dropdown
+   * loaded: {ok, updated}. Same scope as GET /api/call-notifications (no `extension` param).
+   */
+  @Post('/api/call-notifications/mark-all-read')
+  @Auth('user')
+  async markAllCallNotificationsReadEndpoint(@Req() req: Request) {
+    const p = principal(req);
+    const allowed = notificationExtensions(p);
+    let extension: string | null = null;
+    if ((allowed === null || p.role === 'agent') && p.extension) extension = p.extension;
+    if (allowed !== null && !allowed.length) return { ok: true, updated: 0 };
+    const updated = await dbm.markCallNotificationsRead({
+      extension,
+      extensions: !extension && allowed !== null ? allowed : null,
+    });
+    return { ok: true, updated };
   }
 
   /** Mark a notification read or archived; only for an extension whose bell the caller reads. */

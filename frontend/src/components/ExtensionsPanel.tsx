@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, RefreshCw, Radio, Clock, Loader2, MinusCircle, CircleDot, Rows3, LayoutGrid } from 'lucide-react';
+import { Phone, RefreshCw, Radio, Clock, Loader2, MinusCircle, CircleDot, List, LayoutGrid } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import type { Extension, AgentStateInfo } from '../types';
@@ -9,8 +9,9 @@ import { StatusBadge, AGENT_STATE_META, DEVICE_STATUS_META, resolveAgentMeta, ty
 import { usePauseReasons } from '../hooks/usePauseReasons';
 import { SuperviseActions } from './SuperviseActions';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
-import { Badge, Dropdown, EmptyState, Page, SearchInput, Toolbar } from './ui';
-import type { DropdownOption } from './ui';
+import { Badge, Dropdown, EmptyState, Page, SearchInput, Table, Toolbar } from './ui';
+import { fmtTimer } from '../lib/format';
+import type { Column, DropdownOption } from './ui';
 import '../styles/live.css';
 
 /** Live queue presence for an extension (Ready / Not-Ready · reason code), derived from
@@ -32,7 +33,14 @@ interface ExtensionsPanelProps {
   onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
 }
 
-const COMPACT_STORAGE_KEY = 'opdesk:extensions-compact';
+type ViewMode = 'grid' | 'list';
+const VIEW_STORAGE_KEY = 'opdesk:extensions-view';
+
+/** Grid/List choice is per user: several people may share one browser. */
+function viewStorageKey(): string {
+  const id = getUser()?.id;
+  return id != null ? `${VIEW_STORAGE_KEY}:${id}` : VIEW_STORAGE_KEY;
+}
 
 /** What the Status filter narrows by: the status the card's badge is showing. */
 type StatusBucket = 'available' | 'in_call' | 'ringing' | 'on_hold' | 'offline' | 'dnd' | 'not_ready' | 'wrap_up';
@@ -43,6 +51,8 @@ interface ResolvedStatus {
   label: string;
   title?: string;
   bucket: StatusBucket;
+  /** Epoch ms the shown status began, for the card's time-in-state timer. Unset when unknown. */
+  since?: number;
 }
 
 const DEVICE_BUCKET: Record<Extension['status'], StatusBucket> = {
@@ -115,6 +125,29 @@ function resolveStatus(
   return device();
 }
 
+/**
+ * When the card's status began. A live call shows its own call timer instead. Otherwise the
+ * agent presence's `since` when that presence is what the badge shows, else the server's
+ * `status_since` when the badge shows the device status or DND (Idle, DND), never Unavailable.
+ * A status neither describes (the queue-member Not-Ready fallback) gets no timer rather than a
+ * wrong one.
+ */
+function stateSince(extension: Extension, agentState: AgentStateInfo | undefined, status: ResolvedStatus): number | undefined {
+  if (['in_call', 'dialing', 'ringing', 'on_hold'].includes(extension.status)) return undefined;
+  const parse = (iso?: string) => {
+    const ms = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(ms) ? ms : undefined;
+  };
+  if (agentState?.since && AGENT_BUCKET[agentState.state] === status.bucket) return parse(agentState.since);
+  // Not for Unavailable: the server only sees a status begin once it is running, so an
+  // unregistered phone would count from the last OpDesk restart, not from when it went away.
+  if (extension.status === 'unavailable') return undefined;
+  if (status.bucket === DEVICE_BUCKET[extension.status] || (status.bucket === 'dnd' && extension.dnd)) {
+    return parse(extension.status_since);
+  }
+  return undefined;
+}
+
 export function ExtensionsPanel({
   extensions,
   agentStates = {},
@@ -132,21 +165,31 @@ export function ExtensionsPanel({
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  const [compact, setCompact] = useState<boolean>(() => {
-    try { return localStorage.getItem(COMPACT_STORAGE_KEY) === '1'; } catch { return false; }
+  const [storageKey] = useState(viewStorageKey);
+  const [view, setView] = useState<ViewMode>(() => {
+    try { return localStorage.getItem(storageKey) === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
   });
 
   useEffect(() => {
-    try { localStorage.setItem(COMPACT_STORAGE_KEY, compact ? '1' : '0'); } catch { /* best-effort */ }
-  }, [compact]);
+    try { localStorage.setItem(storageKey, view); } catch { /* best-effort */ }
+  }, [storageKey, view]);
 
   const rows = useMemo(() => Object.values(extensions)
     .sort((a, b) => a.extension.localeCompare(b.extension, undefined, { numeric: true }))
-    .map((ext) => ({
-      ext,
-      status: resolveStatus(ext, agentStates[ext.extension], memberPresence[ext.extension], t, labelFor),
-    })),
+    .map((ext) => {
+      const status = resolveStatus(ext, agentStates[ext.extension], memberPresence[ext.extension], t, labelFor);
+      return { ext, status: { ...status, since: stateSince(ext, agentStates[ext.extension], status) } };
+    }),
   [extensions, agentStates, memberPresence, t, labelFor]);
+
+  // One clock for every card's time-in-state timer, ticking only while some card shows one.
+  const [now, setNow] = useState(() => Date.now());
+  const anyTimer = rows.some((r) => r.status.since !== undefined);
+  useEffect(() => {
+    if (!anyTimer) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [anyTimer]);
 
   // Filters offer only what is on the page: each status or type that occurs, with its count.
   const typeOf = (ext: string) => (webrtcMap[ext] === 'yes' ? 'webrtc' : 'desk');
@@ -188,16 +231,26 @@ export function ExtensionsPanel({
       count={rows.length}
       actions={
         <>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => setCompact((c) => !c)}
-            title={compact ? t('extensions.comfortableView') : t('extensions.compactView')}
-            aria-pressed={compact}
-          >
-            {compact ? <LayoutGrid size={14} /> : <Rows3 size={14} />}
-            {compact ? t('extensions.comfortable') : t('extensions.compact')}
-          </button>
+          <div className="ui-segmented" role="group" aria-label={t('extensions.view', 'View')}>
+            <button
+              type="button"
+              className={`btn${view === 'grid' ? ' is-selected' : ''}`}
+              aria-pressed={view === 'grid'}
+              onClick={() => setView('grid')}
+            >
+              <LayoutGrid size={14} />
+              {t('extensions.gridView', 'Grid View')}
+            </button>
+            <button
+              type="button"
+              className={`btn${view === 'list' ? ' is-selected' : ''}`}
+              aria-pressed={view === 'list'}
+              onClick={() => setView('list')}
+            >
+              <List size={14} />
+              {t('extensions.listView', 'List View')}
+            </button>
+          </div>
           {onSync && (
             <button type="button" className="btn btn-ghost" onClick={onSync} title={t('common.syncAll')}>
               <RefreshCw size={14} />
@@ -260,14 +313,24 @@ export function ExtensionsPanel({
           description={t('extensions.noMatches', 'No extensions match these filters.')}
           action={<button type="button" className="btn" onClick={clearFilters}>{t('common.clearFilters', 'Clear filters')}</button>}
         />
+      ) : view === 'list' ? (
+        <ExtensionsList
+          rows={filtered}
+          now={now}
+          onSupervisorAction={onSupervisorAction}
+          webrtcMap={webrtcMap}
+          allowedDndExtensions={allowedDndExtensions}
+          onDndToggle={onDndToggle}
+        />
       ) : (
-        <div className={`extensions-grid${compact ? ' compact' : ''}`}>
+        <div className="extensions-grid">
           <AnimatePresence>
             {filtered.map(({ ext, status }) => (
               <ExtensionCard
                 key={ext.extension}
                 extension={ext}
                 status={status}
+                now={now}
                 onSupervisorAction={onSupervisorAction}
                 webrtcEnabled={webrtcMap[ext.extension] === 'yes'}
                 canToggleDnd={allowedDndExtensions.has(ext.extension)}
@@ -284,6 +347,8 @@ export function ExtensionsPanel({
 interface ExtensionCardProps {
   extension: Extension;
   status: ResolvedStatus;
+  /** Shared clock (epoch ms) for the time-in-state timer. */
+  now: number;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   webrtcEnabled: boolean;
   canToggleDnd: boolean;
@@ -300,29 +365,12 @@ function monogram(name: string | undefined, ext: string): string {
 }
 
 function ExtensionCard({
-  extension, status, onSupervisorAction, webrtcEnabled, canToggleDnd, onDndToggle,
+  extension, status, now, onSupervisorAction, webrtcEnabled, canToggleDnd, onDndToggle,
 }: ExtensionCardProps) {
   const { t } = useTranslation();
-  const [dndSaving, setDndSaving] = useState(false);
   const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
   const isRinging = extension.status === 'ringing';
-  const dndOn = !!extension.dnd;
   const { meta } = status;
-
-  const handleDndClick = async () => {
-    // DND cannot be toggled while the extension is on a call.
-    if (!canToggleDnd || !onDndToggle || dndSaving || isInCall) return;
-    setDndSaving(true);
-    try {
-      await onDndToggle(extension.extension, !dndOn);
-    } finally {
-      setDndSaving(false);
-    }
-  };
-
-  const dndTitle = dndOn
-    ? t('extensions.dndOn', 'Do Not Disturb: on')
-    : t('extensions.dndOff', 'Do Not Disturb: off');
 
   return (
     <motion.div
@@ -357,24 +405,8 @@ function ExtensionCard({
 
       <div className="ext-badges">
         <StatusBadge meta={meta} label={status.label} title={status.title} />
-        {canToggleDnd && (
-          <button
-            type="button"
-            role="switch"
-            aria-checked={dndOn}
-            className={`agent-dnd-toggle ext-dnd-toggle${dndOn ? ' on' : ''}`}
-            onClick={(e) => { e.stopPropagation(); handleDndClick(); }}
-            disabled={dndSaving || isInCall}
-            title={dndTitle}
-            aria-label={dndTitle}
-          >
-            <span className="agent-dnd-toggle-track">
-              <span className="agent-dnd-toggle-knob">
-                {dndSaving ? <Loader2 size={12} className="spinner" /> : dndOn ? <MinusCircle size={12} /> : <CircleDot size={12} />}
-              </span>
-            </span>
-          </button>
-        )}
+        <StateTimer status={status} now={now} />
+        {canToggleDnd && onDndToggle && <DndToggle extension={extension} onDndToggle={onDndToggle} />}
       </div>
 
       {extension.call_info && (isInCall || isRinging) && (
@@ -402,5 +434,145 @@ function ExtensionCard({
         </div>
       )}
     </motion.div>
+  );
+}
+
+/** How long the extension has been in its shown status, when that is known. */
+function StateTimer({ status, now }: { status: ResolvedStatus; now: number }) {
+  const { t } = useTranslation();
+  if (status.since === undefined) return null;
+  return (
+    <span
+      className="ext-state-timer u-mono"
+      title={t('extensions.timeInState', { status: status.label, defaultValue: 'Time in {{status}}' })}
+    >
+      <Clock size={12} />
+      {fmtTimer(Math.max(0, now - status.since) / 1000)}
+    </span>
+  );
+}
+
+/** The DND switch of one extension; disabled while it is on a call. */
+function DndToggle({ extension, onDndToggle }: {
+  extension: Extension;
+  onDndToggle: (extension: string, enabled: boolean) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [saving, setSaving] = useState(false);
+  const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
+  const on = !!extension.dnd;
+  const title = on ? t('extensions.dndOn', 'Do Not Disturb: on') : t('extensions.dndOff', 'Do Not Disturb: off');
+
+  const handleClick = async () => {
+    if (saving || isInCall) return;
+    setSaving(true);
+    try {
+      await onDndToggle(extension.extension, !on);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      className={`agent-dnd-toggle ext-dnd-toggle${on ? ' on' : ''}`}
+      onClick={(e) => { e.stopPropagation(); handleClick(); }}
+      disabled={saving || isInCall}
+      title={title}
+      aria-label={title}
+    >
+      <span className="agent-dnd-toggle-track">
+        <span className="agent-dnd-toggle-knob">
+          {saving ? <Loader2 size={12} className="spinner" /> : on ? <MinusCircle size={12} /> : <CircleDot size={12} />}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+interface ExtensionRow {
+  ext: Extension;
+  status: ResolvedStatus;
+}
+
+interface ExtensionsListProps {
+  rows: ExtensionRow[];
+  now: number;
+  onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
+  webrtcMap: Record<string, string>;
+  allowedDndExtensions: Set<string>;
+  onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
+}
+
+/** List View: the cards' content as one table row per extension. */
+function ExtensionsList({ rows, now, onSupervisorAction, webrtcMap, allowedDndExtensions, onDndToggle }: ExtensionsListProps) {
+  const { t } = useTranslation();
+  const canSupervise = getUser()?.role !== 'agent';
+  const inCall = (ext: Extension) => ext.status === 'in_call' || ext.status === 'dialing';
+  const anyDnd = Boolean(onDndToggle) && rows.some(({ ext }) => allowedDndExtensions.has(ext.extension));
+
+  const columns: Column<ExtensionRow>[] = [
+    {
+      key: 'extension', header: t('fields.extension'), primary: true,
+      cell: ({ ext }) => (
+        <span className="u-row u-gap-2">
+          <span className="u-mono u-semibold">{ext.extension}</span>
+          {ext.name && <span className="u-fg-muted">{ext.name}</span>}
+          {webrtcMap[ext.extension] === 'yes' && (
+            <Badge tone="info" icon={<Radio size={14} />} title={t('extensions.webrtcOn')}>
+              {t('extensions.webrtcBadge')}
+            </Badge>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: 'status', header: t('common.status', 'Status'),
+      cell: ({ status }) => (
+        <span className="u-row u-gap-2">
+          <StatusBadge meta={status.meta} label={status.label} title={status.title} />
+          <StateTimer status={status} now={now} />
+        </span>
+      ),
+    },
+    {
+      key: 'talkingTo', header: t('activeCalls.table.talkingTo'),
+      cell: ({ ext }) => {
+        const call = ext.call_info;
+        if (!call?.talking_to || call.talking_to === 'Unknown') return <span className="u-fg-muted">—</span>;
+        return call.contact_name
+          ? <>{call.contact_name} <span className="u-fg-muted u-mono">({call.talking_to})</span></>
+          : <span className="u-mono">{call.talking_to}</span>;
+      },
+    },
+    {
+      key: 'duration', header: t('fields.duration'),
+      cell: ({ ext }) => <span className="u-mono">{ext.call_info?.duration || '—'}</span>,
+    },
+    ...(anyDnd && onDndToggle ? [{
+      key: 'dnd', header: t('extensions.status.dnd', 'Do Not Disturb'),
+      cell: ({ ext }: ExtensionRow) => (allowedDndExtensions.has(ext.extension)
+        ? <DndToggle extension={ext} onDndToggle={onDndToggle} />
+        : null),
+    }] : []),
+    ...(canSupervise ? [{
+      key: 'actions', header: t('common.actions'), label: '',
+      cell: ({ ext }: ExtensionRow) => (inCall(ext)
+        ? <SuperviseActions target={ext.extension} onAction={onSupervisorAction} />
+        : null),
+    }] : []),
+  ];
+
+  return (
+    <Table
+      columns={columns}
+      rows={rows}
+      rowKey={({ ext }) => ext.extension}
+      framed
+      className="extensions-list"
+    />
   );
 }

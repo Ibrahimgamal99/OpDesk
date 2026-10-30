@@ -17,7 +17,9 @@
  *   FreePBX   predial hooks are Gosub'd (end in Return()); config applied by `fwconsole reload`;
  *             TLS transport overrides go to pjsip.transports_custom.conf.
  *   Issabel   IssabelPBX (a FreePBX 2.11 fork) still runs the predial hooks with Macro(), so
- *             they end in MacroExit(); config applied by `amportal a r` (falling back to
+ *             they end in MacroExit(), and never runs the one-predial hook at all, so
+ *             recording also hooks [sub-record-check] through extensions_override_issabelpbx.conf
+ *             (renderIssabelRecordOverrideConf); config applied by `amportal a r` (falling back to
  *             retrieve_conf + core reload); pjsip.conf includes pjsip_custom_post.conf last,
  *             which is where the TLS transport goes.
  */
@@ -202,6 +204,11 @@ export const EXTENSIONS_CUSTOM_CONF = '/etc/asterisk/extensions_custom.conf';
 export const EXTENSIONS_OPDESK_CONF = '/etc/asterisk/extensions_opdesk.conf';
 export const EXTENSIONS_MOBILE_WAKE_CONF = '/etc/asterisk/extensions_mobile_wake.conf';
 export const EXTENSIONS_RECORD_CONF = '/etc/asterisk/extensions_opdesk_record.conf';
+// Issabel only: extensions.conf #includes this file FIRST, ahead of the generated
+// extensions_additional.conf, so a priority defined in a file it includes wins over the
+// generated one (see renderIssabelRecordOverrideConf).
+export const EXTENSIONS_OVERRIDE_ISSABELPBX_CONF = '/etc/asterisk/extensions_override_issabelpbx.conf';
+export const EXTENSIONS_RECORD_OVERRIDE_CONF = '/etc/asterisk/extensions_opdesk_record_override.conf';
 
 // Where MixMonitor writes call recordings.
 //   - The mixed file goes to the FreePBX/Issabel default monitor dir, so it lands where the
@@ -259,17 +266,17 @@ export function withInclude(existing: string, includeBasename: string, absolute:
   return out + `#include ${includeBasename}\n`;
 }
 
-/** Ensure extensions_custom.conf includes `confPath`. False when the write failed. */
-export async function ensureInclude(confPath: string): Promise<boolean> {
+/** Ensure `into` (extensions_custom.conf by default) includes `confPath`. False when the write failed. */
+export async function ensureInclude(confPath: string, into: string = EXTENSIONS_CUSTOM_CONF): Promise<boolean> {
   let existing = '';
-  if (await pathExists(EXTENSIONS_CUSTOM_CONF)) existing = await readText(EXTENSIONS_CUSTOM_CONF);
+  if (await pathExists(into)) existing = await readText(into);
   const next = withInclude(existing, basename(confPath), confPath);
   if (next === null) {
-    log.info('%s already includes %s', EXTENSIONS_CUSTOM_CONF, confPath);
+    log.info('%s already includes %s', into, confPath);
     return true;
   }
-  if (!(await sudoWrite(EXTENSIONS_CUSTOM_CONF, next))) return false;
-  log.info('Ensured %s includes %s', EXTENSIONS_CUSTOM_CONF, basename(confPath));
+  if (!(await sudoWrite(into, next))) return false;
+  log.info('Ensured %s includes %s', into, basename(confPath));
   return true;
 }
 
@@ -311,6 +318,17 @@ async function findAmportal(): Promise<string | null> {
  *   FreePBX: `fwconsole reload`.
  */
 export async function reloadAsteriskSip(pbxType: string | null = null): Promise<boolean> {
+  // One reload at a time: `fwconsole reload` / `amportal a r` started while another is still
+  // running fails (FreePBX holds a reload lock), so two saves close together would report a
+  // failed reload for the second one.
+  const run = sipReloadQueue.then(() => runSipReload(pbxType));
+  sipReloadQueue = run.catch(() => false);
+  return run;
+}
+
+let sipReloadQueue: Promise<unknown> = Promise.resolve();
+
+async function runSipReload(pbxType: string | null): Promise<boolean> {
   const kind = pbxKind(pbxType);
   try {
     let result: CompletedProcess;
@@ -748,6 +766,58 @@ export function renderRecordingOffConf(pbx: string | null = null): string {
 }
 
 /**
+ * extensions_opdesk_record_override.conf (Issabel only, recording on).
+ *
+ * IssabelPBX's [macro-dial-one] calls no predial hook, so on Issabel the one-predial hook
+ * never fires and internal and inbound calls would go unrecorded. What every IssabelPBX call
+ * does run, on the originating channel before the dial, is Gosub(sub-record-check,s,1(...)):
+ * from macro-exten-vm (extensions), ring groups, queues and outbound routes. This file is
+ * included from extensions_override_issabelpbx.conf, which extensions.conf reads before the
+ * generated extensions_additional.conf, so its s,1 wins the duplicate-priority race; the
+ * generated s,1 is dropped and the generated s,n lines still number from 2.
+ *
+ * [opdesk-issabel-record-check] therefore first does the generated s,1's job
+ * (REC_POLICY_MODE_SAVE) and then runs [opdesk-record], which the __OPDESK_REC flag keeps to
+ * once per call (sub-record-check runs again for every ring group / queue member).
+ */
+export function renderIssabelRecordOverrideConf(): string {
+  return `; OpDesk call recording: IssabelPBX entry point — auto-generated. Do not edit manually.
+;
+; IssabelPBX's [macro-dial-one] calls no predial hook, so OpDesk starts its recorder from
+; [sub-record-check], which every call runs. This replaces only its first priority, whose
+; Set(REC_POLICY_MODE_SAVE=...) is carried out in [opdesk-issabel-record-check].
+
+[sub-record-check]
+exten => s,1,Gosub(opdesk-issabel-record-check,s,1)
+
+[opdesk-issabel-record-check]
+exten => s,1,Set(REC_POLICY_MODE_SAVE=\${REC_POLICY_MODE})
+ same => n,GosubIf($["\${OPDESK_REC}"=""]?opdesk-record,s,1)
+ same => n,Return()
+`;
+}
+
+/** extensions_opdesk_record_override.conf with recording off: the generated [sub-record-check] runs as shipped. */
+export const RECORD_OVERRIDE_OFF_CONTENT = '; OpDesk call recording disabled\n';
+
+/** Write (or clear) the Issabel [sub-record-check] override and make sure it is included. */
+async function writeIssabelRecordOverride(enable: boolean): Promise<boolean> {
+  if (!enable && !(await pathExists(EXTENSIONS_RECORD_OVERRIDE_CONF))) return true;
+  const content = enable ? renderIssabelRecordOverrideConf() : RECORD_OVERRIDE_OFF_CONTENT;
+  if (!(await sudoWrite(EXTENSIONS_RECORD_OVERRIDE_CONF, content))) return false;
+  return ensureInclude(EXTENSIONS_RECORD_OVERRIDE_CONF, EXTENSIONS_OVERRIDE_ISSABELPBX_CONF);
+}
+
+/** The PBX flavour from the PBX setting, else env PBX, for callers that were not given one. */
+async function pbxFromSettings(): Promise<string | null> {
+  try {
+    return (await dbm.getSetting('PBX', env('PBX', ''))) || env('PBX', '') || null;
+  } catch {
+    return env('PBX', '') || null;
+  }
+}
+
+/**
  * `text` (extensions_custom.conf) with `line` injected into, or removed from, an existing
  * [macro-dialout-trunk-predial-hook] block; null when nothing changes.
  *
@@ -824,6 +894,7 @@ export async function writeRecordingConf(
     log.warning('VAD analysis needs 16-bit PCM (wav/sln); format=%s -> disabling VAD', fmt);
     vad = false;
   }
+  const pbx = opts.pbx ?? (await pbxFromSettings());
   log.info('Writing call recording dialplan to %s (vad=%s)', EXTENSIONS_RECORD_CONF, vad);
   try {
     // MixMonitor creates the dated YYYY/MM/DD subdirs, but the single-leg base dir must
@@ -832,11 +903,12 @@ export async function writeRecordingConf(
     await subprocessRun(['sudo', 'chown', 'asterisk:asterisk', RECORD_SINGLE_DIR]);
     await subprocessRun(['sudo', 'chmod', '775', RECORD_SINGLE_DIR]);
 
-    if (!(await sudoWrite(EXTENSIONS_RECORD_CONF, renderRecordingConf({ format: fmt, vad, pbx: opts.pbx ?? null })))) {
+    if (!(await sudoWrite(EXTENSIONS_RECORD_CONF, renderRecordingConf({ format: fmt, vad, pbx })))) {
       return false;
     }
     if (!(await ensureInclude(EXTENSIONS_RECORD_CONF))) return false;
     await chainRecordIntoCustomHook(true);
+    if (pbxKind(pbx) === 'issabel' && !(await writeIssabelRecordOverride(true))) return false;
     log.info('Call recording dialplan written to %s', EXTENSIONS_RECORD_CONF);
     return true;
   } catch (e) {
@@ -849,11 +921,13 @@ export async function writeRecordingConf(
 export async function removeRecordingConf(pbx: string | null = null): Promise<boolean> {
   log.info('Clearing call recording dialplan from %s', EXTENSIONS_RECORD_CONF);
   try {
+    // Whatever the PBX setting says now: an override left behind would keep recording.
+    if (!(await writeIssabelRecordOverride(false))) return false;
     if (!(await pathExists(EXTENSIONS_RECORD_CONF))) {
       await chainRecordIntoCustomHook(false);
       return true;
     }
-    if (!(await sudoWrite(EXTENSIONS_RECORD_CONF, renderRecordingOffConf(pbx)))) return false;
+    if (!(await sudoWrite(EXTENSIONS_RECORD_CONF, renderRecordingOffConf(pbx ?? (await pbxFromSettings()))))) return false;
     await ensureInclude(EXTENSIONS_RECORD_CONF);
     // Remove the injected Gosub from the trunk predial hook (leave the rest of the block).
     await chainRecordIntoCustomHook(false);
@@ -867,6 +941,17 @@ export async function removeRecordingConf(pbx: string | null = null): Promise<bo
 
 /** The predial hooks [opdesk-record] runs from (see renderRecordingConf). */
 export const RECORD_HOOK_CONTEXTS: readonly string[] = ['macro-dialout-one-predial-hook', 'macro-dialout-trunk-predial-hook'];
+
+/**
+ * The contexts the PBX actually calls that must reach OpDesk's recorder, each with the text
+ * its loaded dialplan shows when it does. On Issabel the one-predial hook is never called
+ * (see renderIssabelRecordOverrideConf), so [sub-record-check] is checked in its place.
+ */
+export function recordEntryPoints(pbx: string | null = null): ReadonlyArray<{ context: string; marker: string }> {
+  const trunk = { context: 'macro-dialout-trunk-predial-hook', marker: 'opdesk-record' };
+  if (pbxKind(pbx) === 'issabel') return [{ context: 'sub-record-check', marker: 'opdesk-issabel-record-check' }, trunk];
+  return RECORD_HOOK_CONTEXTS.map((context) => ({ context, marker: 'opdesk-record' }));
+}
 
 /** A predial hook that, in the loaded dialplan, does not run [opdesk-record]. */
 export interface RecordingHookConflict {
@@ -885,9 +970,9 @@ export interface RecordingHookConflict {
  * other product under its own policy. Writing the file and reloading cannot tell; reading
  * back what was loaded can.
  */
-export async function recordingHookConflicts(): Promise<RecordingHookConflict[] | null> {
+export async function recordingHookConflicts(pbx: string | null = null): Promise<RecordingHookConflict[] | null> {
   const out: RecordingHookConflict[] = [];
-  for (const context of RECORD_HOOK_CONTEXTS) {
+  for (const { context, marker } of recordEntryPoints(pbx ?? (await pbxFromSettings()))) {
     let text: string;
     try {
       const r = await subprocessRun(['sudo', 'asterisk', '-rx', `dialplan show s@${context}`], { timeout: 10 });
@@ -897,7 +982,7 @@ export async function recordingHookConflicts(): Promise<RecordingHookConflict[] 
       log.warning('Could not read the %s dialplan: %s', context, e);
       return null;
     }
-    if (text.includes('opdesk-record')) continue;
+    if (text.includes(marker)) continue;
     const m = /\[([^\]:\s]+\.conf):\d+\]/.exec(text);
     out.push({ context, file: m ? m[1] : null });
   }

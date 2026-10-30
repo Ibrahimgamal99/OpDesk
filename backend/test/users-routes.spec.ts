@@ -14,7 +14,7 @@ jest.mock(
     deleteUser: jest.fn(),
     setUserGroups: jest.fn(),
     setExtensionSecretInPbx: jest.fn(async () => true),
-    setExtensionNameInPbx: jest.fn(async () => true),
+    setExtensionNameInPbx: jest.fn(async () => 1),
     extensionExistsInPbx: jest.fn(async () => true),
     getSetting: jest.fn(async (_k: string, d: unknown) => d),
     getExtensionNamesFromDb: jest.fn(async () => ({ '100': 'Ann' })),
@@ -49,7 +49,7 @@ beforeEach(() => {
   mocked(dbm.updateUser).mockResolvedValue(true);
   mocked(dbm.extensionExistsInPbx).mockResolvedValue(true);
   mocked(dbm.setExtensionSecretInPbx).mockResolvedValue(true);
-  mocked(dbm.setExtensionNameInPbx).mockResolvedValue(true);
+  mocked(dbm.setExtensionNameInPbx).mockResolvedValue(1);
   mocked(reloadAsteriskSip).mockResolvedValue(true);
   (runtime as { monitor: unknown }).monitor = null;
 });
@@ -214,11 +214,23 @@ describe('update', () => {
   });
 
   test('a display name the PBX refuses is a 502', async () => {
-    mocked(dbm.setExtensionNameInPbx).mockResolvedValue(false);
+    mocked(dbm.setExtensionNameInPbx).mockResolvedValue(null);
     await expect(ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { name: 'Bob' } }))).rejects.toMatchObject({
       status: 502,
       message: 'User saved, but the display name of extension 100 was not updated in the PBX.',
     });
+  });
+
+  test('the 502 carries its own code, so the client sees what went wrong (not the generic upstream text)', async () => {
+    mocked(reloadAsteriskSip).mockResolvedValue(false);
+    const err = await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { name: 'Bob' } })).catch((e) => e);
+    expect(err.detail).toMatchObject({ code: 'user.pbx.apply_incomplete' });
+  });
+
+  test('saving with an unchanged display name does not reload the PBX', async () => {
+    mocked(dbm.setExtensionNameInPbx).mockResolvedValue(0);
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { name: 'Ann' } }));
+    expect(reloadAsteriskSip).not.toHaveBeenCalled();
   });
 
   test('create refuses a sign-in password under 8 characters', async () => {

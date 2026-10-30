@@ -66,6 +66,24 @@ describe('recordingHookConflicts', () => {
     ]);
   });
 
+  test('Issabel: [sub-record-check] is checked in place of the never-called one-predial hook', async () => {
+    const SUB = 'dialplan show s@sub-record-check';
+    mockCli[TRUNK] = CHAINED_TRUNK;
+    // Ours defines the one-predial hook too, but IssabelPBX never calls it: it must not count.
+    mockCli[ONE] = OURS_ONE;
+    mockCli[SUB] = `[ Context 'sub-record-check' created by 'pbx_config' ]
+  's' =>            1. Set(REC_POLICY_MODE_SAVE=\${REC_POLICY_MODE}) [extensions_additional.conf:1523]
+`;
+    expect(await dialplan.recordingHookConflicts('Issabel')).toEqual([
+      { context: 'sub-record-check', file: 'extensions_additional.conf' },
+    ]);
+    mockCli[SUB] = `[ Context 'sub-record-check' created by 'pbx_config' ]
+  's' =>            1. Gosub(opdesk-issabel-record-check,s,1)     [extensions_opdesk_record_override.conf:7]
+                    2. GotoIf($["\${BLINDTRANSFER}" = ""]?check)  [extensions_additional.conf:1524]
+`;
+    expect(await dialplan.recordingHookConflicts('Issabel')).toEqual([]);
+  });
+
   test('a hook that did not load at all has no owning file', async () => {
     mockCli[ONE] = OURS_ONE;
     mockCli[TRUNK] = "There is no existence of 's@macro-dialout-trunk-predial-hook' extension\n";

@@ -84,6 +84,10 @@ export class AMIEventBridge {
   stateQueue: Record<string, string>[] = [];
   /** ext -> display name (users.name / PBX name); refreshed by the WS `sync` action. */
   extensionNames: Record<string, string> = {};
+  /** When each extension's shown status (device status + DND) last changed, for the card's
+   *  time-in-state timer (how long Idle, Offline …). Starts at the first time the backend
+   *  sees the extension, so right after a restart it counts from the restart. */
+  private statusSince = new Map<string, { key: string; since: number }>();
   private queueNames: Record<string, string> = {};
   private queueNamesAt = 0;
   // Each queue's service-level target (analytics settings), for the Dashboard's past-target alert.
@@ -241,12 +245,21 @@ export class AMIEventBridge {
       else if (statusCode === '16' || statusCode === '32') status = 'on_hold';
       else status = 'idle';
 
+      const dnd = monitor.dnd.has(ext);
+      const key = `${status}|${dnd ? 'dnd' : ''}`;
+      let seen = this.statusSince.get(ext);
+      if (!seen || seen.key !== key) {
+        seen = { key, since: Date.now() };
+        this.statusSince.set(ext, seen);
+      }
+
       extensions[ext] = {
         extension: ext,
         name: this.extensionNames[ext] ?? '',
         status,
         status_code: statusCode,
-        dnd: monitor.dnd.has(ext),
+        status_since: new Date(seen.since).toISOString(),
+        dnd,
         call_info: callLive ? this.formatCallInfo(ext, callInfo) : null,
       };
     }

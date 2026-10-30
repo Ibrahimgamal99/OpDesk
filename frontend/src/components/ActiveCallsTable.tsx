@@ -16,6 +16,8 @@ import '../styles/live.css';
  */
 export interface ActiveCallsTableProps {
   calls: CallInfo[];
+  /** Extension number -> its display name, for the extension and an internal far end. */
+  extensionNames?: Record<string, string>;
   onSupervisorAction: (mode: SuperviseMode, target: string) => void;
   onHangup?: (target: string) => void;
   onTransfer?: (source: string, destination: string, ext: string) => void;
@@ -43,13 +45,22 @@ function channelStatus(state: string): ExtensionStatus | null {
  * passes: supervision always, hangup / transfer / take-over when given.
  */
 export function ActiveCallsTable({
-  calls, onSupervisorAction, onHangup, onTransfer, onTakeOver,
+  calls, extensionNames = {}, onSupervisorAction, onHangup, onTransfer, onTakeOver,
 }: ActiveCallsTableProps) {
   const { t } = useTranslation();
+  const nameOf = (ext: string | null | undefined) => {
+    const name = ext ? extensionNames[ext.trim()]?.trim() : '';
+    return name && name !== ext?.trim() ? name : '';
+  };
   const columns: Column<CallInfo>[] = [
     {
       key: 'extension', header: t('fields.extension'), primary: true,
-      cell: call => <span className="u-mono u-semibold">{call.extension}</span>,
+      cell: call => {
+        const name = nameOf(call.extension);
+        return name
+          ? <>{name} <span className="u-fg-muted u-mono">({call.extension})</span></>
+          : <span className="u-mono u-semibold">{call.extension}</span>;
+      },
     },
     {
       key: 'state', header: t('activeCalls.table.state'),
@@ -71,10 +82,14 @@ export function ActiveCallsTable({
     {
       key: 'talkingTo', header: t('activeCalls.table.talkingTo'),
       // Phonebook name when we have one, resolved server-side so every viewer
-      // agrees. The number stays visible — it is what you dial back.
-      cell: call => call.contact_name
-        ? <>{call.contact_name} <span className="u-fg-muted u-mono">({call.talking_to})</span></>
-        : (call.talking_to || '—'),
+      // agrees; else the extension's name when the far end is one of ours. The number
+      // stays visible — it is what you dial back.
+      cell: call => {
+        const name = call.contact_name || nameOf(call.talking_to);
+        return name
+          ? <>{name} <span className="u-fg-muted u-mono">({call.talking_to})</span></>
+          : (call.talking_to || '—');
+      },
     },
     {
       key: 'duration', header: t('fields.duration'),

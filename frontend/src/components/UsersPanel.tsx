@@ -7,7 +7,7 @@ import { generateSipPassword } from './ChangePasswordModal';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth, getUser } from '../auth';
 import type { PendingUserFormSnapshot } from '../App';
-import { raiseFor } from '../lib/api';
+import { ApiError, raiseFor } from '../lib/api';
 import {
   Dropdown, SearchInput, matches, prepareQuery, Alert, Page, Toolbar, EmptyState, Badge, Table, Modal, Loading,
   FormSection, FormRow, FormField, Toggle, useConfirm,
@@ -256,6 +256,18 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       setMessage({ type: 'error', text: t('users.sipPasswordRule', 'The SIP password needs 8 to 64 characters, with letters and digits, and no spaces or quotes.') });
       return;
     }
+    // The server answers user.pbx.apply_incomplete when the user WAS saved but the PBX did not
+    // take all of it: carry on as saved (the steps below still apply) and show its message.
+    let pbxWarning: string | null = null;
+    const checkSave = async (res: Response) => {
+      if (res.ok) return;
+      try {
+        await raiseFor(res);
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'user.pbx.apply_incomplete') pbxWarning = e.message;
+        else throw e;
+      }
+    };
     try {
       let saved: string;
       if (editingUser) {
@@ -274,7 +286,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
-        if (!res.ok) await raiseFor(res);
+        await checkSave(res);
         saved = t('users.userUpdated');
       } else {
         const res = await fetchWithAuth('/api/settings/users', {
@@ -290,7 +302,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
             group_ids: form.role === 'agent' ? [] : form.group_ids.map(Number),
           }),
         });
-        if (!res.ok) await raiseFor(res);
+        await checkSave(res);
         saved = t('users.userCreated');
       }
       // A new SIP secret for the linked extension, on its own: the sign-in password above
@@ -340,7 +352,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
       }
       resetForm();
       loadData({ keepMessage: true });
-      setMessage(sipFailed
+      setMessage(pbxWarning
+        ? { type: 'error', text: pbxWarning }
+        : sipFailed
         ? { type: 'error', text: t('users.sipSaveFailed', 'User saved, but changing the SIP password failed.') }
         : webrtcFailed
         ? { type: 'error', text: t('users.webrtcSaveFailed') }

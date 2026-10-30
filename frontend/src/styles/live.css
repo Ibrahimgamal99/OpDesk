@@ -30,20 +30,8 @@
 }
 .dash-trend-key.out i { background: var(--accent-teal); }
 
-/* ── Extensions: compact grid ── */
-.extensions-grid.compact {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 11rem), 1fr));
-  gap: var(--space-2h);
-}
-.extensions-grid.compact .extension-card { padding: var(--space-3); }
-.extensions-grid.compact .ext-card-top { margin-bottom: var(--space-2); }
-.extensions-grid.compact .ext-avatar { display: none; }
-.extensions-grid.compact .ext-identity .extension-number { font-size: var(--text-lg); }
-.extensions-grid.compact .extension-name { font-size: var(--text-sm); }
-.extensions-grid.compact .extension-info {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-}
+/* ── Extensions: List View ── */
+.extensions-list .ext-dnd-toggle { margin-inline-start: 0; }
 
 /* ── Extensions: DND switch beside the status badge ── */
 .ext-dnd-toggle {
@@ -51,6 +39,15 @@
   margin-inline-start: auto;
 }
 .ext-dnd-toggle.on { --dt-color: var(--accent-danger); }
+
+/* ── Extensions: time in the current status, beside the badge ── */
+.ext-state-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
 
 /* ── Queues: member status badge beside the name ── */
 .queue-member-name {
