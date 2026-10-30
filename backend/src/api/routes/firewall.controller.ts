@@ -14,6 +14,7 @@ import * as f2b from '../../services/firewall-fail2ban';
 import * as geo from '../../services/firewall-geoip';
 import { parseIp } from '../../services/firewall-net';
 import { HttpError } from '../http-error';
+import { respond } from '../respond';
 import { Auth, clientHost, Get, Post, Put, principal } from '../routing';
 import { parseBody, pStr, v } from '../validation';
 
@@ -47,6 +48,13 @@ async function guarded<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Jails and current bans, each ban with its country. */
+async function fail2banStatus() {
+  const st = await f2b.status();
+  const bans = await Promise.all(st.bans.map(async (b) => ({ ...b, country: await geo.countryOf(b.ip) })));
+  return { ...st, bans };
+}
+
 async function geoipStatus(req: Request) {
   const cfg = await geo.loadConfig();
   const [tools, updatedAt, countries, applied, dropped, conflicts] = await Promise.all([
@@ -78,7 +86,7 @@ export class FirewallController {
   @Get('/api/firewall/geoip')
   @Auth('admin')
   async getGeoip(@Req() req: Request) {
-    return geoipStatus(req);
+    return respond(await geoipStatus(req));
   }
 
   /**
@@ -127,7 +135,7 @@ export class FirewallController {
       }
       setRedactedAuditDetail(req, next);
       log.info('GeoIP firewall %s by %s (countries=%s)', next.enabled ? 'enabled' : 'disabled', principal(req).username, countries.join(','));
-      return geoipStatus(req);
+      return respond(await geoipStatus(req));
     });
   }
 
@@ -139,7 +147,7 @@ export class FirewallController {
       await geo.updateData();
       const cfg = await geo.loadConfig();
       if (cfg.enabled) await geo.apply(cfg);
-      return geoipStatus(req);
+      return respond(await geoipStatus(req));
     });
   }
 
@@ -147,9 +155,7 @@ export class FirewallController {
   @Get('/api/firewall/fail2ban')
   @Auth('admin')
   async getFail2ban() {
-    const st = await f2b.status();
-    const bans = await Promise.all(st.bans.map(async (b) => ({ ...b, country: await geo.countryOf(b.ip) })));
-    return { ...st, bans };
+    return respond(await fail2banStatus());
   }
 
   /** Change one jail's enabled flag or thresholds (persisted in jail.d/opdesk.local). */
@@ -166,7 +172,7 @@ export class FirewallController {
         bantime: body.bantime ?? undefined,
       }, (await geo.loadConfig()).trusted);
       setRedactedAuditDetail(req, { jail, ...body });
-      return this.getFail2ban();
+      return respond(await fail2banStatus());
     });
   }
 
@@ -186,7 +192,7 @@ export class FirewallController {
     return guarded(async () => {
       await f2b.ban(ip, jail);
       setRedactedAuditDetail(req, { ip, jail });
-      return this.getFail2ban();
+      return respond(await fail2banStatus());
     });
   }
 
@@ -199,7 +205,7 @@ export class FirewallController {
     return guarded(async () => {
       await f2b.unban(ip, body.jail || null);
       setRedactedAuditDetail(req, { ip, jail: body.jail || null });
-      return this.getFail2ban();
+      return respond(await fail2banStatus());
     });
   }
 }
