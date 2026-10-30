@@ -8,7 +8,7 @@
  * its extensions is switched off. Storage is local only.
  *
  * The playback, list and delete routes for individual recordings live in
- * call-history.controller.ts (/api/recordings...).
+ * call-history.controller.ts (/api/recordings..., /api/call-log/recording/{call_id}).
  */
 
 import { Controller, Req } from '@nestjs/common';

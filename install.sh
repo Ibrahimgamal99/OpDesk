@@ -509,6 +509,14 @@ step_os() {
         dnf install -y git curl openssl lsof tar iproute ca-certificates \
             || yum install -y git curl openssl lsof tar iproute ca-certificates
     fi
+    # Settings -> Firewall (GeoIP) needs ipset; optional, so a failure here is not fatal.
+    if ! command_exists ipset; then
+        if [ "$OS_FAMILY" = "debian" ]; then
+            apt-get install -y ipset >/dev/null 2>&1 || warn "ipset not installed: Settings -> Firewall GeoIP will be unavailable."
+        elif [ "$OS_FAMILY" = "el" ]; then
+            { dnf install -y ipset || yum install -y ipset; } >/dev/null 2>&1 || warn "ipset not installed: Settings -> Firewall GeoIP will be unavailable."
+        fi
+    fi
 }
 
 step_repo() {

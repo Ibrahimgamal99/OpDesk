@@ -284,6 +284,40 @@ Talk/silence analysis for a recorded call, when VAD is enabled: per-speaker talk
 seconds, overlap and segments. Resolves through the call's other legs when the
 requested one was not analysed. `403` out of scope, `404` when there is no analysis.
 
+### `GET /api/call-log/recording/{call_id}`
+**Auth:** JWT (any) · **Key:** `cdr:read`
+
+Streams one call's recording by its Call ID, so an integration that stored the Call ID
+needs no `recording_path`. `call_id` is the call-log `linkedid` (the Call ID the CRM push
+carries) or the `uniqueid` of any leg of the call; given a leg, that leg's own recording
+wins over another leg's. The response is the audio file, served exactly as
+`GET /api/recordings/{path}` serves it (header credential only, `Range`/`206`), with
+`Content-Disposition: attachment; filename="<file name>"`.
+
+`403` (`Not allowed to view this call`) when the call is outside the caller's history
+scope, or the id is unknown to a scoped user; `404` (`Call not found`) for an unknown id
+otherwise, and `404` (`Recording not found`) when the call was not recorded or its file
+has been deleted.
+
+```bash
+curl -fsS -H "X-API-Key: $OPDESK_KEY" -o call.wav \
+  "https://opdesk.example.com/api/call-log/recording/1792247515.42"
+```
+
+### `GET /api/recordings`
+**Auth:** JWT (admin) · **Key:** `cdr:read`
+
+Every recorded call leg, newest first, for syncing recordings in bulk. Unlike the routes
+above this list is not scoped, so a supervisor or agent JWT is `403` (`Admin only`).
+
+Query: `limit` (default 25), `cursor` (the previous page's `next_cursor`), `search` (a
+number, `uniqueid` or `linkedid`), `date_from`, `date_to` (`YYYY-MM-DD`, inclusive).
+
+Returns `{"recordings": [{calldate, src, dst, duration, billsec, disposition, recordingfile,
+uniqueid, linkedid, recording_path, size_bytes}], "total": n, "next_cursor": "..." | null}`.
+`recording_path` and `size_bytes` are `null` when the file is no longer on disk. Download a
+row with `GET /api/recordings/{recording_path}` or `GET /api/call-log/recording/{uniqueid}`.
+
 ### `GET /api/recordings/{path}`
 **Auth:** JWT (any) · **Key:** `cdr:read`
 
@@ -317,7 +351,6 @@ under Settings → Recording but cannot be changed there.
 | `POST /api/recording/retention` | Any of the same keys; `root_dir` is read-only (sending another directory is a 400) |
 | `POST /api/recording/retention/run` | Run the daily clean-up now; returns what it deleted |
 | `GET /api/recording/storage-stats` | `{total_recordings, local: {used_bytes, max_bytes, disk_free_bytes, disk_total_bytes, retention_days}}` |
-| `GET /api/recordings` | `?limit=25&cursor=&search=&date_from=&date_to=` — `{recordings: [{calldate, src, dst, duration, billsec, recordingfile, uniqueid, linkedid, recording_path, size_bytes}], total, next_cursor}`; pass `next_cursor` as `cursor` for the next page |
 | `DELETE /api/recordings/{uniqueid}` | Delete the recording file of one call (the CDR row stays); `{deleted, deleted_legs}` |
 
 Recordings are kept on the PBX's disk only. The recorder keeps both directions of a call

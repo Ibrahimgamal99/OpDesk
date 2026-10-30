@@ -12,6 +12,7 @@ jest.mock('../src/db/db-manager', () => ({
   getCdrByLinkedid: jest.fn(async () => []),
   getSupervisionForTarget: jest.fn(async () => [{ mode: 'listen' }]),
   getCallLegs: jest.fn(async () => []),
+  getCdrRecordingfile: jest.fn(async () => null),
   getCallVadFromDb: jest.fn(async () => ({ uniqueid: 'u' })),
   getCallNotificationsFromDb: jest.fn(async () => [{ id: 1 }, { id: 2 }]),
   getCallNotificationsCountFromDb: jest.fn(async () => 250),
@@ -36,7 +37,9 @@ jest.mock('../src/services/recording', () => ({
 
 import * as dbm from '../src/db/db-manager';
 import { CallHistoryController, hidesSupervision, isSupervisionCall, notificationExtensions } from '../src/api/routes/call-history.controller';
+import { FileResponse } from '../src/api/respond';
 import { buildCallJourneyFromCdr, callLog, callLogPage } from '../src/services/call-log';
+import { resolveRecordingRequest } from '../src/services/recording';
 
 const ctl = new CallHistoryController();
 const mocked = (fn: unknown) => fn as jest.Mock;
@@ -139,6 +142,55 @@ describe('supervision is hidden from the monitored agent', () => {
     await expect(ctl.serveRecording(req(AGENT, { params: { file_path: 'spy.wav' } }))).rejects.toMatchObject({ status: 403 });
     expect(await ctl.getCallVadEndpoint(req({ ...SUPERVISOR, allowed_agent_extensions: ['100'] }, { params: { uniqueid: 'x' } })))
       .toEqual({ uniqueid: 'u' });
+  });
+});
+
+describe('GET /api/call-log/recording/:call_id', () => {
+  const MONITOR = '/var/spool/asterisk/monitor/2026/10/17';
+  const AGENT_LEG = { linkedid: 'L', uniqueid: 'L.2', src: '199', dst: '100', channel: 'PJSIP/100-2', dstchannel: '', lastapp: 'Queue' };
+  const byId = (principal: unknown, callId: string) => ctl.getCallRecordingEndpoint(req(principal, { params: { call_id: callId } }));
+
+  it('by linkedid: falls back from the uniqueid lookup, streams the call\'s file from inside the recordings root', async () => {
+    mocked(dbm.getCallLegs).mockImplementation(async (o: { uniqueid?: string; linkedid?: string }) =>
+      (o.linkedid === 'L' ? [AGENT_LEG, CALL_LEG] : []));
+    mocked(dbm.getCdrRecordingfile).mockResolvedValue('2026/10/17/in-199-100.wav');
+    mocked(resolveRecordingRequest).mockResolvedValueOnce({ path: `${MONITOR}/in-199-100.wav` });
+    const res = await byId(API_KEY, ' L ');
+    expect(mocked(dbm.getCallLegs).mock.calls).toEqual([[{ uniqueid: 'L' }], [{ linkedid: 'L' }]]);
+    // L is also a leg's uniqueid here, so that leg's own recording is asked for first.
+    expect(dbm.getCdrRecordingfile).toHaveBeenCalledWith('L');
+    expect(resolveRecordingRequest).toHaveBeenCalledWith('in-199-100.wav');
+    expect(res).toBeInstanceOf(FileResponse);
+    expect(res).toMatchObject({ path: `${MONITOR}/in-199-100.wav`, init: { contentType: 'audio/x-wav', filename: 'in-199-100.wav' } });
+  });
+
+  it('by a leg\'s uniqueid: that leg\'s recording; in scope for the agent on it', async () => {
+    mocked(dbm.getCallLegs).mockResolvedValue([CALL_LEG, AGENT_LEG]);
+    mocked(dbm.getCdrRecordingfile).mockResolvedValue('in-199-100.wav');
+    await byId(AGENT, 'L.2');
+    expect(dbm.getCallLegs).toHaveBeenCalledTimes(1);
+    expect(dbm.getCdrRecordingfile).toHaveBeenCalledWith('L.2');
+  });
+
+  it('out of scope or unknown is 403 for a scoped user; unknown is 404 for an admin or a key', async () => {
+    mocked(dbm.getCallLegs).mockResolvedValue([{ ...CALL_LEG, dst: '102', dstchannel: 'PJSIP/102-1' }]);
+    await expect(byId(AGENT, 'L')).rejects.toMatchObject({ status: 403, message: 'Not allowed to view this call' });
+    mocked(dbm.getCallLegs).mockResolvedValue([]);
+    await expect(byId(SUPERVISOR, 'nope')).rejects.toMatchObject({ status: 403 });
+    await expect(byId(ADMIN, 'nope')).rejects.toMatchObject({ status: 404, message: 'Call not found' });
+    await expect(byId(API_KEY, '  ')).rejects.toMatchObject({ status: 400 });
+    expect(dbm.getCdrRecordingfile).not.toHaveBeenCalled();
+  });
+
+  it('a call that was not recorded, or whose file is gone, is 404; a ChanSpy call is 403 for the agent', async () => {
+    mocked(dbm.getCallLegs).mockResolvedValue([CALL_LEG]);
+    mocked(dbm.getCdrRecordingfile).mockResolvedValue(null);
+    await expect(byId(ADMIN, 'L')).rejects.toMatchObject({ status: 404, message: 'Recording not found' });
+    mocked(dbm.getCdrRecordingfile).mockResolvedValue('in-199-100.wav');
+    mocked(resolveRecordingRequest).mockResolvedValueOnce({ status: 404 });
+    await expect(byId(ADMIN, 'L')).rejects.toMatchObject({ status: 404, message: 'Recording not found' });
+    mocked(dbm.getCallLegs).mockResolvedValue([SPY_LEG]);
+    await expect(byId(AGENT, SPY_LEG.uniqueid)).rejects.toMatchObject({ status: 403 });
   });
 });
 

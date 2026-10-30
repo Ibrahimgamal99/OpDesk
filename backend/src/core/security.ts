@@ -16,11 +16,13 @@
 import * as crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import type { Request } from 'express';
+import { clientHost } from '../api/client-host';
 import { HttpError } from '../api/http-error';
 import { placeholders, query, queryOne, execute } from '../db/pool';
 import type { Row } from '../db/pool';
 import { env } from './config';
 import { getLogger } from './logger';
+import { logAuthFailure } from './security-log';
 import { nowIso } from './py';
 import { runtime } from './runtime';
 import { filterLiveState, liveExtensions, liveQueues } from './scope';
@@ -665,6 +667,16 @@ async function scopedKeyPrincipal(rawKey: string, scope: string): Promise<Princi
   return apikeyPrincipal(meta);
 }
 
+/** scopedKeyPrincipal, writing an invalid key to the security log (for fail2ban). */
+async function keyPrincipalLogged(req: Request, rawKey: string, scope: string): Promise<Principal> {
+  try {
+    return await scopedKeyPrincipal(rawKey, scope);
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 401) void logAuthFailure('api-key', clientHost(req));
+    throw e;
+  }
+}
+
 /**
  * require_scope: the machine-reachable integration surface. An API key holding `scope`, or
  * any valid JWT (no role check: the read routes scope their rows by the caller, and any route
@@ -672,7 +684,7 @@ async function scopedKeyPrincipal(rawKey: string, scope: string): Promise<Princi
  */
 export async function requireScope(req: Request, scope: string): Promise<Principal> {
   const rawKey = extractApiKey(req);
-  const principal = rawKey ? await scopedKeyPrincipal(rawKey, scope) : await userFromJwt(bearerCredentials(req));
+  const principal = rawKey ? await keyPrincipalLogged(req, rawKey, scope) : await userFromJwt(bearerCredentials(req));
   return setPrincipal(req, principal);
 }
 
@@ -684,7 +696,7 @@ export async function requireScope(req: Request, scope: string): Promise<Princip
 export async function requireApiKey(req: Request, scope: string): Promise<Principal> {
   const rawKey = extractApiKey(req);
   if (!rawKey) throw new HttpError(401, 'API key required');
-  return setPrincipal(req, await scopedKeyPrincipal(rawKey, scope));
+  return setPrincipal(req, await keyPrincipalLogged(req, rawKey, scope));
 }
 
 // ---------------------------------------------------------------------------

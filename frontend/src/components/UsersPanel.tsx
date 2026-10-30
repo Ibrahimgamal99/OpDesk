@@ -749,7 +749,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
           {form.role !== 'agent' && (
             <FormSection title={t('users.access')}>
               <FormRow single>
-                <FormField label={t('users.groupsLabel')}>
+                <FormField
+                  label={t('users.groupsLabel')}
+                  hint={form.role === 'admin' ? t('users.groupsHintAdmin') : t('users.groupsHint')}
+                >
                   <Dropdown multiple size="md"
                     options={groups.map(g => ({ value: String(g.id), label: g.name }))}
                     value={form.group_ids}

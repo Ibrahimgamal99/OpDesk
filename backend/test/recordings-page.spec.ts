@@ -78,6 +78,18 @@ describe('GET /api/recordings', () => {
       next_cursor: 'next',
     });
   });
+
+  it('an API key may list; a signed-in supervisor or agent may not (the list is not scoped)', async () => {
+    const API_KEY = { id: null, role: 'admin', extension: null, api_key: true, allowed_agent_extensions: null };
+    mocked(dbm.getRecordingsFromDb).mockResolvedValue({ items: [], next_cursor: null });
+    mocked(dbm.getRecordingsCountFromDb).mockResolvedValue(0);
+    await expect(history.listRecordingsEndpoint(req({ principal: API_KEY }))).resolves.toEqual({ recordings: [], total: 0, next_cursor: null });
+    for (const role of ['supervisor', 'agent']) {
+      const p = { id: 2, role, extension: '100', allowed_agent_extensions: ['100'] };
+      await expect(history.listRecordingsEndpoint(req({ principal: p }))).rejects.toMatchObject({ status: 403, message: 'Admin only' });
+    }
+    expect(dbm.getRecordingsFromDb).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('DELETE /api/recordings/:uniqueid', () => {
