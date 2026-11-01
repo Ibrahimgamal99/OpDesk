@@ -483,7 +483,7 @@ components:
         local_days: { type: integer, nullable: true, description: "Delete recordings older than this." }
         local_max_bytes: { type: integer, nullable: true, description: "Delete the oldest recordings above this total size." }
         vad_delete_legs: { type: boolean, description: "Delete the per-speaker files once VAD has analysed them." }
-        root_dir: { type: string, description: "The recording directory; must exist." }
+        root_dir: { type: string, description: "Where the recorder writes (/var/spool/asterisk/monitor, or ASTERISK_RECORDING_ROOT_DIR). Read-only: sending another directory is a 400; sending the current one is ignored." }
 
     AuditEntry:
       type: object
@@ -981,13 +981,13 @@ paths:
           schema: { type: string, example: "bytes=0-65535" }
       responses:
         '200':
-          description: The audio file
+          description: The audio file, typed by its format (`audio/x-wav` for wav, `audio/x-gsm`, `audio/G722`, `audio/basic` for ulaw, ...)
           content:
-            audio/wav: { schema: { type: string, format: binary } }
+            audio/*: { schema: { type: string, format: binary } }
         '206':
           description: The requested byte range
           content:
-            audio/wav: { schema: { type: string, format: binary } }
+            audio/*: { schema: { type: string, format: binary } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1012,13 +1012,13 @@ paths:
           schema: { type: string, example: "bytes=0-65535" }
       responses:
         '200':
-          description: The audio file
+          description: The audio file, typed by its format (`audio/x-wav` for wav, `audio/x-gsm`, `audio/G722`, `audio/basic` for ulaw, ...)
           content:
-            audio/wav: { schema: { type: string, format: binary } }
+            audio/*: { schema: { type: string, format: binary } }
         '206':
           description: The requested byte range
           content:
-            audio/wav: { schema: { type: string, format: binary } }
+            audio/*: { schema: { type: string, format: binary } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1026,8 +1026,10 @@ paths:
       tags: [Recording]
       summary: Delete one call's recording file
       description: |
-        Admin JWT only. Here `{path}` is the call's `uniqueid`. Deletes the mixed file and
-        any leftover per-speaker files; the CDR row stays.
+        Admin JWT only. The route is `DELETE /api/recordings/{uniqueid}`: here `{path}` is
+        the uniqueid of one of the call's CDR legs. Deletes the mixed file and any leftover
+        per-speaker files; the CDR row stays. `404` is `Recording not found` when the leg
+        has no recording, `Recording file not found on disk` when its file is gone.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: path
@@ -1043,11 +1045,16 @@ paths:
               schema:
                 type: object
                 properties:
-                  deleted: { type: string }
+                  deleted: { type: string, description: "The deleted file's absolute path." }
                   deleted_legs: { type: array, items: { type: string } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500':
+          description: The file could not be deleted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/recordings:
     get:
@@ -1122,9 +1129,81 @@ paths:
                 properties:
                   enabled: { type: boolean }
                   format: { type: string, example: wav }
-                  engine: { type: string }
+                  engine: { type: string, example: opdesk }
                   mixed_dir: { type: string, example: /var/spool/asterisk/monitor }
+                  single_dir: { type: string, description: "Where the per-speaker files are written." }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/recording/enable:
+    post:
+      tags: [Recording]
+      summary: Turn call recording on
+      description: |
+        Installs OpDesk's recorder in the PBX predial hooks and reloads the dialplan. No
+        body is the same as `{"format": "wav"}`. `409` when another dialplan file already
+        defines the predial hooks (another call recorder is installed): recording is left
+        off and the message names the file to remove.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  default: wav
+                  enum: [wav, wav49, gsm, g722, ulaw, alaw, sln]
+      responses:
+        '200':
+          description: Enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties: { message: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Another recorder owns the PBX predial hooks
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: The dialplan could not be updated or reloaded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/recording/disable:
+    post:
+      tags: [Recording]
+      summary: Turn call recording off
+      description: The predial hooks become no-ops and the dialplan is reloaded.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties: { message: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500':
+          description: The dialplan could not be updated or reloaded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/recording/policy:
     get:
@@ -1143,6 +1222,7 @@ paths:
                   enabled: { type: boolean }
                   format: { type: string }
                   mixed_dir: { type: string }
+                  single_dir: { type: string }
                   directions:
                     type: object
                     properties:
@@ -1255,8 +1335,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Recording]
-      summary: Change retention settings or the recording directory
-      description: Only the keys sent are changed.
+      summary: Change retention settings
+      description: |
+        Only the keys sent are changed; `null` or `0` turns a limit off. `local_days` and
+        `local_max_bytes` must not be negative. `root_dir` cannot be changed: another
+        directory is a `400`, the current one is accepted and ignored. Returns `{}`.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -1279,7 +1362,11 @@ paths:
           description: What was deleted
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                properties:
+                  local_deleted: { type: integer, description: "Recording files deleted." }
+                  remote_deleted: { type: integer, description: "Always 0: storage is local only." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -1300,10 +1387,23 @@ paths:
                   local:
                     type: object
                     properties:
-                      used_bytes: { type: integer }
+                      root_dir: { type: string }
+                      used_bytes: { type: integer, description: "mixed_bytes + legs_bytes" }
+                      mixed_bytes: { type: integer, description: "The mixed call files." }
+                      legs_bytes: { type: integer, description: "The per-speaker files." }
+                      file_count: { type: integer }
                       max_bytes: { type: integer, nullable: true }
                       disk_free_bytes: { type: integer, nullable: true }
                       disk_total_bytes: { type: integer, nullable: true }
+                      retention_days: { type: integer, nullable: true }
+                  remote:
+                    type: object
+                    description: Always disabled; storage is local only. Kept for older clients.
+                    properties:
+                      enabled: { type: boolean }
+                      configured: { type: boolean }
+                      used_bytes: { type: integer, nullable: true }
+                      max_bytes: { type: integer, nullable: true }
                       retention_days: { type: integer, nullable: true }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }

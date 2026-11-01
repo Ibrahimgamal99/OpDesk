@@ -329,7 +329,9 @@ fetches the file with the header and plays the result as a blob.
 a bare file name, which is looked up across the dated subdirectories. Paths are resolved
 and confined to the recording directory; anything outside it is `403`, and so is a
 recording of a call outside the caller's history scope. `Range` requests are honoured
-(`206 Partial Content`), so players can seek.
+(`206 Partial Content`), so players can seek. The `Content-Type` follows the file's format: `audio/x-wav` for
+`wav`/`wav49`, `audio/x-gsm`, `audio/G722`, `audio/basic` (ulaw), `audio/x-alaw-basic`,
+`audio/L16` (sln).
 
 The recording directory is where the recorder writes, `/var/spool/asterisk/monitor`, or
 `ASTERISK_RECORDING_ROOT_DIR` when the deployment mounts the spool elsewhere. It is shown
@@ -340,18 +342,18 @@ under Settings → Recording but cannot be changed there.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/recording/status` | (any JWT) `{enabled, format, engine, mixed_dir}` |
-| `POST /api/recording/enable` | `{format?}` (`wav` default, `wav49`, `gsm`, `g722`, `ulaw`, `alaw`, `sln`) — turn recording on |
+| `GET /api/recording/status` | (any JWT) `{enabled, format, engine, mixed_dir, single_dir}` |
+| `POST /api/recording/enable` | `{format?}` (`wav` default, `wav49`, `gsm`, `g722`, `ulaw`, `alaw`, `sln`) — turn recording on. `409` when another dialplan file already defines the PBX predial hooks (another call recorder is installed): recording stays off and the message names the file |
 | `POST /api/recording/disable` | Turn recording off |
-| `GET /api/recording/policy` | `{engine, enabled, format, mixed_dir, directions: {inbound, outbound, internal}, extensions: [{extension, name, recording}]}` |
+| `GET /api/recording/policy` | `{engine, enabled, format, mixed_dir, single_dir, directions: {inbound, outbound, internal}, extensions: [{extension, name, recording}]}` |
 | `POST /api/recording/direction/{direction}` | `{enabled}` — record `inbound`, `outbound` or `internal` calls or not |
 | `POST /api/recording/extension/{ext}` | `{recording}` — record calls involving one extension or not |
 | `POST /api/recording/extensions/bulk` | `{recording, extensions?}` — many extensions at once (all when omitted); returns `{updated: [...]}` |
 | `GET /api/recording/retention` | `{local_days, local_max_bytes, vad_delete_legs, root_dir}` |
-| `POST /api/recording/retention` | Any of the same keys; `root_dir` is read-only (sending another directory is a 400) |
-| `POST /api/recording/retention/run` | Run the daily clean-up now; returns what it deleted |
-| `GET /api/recording/storage-stats` | `{total_recordings, local: {used_bytes, max_bytes, disk_free_bytes, disk_total_bytes, retention_days}}` |
-| `DELETE /api/recordings/{uniqueid}` | Delete the recording file of one call (the CDR row stays); `{deleted, deleted_legs}` |
+| `POST /api/recording/retention` | Any of the same keys, only those sent change; `root_dir` is read-only (another directory is a 400, the current one is ignored). Returns `{}` |
+| `POST /api/recording/retention/run` | Run the daily clean-up now; returns `{local_deleted, remote_deleted}` (files deleted; `remote_deleted` is always 0) |
+| `GET /api/recording/storage-stats` | `{total_recordings, local: {root_dir, used_bytes, mixed_bytes, legs_bytes, file_count, max_bytes, disk_free_bytes, disk_total_bytes, retention_days}, remote}` — `remote` is always disabled |
+| `DELETE /api/recordings/{uniqueid}` | Delete the recording file of one call (the CDR row stays); `{deleted, deleted_legs}`. `404` when the leg has no recording or its file is already gone |
 
 Recordings are kept on the PBX's disk only. The recorder keeps both directions of a call
 in one file, and the ring-only files of legs that were never answered are removed.
