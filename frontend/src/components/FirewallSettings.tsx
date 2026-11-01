@@ -17,10 +17,13 @@ export interface GeoipStatus {
   tools: { ipset: boolean; iptables: boolean; ip6tables: boolean };
   data: { updated_at: string | null; countries: string[] };
   applied: boolean;
+  /** Loaded at boot by opdesk-firewall.service, before the network comes up. */
+  persisted: boolean;
   dropped_packets: number;
   conflicts: string[];
   last_error: string | null;
-  client: { ip: string | null; country: string | null; allowed: boolean };
+  /** `private`: the server sees a private source, so a NAT or proxy hides the real one. */
+  client: { ip: string | null; country: string | null; allowed: boolean; private: boolean };
 }
 
 interface Jail {
@@ -424,6 +427,11 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
                   {geo.applied ? t('firewall.geoip.active', 'Filtering') : t('firewall.geoip.notApplied', 'On, not applied')}
                 </Badge>
               : <Badge>{t('common.disabled', 'Disabled')}</Badge>}
+            {geo.enabled && geo.applied && (
+              <Badge tone={geo.persisted ? 'success' : 'warning'}>
+                {geo.persisted ? t('firewall.geoip.persisted', 'Saved for reboot') : t('firewall.geoip.notPersisted', 'Not saved for reboot')}
+              </Badge>
+            )}
             {geo.enabled && (
               <Badge tone="neutral">
                 {t('firewall.geoip.dropped', { defaultValue: 'Dropped packets: {{n}}', n: geo.dropped_packets.toLocaleString() })}
@@ -450,6 +458,14 @@ export function FirewallSettings({ card, onStatus }: FirewallSettingsProps) {
             </Alert>
           )}
           {geo.last_error && <Alert tone="error" className="u-mb-3">{geo.last_error}</Alert>}
+          {geo.client.private && (
+            <Alert tone="warning" className="u-mb-3">
+              {t('firewall.geoip.privateClient', {
+                defaultValue: 'Your connection reaches this server from {{ip}}, a private address: a router, NAT or proxy in front of the server is replacing the real client address. GeoIP always lets private addresses through, so it cannot filter traffic that arrives this way. Forward the ports without source NAT so the server sees real client IPs.',
+                ip: geo.client.ip,
+              })}
+            </Alert>
+          )}
           {geo.conflicts.length > 0 && (
             <Alert tone="warning" className="u-mb-3">
               {t('firewall.geoip.conflicts', {

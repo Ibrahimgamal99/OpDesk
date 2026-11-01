@@ -13,7 +13,7 @@ import { getLogger } from '../../core/logger';
 import * as f2b from '../../services/firewall-fail2ban';
 import * as geo from '../../services/firewall-geoip';
 import { recentEvents } from '../../services/firewall-logs';
-import { parseIp } from '../../services/firewall-net';
+import { isPrivate, parseIp } from '../../services/firewall-net';
 import { HttpError } from '../http-error';
 import { respond } from '../respond';
 import { Auth, clientHost, Get, Post, Put, principal } from '../routing';
@@ -58,11 +58,12 @@ async function fail2banStatus() {
 
 async function geoipStatus(req: Request) {
   const cfg = await geo.loadConfig();
-  const [tools, updatedAt, countries, applied, dropped, conflicts] = await Promise.all([
+  const [tools, updatedAt, countries, applied, persisted, dropped, conflicts] = await Promise.all([
     geo.detectTools(),
     geo.dataUpdatedAt(),
     geo.availableCountries(),
     geo.isApplied(),
+    geo.isPersisted(),
     geo.droppedPackets(),
     geo.conflicts(),
   ]);
@@ -74,10 +75,14 @@ async function geoipStatus(req: Request) {
     tools,
     data: { updated_at: updatedAt, countries },
     applied: cfg.enabled && applied,
+    // Loaded at boot by opdesk-firewall.service, before the network comes up.
+    persisted: cfg.enabled && persisted,
     dropped_packets: dropped,
     conflicts,
     last_error: geo.lastApplyError(),
-    client: { ip, country: you.country, allowed: !you.blocked },
+    // A private address here usually means a NAT or proxy in front of the server rewrites
+    // the source: GeoIP lets private ranges through, so it cannot filter that traffic.
+    client: { ip, country: you.country, allowed: !you.blocked, private: !!ip && isPrivate(ip) && ip !== '127.0.0.1' && ip !== '::1' },
   };
 }
 
