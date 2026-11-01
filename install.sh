@@ -1286,12 +1286,23 @@ step_build() {
     local d
     for d in backend frontend; do
         info "npm ci + build: $d"
+        # As start.sh does: keep the last good dist/ aside and put it back if this build fails.
+        # tsc writes dist/ even on type errors, so a failed build must not become the one that runs.
+        if [ -d "$PROJECT_ROOT/$d/dist" ]; then
+            rm -rf "$PROJECT_ROOT/$d/dist.prev" && cp -a "$PROJECT_ROOT/$d/dist" "$PROJECT_ROOT/$d/dist.prev"
+        fi
         if (cd "$PROJECT_ROOT/$d" && { if [ -f package-lock.json ]; then npm ci --include=dev --no-audit --no-fund; else npm install --include=dev --no-audit --no-fund; fi; } \
             && NODE_OPTIONS="$nopts" npm run build); then
+            rm -rf "$PROJECT_ROOT/$d/dist.prev"
             info "$d built"
         else
             err "$d build failed (see the npm output above)."
             BUILD_STATUS="FAILED ($d)"
+            if [ -d "$PROJECT_ROOT/$d/dist.prev" ]; then
+                rm -rf "$PROJECT_ROOT/$d/dist" && mv "$PROJECT_ROOT/$d/dist.prev" "$PROJECT_ROOT/$d/dist"
+                warn "Kept the previous $d build."
+                BUILD_STATUS="FAILED ($d; previous build kept)"
+            fi
         fi
     done
     [ -f "$PROJECT_ROOT/backend/dist/main.js" ] || BUILD_STATUS="FAILED (no backend/dist/main.js)"
@@ -1369,9 +1380,32 @@ EOF
         warn "Not starting opdesk: the backend is not built."
         return
     fi
+    # A failed build left the previous one in place: a running service already runs it, and a
+    # restart would only make start.sh retry the failing build before falling back to it.
+    if [ "$BUILD_STATUS" != "ok" ] && systemctl is-active --quiet opdesk.service; then
+        warn "Not restarting opdesk: the build failed, so it keeps running the version it runs now."
+        SERVICE_STATUS="running the previous version (not restarted)"
+        return
+    fi
     systemctl restart opdesk.service
-    sleep 3
-    if systemctl is-active --quiet opdesk.service; then SERVICE_STATUS="running"; else SERVICE_STATUS="FAILED (journalctl -u opdesk -n 100)"; fi
+    if wait_for_backend; then SERVICE_STATUS="running"; else SERVICE_STATUS="FAILED (journalctl -u opdesk -n 100)"; fi
+}
+
+# wait_for_backend: true once the restarted backend answers /health (up to ~2 min: start.sh may
+# still build). systemd reports a Type=simple unit active as soon as start.sh launches, so a
+# crash a few seconds in -- then auto-restarted every 5 s -- would otherwise read "running".
+wait_for_backend() {
+    local host restarts i
+    host=$(env_get "$ENV_FILE" OPDESK_BIND_HOST)
+    case "$host" in "" | 0.0.0.0 | "::") host=127.0.0.1 ;; *:*) host="[$host]" ;; esac
+    restarts=$(systemctl show -p NRestarts --value opdesk.service 2>/dev/null)
+    for i in $(seq 1 60); do
+        curl -fsS -o /dev/null --max-time 2 "http://$host:${PORT:-8765}/health" 2>/dev/null && return 0
+        systemctl is-failed --quiet opdesk.service && return 1
+        [ "$(systemctl show -p NRestarts --value opdesk.service 2>/dev/null)" != "$restarts" ] && return 1
+        sleep 2
+    done
+    return 1
 }
 
 step_summary() {

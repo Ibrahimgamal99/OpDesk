@@ -187,7 +187,7 @@ Re-run the installer:
 cd /opt/OpDesk && sudo ./install.sh
 ```
 
-On an existing install it first asks **1) update 2) uninstall**. Enter (and `--yes`) means update. When `backend/.env` or the OpDesk database is missing, it runs as a fresh install instead, admin password question included. It pulls the latest code, keeps `backend/.env`, `cert/`, the HTTPS port and the domain, regenerates the nginx site and the systemd unit, rebuilds, and restarts the service.
+On an existing install it first asks **1) update 2) uninstall**. Enter (and `--yes`) means update. When `backend/.env` or the OpDesk database is missing, it runs as a fresh install instead, admin password question included. It pulls the latest code, keeps `backend/.env`, `cert/`, the HTTPS port and the domain, regenerates the nginx site and the systemd unit, rebuilds, and restarts the service. The summary reports `running` only once the restarted backend answers `/health`. If a build fails, the previous build is put back and a running service is left running it, not restarted; the summary shows `Build: FAILED (...; previous build kept)`.
 
 To switch an existing LAN install to a public domain, run it once with the domain set:
 
