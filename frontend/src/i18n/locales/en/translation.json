@@ -1862,7 +1862,10 @@
       "countriesHint": "Everything else is dropped while filtering is on.",
       "pickCountries": "Pick countries…",
       "searchCountries": "Search countries…",
-      "downloading": "Downloading country list…"
+      "downloading": "Downloading country list…",
+      "persisted": "Saved for reboot",
+      "notPersisted": "Not saved for reboot",
+      "privateClient": "Your connection reaches this server from {{ip}}, a private address: a router, NAT or proxy in front of the server is replacing the real client address. GeoIP always lets private addresses through, so it cannot filter traffic that arrives this way. Forward the ports without source NAT so the server sees real client IPs."
     },
     "saved": "Saved and applied.",
     "f2b": {

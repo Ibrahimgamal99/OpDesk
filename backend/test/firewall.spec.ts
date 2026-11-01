@@ -12,7 +12,7 @@ import { securityLogLine } from '../src/core/security-log';
 import {
   defaultIgnoreIp, parseBanned, parseBanTimes, parseDump, renderJailFile, validateOverride,
 } from '../src/services/firewall-fail2ban';
-import { FirewallError, parseTrusted, splitList, wouldBlock } from '../src/services/firewall-geoip';
+import { FirewallError, parseTrusted, renderBootUnit, splitList, wouldBlock } from '../src/services/firewall-geoip';
 import { formatIp, isPrivate, parseCidr, parseIp } from '../src/services/firewall-net';
 
 describe('firewall-net', () => {
@@ -141,6 +141,17 @@ describe('GeoIP config', () => {
     expect(await wouldBlock('198.51.100.7', cfg)).toEqual({ blocked: true, country: null });
     expect((await wouldBlock('198.51.100.7', { ...cfg, enabled: false })).blocked).toBe(false);
     expect((await wouldBlock(null, cfg)).blocked).toBe(false);
+  });
+
+  test('boot unit: loads the saved sets before the chain, before the network, and hooks INPUT once', () => {
+    const unit = renderBootUnit('/var/lib/opdesk/geoip/boot');
+    expect(unit).toContain('Before=network-pre.target netfilter-persistent.service fail2ban.service opdesk.service');
+    expect(unit).toContain('ConditionPathExists=/var/lib/opdesk/geoip/boot/ipset');
+    const exec = unit.split('\n').filter((l) => l.startsWith('ExecStart='));
+    expect(exec[0]).toContain('ipset restore -exist -file "/var/lib/opdesk/geoip/boot/ipset"');
+    expect(exec[1]).toContain('iptables-restore -w --noflush "/var/lib/opdesk/geoip/boot/rules.v4"');
+    expect(exec[1]).toContain('iptables -w -C INPUT -j OPDESK-GEO 2>/dev/null || iptables -w -I INPUT 1 -j OPDESK-GEO');
+    expect(exec[2]).toContain('[ ! -f "/var/lib/opdesk/geoip/boot/rules.v6" ] ||');
   });
 });
 

@@ -10,6 +10,7 @@ jest.mock('../src/services/firewall-geoip', () => ({
   dataUpdatedAt: jest.fn(async () => '2026-10-30T00:00:00Z'),
   availableCountries: jest.fn(async () => ['EG', 'US']),
   isApplied: jest.fn(async () => false),
+  isPersisted: jest.fn(async () => false),
   droppedPackets: jest.fn(async () => 0),
   conflicts: jest.fn(async () => []),
   lastApplyError: jest.fn(() => null),

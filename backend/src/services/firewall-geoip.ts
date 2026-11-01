@@ -15,8 +15,11 @@
  *   src in opdesk-geo4             RETURN
  *                                  DROP
  *
- * RETURN, not ACCEPT: fail2ban's chains still see allowed traffic. Rules live in the kernel
- * only, so startup re-applies them and a 5-minute check re-hooks the chain if another tool
+ * RETURN, not ACCEPT: fail2ban's chains still see allowed traffic. Every apply also saves
+ * the sets and chain under OPDESK_DATA_DIR/geoip/boot, and opdesk-firewall.service loads
+ * them at boot before the network comes up (and before netfilter-persistent, whose saved
+ * rules may reference the sets), so there is no unfiltered window while OpDesk starts.
+ * Startup re-applies them anyway, and a 5-minute check re-hooks the chain if another tool
  * flushed INPUT. Sets are rebuilt under a temporary name and swapped in, so an update never
  * leaves a moment with an empty allow-list.
  */
@@ -41,6 +44,10 @@ const ZONE_URLS: Record<Family, string> = {
 };
 const MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024;
 export const REFRESH_AFTER_MS = 7 * 24 * 3600 * 1000;
+
+const BOOT_DIR = path.join(GEO_DIR, 'boot');
+export const BOOT_UNIT = 'opdesk-firewall.service';
+const BOOT_UNIT_FILE = path.join('/etc/systemd/system', BOOT_UNIT);
 
 export const CHAIN = 'OPDESK-GEO';
 const SETS: Record<Family, { geo: string; trust: string; inet: string; ipt: string }> = {
@@ -328,19 +335,110 @@ async function unhook(family: Family): Promise<void> {
   await run(['ipset', 'destroy', trust]);
 }
 
+// ---------------------------------------------------------------------------
+// Boot persistence
+// ---------------------------------------------------------------------------
+
+/** The unit that loads the saved sets and chain at boot; every step is idempotent. */
+export function renderBootUnit(bootDir: string = BOOT_DIR): string {
+  const hookCmd = (ipt: string, rules: string) =>
+    `${ipt}-restore -w --noflush "${rules}" && { ${ipt} -w -C INPUT -j ${CHAIN} 2>/dev/null || ${ipt} -w -I INPUT 1 -j ${CHAIN}; }`;
+  const v4 = path.join(bootDir, 'rules.v4');
+  const v6 = path.join(bootDir, 'rules.v6');
+  return [
+    '# Written by OpDesk (Settings -> Firewall -> GeoIP); removed when GeoIP is turned off.',
+    '[Unit]',
+    'Description=OpDesk GeoIP firewall (the allow-list OpDesk last applied)',
+    'DefaultDependencies=no',
+    'After=local-fs.target',
+    'Before=network-pre.target netfilter-persistent.service fail2ban.service opdesk.service shutdown.target',
+    'Wants=network-pre.target',
+    'Conflicts=shutdown.target',
+    `ConditionPathExists=${path.join(bootDir, 'ipset')}`,
+    '',
+    '[Service]',
+    'Type=oneshot',
+    'RemainAfterExit=yes',
+    `ExecStart=/bin/sh -c 'ipset restore -exist -file "${path.join(bootDir, 'ipset')}"'`,
+    `ExecStart=/bin/sh -c '${hookCmd('iptables', v4)}'`,
+    `ExecStart=/bin/sh -c '[ ! -f "${v6}" ] || { ${hookCmd('ip6tables', v6)}; }'`,
+    '',
+    '[Install]',
+    'WantedBy=sysinit.target',
+    '',
+  ].join('\n');
+}
+
+async function writeAtomic(file: string, content: string, mode: number): Promise<void> {
+  const tmp = `${file}.tmp`;
+  await fsp.writeFile(tmp, content, { mode });
+  await fsp.rename(tmp, file);
+}
+
+/** Save what was just applied for the next boot, and make sure the unit is installed and enabled. */
+async function persist(ipsetScript: string, rules: Partial<Record<Family, string>>): Promise<void> {
+  if (!(await run(['systemctl', '--version'])).ok) return; // no systemd (container): startup re-applies
+  await fsp.mkdir(BOOT_DIR, { recursive: true, mode: 0o700 });
+  await writeAtomic(path.join(BOOT_DIR, 'ipset'), ipsetScript, 0o600);
+  for (const family of [4, 6] as Family[]) {
+    const file = path.join(BOOT_DIR, `rules.v${family}`);
+    if (rules[family]) await writeAtomic(file, rules[family]!, 0o600);
+    else await fsp.rm(file, { force: true });
+  }
+  const unit = renderBootUnit();
+  const current = await fsp.readFile(BOOT_UNIT_FILE, 'utf8').catch(() => null);
+  if (current !== unit) {
+    await writeAtomic(BOOT_UNIT_FILE, unit, 0o644);
+    const r = await run(['systemctl', 'daemon-reload']);
+    if (!r.ok) throw new Error(`systemctl daemon-reload: ${r.err}`);
+  }
+  if (!(await run(['systemctl', 'is-enabled', '--quiet', BOOT_UNIT])).ok) {
+    const r = await run(['systemctl', 'enable', BOOT_UNIT]);
+    if (!r.ok) throw new Error(`systemctl enable ${BOOT_UNIT}: ${r.err}`);
+  }
+}
+
+/** GeoIP is off: nothing may be loaded at the next boot. */
+async function unpersist(): Promise<void> {
+  await fsp.rm(BOOT_DIR, { recursive: true, force: true });
+  if (await fsp.stat(BOOT_UNIT_FILE).then(() => true, () => false)) {
+    await run(['systemctl', 'disable', BOOT_UNIT]);
+    await fsp.rm(BOOT_UNIT_FILE, { force: true });
+    await run(['systemctl', 'daemon-reload']);
+  }
+}
+
+/** True when the next boot will load the allow-list before the network comes up. */
+export async function isPersisted(): Promise<boolean> {
+  const [saved, unit, enabled] = await Promise.all([
+    fsp.stat(path.join(BOOT_DIR, 'rules.v4')).then(() => true, () => false),
+    fsp.stat(BOOT_UNIT_FILE).then(() => true, () => false),
+    run(['systemctl', 'is-enabled', '--quiet', BOOT_UNIT]),
+  ]);
+  return saved && unit && enabled.ok;
+}
+
 let lastError: string | null = null;
 
 export function lastApplyError(): string | null {
   return lastError;
 }
 
-/** Make the kernel match `cfg`: install or refresh the sets and chain, or remove them. */
+/**
+ * Make the kernel match `cfg`: install or refresh the sets and chain, or remove them; then
+ * save the same for boot. A save failure does not undo the kernel change: it shows as the
+ * last error, and the next apply (startup, the 5-minute check, a save) retries it.
+ */
 export async function apply(cfg: GeoipConfig): Promise<void> {
   try {
     if (!cfg.enabled) {
       await unhook(4);
       await unhook(6);
       lastError = null;
+      await unpersist().catch((e) => {
+        lastError = `GeoIP removed, but the boot copy could not be removed: ${(e as Error)?.message || e}`;
+        log.warning(lastError);
+      });
       return;
     }
     const tools = await detectTools();
@@ -349,19 +447,28 @@ export async function apply(cfg: GeoipConfig): Promise<void> {
     }
     const trusted = parseTrusted(cfg.trusted);
     const families: Family[] = tools.ip6tables ? [4, 6] : [4];
+    const savedSets: string[] = [];
+    const savedRules: Partial<Record<Family, string>> = {};
     for (const family of families) {
       const s = SETS[family];
       const allowed: Cidr[] = [];
       for (const cc of cfg.countries) allowed.push(...(await readZone(cc, family)));
-      let r = await run(['ipset', 'restore', '-exist'], setScript(s.geo, s.inet, allowed));
-      if (r.ok) r = await run(['ipset', 'restore', '-exist'], setScript(s.trust, s.inet, trusted.filter((c) => c.family === family)));
+      const sets = [setScript(s.geo, s.inet, allowed), setScript(s.trust, s.inet, trusted.filter((c) => c.family === family))];
+      let r = await run(['ipset', 'restore', '-exist'], sets[0]);
+      if (r.ok) r = await run(['ipset', 'restore', '-exist'], sets[1]);
       if (!r.ok) throw new FirewallError(500, `ipset: ${r.err}`);
       r = await run([`${s.ipt}-restore`, '-w', '--noflush'], chainScript(family));
       if (!r.ok) throw new FirewallError(500, `${s.ipt}-restore: ${r.err}`);
       await hook(s.ipt);
+      savedSets.push(...sets);
+      savedRules[family] = chainScript(family);
     }
     lastError = null;
     log.info('GeoIP firewall applied: countries=%s trusted=%s', cfg.countries.join(','), cfg.trusted.length);
+    await persist(savedSets.join(''), savedRules).catch((e) => {
+      lastError = `GeoIP is filtering now, but it could not be saved for the next boot: ${(e as Error)?.message || e}`;
+      log.warning(lastError);
+    });
   } catch (e) {
     lastError = (e as Error)?.message || String(e);
     throw e;
@@ -428,6 +535,9 @@ async function tick(startup = false): Promise<void> {
   if (!cfg.enabled) return;
   if (startup || !(await isApplied())) {
     if (!startup) log.warning('GeoIP firewall chain was missing (flushed by another tool?); re-applying');
+    await apply(cfg);
+  } else if (!(await isPersisted()) && (await run(['systemctl', '--version'])).ok) {
+    log.warning('GeoIP firewall is not saved for boot; re-applying');
     await apply(cfg);
   }
 }
