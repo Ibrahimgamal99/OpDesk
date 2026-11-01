@@ -69,6 +69,10 @@ beforeAll(async () => {
     actions.push({ Action: action, ...(params || {}) });
     return 'Response: Success\r\nMessage: ok';
   }) as never;
+  monitor.sendAwaitingEvent = (async (action: string, params: Record<string, unknown>) => {
+    actions.push({ Action: action, ...params });
+    return [{ Response: 'Success' }, { Event: 'OriginateResponse', Response: 'Success', Reason: '4' }];
+  }) as never;
   monitor.syncActiveCalls = (async () => monitor.activeCalls) as never;
   runtime.monitor = monitor;
   runtime.agentState = new AgentStateManager(monitor);
@@ -378,6 +382,29 @@ describe('supervisor controls on a live call', () => {
     a.ws.send(JSON.stringify({ action: 'barge', supervisor: '999', target: '101' }));
     expect(await a.next('action_result')).toMatchObject({ success: false, message: 'Supervise from your own extension' });
     a.ws.close();
+  });
+
+  it('supervision: a ringing supervisor phone does not hold up the socket', async () => {
+    // The ChanSpy Originate answers only when the supervisor picks up: hold it open.
+    const original = monitor.sendAwaitingEvent;
+    let pickUp!: () => void;
+    const answered = new Promise<void>((r) => (pickUp = r));
+    monitor.sendAwaitingEvent = (async (action: string, params: Record<string, unknown>, event: string) => {
+      await answered;
+      return original.call(monitor, action, params, event);
+    }) as never;
+    try {
+      const c = await open('/ws?token=sup');
+      await c.next('initial_state');
+      c.ws.send(JSON.stringify({ action: 'listen', supervisor: '200', target: '101' }));
+      c.ws.send(JSON.stringify({ action: 'sync_calls' }));
+      expect(await c.next('action_result')).toMatchObject({ action: 'sync_calls', success: true });
+      pickUp();
+      expect(await c.next('action_result')).toMatchObject({ action: 'listen', success: true });
+      c.ws.close();
+    } finally {
+      monitor.sendAwaitingEvent = original;
+    }
   });
 
   it('owner resolution', () => {

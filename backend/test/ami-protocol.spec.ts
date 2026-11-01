@@ -233,6 +233,37 @@ describe('AmiClient', () => {
     await srv.close();
   });
 
+  it('sendAwaitingEvent holds an Async Originate open until its OriginateResponse', async () => {
+    let answer: (() => void) | null = null;
+    const srv = await fakeAmi((a, sock) => {
+      const id = a.ActionID;
+      if (a.Action === 'Login') sock.write(raw({ Response: 'Success', ActionID: id }));
+      else if (a.Action === 'Ping') sock.write(raw({ Response: 'Success', ActionID: id, Ping: 'Pong' }));
+      else if (a.Action === 'Originate') {
+        sock.write(raw({ Response: 'Success', ActionID: id, Message: 'Originate successfully queued' }));
+        answer = () => sock.write(raw({ Event: 'OriginateResponse', ActionID: id, Response: 'Success', Reason: '4' }));
+      }
+    });
+    const events: string[] = [];
+    const client = new AmiClient({ onEvent: (r) => events.push(parse(r).Event) });
+    await client.connect('127.0.0.1', srv.port);
+    await client.login('u', 'p');
+
+    let settled = false;
+    const pending = client.sendAwaitingEvent('Originate', { Async: 'true' }, 'OriginateResponse', 5).then((r) => {
+      settled = true;
+      return r;
+    });
+    // Still ringing: the queued Success alone does not end it, and other actions go through.
+    expect(parse((await client.send('Ping'))!).Ping).toBe('Pong');
+    expect(settled).toBe(false);
+    answer!();
+    expect((await pending)!.map((m) => parse(m).Event || parse(m).Response)).toEqual(['Success', 'OriginateResponse']);
+    expect(events).toEqual([]);
+    await client.close();
+    await srv.close();
+  });
+
   it('answers null on timeout and when the connection drops', async () => {
     let lastSock: net.Socket | null = null;
     const srv = await fakeAmi((a, sock) => {

@@ -112,6 +112,16 @@ export const EVENT_TIMEOUT = 1.0;
 export const AMI_RECONNECT_MIN_DELAY = 3.0; // seconds, first backoff after an unexpected disconnect
 export const AMI_RECONNECT_MAX_DELAY = 30.0; // seconds, backoff ceiling
 export const QUEUE_RECONCILE_INTERVAL = 10.0; // seconds between waiting-caller reconciles
+export const SPY_RING_TIMEOUT = 30.0; // seconds the supervisor's phone rings for listen / whisper / barge
+
+/** OriginateResponse `Reason` (the dialled channel's last control frame), for the error log. */
+const ORIGINATE_REASONS: Readonly<Record<string, string>> = {
+  '0': "the supervisor's phone could not be called",
+  '1': "the supervisor's phone hung up",
+  '3': "the supervisor's phone was not answered",
+  '5': "the supervisor's phone is busy",
+  '8': 'the call could not be placed (congestion)',
+};
 
 export const DIALPLAN_CTX: ReadonlySet<string> = new Set([
   's', 'h', 'i', 't', 'o', 'a', 'e', 'start', 'hangup', 'invalid', 'timeout',
@@ -538,6 +548,23 @@ export class AMIExtensionsMonitor {
       if (msgs.length && /Success/i.test(msgs[0]['Response'] || '')) log.warning('%s: Timeout waiting for %s', action, complete);
     }
     return msgs;
+  }
+
+  /**
+   * Send an action answered by a Response and then `event` (see AmiClient.sendAwaitingEvent),
+   * parsed; null when not connected or nothing came back.
+   */
+  async sendAwaitingEvent(
+    action: string,
+    params: Record<string, unknown>,
+    event: string,
+    timeout = AMI_TIMEOUT,
+  ): Promise<AmiMessage[] | null> {
+    const client = this.client;
+    if (!this.connected || !client) return null;
+    const raw = await client.sendAwaitingEvent(action, params, event, timeout);
+    if (raw === null) log.error('Send %s failed: no response', action);
+    return raw ? raw.map((m) => parse(m)) : null;
   }
 
   /** Every wire event goes through here, in arrival order. */
@@ -3000,15 +3027,26 @@ export class AMIExtensionsMonitor {
     const mode = label.toLowerCase();
     // ChanSpy matches a channel-name PREFIX: `PJSIP/101` would also spy on PJSIP/1010-….
     // The full channel name (PJSIP/101-0000002a) names this call's leg and nothing else.
-    const resp = await this.sendAsync('Originate', {
-      Channel: this.deviceInterface(supervisor),
-      ChannelId: spyId,
-      Application: 'ChanSpy',
-      Data: `${ch},${options}`,
-      CallerID: `${label} <${target}>`,
-      Timeout: '30000',
-    });
-    if (resp && resp.includes('Response: Success')) {
+    // Async, then wait for OriginateResponse: it comes once the supervisor picks up (or the
+    // ring fails). A synchronous Originate held the whole AMI session for the ring -- every
+    // other action timed out meanwhile -- and its reply came after the 5 s AMI default, so
+    // a supervisor slower than that read as "Unknown error".
+    const msgs = await this.sendAwaitingEvent(
+      'Originate',
+      {
+        Channel: this.deviceInterface(supervisor),
+        ChannelId: spyId,
+        Application: 'ChanSpy',
+        Data: `${ch},${options}`,
+        CallerID: `${label} <${target}>`,
+        Timeout: String(SPY_RING_TIMEOUT * 1000),
+        Async: 'true',
+      },
+      'OriginateResponse',
+      SPY_RING_TIMEOUT + AMI_TIMEOUT,
+    );
+    const answer = msgs?.find((msg) => msg['Event'] === 'OriginateResponse');
+    if (answer && /^success$/i.test(answer['Response'] || '')) {
       log.info(`✅ ${supervisor} is now ${mode}ing ${target}'s call`);
       try {
         await dbm.recordSupervision(spyId, {
@@ -3023,7 +3061,12 @@ export class AMIExtensionsMonitor {
       }
       return true;
     }
-    log.error(`❌ ${label} failed: ${dget(parse(resp || ''), 'Message', 'Unknown error')}`);
+    const why = answer
+      ? ORIGINATE_REASONS[answer['Reason'] || ''] || `reason ${answer['Reason'] || '?'}`
+      : msgs?.length
+        ? dget(msgs[0], 'Message', 'no answer from Asterisk')
+        : 'no response from Asterisk';
+    log.error(`❌ ${label} failed: ${why}`);
     return false;
   }
 

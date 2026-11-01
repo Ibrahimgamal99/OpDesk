@@ -225,13 +225,39 @@ describe('supervision targets the exact channel', () => {
     m.connected = true;
     m.activeCalls.set('101', { channel: 'PJSIP/101-0000002a', linkedid: 'L101' });
     m.syncActiveCalls = jest.fn(async () => m.activeCalls);
-    const sent: Array<[string, Record<string, unknown> | null]> = [];
-    m.sendAsync = jest.fn(async (action: string, params: Record<string, unknown> | null = null) => {
+    const sent: Array<[string, Record<string, unknown>]> = [];
+    m.sendAwaitingEvent = jest.fn(async (action: string, params: Record<string, unknown>) => {
       sent.push([action, params]);
-      return 'Response: Success\r\n';
+      const answered: Record<string, string>[] = [{ Response: 'Success' }, { Event: 'OriginateResponse', Response: 'Success', Reason: '4' }];
+      return answered;
     });
     expect(await m.listenToCall('200', '101')).toBe(true);
     expect(sent[0][0]).toBe('Originate');
     expect(sent[0][1]).toMatchObject({ Application: 'ChanSpy', Data: 'PJSIP/101-0000002a,qsE' });
+  });
+
+  test('Async Originate: success is the supervisor answering, within the whole ring', async () => {
+    const { m } = setup();
+    m.connected = true;
+    m.activeCalls.set('101', { channel: 'PJSIP/101-0000002a', linkedid: 'L101' });
+    m.syncActiveCalls = jest.fn(async () => m.activeCalls);
+    const calls: Array<[Record<string, unknown>, string, number | undefined]> = [];
+    let reply: Record<string, string>[] | null = [{ Response: 'Success' }, { Event: 'OriginateResponse', Response: 'Success', Reason: '4' }];
+    m.sendAwaitingEvent = jest.fn(async (_action: string, params: Record<string, unknown>, event: string, timeout?: number) => {
+      calls.push([params, event, timeout]);
+      return reply;
+    });
+    expect(await m.whisperToCall('200', '101')).toBe(true);
+    expect(calls[0][0]).toMatchObject({ Async: 'true', Timeout: '30000' });
+    expect(calls[0][1]).toBe('OriginateResponse');
+    expect(calls[0][2]).toBeGreaterThan(30);
+
+    // Not answered / still ringing at the deadline (queued only) / AMI silent: all failures.
+    reply = [{ Response: 'Success' }, { Event: 'OriginateResponse', Response: 'Failure', Reason: '3' }];
+    expect(await m.listenToCall('200', '101')).toBe(false);
+    reply = [{ Response: 'Success', Message: 'Originate successfully queued' }];
+    expect(await m.listenToCall('200', '101')).toBe(false);
+    reply = null;
+    expect(await m.listenToCall('200', '101')).toBe(false);
   });
 });

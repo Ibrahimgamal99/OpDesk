@@ -500,19 +500,23 @@ export async function handleClientMessage(websocket: WebSocket, message: unknown
           await send(actionResult(action, false, refusal));
           return;
         }
-        let result: boolean;
-        let verb: string;
-        if (action === 'listen') {
-          result = await monitor.listenToCall(supervisor, target);
-          verb = 'listening to';
-        } else if (action === 'whisper') {
-          result = await monitor.whisperToCall(supervisor, target);
-          verb = 'whispering to';
-        } else {
-          result = await monitor.bargeIntoCall(supervisor, target);
-          verb = 'barging into';
-        }
-        await send(actionResult(action, result, `${result ? 'Started' : 'Failed to start'} ${verb} ${target}`));
+        // Not awaited: the result comes only once the supervisor's phone is answered (up to
+        // SPY_RING_TIMEOUT), and this socket's other commands must not queue behind it.
+        void (async () => {
+          let result: boolean;
+          let verb: string;
+          if (action === 'listen') {
+            result = await monitor.listenToCall(supervisor, target);
+            verb = 'listening to';
+          } else if (action === 'whisper') {
+            result = await monitor.whisperToCall(supervisor, target);
+            verb = 'whispering to';
+          } else {
+            result = await monitor.bargeIntoCall(supervisor, target);
+            verb = 'barging into';
+          }
+          await send(actionResult(action, result, `${result ? 'Started' : 'Failed to start'} ${verb} ${target}`));
+        })().catch((e) => log.error(`${action} failed: ${pyStr(e)}`));
         return;
       }
       case 'hangup': {

@@ -170,6 +170,8 @@ interface PendingAction {
   action: string;
   /** null for a single-reply action; the event that ends the list otherwise. */
   completeEvent: string | null;
+  /** Keep waiting for completeEvent after a plain Success (an Async Originate's OriginateResponse). */
+  awaitEvent: boolean;
   raw: string[]; // the reply message(s), raw text, response first
   gotResponse: boolean;
   timer: NodeJS.Timeout;
@@ -277,11 +279,28 @@ export class AmiClient {
     return this.request(action, params, completeEvent || `${action}Complete`, timeout);
   }
 
+  /**
+   * Send an action that answers twice: a Response at once, then `event` carrying the same
+   * ActionID when the work is done -- an `Async: true` Originate answers OriginateResponse
+   * once the called side picks up or fails, without holding this AMI session meanwhile (a
+   * synchronous Originate stalls every other action on it until then). Resolves with
+   * [response, event]; on timeout with what arrived ([response] alone), or null if nothing did.
+   */
+  async sendAwaitingEvent(
+    action: string,
+    params: Record<string, unknown> | null,
+    event: string,
+    timeout = AMI_TIMEOUT,
+  ): Promise<string[] | null> {
+    return this.request(action, params, event, timeout, true);
+  }
+
   private request(
     action: string,
     params: Record<string, unknown> | null,
     completeEvent: string | null,
     timeout: number,
+    awaitEvent = false,
   ): Promise<string[] | null> {
     const sock = this.sock;
     if (!this.connected || !sock || sock.destroyed) return Promise.resolve(null);
@@ -295,6 +314,7 @@ export class AmiClient {
       const entry: PendingAction = {
         action,
         completeEvent,
+        awaitEvent,
         raw: [],
         gotResponse: false,
         timer: setTimeout(() => {
@@ -356,7 +376,8 @@ export class AmiClient {
     const head = parse(msg);
     const actionId = head['ActionID'] || '';
     const entry = actionId ? this.pending.get(actionId) : undefined;
-    if ('Response' in head) {
+    // An event may carry a Response header of its own (OriginateResponse: `Response: Success`).
+    if ('Response' in head && !('Event' in head)) {
       if (!entry) return; // stale / foreign reply
       entry.raw.push(msg);
       entry.gotResponse = true;
@@ -364,7 +385,7 @@ export class AmiClient {
       const failed = !/^(Success|Follows)$/i.test(head['Response'] || '');
       // A list action that failed (or a PBX that answered without starting a list) ends here.
       const listStarted = /start/i.test(head['EventList'] || '') || /will follow/i.test(head['Message'] || '');
-      if (!isList || failed || !listStarted) this.finish(actionId, entry);
+      if (!isList || failed || (!listStarted && !entry.awaitEvent)) this.finish(actionId, entry);
       return;
     }
     if ('Event' in head) {
