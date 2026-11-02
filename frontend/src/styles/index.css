@@ -3844,46 +3844,6 @@ select.form-input option:checked {
 .sync-btn.is-busy svg { animation: sync-spin 0.9s linear infinite; }
 @keyframes sync-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .sync-btn.is-busy svg { animation: none; } }
-/* Do-Not-Disturb toggle — the plain-extension status control. Grey (Idle) when
-   off, red (DND, calls blocked) when on. Mirrors the queue toggle's geometry. */
-.agent-dnd-toggle {
-  /* Track/knob follow the live status colour (each state carries its own token
-     via --ah-color, set inline on .agent-header). */
-  --dt-color: var(--ah-color, var(--status-idle));
-  display: inline-flex;
-  align-items: center;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-  flex: 0 0 auto;
-}
-.agent-dnd-toggle:disabled { opacity: 0.55; cursor: default; }
-.agent-dnd-toggle-track {
-  position: relative;
-  width: 46px;
-  height: 24px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--dt-color) 20%, transparent);
-  border: 1px solid color-mix(in srgb, var(--dt-color) 55%, transparent);
-  transition: background 0.15s ease;
-}
-.agent-dnd-toggle-knob {
-  position: absolute;
-  top: 50%;
-  inset-inline-start: 2px;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-round);
-  background: var(--dt-color);
-  color: var(--text-on-accent);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: inset-inline-start 0.15s ease;
-}
-.agent-dnd-toggle.on .agent-dnd-toggle-knob { inset-inline-start: 24px; }
 .agent-header-menu {
   position: absolute;
   inset-inline-start: 10px;
@@ -4153,6 +4113,135 @@ select.form-input option:checked {
 .header-profile-signout:hover {
   background: rgb(var(--accent-danger-rgb) / 0.1);
 }
+
+/* ── Status in the profile button and menu (ProfileStatusSection) ──────────
+   --ring is the state colour (a status token), set inline per element. The
+   avatar ring is the same mark the extension cards wear. */
+.header-profile-avatar.has-ring {
+  color: var(--ring);
+  background: color-mix(in srgb, var(--ring) 12%, var(--bg-card));
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 3.5px var(--ring);
+}
+.header-profile-text {
+  display: grid;
+  min-width: 0;
+  text-align: start;
+  line-height: 1.25;
+}
+.header-profile-state {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ring);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.header-profile-state.is-near .u-mono { color: var(--warning); }
+.header-profile-state.is-over .u-mono { color: var(--danger); }
+@media (max-width: 640px) {
+  .header-profile-text { display: none; }
+}
+.header-profile-dropdown { min-width: 300px; }
+
+.profile-status-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  color: var(--ring);
+  background: color-mix(in srgb, var(--ring) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ring) 25%, transparent);
+}
+.profile-status-now-text { display: grid; flex: 1; min-width: 0; }
+.profile-status-now-label { font-size: var(--text-base); font-weight: 700; }
+.profile-status-now-sub { font-size: var(--text-sm); color: var(--text-secondary); }
+.profile-status-timer { font-size: var(--text-base); font-weight: 600; font-variant-numeric: tabular-nums; }
+.profile-status-timer.is-near { color: var(--warning); }
+.profile-status-timer.is-over { color: var(--danger); }
+.profile-status-lock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--status-call);
+  background: var(--status-call-bg);
+}
+.status-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: 500;
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.status-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
+.status-menu-item:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: -2px; }
+.status-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.status-menu-item > svg { flex-shrink: 0; color: var(--text-secondary); }
+.status-menu-text { display: grid; flex: 1; min-width: 0; }
+.status-menu-text small { font-size: var(--text-sm); font-weight: 400; color: var(--text-muted); }
+.status-menu-dot { width: 8px; height: 8px; border-radius: var(--radius-round); background: var(--ring); flex-shrink: 0; }
+.status-menu-swatch { width: 10px; height: 10px; border-radius: var(--radius-2xs); background: var(--ring); flex-shrink: 0; }
+.status-menu-meta { font-size: var(--text-xs); color: var(--text-muted); }
+.status-menu-item > .status-menu-tick { color: var(--accent-primary); }
+.status-menu-sub { display: grid; gap: 1px; padding-inline-start: 18px; padding-block: 2px 4px; }
+.status-menu-sub .status-menu-item { padding-block: 6px; }
+.status-menu-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--border-accent);
+  transition: background var(--transition-fast);
+}
+.status-menu-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  inset-inline-start: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-round);
+  background: var(--text-on-accent);
+  box-shadow: var(--shadow-sm);
+  transition: inset-inline-start var(--transition-fast);
+}
+.status-menu-switch.on { background: var(--status-call); }
+.status-menu-switch.is-dnd.on { background: var(--danger); }
+.status-menu-switch.on::after { inset-inline-start: 17px; }
+[dir='rtl'] .u-flip-rtl { transform: scaleX(-1); }
+
+/* The extension card's ⋯ menu (ExtensionActionsMenu), on a ui-popover. */
+.status-menu { gap: 1px; min-inline-size: 250px; }
+.status-menu-head {
+  padding: 4px 10px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-primary);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+.status-menu-head b { font-weight: var(--weight-semibold); }
+.status-menu-note { padding: 6px 10px; font-size: var(--text-sm); color: var(--text-muted); }
+
+/* Softphone pill timer against the break window (usePresenceControls). */
+.agent-pill-timer.is-near { color: var(--warning); }
+.agent-pill-timer.is-over { color: var(--danger); }
 
 /* ===========================================================================
    Softphone transfer box (migrated from inline styles in Softphone.tsx)

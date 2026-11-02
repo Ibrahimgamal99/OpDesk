@@ -30,16 +30,6 @@
 }
 .dash-trend-key.out i { background: var(--accent-teal); }
 
-/* ── Extensions: List View ── */
-.extensions-list .ext-dnd-toggle { margin-inline-start: 0; }
-
-/* ── Extensions: DND switch beside the status badge ── */
-.ext-dnd-toggle {
-  --dt-color: var(--status-unavailable);
-  margin-inline-start: auto;
-}
-.ext-dnd-toggle.on { --dt-color: var(--accent-danger); }
-
 /* ── Extensions: time in the current status, beside the badge ── */
 .ext-state-timer {
   display: inline-flex;
@@ -48,6 +38,8 @@
   font-size: var(--text-xs);
   color: var(--text-secondary);
 }
+.ext-state-timer.is-near { color: var(--warning); font-weight: var(--weight-semibold); }
+.ext-state-timer.is-over { color: var(--danger); font-weight: var(--weight-semibold); }
 
 /* ── Queues: member status badge beside the name ── */
 .queue-member-name {

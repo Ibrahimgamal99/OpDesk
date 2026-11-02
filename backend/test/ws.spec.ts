@@ -35,6 +35,7 @@ jest.mock('../src/db/db-manager', () => ({
   getSetting: jest.fn(async (_k: string, d: string) => d),
   insertCallNotification: jest.fn(async () => 1),
   recordSupervision: jest.fn(async () => true),
+  insertAuditLog: jest.fn(async () => true),
 }));
 jest.mock('../src/services/vad-runner', () => ({ schedule: jest.fn() }));
 jest.mock('../src/services/analytics', () => ({
@@ -445,6 +446,36 @@ describe('agent board: a supervisor forces presence for agents in scope', () => 
     expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to control this agent' });
     expect(actions.length).toBe(before);
     c.ws.close();
+  });
+});
+
+describe('a supervisor change is told to the agent and audited', () => {
+  it('the agent gets presence_changed_by and an audit row is written; a self change does neither', async () => {
+    const dbm = jest.requireMock('../src/db/db-manager') as { insertAuditLog: jest.Mock };
+    dbm.insertAuditLog.mockClear();
+    const agent = await open('/ws?token=agent');
+    await agent.next('initial_state');
+    const sup = await open('/ws?token=sup');
+    await sup.next('initial_state');
+
+    sup.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'not_ready', reason_code: 'lunch', agent: '101' }));
+    expect(await sup.next('action_result')).toMatchObject({ success: true });
+    expect(await agent.next('presence_changed_by')).toMatchObject({
+      extension: '101', by: 'sup', action: 'agent_set_status', status: 'not_ready', reason_code: 'lunch', enabled: null,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(dbm.insertAuditLog).toHaveBeenCalledTimes(1);
+    expect(dbm.insertAuditLog.mock.calls[0].slice(0, 2)).toEqual(['update', 'agent_presence']);
+    expect(dbm.insertAuditLog.mock.calls[0][2]).toMatchObject({ actorExt: '200', actorUserId: 2, entityId: '101' });
+
+    // The agent's own change: no toast frame to itself, no audit row.
+    agent.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'ready' }));
+    expect(await agent.next('action_result')).toMatchObject({ success: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(agent.frames.filter((f) => f.type === 'presence_changed_by')).toHaveLength(1);
+    expect(dbm.insertAuditLog).toHaveBeenCalledTimes(1);
+    agent.ws.close();
+    sup.ws.close();
   });
 });
 

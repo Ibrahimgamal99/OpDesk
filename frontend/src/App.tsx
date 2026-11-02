@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { useWebSocket } from './hooks/useWebSocket';
+import { useWebSocket, type PresenceChangedBy } from './hooks/useWebSocket';
+import { usePauseReasons } from './hooks/usePauseReasons';
 import { useWebPhone } from './hooks/useWebPhone';
 import { WebPhoneProvider } from './contexts/WebPhoneContext';
 import { AgentPresenceProvider } from './contexts/AgentPresenceContext';
@@ -25,6 +26,7 @@ import { SettingsPanel } from './components/CRMSettingsModal';
 import { ContactsPanel } from './components/ContactsPanel';
 import { FloatingSoftphone } from './components/FloatingSoftphone';
 import { ProfilePanel } from './components/ProfilePanel';
+import { ProfileStatusButtonFace, ProfileStatusSection } from './components/ProfileStatusSection';
 import {
   Phone,
   PhoneCall,
@@ -63,7 +65,6 @@ import { CallStatusBadge } from './components/CallStatusBadge';
 import { callStatusLabel, isCallStatus } from './components/callStatus';
 import { memberExtension } from './components/queueMemberState';
 import { quickRanges, type DateRange } from './components/analyticsUtils';
-import { raiseFor } from './lib/api';
 import type { CallNotification } from './types';
 
 type TabType = 'dashboard' | 'extensions' | 'calls' | 'queues' | 'call-log' | 'contacts' | 'groups' | 'users' | 'analytics' | 'recordings' | 'logs' | 'settings' | 'profile';
@@ -200,10 +201,26 @@ function App({ onLogout }: AppProps) {
     setCallOutcome({ status: msg.status, linkedid: msg.linkedid, seq: outcomeSeq.current });
   }, []);
 
+  // A supervisor changed my status: say who and to what ("Omar set Break · Lunch").
+  const { labelFor: pauseLabelFor } = usePauseReasons();
+  const describePresenceChange = useCallback((m: PresenceChangedBy): string | null => {
+    let what: string;
+    if (m.action === 'agent_login') what = t('presenceToast.queueIn', 'logged you in to your queues');
+    else if (m.action === 'agent_logout') what = t('presenceToast.queueOut', 'logged you out of your queues');
+    else if (m.action === 'agent_wrapup_done') what = t('presenceToast.wrapDone', 'finished your wrap-up');
+    else if (m.status === 'not_ready') {
+      what = t('presenceToast.break', 'set you on Break · {{reason}}', { reason: pauseLabelFor(m.reason_code) || m.reason_code || '' });
+    } else if (m.status === 'ready') what = t('presenceToast.available', 'set you Available');
+    else if (m.status === 'dnd') what = m.enabled === false ? t('presenceToast.dndOff', 'turned your DND off') : t('presenceToast.dndOn', 'turned on Do Not Disturb for you');
+    else return null;
+    return `${m.by} ${what}`;
+  }, [t, pauseLabelFor]);
+
   const { state, connected, lastUpdate, notifications, sendAction, disconnect: wsDisconnect } = useWebSocket(token, {
     onAuthFailure: handleLogout,
     onCallNotificationNew: fetchNewNotifCount,
     onCallOutcome: handleCallOutcome,
+    describePresenceChange,
   });
   wsDisconnectRef.current = wsDisconnect;
   const navigate = useNavigate();
@@ -683,6 +700,7 @@ function App({ onLogout }: AppProps) {
 
   return (
     <WebPhoneProvider value={webPhone}>
+    <AgentPresenceProvider value={presenceValue}>
     <div className="app">
 
       {/* ── Header: 56px compact bar ── */}
@@ -808,8 +826,7 @@ function App({ onLogout }: AppProps) {
               aria-label={t('header.profile')}
               aria-expanded={profileMenuOpen}
             >
-              <span className="header-profile-avatar"><User size={16} /></span>
-              <span className="header-profile-name">{getUser()?.name || getUser()?.username || getUser()?.extension}</span>
+              <ProfileStatusButtonFace name={getUser()?.name || getUser()?.username || getUser()?.extension} />
               <ChevronDown size={14} className={`header-profile-caret${profileMenuOpen ? ' open' : ''}`} />
             </button>
 
@@ -832,6 +849,13 @@ function App({ onLogout }: AppProps) {
                   </div>
                   <ChevronRight size={15} className="header-profile-identity-go" />
                 </button>
+
+                {getUser()?.extension && (
+                  <>
+                    <div className="header-profile-divider" />
+                    <ProfileStatusSection />
+                  </>
+                )}
 
                 <div className="header-profile-divider" />
                 <div className="header-profile-section-label">{t('header.preferences')}</div>
@@ -945,16 +969,8 @@ function App({ onLogout }: AppProps) {
               onSupervisorAction={handleSupervisorAction}
               onSync={() => sendAction({ action: isAdminRole ? 'sync' : 'sync_calls' })}
               webrtcMap={Object.fromEntries(webrtcExtensions.map((e) => [e.extension, e.webrtc || 'no']))}
-              allowedDndExtensions={new Set(webrtcExtensions.map((e) => e.extension))}
-              onDndToggle={async (ext, enabled) => {
-                const res = await fetchWithAuth(`/api/extensions/${ext}/dnd`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ enabled }),
-                });
-                if (!res.ok) await raiseFor(res);
-                // DND state flip arrives via the WebSocket state broadcast.
-              }}
+              sendAction={sendAction}
+              onCallExtension={webPhone.config ? (ext) => { webPhone.setDialNumber(ext); setFloatingPhoneOpen(true); } : undefined}
             />
           )}
           {activeTab === 'calls' && (
@@ -1025,17 +1041,16 @@ function App({ onLogout }: AppProps) {
           onSubmit={executeSupervisorAction}
         />
       )}
-      <AgentPresenceProvider value={presenceValue}>
-        <CallOutcomeProvider value={callOutcome}>
-          <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} />
-        </CallOutcomeProvider>
-      </AgentPresenceProvider>
+      <CallOutcomeProvider value={callOutcome}>
+        <FloatingSoftphone open={floatingPhoneOpen} onOpenChange={setFloatingPhoneOpen} />
+      </CallOutcomeProvider>
       <div className="notifications">
         {notifications.map((notification, index) => (
           <div key={index} className="notification">{notification}</div>
         ))}
       </div>
     </div>
+    </AgentPresenceProvider>
     </WebPhoneProvider>
   );
 }

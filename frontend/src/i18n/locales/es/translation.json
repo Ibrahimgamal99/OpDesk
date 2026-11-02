@@ -196,7 +196,8 @@
     "setReady": "Poner Disponible",
     "setNotReady": "Poner No disponible",
     "logoutTitle": "¿Cerrar la sesión de {{agent}}?",
-    "logoutConfirm": "{{agent}} sale de todas las colas y deja de recibir sus llamadas."
+    "logoutConfirm": "{{agent}} sale de todas las colas y deja de recibir sus llamadas.",
+    "setAvailable": "Poner disponible"
   },
   "callLog": {
     "viewManage": "Ver y gestionar registros de llamadas",
@@ -1353,7 +1354,8 @@
       "loggedOut": "Desconectado",
       "wrapUp": "Post-llamada",
       "queueLabel": "Cola: {{queue}}",
-      "deviceAsleep": "Listo, pero el teléfono está en reposo; se activa con la próxima llamada"
+      "deviceAsleep": "Listo, pero el teléfono está en reposo; se activa con la próxima llamada",
+      "break": "Pausa"
     },
     "codes": {
       "deleteFailed": "No se pudo eliminar ese código de motivo.",
@@ -1830,5 +1832,48 @@
       "login": "Inicio de sesión",
       "logout": "Cierre de sesión"
     }
+  },
+  "profileStatus": {
+    "title": "Estado",
+    "window": "Ventana de pausa {{min}} min",
+    "wrapSub": "Termina el post-llamada para recibir llamadas",
+    "readySub": "Listo para llamadas",
+    "queuesOutDnd": "Fuera mientras No molestar está activo · se restaura después",
+    "queuesOff": "No recibe llamadas de colas",
+    "queuesPaused": "{{queues}} · en pausa",
+    "queuesOn": "Recibe llamadas de colas",
+    "turnsDndOff": "Desactiva No molestar",
+    "switchBreak": "Cambiar motivo de pausa",
+    "pickReason": "Elige un motivo",
+    "paid": "pagada",
+    "dndSub": "Bloquea entrantes, sale de las colas"
+  },
+  "extActions": {
+    "menu": "Acciones para {{ext}}",
+    "lockedOnCall": "Pausa, colas y No molestar se desbloquean al terminar la llamada.",
+    "offline": "El teléfono está desconectado. Su estado cambia al registrarse.",
+    "forceBreak": "Poner en pausa",
+    "queuesDnd": "Fuera mientras No molestar está activo · se restaura después",
+    "timeline": "Abrir línea de tiempo",
+    "calls": "Llamadas de hoy",
+    "call": "Llamar a {{ext}}"
+  },
+  "extCard": {
+    "registered": "Registrado",
+    "asleep": "Dormido, despierta por push",
+    "noQueues": "Sin colas · saliente",
+    "outDnd": "Fuera (No molestar)",
+    "notInQueues": "Fuera de las colas",
+    "inQueues": "En colas",
+    "window": "Ventana de pausa {{min}} min"
+  },
+  "presenceToast": {
+    "queueIn": "te conectó a tus colas",
+    "queueOut": "te desconectó de tus colas",
+    "wrapDone": "terminó tu post-llamada",
+    "break": "te puso en Pausa · {{reason}}",
+    "available": "te puso Disponible",
+    "dndOff": "desactivó tu No molestar",
+    "dndOn": "activó No molestar para ti"
   }
 }

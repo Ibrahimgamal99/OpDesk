@@ -13,7 +13,20 @@ export type UseWebSocketOptions = {
   onCallNotificationNew?: () => void;
   /** Called when the server pushes a call's status at hangup (`call_outcome`). */
   onCallOutcome?: (msg: { extension: string; status: string; linkedid: string }) => void;
+  /** A supervisor changed this user's presence (`presence_changed_by`): the toast's text, or
+   *  null for none. Resolved by the caller, which knows the reason labels. */
+  describePresenceChange?: (msg: PresenceChangedBy) => string | null;
 };
+
+/** `presence_changed_by`: who changed this user's availability, queue login or DND, and to what. */
+export interface PresenceChangedBy {
+  extension: string;
+  by: string;
+  action: string;
+  status: string | null;
+  reason_code: string | null;
+  enabled: boolean | null;
+}
 
 /**
  * The socket URL. The token never goes in it (URLs end up in proxy and access logs);
@@ -102,6 +115,16 @@ export function useWebSocket(token: string | null, options: UseWebSocketOptions 
               status: String(message.status ?? ''),
               linkedid: String(message.linkedid ?? ''),
             });
+          } else if (message.type === 'presence_changed_by') {
+            const text = opts.describePresenceChange?.({
+              extension: String(message.extension ?? ''),
+              by: String(message.by ?? ''),
+              action: String(message.action ?? ''),
+              status: message.status == null ? null : String(message.status),
+              reason_code: message.reason_code == null ? null : String(message.reason_code),
+              enabled: message.enabled == null ? null : Boolean(message.enabled),
+            });
+            if (text) addNotification(text);
           } else if (message.type === 'action_result') {
             if (message.message) {
               addNotification(message.success === false ? `✗ ${message.message}` : `✓ ${message.message}`);
