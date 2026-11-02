@@ -3727,142 +3727,123 @@ select.form-input option:checked {
   text-align: center;
 }
 
-/* ── Contact Center Mode: Avaya-style agent status band (softphone header) ── */
+/* ── Softphone header: agent status, one row (state pill · quick action · ext · Queue · DND · sync) ── */
 .agent-header {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 10px 12px 10px 14px;
+  gap: 6px;
+  padding: 10px var(--space-3);
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border-subtle);
-  /* Tinted by state via the --ah-color / --ah-bg custom props set inline. */
-  background:
-    var(--gradient-adherence-row),
-    var(--bg-secondary);
-  border-inline-start: 3px solid var(--ah-color, transparent);
-}
-/* Out-of-queue bands (Idle / logged-out) stay quiet (grey); the state icon chip
-   and label still carry the colour, so the toolbar reads calm at rest. */
-.agent-header-logged_out,
-.agent-header-available {
   background: var(--bg-secondary);
+  /* The state colour (--ah-color, set inline) underlines the header. */
+  border-block-end: 3px solid var(--ah-color, var(--border-subtle));
 }
-/* Status-icon chip in the selector — a tinted square holding the state glyph. */
-.agent-header-ic {
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm);
+.agent-header-spacer { flex: 1 1 0; min-width: 0; }
+/* The state pill: tinted by the state, opens the break menu. */
+.agent-pill {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  color: var(--ah-color);
-  background: color-mix(in srgb, var(--ah-color) 16%, transparent);
-}
-.agent-header-main {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1 1 auto;
+  gap: 7px;
+  flex: 0 1 auto;
   min-width: 0;
-  border: none;
-  background: transparent;
-  padding: 4px 6px;
-  margin: -4px -6px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+  height: 34px;
+  padding-inline: 11px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--ah-color) 40%, transparent);
+  background: color-mix(in srgb, var(--ah-color) 14%, transparent);
   color: var(--text-primary);
-  text-align: start;
+  font-size: var(--text-md);
+  cursor: pointer;
 }
-.agent-header-main:disabled { cursor: default; }
-.agent-header-main:not(:disabled):hover { background: color-mix(in srgb, var(--ah-color) 12%, transparent); }
-.agent-header-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: var(--radius-round);
-  flex: 0 0 auto;
-  background: var(--ah-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ah-color) 22%, transparent);
-}
-.agent-header-state {
+.agent-pill:hover:not(:disabled) { background: color-mix(in srgb, var(--ah-color) 24%, transparent); }
+.agent-pill:disabled { cursor: default; }
+.agent-pill-ic { flex: 0 0 auto; color: var(--ah-color); }
+.agent-pill-label {
   font-weight: 700;
-  font-size: var(--text-sm);
-  letter-spacing: 0.01em;
   color: var(--ah-color);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.agent-header-timer {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  margin-inline-start: 2px;
-}
-.agent-header-caret { color: var(--text-muted); flex: 0 0 auto; }
-.agent-header-right {
+.agent-pill-timer { flex: 0 0 auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.agent-pill-caret { flex: 0 0 auto; color: var(--text-secondary); }
+/* Quick ▶ Resume / ✓ Finish wrap-up beside the pill. */
+.agent-quick {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: var(--radius-round);
+  border: 1px solid color-mix(in srgb, var(--success) 50%, transparent);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+  cursor: pointer;
 }
-.agent-header-avail { white-space: nowrap; }
-.agent-header-quick {
+.agent-quick:hover { background: color-mix(in srgb, var(--success) 28%, transparent); border-color: var(--success); }
+/* Extension with its registration dot. */
+.agent-ext {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-inline-end: 2px;
+}
+.agent-ext-dot { width: 6px; height: 6px; border-radius: var(--radius-round); background: var(--danger); }
+.agent-ext-dot.is-on { background: var(--success); }
+/* Queue / DND: icon buttons, each with its own fixed "on" colour. */
+.agent-icon-btn {
+  --ib-color: var(--text-secondary);
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ib-color);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.agent-icon-btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-accent); }
+.agent-icon-btn:disabled { opacity: 0.4; cursor: default; }
+.agent-icon-queue.on { --ib-color: var(--status-call); }
+.agent-icon-dnd.on { --ib-color: var(--danger); }
+.agent-icon-btn.on {
+  border-color: color-mix(in srgb, var(--ib-color) 45%, transparent);
+  background: color-mix(in srgb, var(--ib-color) 16%, transparent);
+}
+.agent-icon-btn.on:hover:not(:disabled) { background: color-mix(in srgb, var(--ib-color) 26%, transparent); border-color: var(--ib-color); }
+.agent-header-refresh {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-round);
-  border: 1px solid var(--ah-color);
-  background: color-mix(in srgb, var(--ah-color) 16%, transparent);
-  color: var(--ah-color);
-  cursor: pointer;
-}
-.agent-header-quick:hover { background: color-mix(in srgb, var(--ah-color) 28%, transparent); }
-/* Queue-membership toggle switch — headset (in queue) / headset-off (logged out). */
-.agent-queue-toggle {
-  /* Out of the queue the switch reads grey (unavailable); once in the queue it
-     follows the live ACD state colour via --ah-color (Ready green / Not Ready
-     amber / Wrap-up purple / On Call blue), set inline on .agent-header. */
-  --qt-color: var(--status-unavailable);
-  display: inline-flex;
-  align-items: center;
-  padding: 0;
   border: none;
-  background: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  flex: 0 0 auto;
 }
-.agent-queue-toggle.on { --qt-color: var(--ah-color, var(--status-idle)); }
-.agent-queue-toggle:disabled { opacity: 0.55; cursor: default; }
-.agent-queue-toggle-track {
-  position: relative;
-  width: 46px;
-  height: 24px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--qt-color) 20%, transparent);
-  border: 1px solid color-mix(in srgb, var(--qt-color) 55%, transparent);
-  transition: background 0.15s ease;
-}
-.agent-queue-toggle-knob {
-  position: absolute;
-  top: 50%;
-  inset-inline-start: 2px;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-round);
-  background: var(--qt-color);
-  color: var(--text-on-accent);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: inset-inline-start 0.15s ease;
-}
-.agent-queue-toggle.on .agent-queue-toggle-knob { inset-inline-start: 24px; }
+.agent-header-refresh:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-secondary); }
+.agent-header-refresh:disabled { opacity: 0.5; cursor: default; }
+/* The one sync icon (SyncButton): amber while it means "reconnect", spinning while it runs. */
+.sync-btn.is-reconnect { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+.sync-btn.is-reconnect:hover:not(:disabled) { color: var(--warning); background: color-mix(in srgb, var(--warning) 24%, transparent); }
+.sync-btn.is-busy svg { animation: sync-spin 0.9s linear infinite; }
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sync-btn.is-busy svg { animation: none; } }
 /* Do-Not-Disturb toggle — the plain-extension status control. Grey (Idle) when
    off, red (DND, calls blocked) when on. Mirrors the queue toggle's geometry. */
 .agent-dnd-toggle {
@@ -3903,20 +3884,6 @@ select.form-input option:checked {
   transition: inset-inline-start 0.15s ease;
 }
 .agent-dnd-toggle.on .agent-dnd-toggle-knob { inset-inline-start: 24px; }
-.agent-header-refresh {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.agent-header-refresh:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-secondary); }
-.agent-header-refresh:disabled { opacity: 0.5; cursor: default; }
 .agent-header-menu {
   position: absolute;
   inset-inline-start: 10px;
@@ -3954,6 +3921,7 @@ select.form-input option:checked {
 .agent-header-menu-danger:hover { background: var(--status-ringing-bg); }
 
 /* ── Contact Center Mode: supervisor live agent board ─────────────────────── */
+.agent-board-filter { margin-block-end: var(--space-3); flex-wrap: wrap; }
 .agent-board-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

@@ -7,8 +7,8 @@ import type { AgentState, ExtensionStatus } from '../types';
 import { Badge } from './ui';
 
 /**
- * Single source of truth for status presentation across the app. Agent presence
- * (login → Ready / logout → Offline / DND / pause → Not-Ready / On-Call / Wrap-up)
+ * Single source of truth for status presentation across the app. Availability
+ * (registered → Available / Break with a reason / On-Call / Wrap-up / offline)
  * and plain-extension device status (Idle / Ringing / DND …) all resolve to a
  * StatusMeta and render through the one <StatusBadge> pill (the shared Badge).
  * Keeps ExtensionsPanel, AgentBoardPanel and AgentStatusHeader in sync.
@@ -32,13 +32,14 @@ export interface StatusMeta {
 // Agent presence tokens. DND uses the danger color + the Slack/Teams-style
 // minus-circle icon (business-comms "do not disturb", not the Apple moon).
 export const AGENT_STATE_META: Record<AgentState, StatusMeta> = {
-  ready:      { varName: '--status-idle',        bgVar: '--status-idle-bg',        key: 'agent.state.ready',     fallback: 'Ready',          Icon: CheckCircle2 },
+  ready:      { varName: '--status-idle',        bgVar: '--status-idle-bg',        key: 'agent.state.available', fallback: 'Available',      Icon: CheckCircle2 },
   on_call:    { varName: '--status-call',        bgVar: '--status-call-bg',        key: 'agent.state.onCall',    fallback: 'On Call',        Icon: PhoneCall },
   wrap_up:    { varName: '--status-hold',        bgVar: '--status-hold-bg',        key: 'agent.state.wrapUp',    fallback: 'Wrap-up',        Icon: Clock },
   not_ready:  { varName: '--warning',            bgVar: '--status-ringing-bg',     key: 'agent.state.notReady',  fallback: 'Not Ready',      Icon: Pause },
   dnd:        { varName: '--danger',             bgVar: '--status-ringing-bg',     key: 'agent.state.dnd',       fallback: 'Do Not Disturb', Icon: MinusCircle },
   logged_out: { varName: '--status-unavailable', bgVar: '--status-unavailable-bg', key: 'agent.state.loggedOut', fallback: 'Offline',        Icon: LogOut },
   available:  { varName: '--status-idle',        bgVar: '--status-idle-bg',        key: 'agent.state.available', fallback: 'Available',     Icon: CircleDot },
+  break_offline: { varName: '--status-unavailable', bgVar: '--status-unavailable-bg', key: 'agent.state.breakOffline', fallback: 'Break (offline)', Icon: Pause },
 };
 
 // Device (telephony) status tokens — used for plain extensions with no overriding

@@ -6,7 +6,7 @@
 
 import type { PoolConnection } from 'mysql2/promise';
 import { getLogger, pyStr } from '../../core/logger';
-import { pyInt, truthy } from '../../core/py';
+import { AsyncLock, pyInt, truthy } from '../../core/py';
 import { execute, placeholders, query, queryOne, withTransaction } from '../pool';
 import type { Row, SqlValue } from '../pool';
 
@@ -278,7 +278,7 @@ export const SYSTEM_PAUSE_REASONS: readonly [string, string, number, string, num
   [WRAPUP_REASON_CODE, 'Wrap-up', 1, '#10b981', 900, 1],
 ];
 
-const COLS_PAUSE_REASONS = 'id, code, label, productive, color, sort_order, is_active, is_system';
+const COLS_PAUSE_REASONS = 'id, code, label, productive, color, sort_order, is_active, is_system, max_break_secs';
 
 /**
  * Reasons by sort_order, label. `activeOnly` hides disabled codes; `includeSystem`
@@ -338,6 +338,22 @@ export async function isValidNotReadyReason(code: unknown): Promise<boolean> {
  * included) as given, anything else null (refused). `int(x or 100)` turned an explicit 0
  * into 100, so a code meant to sort first sorted after the seeded 10-40 codes.
  */
+/** Longest break window accepted: one day. */
+export const MAX_BREAK_WINDOW_SECS = 86400;
+/** A new break's window when none is given: 30 minutes (also the column default). */
+export const DEFAULT_BREAK_WINDOW_SECS = 1800;
+
+/**
+ * A break window value -> seconds, or null for "no window" (blank / 0). undefined when the
+ * value is not a whole number in range, so the caller refuses it rather than storing junk.
+ */
+export function breakWindowValue(raw: unknown): number | null | undefined {
+  if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim())) return null;
+  const n = pyInt(raw);
+  if (n === null || n < 0 || n > MAX_BREAK_WINDOW_SECS) return undefined;
+  return n === 0 ? null : n;
+}
+
 function sortOrderValue(raw: unknown): number | null {
   if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim())) return 100;
   return pyInt(raw);
@@ -352,6 +368,8 @@ export async function pauseReasonCreate(
   isActive: unknown = true,
 ): Promise<number | null> {
   let code: unknown = codeOrFields;
+  // Not given -> the default window; an explicit null / blank / 0 -> no window.
+  let maxBreak: unknown = DEFAULT_BREAK_WINDOW_SECS;
   if (codeOrFields !== null && typeof codeOrFields === 'object') {
     const f = codeOrFields;
     code = f.code;
@@ -360,6 +378,7 @@ export async function pauseReasonCreate(
     color = (f.color as string | null | undefined) ?? null;
     sortOrder = f.sort_order ?? 100;
     isActive = f.is_active ?? true;
+    if (f.max_break_secs !== undefined) maxBreak = f.max_break_secs;
   }
   const c = strOrEmptyStripped(code);
   const l = strOrEmptyStripped(label);
@@ -367,10 +386,12 @@ export async function pauseReasonCreate(
   // A non-integer is refused rather than raised.
   const order = sortOrderValue(sortOrder);
   if (order === null) return null;
+  const window = breakWindowValue(maxBreak);
+  if (window === undefined) return null;
   try {
     const res = await execute(
-      'INSERT INTO pause_reasons (code, label, productive, color, sort_order, is_active, is_system) VALUES (?, ?, ?, ?, ?, ?, 0)',
-      [c, l, truthy(productive) ? 1 : 0, color || null, order, truthy(isActive) ? 1 : 0],
+      'INSERT INTO pause_reasons (code, label, productive, color, sort_order, is_active, is_system, max_break_secs) VALUES (?, ?, ?, ?, ?, ?, 0, ?)',
+      [c, l, truthy(productive) ? 1 : 0, color || null, order, truthy(isActive) ? 1 : 0, window],
     );
     return res.insertId;
   } catch (e) {
@@ -380,14 +401,15 @@ export async function pauseReasonCreate(
 }
 
 /**
- * Update a reason's mutable fields (label, productive, color, sort_order, is_active;
+ * Update a reason's mutable fields (label, productive, color, sort_order, is_active,
+ * max_break_secs;
  * code and is_system are immutable). False when no allowed field is given, the id does
  * not exist, the row is a system reason, or on error; true otherwise (also when nothing
  * actually changed).
  */
 export async function pauseReasonUpdate(reasonId: number, fields: Record<string, unknown> | null | undefined): Promise<boolean> {
   if (!reasonId || !fields) return false;
-  const allowed = new Set(['label', 'productive', 'color', 'sort_order', 'is_active']);
+  const allowed = new Set(['label', 'productive', 'color', 'sort_order', 'is_active', 'max_break_secs']);
   const sets: string[] = [];
   const params: SqlValue[] = [];
   for (const [key, raw] of Object.entries(fields)) {
@@ -398,6 +420,10 @@ export async function pauseReasonUpdate(reasonId: number, fields: Record<string,
       const n = sortOrderValue(raw);
       if (n === null) return false;
       val = n;
+    } else if (key === 'max_break_secs') {
+      const w = breakWindowValue(raw);
+      if (w === undefined) return false;
+      val = w;
     } else val = raw as SqlValue;
     sets.push(`${key} = ?`);
     params.push(val);
@@ -504,4 +530,128 @@ export async function agentActivityCloseAllOpen(source = 'system'): Promise<numb
     log.warning('⚠️  Database error agent_activity_close_all_open: %s', e);
     return 0;
   }
+}
+
+/**
+ * Open Not-Ready (break) segments by extension -> reason code. Read at startup BEFORE
+ * agentActivityCloseAllOpen, so a break taken by an extension with no queue member (whose
+ * reason Asterisk does not hold) survives a backend restart.
+ */
+export async function agentActivityOpenBreaks(): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const rows = await query(
+      "SELECT agent_ext, reason_code FROM agent_activity WHERE ended_at IS NULL AND state IN ('not_ready', 'break_offline') AND reason_code IS NOT NULL",
+    );
+    for (const r of rows) out.set(pyStr(r.agent_ext), pyStr(r.reason_code));
+  } catch (e) {
+    log.warning('agent_activity_open_breaks: %s', e);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Simple open/close segment tables: extension_registration, queue_login, extension_dnd.
+// One open row (ended_at IS NULL) per extension at most; opening when one is already
+// open is a no-op, so a repeated event never doubles the time.
+// ---------------------------------------------------------------------------
+type SegmentTable = 'extension_registration' | 'queue_login' | 'extension_dnd';
+
+/**
+ * Serialises every open/close of these tables in this process. The "is one already open?"
+ * check and the INSERT are two statements, and InnoDB's consistent read does not stop two
+ * concurrent openers both seeing none: an OpDesk queue login and the QueueMemberAdded event
+ * it causes arrive together and would each open a row (double-counted queue time).
+ */
+const segmentLock = new AsyncLock();
+
+function segmentOpen(table: SegmentTable, ext: unknown, source: string, extra: Record<string, SqlValue> = {}): Promise<boolean> {
+  return segmentLock.run(() => segmentOpenUnlocked(table, ext, source, extra));
+}
+
+async function segmentOpenUnlocked(table: SegmentTable, ext: unknown, source: string, extra: Record<string, SqlValue>): Promise<boolean> {
+  const e = strOrEmptyStripped(ext);
+  if (!e) return false;
+  try {
+    return await withTransaction(async (conn) => {
+      const open = (await query(`SELECT id FROM ${table} WHERE ext = ? AND ended_at IS NULL LIMIT 1`, [e], conn)) as Row[];
+      if (open.length) return false;
+      const cols = ['ext', 'source', ...Object.keys(extra)];
+      await execute(
+        `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders(cols.length)})`,
+        [e, source, ...Object.values(extra)],
+        conn,
+      );
+      return true;
+    });
+  } catch (err) {
+    log.warning('⚠️  Database error %s open(%s): %s', table, e, err);
+    return false;
+  }
+}
+
+function segmentClose(table: SegmentTable, ext: unknown): Promise<boolean> {
+  return segmentLock.run(() => segmentCloseUnlocked(table, ext));
+}
+
+async function segmentCloseUnlocked(table: SegmentTable, ext: unknown): Promise<boolean> {
+  const e = strOrEmptyStripped(ext);
+  if (!e) return false;
+  try {
+    return (
+      await execute(
+        `UPDATE ${table} SET ended_at = NOW(), duration_secs = TIMESTAMPDIFF(SECOND, started_at, NOW()) WHERE ext = ? AND ended_at IS NULL`,
+        [e],
+      )
+    ).affectedRows > 0;
+  } catch (err) {
+    log.warning('⚠️  Database error %s close(%s): %s', table, e, err);
+    return false;
+  }
+}
+
+async function segmentCloseAllOpen(table: SegmentTable): Promise<number> {
+  try {
+    return (
+      await execute(
+        `UPDATE ${table} SET ended_at = NOW(), duration_secs = TIMESTAMPDIFF(SECOND, started_at, NOW()) WHERE ended_at IS NULL`,
+      )
+    ).affectedRows;
+  } catch (err) {
+    log.warning('⚠️  Database error %s close_all_open: %s', table, err);
+    return 0;
+  }
+}
+
+/** Reachability segment: opened when the device becomes reachable (via sip / push). */
+export function registrationOpen(ext: unknown, via: string, source = 'ami'): Promise<boolean> {
+  return segmentOpen('extension_registration', ext, source, { via });
+}
+export function registrationClose(ext: unknown): Promise<boolean> {
+  return segmentClose('extension_registration', ext);
+}
+export function registrationCloseAllOpen(): Promise<number> {
+  return segmentCloseAllOpen('extension_registration');
+}
+
+/** Queue login session: opened when the extension joins its queues. */
+export function queueLoginOpen(ext: unknown, source = 'ui'): Promise<boolean> {
+  return segmentOpen('queue_login', ext, source);
+}
+export function queueLoginClose(ext: unknown): Promise<boolean> {
+  return segmentClose('queue_login', ext);
+}
+export function queueLoginCloseAllOpen(): Promise<number> {
+  return segmentCloseAllOpen('queue_login');
+}
+
+/** DND segment: opened when the AstDB DND flag goes on. */
+export function dndOpen(ext: unknown, source = 'ui'): Promise<boolean> {
+  return segmentOpen('extension_dnd', ext, source);
+}
+export function dndClose(ext: unknown): Promise<boolean> {
+  return segmentClose('extension_dnd', ext);
+}
+export function dndCloseAllOpen(): Promise<number> {
+  return segmentCloseAllOpen('extension_dnd');
 }

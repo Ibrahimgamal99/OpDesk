@@ -12,6 +12,7 @@ import type { CRMConnector } from '../integrations/crm';
 import type { ContactResolver } from '../integrations/crm-lookup';
 import type { AgentStateManager } from '../services/agent-state';
 import type { AMIExtensionsMonitor } from '../services/ami';
+import type { RegistrationTracker } from '../services/registration';
 
 /**
  * The AMI -> WebSocket bridge (server.py AMIEventBridge): the 100 ms state broadcast loop.
@@ -31,6 +32,7 @@ export interface Runtime {
   monitor: AMIExtensionsMonitor | null;
   bridge: LiveStateBridge | null;
   agentState: AgentStateManager | null;
+  registration: RegistrationTracker | null;
   crmConnector: CRMConnector | null;
   /**
    * Contact-name resolution (phonebook + optional CRM lookup). Constructed at startup and
@@ -60,6 +62,7 @@ export const runtime: Runtime = {
   monitor: null,
   bridge: null,
   agentState: null,
+  registration: null,
   crmConnector: null,
   contactResolver: null,
   crmLookupConnector: null,

@@ -543,6 +543,11 @@ export class SoftphoneController {
   /**
    * The browser softphone's config: the PBX WebSocket URL, the caller's extension and its
    * SIP secret. See /api/extension-config for the full, transport-aware version.
+   *
+   * Only for a user whose WebRTC is enabled (users.webrtc = 'yes'). The page connects
+   * whenever it is handed credentials, so a user with WebRTC off gets none (`webrtc: false`)
+   * and the browser never registers the extension — it would otherwise steal the
+   * registration from the user's desk or mobile phone and keep them "online".
    */
   @Get('/api/webrtc/config')
   @Auth('user')
@@ -550,10 +555,11 @@ export class SoftphoneController {
     const currentUser = principal(req);
     const server = await webrtcServerUrl(req);
     const creds = await dbm.getUserWebrtcCredentials(currentUser.id as number);
-    if (!creds) return { server, extension: null, extension_secret: null };
+    if (!creds) return { server, extension: null, extension_secret: null, webrtc: false };
+    if (!creds.webrtc) return { server, extension: null, extension_secret: null, webrtc: false };
     const ext = creds.extension ?? null;
     const secret = ext ? await dbm.getExtensionSecretFromDb(ext) : null;
-    return { server, extension: ext, extension_secret: secret };
+    return { server, extension: ext, extension_secret: secret, webrtc: true };
   }
 
   /**

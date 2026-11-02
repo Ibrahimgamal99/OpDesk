@@ -368,9 +368,11 @@ export class AnalyticsController {
   }
 
   /**
-   * Agent Adherence: Login / Logout / Sessions / Logged In / Ready / On Call / Wrap-up /
-   * Break / Not Ready / DND / Occupancy per agent for the selected period, from
-   * agent_activity presence segments. Scope-filtered. Roles: admin, supervisor.
+   * Agent Adherence: per extension (queue agents and plain extensions) for the period —
+   * First online / Last offline / Sessions / Registered / Logged In (= queue login) /
+   * Available / Idle (and Idle on DND) / On Call / Wrap-up / Break / Not Ready / DND /
+   * Outbound calls and talk / Occupancy, from agent_activity availability segments plus the registration,
+   * queue_login and extension_dnd tables. Scope-filtered. Roles: admin, supervisor.
    */
   @Get('/api/analytics/agent-adherence')
   @Auth({ scope: 'analytics:read' })
@@ -427,9 +429,12 @@ export class AnalyticsController {
       const dateLabel = `${dateFrom || 'all'}_${dateTo || 'all'}`;
       const filenameBase = `agent_adherence_${dateLabel}_${stampFile(generatedAt)}`;
 
+      // "Logged In" is QUEUE login (login means the queues); being online is the phone's
+      // registration, so the online span is First Online / Last Offline / Registered.
       const headersRow = [
-        'Agent', 'Name', 'Login', 'Logout', 'Still Logged In', 'Sessions',
-        'Logged In', 'Ready', 'On Call', 'Wrap-up', 'Break', 'Not Ready', 'DND',
+        'Agent', 'Name', 'Type', 'First Online', 'Last Offline', 'Online Now', 'Sessions',
+        'Registered', 'Logged In (Queue)', 'Available', 'Idle', 'Idle on DND', 'On Call', 'Wrap-up',
+        'Break', 'Not Ready', 'DND', 'Outbound Calls', 'Outbound Talk',
         'Occupancy %', 'Not Ready Breakdown',
       ];
 
@@ -441,17 +446,23 @@ export class AnalyticsController {
         return [
           get(a, 'agent', ''),
           get(a, 'name', ''),
+          truthy(a.is_agent) ? 'Agent' : 'Extension',
           truthy(a.login) ? a.login : '',
           truthy(a.logged_in) ? '' : truthy(a.logout) ? a.logout : '',
           truthy(a.logged_in) ? 'Yes' : 'No',
           get(a, 'sessions', 0),
-          fmtHms(a.logged_in_secs ?? null),
-          fmtHms(a.ready_secs ?? null),
+          fmtHms(a.registered_secs ?? null),
+          truthy(a.is_agent) ? fmtHms(a.queue_login_secs ?? null) : '',
+          fmtHms(a.available_secs ?? null),
+          fmtHms(a.idle_secs ?? null),
+          fmtHms(a.idle_dnd_secs ?? null),
           fmtHms(a.on_call_secs ?? null),
           fmtHms(a.wrap_secs ?? null),
           fmtHms(a.break_secs ?? null),
           fmtHms(a.not_ready_secs ?? null),
           fmtHms(a.dnd_secs ?? null),
+          get(a, 'outbound_calls', 0),
+          fmtHms(a.outbound_talk_secs ?? null),
           // A Python float: str(85.0) is '85.0' in the CSV; the spreadsheet keeps the number.
           forCsv ? floatStr(occupancy) : occupancy,
           breakdown,

@@ -30,7 +30,7 @@ import { BACKEND_DIR, env, envFlag } from '../core/config';
 import { getLogger } from '../core/logger';
 import { appDbName, dbErrno, execute, query, queryOne } from './pool';
 import { getSetting, setSetting } from './manager/platform';
-import { DEFAULT_PAUSE_REASONS, SYSTEM_PAUSE_REASONS } from './manager/ops';
+import { DEFAULT_BREAK_WINDOW_SECS, DEFAULT_PAUSE_REASONS, SYSTEM_PAUSE_REASONS } from './manager/ops';
 import { BCRYPT_ROUNDS } from './manager/users';
 
 const log = getLogger('db.migrate');
@@ -246,6 +246,24 @@ export const COLUMN_GUARDS: ColumnGuard[] = [
     ddl: 'ALTER TABLE analytics_fcr_settings ADD COLUMN callback_window_hours SMALLINT UNSIGNED NOT NULL DEFAULT 24 AFTER short_abandon_secs',
     why: 'FCR and abandoned-caller recovery count our own callbacks within this window',
   },
+  addColumn(
+    'pause_reasons',
+    'max_break_secs',
+    `ALTER TABLE pause_reasons ADD COLUMN max_break_secs INT NULL DEFAULT ${DEFAULT_BREAK_WINDOW_SECS}`,
+    'break window: offline time during a break counts as the break up to this many seconds from its start',
+    // Every break gets the default window; system reasons (wrap-up) are not breaks.
+    ['UPDATE pause_reasons SET max_break_secs = NULL WHERE is_system = 1'],
+  ),
+  {
+    // The column first shipped with no default (NULL = no window): move it to the 30-min
+    // default once, filling the breaks that were never given a window.
+    table: 'pause_reasons',
+    column: 'max_break_secs',
+    needed: (col) => col !== null && String(col.COLUMN_DEFAULT ?? '') !== String(DEFAULT_BREAK_WINDOW_SECS),
+    ddl: `ALTER TABLE pause_reasons MODIFY max_break_secs INT NULL DEFAULT ${DEFAULT_BREAK_WINDOW_SECS}`,
+    then: [`UPDATE pause_reasons SET max_break_secs = ${DEFAULT_BREAK_WINDOW_SECS} WHERE is_system = 0 AND max_break_secs IS NULL`],
+    why: 'breaks default to a 30-minute break window',
+  },
   // CRM delivery retry queue: webhook_deliveries rows became queue rows. Existing rows
   // are finished attempts, so they are backfilled as delivered/failed with one attempt.
   addColumn(
@@ -411,13 +429,16 @@ async function seedFixedRows(): Promise<void> {
 /** Default codes into an empty catalog only (deleted codes stay deleted); system codes always. */
 async function seedPauseReasons(): Promise<void> {
   const row = await queryOne('SELECT COUNT(*) AS n FROM pause_reasons');
+  // Breaks take the column's default window (30 min); system reasons get none.
   const sql =
     'INSERT IGNORE INTO pause_reasons (code, label, productive, color, sort_order, is_active, is_system) VALUES (?, ?, ?, ?, ?, 1, ?)';
+  const systemSql =
+    'INSERT IGNORE INTO pause_reasons (code, label, productive, color, sort_order, is_active, is_system, max_break_secs) VALUES (?, ?, ?, ?, ?, 1, ?, NULL)';
   if (row && Number(row.n) === 0) {
     for (const r of DEFAULT_PAUSE_REASONS) await execute(sql, [...r]);
     log.info('✅ Seeded %d default Not-Ready codes', DEFAULT_PAUSE_REASONS.length);
   }
-  for (const r of SYSTEM_PAUSE_REASONS) await execute(sql, [...r]);
+  for (const r of SYSTEM_PAUSE_REASONS) await execute(systemSql, [...r]);
 }
 
 // The CRM push's default field selection and the renamed catalog fields (mirrors

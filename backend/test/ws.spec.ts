@@ -28,6 +28,10 @@ jest.mock('../src/db/db-manager', () => ({
   getAgentLoginQueues: jest.fn(async () => ['800']),
   pauseReasonForNotReady: jest.fn(async (c: string) => (c === 'lunch' ? { code: 'lunch', label: 'Lunch', is_active: 1, is_system: 0 } : null)),
   agentActivityTransition: jest.fn(async () => 1),
+  queueLoginOpen: jest.fn(async () => true),
+  queueLoginClose: jest.fn(async () => true),
+  dndOpen: jest.fn(async () => true),
+  dndClose: jest.fn(async () => true),
   getSetting: jest.fn(async (_k: string, d: string) => d),
   insertCallNotification: jest.fn(async () => 1),
   recordSupervision: jest.fn(async () => true),
@@ -88,7 +92,10 @@ beforeAll(async () => {
     { Event: 'QueueMemberAdded', Queue: 'default', Interface: 'PJSIP/103', Paused: '0', Status: '1' },
   ]) await monitor.dispatchAsync(raw(h));
   monitor.dnd.add('102');
-  await runtime.agentState.login('101');
+  // Availability follows the phone: 101 and 102 are registered, then 101 joins its queue.
+  await runtime.agentState.onReachability('101', 'sip');
+  await runtime.agentState.onReachability('102', 'sip');
+  await runtime.agentState.queueLogin('101');
 
   server = http.createServer();
   attachWebSocket(server);
@@ -177,7 +184,8 @@ describe('state frames are filtered by LIVE scope', () => {
       ['PJSIP/101', false, ''],
       ['PJSIP/102', true, 'lunch'],
     ]);
-    expect(Object.keys(s.agent_states)).toEqual(['101']);
+    // Every reachable extension in scope has availability now, not only queue agents.
+    expect(Object.keys(s.agent_states).sort()).toEqual(['101', '102']);
     expect(s.agent_states['101']).toMatchObject({ extension: '101', state: 'ready', reason_code: null, is_agent: true });
     expect(s.stats).toMatchObject({ total_extensions: 2, total_queues: 1 });
     c.ws.close();
@@ -233,7 +241,7 @@ describe('actions', () => {
     c.ws.send(JSON.stringify({ action: 'agent_logout', agent: '102' }));
     expect(await c.next('action_result')).toMatchObject({ success: false, message: 'Not allowed to control this agent' });
     c.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'ready' }));
-    expect(await c.next('action_result')).toMatchObject({ success: true, message: 'Ready' });
+    expect(await c.next('action_result')).toMatchObject({ success: true, message: 'Available' });
     c.ws.close();
   });
 
@@ -428,7 +436,7 @@ describe('agent board: a supervisor forces presence for agents in scope', () => 
     expect(runtime.agentState!.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch' });
 
     c.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'ready', agent: '102' }));
-    expect(await c.next('action_result')).toMatchObject({ success: true, message: 'Ready' });
+    expect(await c.next('action_result')).toMatchObject({ success: true, message: 'Available' });
 
     const before = actions.length;
     c.ws.send(JSON.stringify({ action: 'agent_set_status', status: 'not_ready', reason_code: 'lunch', agent: '103' }));

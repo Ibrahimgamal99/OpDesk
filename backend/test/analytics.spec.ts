@@ -749,6 +749,111 @@ describe('adherence sessions', () => {
     ]);
   });
 
+  test('summary: registered, queue login, DND flag and idle-on-DND come from the side tables', async () => {
+    mocked(shiftResetMinutes).mockResolvedValue(0);
+    mocked(callLog).mockResolvedValue([]);
+    nextId = 1;
+    const rows = [
+      seg('ready', '2026-10-05 08:00:00', '2026-10-05 09:00:00'),
+      seg('on_call', '2026-10-05 09:00:00', '2026-10-05 09:10:00'),
+      seg('ready', '2026-10-05 09:10:00', '2026-10-05 10:00:00'),
+      seg('not_ready', '2026-10-05 10:00:00', '2026-10-05 10:15:00', 'lunch'),
+    ];
+    mocked(pool.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM agent_activity')) return rows.map((r) => ({ ...r }));
+      if (sql.includes('FROM pause_reasons')) return [{ code: 'lunch', label: 'Lunch', productive: 0, color: null, is_system: 0 }];
+      if (sql.includes('FROM extension_registration')) {
+        return [{ ext: '201', via: 'sip', started_at: dt('2026-10-05 07:50:00'), ended_at: dt('2026-10-05 10:20:00') }];
+      }
+      if (sql.includes('FROM queue_login')) {
+        return [{ ext: '201', started_at: dt('2026-10-05 08:00:00'), ended_at: dt('2026-10-05 09:30:00') }];
+      }
+      if (sql.includes('FROM extension_dnd')) {
+        // 08:30-09:30: 30 min of the first Ready, the 10 min call, 20 min of the second Ready.
+        return [{ ext: '201', started_at: dt('2026-10-05 08:30:00'), ended_at: dt('2026-10-05 09:30:00') }];
+      }
+      if (sql.includes('FROM group_agents')) return [{ agent_ext: '201' }];
+      return [];
+    });
+    const r = await A.computeAgentAdherence('2026-10-05', '2026-10-05', ['201']);
+    expect(r.agents[0]).toMatchObject({
+      agent: '201', is_agent: true,
+      ready_secs: 6600, idle_secs: 6600, on_call_secs: 600, available_secs: 7200, break_secs: 900,
+      registered_secs: 9000, queue_login_secs: 5400, dnd_secs: 3600, idle_dnd_secs: 3000,
+      logged_in_secs: 8100, outbound_calls: 0, outbound_talk_secs: 0,
+    });
+  });
+
+  describe('offline during a break (break window from the break start)', () => {
+    const run = async (window: number | null, rows: ReturnType<typeof seg>[]) => {
+      mocked(shiftResetMinutes).mockResolvedValue(0);
+      mocked(callLog).mockResolvedValue([]);
+      mocked(pool.query).mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM agent_activity')) return rows.map((r) => ({ ...r }));
+        if (sql.includes('FROM pause_reasons')) return [{ code: 'lunch', label: 'Lunch', productive: 0, color: null, is_system: 0, max_break_secs: window }];
+        return [];
+      });
+      return (await A.computeAgentAdherence('2026-10-05', '2026-10-05', ['201'])).agents[0];
+    };
+    // 12:40 online -> 13:00 Lunch -> 13:20 laptop closed -> 14:30 back, still Lunch -> 14:40 Available
+    const day = () => {
+      nextId = 1;
+      return [
+        seg('ready', '2026-10-05 12:40:00', '2026-10-05 13:00:00'),
+        seg('not_ready', '2026-10-05 13:00:00', '2026-10-05 13:20:00', 'lunch'),
+        seg('break_offline', '2026-10-05 13:20:00', '2026-10-05 14:30:00', 'lunch'),
+        seg('not_ready', '2026-10-05 14:30:00', '2026-10-05 14:40:00', 'lunch'),
+        seg('ready', '2026-10-05 14:40:00', '2026-10-05 15:00:00'),
+      ];
+    };
+
+    test('60-min window: 13:00-14:00 is Lunch, 14:00-14:30 offline (nothing), then Lunch again online', async () => {
+      const r = await run(3600, day());
+      // online lunch 20 min + 40 min offline inside the window + 10 min online after = 70 min
+      expect(r).toMatchObject({ break_secs: 4200, not_ready_secs: 4200, break_offline_secs: 2400, sessions: 1 });
+      expect(r.not_ready_breakdown).toEqual([expect.objectContaining({ code: 'lunch', secs: 4200 })]);
+      expect(r.logged_in_secs).toBe(2400 + 4200); // 40 min ready + 70 min lunch; 30 min offline uncounted
+    });
+
+    test('a window longer than the absence counts all of it', async () => {
+      const r = await run(3 * 3600, day());
+      expect(r).toMatchObject({ break_secs: 1200 + 4200 + 600, break_offline_secs: 4200 });
+    });
+
+    test('no window: offline time during the break counts as nothing', async () => {
+      const r = await run(null, day());
+      expect(r).toMatchObject({ break_secs: 1800, break_offline_secs: 0 });
+    });
+
+    test('a short drop (under 60 s) does not start a new session', async () => {
+      nextId = 1;
+      const r = await run(null, [
+        seg('ready', '2026-10-05 09:00:00', '2026-10-05 10:00:00'),
+        seg('ready', '2026-10-05 10:00:40', '2026-10-05 11:00:00'),  // 40 s Wi-Fi drop
+        seg('ready', '2026-10-05 11:05:00', '2026-10-05 12:00:00'),  // 5 min away: new session
+      ]);
+      expect(r.sessions).toBe(2);
+    });
+  });
+
+  test('timeline carries registration, queue-login and DND stretches', async () => {
+    mocked(shiftResetMinutes).mockResolvedValue(null);
+    nextId = 1;
+    mocked(pool.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM agent_activity')) return [seg('ready', '2026-10-05 08:00:00', '2026-10-05 09:00:00')];
+      if (sql.includes('FROM extension_registration')) {
+        return [{ ext: '201', via: 'push', started_at: dt('2026-10-05 08:00:00'), ended_at: null }];
+      }
+      return [];
+    });
+    const t = await A.computeAgentTimeline('201', '2026-10-05', '2026-10-05');
+    expect(t.registration).toEqual([
+      expect.objectContaining({ started_at: '2026-10-05T08:00:00', ended_at: null, open: true, via: 'push' }),
+    ]);
+    expect(t.queue_login).toEqual([]);
+    expect(t.dnd).toEqual([]);
+  });
+
   test('timeline: newest session first, merged runs, reason labels', async () => {
     mocked(shiftResetMinutes).mockResolvedValue(null);
     nextId = 1;

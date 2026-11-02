@@ -256,19 +256,23 @@ CREATE TABLE IF NOT EXISTS pause_reasons (
     color       VARCHAR(16) DEFAULT NULL,
     sort_order  INT NOT NULL DEFAULT 100,
     is_active   TINYINT(1) NOT NULL DEFAULT 1,
-    is_system   TINYINT(1) NOT NULL DEFAULT 0
+    is_system   TINYINT(1) NOT NULL DEFAULT 0,
+    -- Break window: how much of a break may pass with the phone offline (laptop closed
+    -- at lunch) and still count as this break, measured from the break's start. 30 min
+    -- by default; NULL = offline time on this break counts as nothing (system reasons).
+    max_break_secs INT NULL DEFAULT 1800
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Agent presence segments — the Agent Adherence report's data source. One append-only
--- row per presence period; ended_at IS NULL marks the currently-open segment. Written
--- by the agent state service from the agent login/logout/status actions and reconciled
--- from AMI (AgentConnect -> on_call, AgentComplete -> wrap_up, pause/unpause). Sessions,
--- break and DND time are derived from these rows by the adherence report.
---   ready       = logged into queue(s), not paused, not on an ACD call
---   on_call     = connected to an ACD call (AgentConnect -> AgentComplete)
---   not_ready   = logged in, paused with a pause_reasons.code
---   wrap_up     = paused with the system reason __WRAPUP (after-call work)
---   dnd         = logged in, Do Not Disturb
+-- Availability segments — the Agent Adherence report's data source, for EVERY extension
+-- (queue agents and plain/outbound extensions alike). One append-only row per period;
+-- ended_at IS NULL marks the currently-open segment. Availability starts when the device
+-- becomes reachable and ends when it stops; queue login is tracked separately
+-- (queue_login), and so is DND (extension_dnd).
+--   ready       = available, not on a call (idle)
+--   on_call     = on any answered call (device channel Up), or an ACD call (AgentConnect)
+--   not_ready   = on a break with a pause_reasons.code (queue members paused too)
+--   wrap_up     = after an ACD call, paused with the system reason __WRAPUP
+--   dnd         = legacy rows only (DND was a presence state before it became a flag)
 CREATE TABLE IF NOT EXISTS agent_activity (
     id            BIGINT PRIMARY KEY AUTO_INCREMENT,
     agent_ext     VARCHAR(20) NOT NULL,
@@ -283,6 +287,49 @@ CREATE TABLE IF NOT EXISTS agent_activity (
     INDEX idx_agent_started (agent_ext, started_at),
     INDEX idx_started (started_at),
     INDEX idx_open (agent_ext, ended_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Reachability segments per extension: open while the device is registered (hint not
+-- Unavailable) or, unregistered, can still be woken by push (via='push'). Feeds the
+-- Registered column of the adherence report.
+CREATE TABLE IF NOT EXISTS extension_registration (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ext           VARCHAR(20) NOT NULL,
+    via           VARCHAR(10) NOT NULL DEFAULT 'sip', -- sip / push
+    started_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at      TIMESTAMP NULL DEFAULT NULL,
+    duration_secs INT NULL,
+    source        VARCHAR(20) NOT NULL DEFAULT 'ami',
+    INDEX idx_ext_started (ext, started_at),
+    INDEX idx_started (started_at),
+    INDEX idx_open (ext, ended_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Queue login sessions (separate from availability): open while the extension is a
+-- dynamic member of at least one queue.
+CREATE TABLE IF NOT EXISTS queue_login (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ext           VARCHAR(20) NOT NULL,
+    started_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at      TIMESTAMP NULL DEFAULT NULL,
+    duration_secs INT NULL,
+    source        VARCHAR(20) NOT NULL DEFAULT 'ui',
+    INDEX idx_ext_started (ext, started_at),
+    INDEX idx_started (started_at),
+    INDEX idx_open (ext, ended_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Do-Not-Disturb segments per extension (AstDB DND flag on).
+CREATE TABLE IF NOT EXISTS extension_dnd (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ext           VARCHAR(20) NOT NULL,
+    started_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at      TIMESTAMP NULL DEFAULT NULL,
+    duration_secs INT NULL,
+    source        VARCHAR(20) NOT NULL DEFAULT 'ui',
+    INDEX idx_ext_started (ext, started_at),
+    INDEX idx_started (started_at),
+    INDEX idx_open (ext, ended_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- =============================================================================

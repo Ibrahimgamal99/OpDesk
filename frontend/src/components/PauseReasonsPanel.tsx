@@ -11,7 +11,7 @@ import type { PauseReason } from '../types';
 
 const truthy = (v: number | boolean | undefined) => v === true || v === 1;
 
-interface ReasonForm { code: string; label: string; productive: boolean; color: string; active: boolean; sort_order: number; }
+interface ReasonForm { code: string; label: string; productive: boolean; color: string; active: boolean; sort_order: number; /** Break window, minutes; '' = none. */ window_min: string; }
 
 /**
  * `color` is persisted per-reason and edited through `<input type="color">`,
@@ -22,7 +22,7 @@ interface ReasonForm { code: string; label: string; productive: boolean; color: 
 // eslint-disable-next-line no-restricted-syntax -- persisted data value, see above
 const DEFAULT_REASON_COLOR = '#d29922';
 
-const blank: ReasonForm = { code: '', label: '', productive: false, color: DEFAULT_REASON_COLOR, active: true, sort_order: 0 };
+const blank: ReasonForm = { code: '', label: '', productive: false, color: DEFAULT_REASON_COLOR, active: true, sort_order: 0, window_min: '30' };
 
 /** Codes starting with this prefix belong to the system (`__WRAPUP`); the backend refuses them. */
 const RESERVED_PREFIX = '__';
@@ -77,6 +77,7 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
       color: r.color || DEFAULT_REASON_COLOR,
       active: truthy(r.is_active),
       sort_order: r.sort_order || 0,
+      window_min: r.max_break_secs ? String(Math.round(r.max_break_secs / 60)) : '',
     });
     setEditing(r);
     setModal('edit');
@@ -94,6 +95,9 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
         color: form.color,
         is_active: form.active,
         sort_order: form.sort_order,
+        // Minutes in the form, seconds in the API; blank = no window (offline time on this
+        // break counts as nothing).
+        max_break_secs: form.window_min.trim() ? Math.max(0, Math.round(Number(form.window_min) * 60)) : null,
       };
       const ok = await run(async () => {
         const res = modal === 'create'
@@ -190,6 +194,12 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
               : <Badge>{t('notReady.break', 'Break')}</Badge>,
           },
           {
+            key: 'window', header: t('notReady.window', 'Break window'),
+            cell: r => r.max_break_secs
+              ? t('notReady.windowMinutes', { count: Math.round(r.max_break_secs / 60), defaultValue: '{{count}} min' })
+              : <span className="u-fg-muted">—</span>,
+          },
+          {
             key: 'active', header: t('notReady.active', 'Active'),
             cell: r => (
               <Badge tone={truthy(r.is_active) ? 'success' : 'neutral'}>
@@ -259,6 +269,16 @@ export function PauseReasonsPanel({ card, onCountChange }: PauseReasonsPanelProp
             <FormField label={t('notReady.order', 'Sort order')}>
               <input type="number" className="form-input" value={form.sort_order}
                 onChange={(e) => setForm((f) => ({ ...f, sort_order: parseInt(e.target.value, 10) || 0 }))} />
+            </FormField>
+          </FormRow>
+          <FormRow>
+            <FormField
+              label={t('notReady.windowLabel', 'Break window (minutes)')}
+              hint={t('notReady.windowHint', 'If the phone goes offline during this break (laptop closed, internet drop), the offline time still counts as this break up to this many minutes from the break start; after that it counts as offline. Leave empty to count no offline time.')}
+            >
+              <input type="number" min={0} max={1440} className="form-input" dir="ltr" value={form.window_min}
+                placeholder={t('notReady.windowNone', 'No window')}
+                onChange={(e) => setForm((f) => ({ ...f, window_min: e.target.value }))} />
             </FormField>
           </FormRow>
         </FormSection>

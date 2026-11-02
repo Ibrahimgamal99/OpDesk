@@ -613,8 +613,7 @@ function App({ onLogout }: AppProps) {
 
   // The signed-in user's own live presence, for the softphone status bar
   // (AgentPresenceContext). The agent-state manager's snapshot is the truth; `is_agent`
-  // says whether the extension has queues (full Ready / Not-Ready band) or is a plain
-  // extension (Available / DND / Offline).
+  // says whether the extension has queues (it then also gets the queue-login switch).
   const myExt = String(getUser()?.extension || '');
   const myExtState = myExt ? state?.extensions?.[myExt] : undefined;
   const myPresence = myExt ? (state?.agent_states?.[myExt] ?? null) : null;

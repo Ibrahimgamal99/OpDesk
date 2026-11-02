@@ -62,18 +62,18 @@ const DEVICE_BUCKET: Record<Extension['status'], StatusBucket> = {
 
 const AGENT_BUCKET: Record<AgentStateInfo['state'], StatusBucket> = {
   ready: 'available', available: 'available', on_call: 'in_call', wrap_up: 'wrap_up',
-  not_ready: 'not_ready', dnd: 'dnd', logged_out: 'offline',
+  not_ready: 'not_ready', dnd: 'dnd', logged_out: 'offline', break_offline: 'offline',
 };
 
 /**
  * One status per card, one badge. Resolved here rather than inside the card so the Status
  * filter and the badge cannot disagree.
- *  - A queue agent: their live presence IS the status (login -> Ready, logout -> Offline,
- *    DND, pause -> Not-Ready with the reason's label, On Call, Wrap-up). Presence only
- *    tracks queue calls, so a direct call while Ready lets the live device status drive the
- *    card instead of a misleading green Ready. A Ready agent whose phone is unregistered
- *    keeps the label but dims to grey (a mobile softphone asleep until the next call).
- *  - A plain extension: DND when its DND flag is set, otherwise its raw device status.
+ *  - An available extension (agent or plain): its availability IS the status (Available,
+ *    Break with the reason's label, On Call, Wrap-up). A live call while Available lets the
+ *    device status drive the card (Ringing / Dialing / On Hold read better than "On Call"),
+ *    and DND shows when Available with the flag on. An Available extension whose phone is
+ *    asleep (push) keeps the label but dims to grey.
+ *  - Offline (no availability): DND when its flag is set, otherwise its raw device status.
  *  - A backend without `agent_states`: the queue-member fallback (Not-Ready / Ready).
  */
 function resolveStatus(
@@ -95,12 +95,16 @@ function resolveStatus(
     return reason ? `${base} · ${reason}` : base;
   };
 
-  if (agentState && agentState.is_agent !== false) {
+  // Availability is tracked for every reachable extension (agents and plain extensions).
+  if (agentState && agentState.state !== 'logged_out') {
     const queueTitle = agentState.queue
       ? t('agent.state.queueLabel', { queue: agentState.queue, defaultValue: 'Queue: {{queue}}' })
       : undefined;
     const presenceIsIdle = agentState.state === 'ready' || agentState.state === 'available';
     if (deviceBusy && presenceIsIdle) return { ...device(), title: queueTitle };
+    if (presenceIsIdle && (agentState.dnd || extension.dnd || agentState.state === 'dnd')) {
+      return { meta: AGENT_STATE_META.dnd, label: t('extensions.status.dnd', 'Do Not Disturb'), bucket: 'dnd' };
+    }
     const resolved = resolveAgentMeta(agentState.state, extension.status === 'unavailable');
     return {
       meta: resolved.meta,
@@ -108,7 +112,7 @@ function resolveStatus(
         ? notReadyLabel(agentState.reason_code)
         : t(resolved.meta.key, resolved.meta.fallback),
       title: resolved.asleep
-        ? t('agent.state.deviceAsleep', 'Ready, but the phone is asleep; it wakes on the next call')
+        ? t('agent.state.deviceAsleep', 'Available, but the phone is asleep; it wakes on the next call')
         : queueTitle,
       bucket: AGENT_BUCKET[agentState.state] ?? 'offline',
     };

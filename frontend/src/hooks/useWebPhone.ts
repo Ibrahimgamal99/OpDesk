@@ -14,6 +14,8 @@ export interface WebRtcConfig {
   server: string;
   extension: string | null;
   extension_secret: string | null;
+  /** False when WebRTC is off for this user: no credentials are sent and the browser does not register. */
+  webrtc?: boolean;
 }
 
 export function useWebPhone() {
@@ -45,21 +47,26 @@ export function useWebPhone() {
   // interrupting a SIP.js transport reconnect that's already in progress.
   const statusRef = useRef<WebPhoneStatus>('disconnected');
 
-  const fetchConfig = useCallback(async () => {
+  /** Load the WebRTC config; resolves to it (null when it could not be loaded). */
+  const fetchConfig = useCallback(async (): Promise<WebRtcConfig | null> => {
     setConfigLoading(true);
     setConfigError(null);
     try {
       const res = await fetchWithAuth('/api/webrtc/config');
       if (!res.ok) throw new Error('Failed to load WebRTC config');
       const data = await res.json();
-      setConfig({
+      const fresh: WebRtcConfig = {
         server: data.server || '',
         extension: data.extension ?? null,
         extension_secret: data.extension_secret ?? null,
-      });
+        webrtc: data.webrtc !== false,
+      };
+      setConfig(fresh);
+      return fresh;
     } catch (e) {
       setConfigError(e instanceof Error ? e.message : 'Failed to load config');
       setConfig(null);
+      return null;
     } finally {
       setConfigLoading(false);
     }
@@ -167,8 +174,10 @@ export function useWebPhone() {
     onIncomingCallEnded: () => setIncomingCall(null),
   };
 
-  const connect = useCallback(async (opts?: { force?: boolean }) => {
-    if (!config?.server?.trim() || !config?.extension?.trim() || !config?.extension_secret?.trim()) {
+  const connect = useCallback(async (opts?: { force?: boolean; config?: WebRtcConfig | null }) => {
+    // A config just reloaded is passed in: the state copy only updates on the next render.
+    const cfg = opts?.config ?? config;
+    if (!cfg?.server?.trim() || !cfg?.extension?.trim() || !cfg?.extension_secret?.trim()) {
       addLog('Set PBX server (admin), extension and extension secret first', 'error');
       return;
     }
@@ -190,7 +199,7 @@ export function useWebPhone() {
     phoneRef.current = phone;
     setRemoteStream(null);
     setLogs((prev) => [...prev, { message: 'Connecting...', type: 'info', time: new Date().toLocaleTimeString() }]);
-    await phone.connect(config.server, config.extension, config.extension_secret);
+    await phone.connect(cfg.server, cfg.extension, cfg.extension_secret);
   }, [config, addLog]);
 
   // Auto-connect once config is available and we are not already connected/connecting
@@ -221,6 +230,16 @@ export function useWebPhone() {
     setIncomingCall(null);
     setRemoteStream(null);
   }, []);
+
+  /**
+   * Reload the config, then register again with it: the recovery action while the phone
+   * is not registered (a stuck transport, or credentials an admin just changed).
+   */
+  const reloadAndReconnect = useCallback(async () => {
+    const fresh = await fetchConfig();
+    disconnect('reconnect');
+    await connect({ force: true, config: fresh });
+  }, [fetchConfig, disconnect, connect]);
 
   const makeCall = useCallback(() => {
     const phone = phoneRef.current;
@@ -447,6 +466,7 @@ export function useWebPhone() {
     clearLogs,
     transfer,
     refetchConfig: fetchConfig,
+    reloadAndReconnect,
     remoteAudioRef,
     localStream,
     remoteStream,

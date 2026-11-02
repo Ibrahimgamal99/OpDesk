@@ -10,9 +10,11 @@ import { fmtSecs, fmtPct, slaProgressClass, buildDateParams, analyticsGet, useAn
 import { AgentTimelineModal } from './AgentTimelineModal';
 import { Alert, Badge, Card, EmptyState, Tooltip } from './ui';
 
-type SortKey = 'agent' | 'sessions' | 'logged_in_secs' | 'ready_secs' | 'on_call_secs'
-  | 'wrap_secs' | 'break_secs' | 'not_ready_secs' | 'dnd_secs' | 'occupancy_pct';
+type SortKey = 'agent' | 'sessions' | 'registered_secs' | 'queue_login_secs' | 'available_secs' | 'idle_secs'
+  | 'on_call_secs' | 'wrap_secs' | 'break_secs' | 'not_ready_secs' | 'dnd_secs'
+  | 'outbound_calls' | 'occupancy_pct';
 type SortDir = 'asc' | 'desc';
+type TypeFilter = 'all' | 'agents' | 'extensions';
 
 function sortRows(rows: AgentAdherenceRow[], key: SortKey, dir: SortDir): AgentAdherenceRow[] {
   return [...rows].sort((a, b) => {
@@ -34,25 +36,26 @@ function fmtClock(iso: string | null): string {
 interface Props { dateRange: DateRange }
 
 /**
- * Agent Adherence report. Login, Logout, Sessions, Logged In, Ready, On Call, Wrap-up,
- * Break, Not Ready, DND and Occupancy per agent for the selected period, sourced from
- * agent_activity presence segments (GET /api/analytics/agent-adherence). Sortable .an-table,
- * like Agent Performance.
+ * Agent Adherence report, for queue agents AND plain/outbound extensions: First online,
+ * Last offline, Sessions, Registered (online), Logged in (= queue login), Available, Idle
+ * (and its DND part), On Call, Wrap-up, Break, Not Ready, DND, Outbound calls/talk and
+ * Occupancy for the period
+ * (GET /api/analytics/agent-adherence). Sortable .an-table, like Agent Performance.
  *
- * Logged In is the whole signed-in shift (ready + on call + wrap-up + not ready + DND).
- * Occupancy = handling / available: Break and DND sit outside that denominator, since an
- * agent on lunch was never available to be given a call.
+ * Availability follows the phone's registration, so being online IS being registered;
+ * "logged in" means the queues. Occupancy = handling / available: Break sits
+ * outside that denominator, since an agent on lunch was never available to be given a call.
  *
- * A row opens that agent's state-change trace (AgentTimelineModal): every move they made,
- * including the DND and the logout/login the summary row can only total.
+ * A row opens that extension's state-change trace (AgentTimelineModal).
  */
 export function AnalyticsAdherence({ dateRange }: Props) {
   const { t } = useTranslation();
-  const [sortKey, setSortKey] = useState<SortKey>('logged_in_secs');
+  const [sortKey, setSortKey] = useState<SortKey>('registered_secs');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [exporting, setExporting] = useState<'csv' | 'xlsx' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [traceFor, setTraceFor] = useState<AgentAdherenceRow | null>(null);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const { data, loading, error } = useAnalyticsFetch(
     () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
@@ -60,7 +63,9 @@ export function AnalyticsAdherence({ dateRange }: Props) {
     },
     [dateRange],
   );
-  const agents = data?.agents ?? [];
+  const allRows = data?.agents ?? [];
+  const agents = allRows.filter((a) => typeFilter === 'all'
+    || (typeFilter === 'agents' ? a.is_agent !== false : a.is_agent === false));
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -108,24 +113,30 @@ export function AnalyticsAdherence({ dateRange }: Props) {
   const columns: { key: SortKey; label: string; tipKey?: string; tip?: Tip }[] = [
     { key: 'agent',          label: t('fields.agent') },
     { key: 'sessions',       label: t('agent.adherence.sessions', 'Sessions'), tipKey: 'agent.adherence.tip.sessions',
-      tip: { text: 'How many times the agent logged in. A logout, or the daily shift reset, ends a session.' } },
-    { key: 'logged_in_secs', label: t('agent.adherence.loggedIn'), tipKey: 'agent.adherence.tip.loggedInTotal',
-      tip: { text: 'Total time the agent was signed in.', formula: 'ready + on call + wrap-up + not ready + DND' } },
-    { key: 'ready_secs',     label: t('agent.state.ready'), tipKey: 'agent.adherence.tip.ready',
-      tip: { text: 'Available: signed in and waiting for a call.' } },
+      tip: { text: 'How many times the extension became available. The phone going offline, or the daily shift reset, ends a session.' } },
+    { key: 'registered_secs', label: t('agent.adherence.registered', 'Registered'), tipKey: 'agent.adherence.tip.registered',
+      tip: { text: 'Time online: the phone was registered, or asleep but able to be woken by push.' } },
+    { key: 'queue_login_secs', label: t('agent.adherence.loggedInQueue', 'Logged in'), tipKey: 'agent.adherence.tip.loggedInQueue',
+      tip: { text: 'Time logged into the queues. Separate from being online; plain extensions have none.' } },
+    { key: 'available_secs', label: t('agent.adherence.available', 'Available'), tipKey: 'agent.adherence.tip.available',
+      tip: { text: 'Ready to work: idle, on a call, or wrapping up.', formula: 'idle + on call + wrap-up' } },
+    { key: 'idle_secs',      label: t('agent.adherence.idle', 'Idle'), tipKey: 'agent.adherence.tip.idle',
+      tip: { text: 'Available with no call. Hover the number for the part spent with DND on.' } },
     { key: 'on_call_secs',   label: t('agent.state.onCall'), tipKey: 'agent.adherence.tip.onCall',
-      tip: { text: 'On a call.' } },
+      tip: { text: 'On any answered call: inbound, outbound or internal.' } },
     { key: 'wrap_secs',      label: t('agent.state.wrapUp'), tipKey: 'agent.adherence.tip.wrapUp',
-      tip: { text: 'Finishing up after a call.' } },
+      tip: { text: 'Finishing up after a queue call.' } },
     { key: 'break_secs',     label: t('agent.adherence.break', 'Break'), tipKey: 'agent.adherence.tip.break',
       tip: { text: 'The unpaid part of Not Ready: reasons not marked productive, such as lunch. Hover the number for the reasons.' } },
     { key: 'not_ready_secs', label: t('agent.state.notReady'), tipKey: 'agent.adherence.tip.notReady',
-      tip: { text: 'Paused with any reason, productive or not. Hover the number for the reasons.' } },
+      tip: { text: 'On a break with any reason, productive or not. Hover the number for the reasons.' } },
     { key: 'dnd_secs',       label: t('agent.adherence.dnd', 'DND'), tipKey: 'agent.adherence.tip.dnd',
-      tip: { text: 'Signed in but on Do Not Disturb: no queue or direct calls reach the agent.' } },
+      tip: { text: 'Do Not Disturb was on: inbound calls blocked, out of the queues, any break ended. Counts as Idle while registered. Outbound calls still work.' } },
+    { key: 'outbound_calls', label: t('agent.adherence.outbound', 'Outbound'), tipKey: 'agent.adherence.tip.outbound',
+      tip: { text: 'Outbound calls placed, with the talk time of the answered ones.' } },
     { key: 'occupancy_pct',  label: t('agent.adherence.occupancy'), tipKey: 'agent.adherence.tip.occupancy',
       tip: { text: 'Of the time they were available, how much was spent working. Over 85% for long is a burnout sign.',
-             formula: '(on call + wrap-up) ÷ (on call + wrap-up + ready)' } },
+             formula: '(on call + wrap-up) ÷ (on call + wrap-up + idle)' } },
   ];
   const tip = (key: string, label: string, text: string) => kpiTip(t, key, label, undefined, { text });
 
@@ -136,12 +147,26 @@ export function AnalyticsAdherence({ dateRange }: Props) {
         <span className="u-inline-row u-gap-1h">
           {t('agent.adherence.title')}
           <Tooltip {...tip('agent.adherence.tip.source', t('agent.adherence.title'),
-            'Based on the status agents set themselves, not on their phones.')} />
+            'Availability follows the phone registration; breaks are the status agents set themselves.')} />
         </span>
       )}
       description={`${t('agent.adherence.subtitle')} · ${agents.length} ${t('analytics.agents.agents', 'agents')}`}
       actions={(
         <>
+          <div className="u-row u-gap-1" role="tablist" aria-label={t('agent.adherence.typeFilter', 'Show')}>
+            {(['all', 'agents', 'extensions'] as TypeFilter[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                role="tab"
+                aria-selected={typeFilter === f}
+                className={`btn btn-sm${typeFilter === f ? '' : ' btn-ghost'}`}
+                onClick={() => setTypeFilter(f)}
+              >
+                {f === 'all' ? t('agentBoard.filterAll', 'All') : f === 'agents' ? t('agentBoard.filterAgents', 'Queue agents') : t('agentBoard.filterExtensions', 'Extensions')}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             className="btn"
@@ -169,7 +194,7 @@ export function AnalyticsAdherence({ dateRange }: Props) {
           <Alert onDismiss={() => setExportError(null)}>{exportError}</Alert>
         </div>
       )}
-      {agents.length === 0 ? (
+      {allRows.length === 0 || agents.length === 0 ? (
         <EmptyState size="sm" icon={ClipboardCheck} title={t('agent.adherence.empty')} />
       ) : (
         <div className="an-table-wrap">
@@ -183,12 +208,12 @@ export function AnalyticsAdherence({ dateRange }: Props) {
                   {t('fields.agent')} <SortIcon col="agent" />
                 </th>
                 <th className="num">
-                  {t('agent.adherence.login')}
-                  <Tooltip {...tip('agent.adherence.tip.login', t('agent.adherence.login'), 'When the agent first went active.')} />
+                  {t('agent.adherence.firstOnline', 'First online')}
+                  <Tooltip {...tip('agent.adherence.tip.firstOnline', t('agent.adherence.firstOnline', 'First online'), 'When the phone first came online in the period.')} />
                 </th>
                 <th className="num">
-                  {t('agent.adherence.logout')}
-                  <Tooltip {...tip('agent.adherence.tip.logout', t('agent.adherence.logout'), 'When the agent last logged out. "In" while still signed in.')} />
+                  {t('agent.adherence.lastOffline', 'Last offline')}
+                  <Tooltip {...tip('agent.adherence.tip.lastOffline', t('agent.adherence.lastOffline', 'Last offline'), 'When the phone last went offline. "Online" while it still is.')} />
                 </th>
                 {columns.slice(1).map(c => (
                   <th
@@ -218,19 +243,30 @@ export function AnalyticsAdherence({ dateRange }: Props) {
                         >
                           {a.name || a.agent}
                         </button>
-                        <div className="an-agent-ext">{a.agent}</div>
+                        <div className="an-agent-ext">
+                          {a.agent}
+                          {a.is_agent === false && <> · {t('agent.adherence.extensionTag', 'extension')}</>}
+                        </div>
                       </div>
                     </div>
                   </td>
                   <td className="num">{fmtClock(a.login)}</td>
                   <td className="num">
                     {a.logged_in
-                      ? <Badge tone="success">{t('agent.adherence.stillIn')}</Badge>
+                      ? <Badge tone="success">{t('agent.adherence.onlineNow', 'Online')}</Badge>
                       : fmtClock(a.logout)}
                   </td>
                   <td className="num">{a.sessions ?? '—'}</td>
-                  <td className="num u-semibold">{fmtSecs(a.logged_in_secs)}</td>
-                  <td className="num an-fg-ready">{fmtSecs(a.ready_secs)}</td>
+                  <td className="num u-semibold">{fmtSecs(a.registered_secs ?? 0)}</td>
+                  <td className="num">{a.is_agent === false ? '—' : fmtSecs(a.queue_login_secs ?? 0)}</td>
+                  <td className="num an-fg-ready">{fmtSecs(a.available_secs ?? a.ready_secs + a.on_call_secs + a.wrap_secs)}</td>
+                  <td
+                    className="num"
+                    title={a.idle_dnd_secs ? `${t('agent.adherence.idleOnDnd', 'Idle on DND')}: ${fmtSecs(a.idle_dnd_secs)}` : undefined}
+                  >
+                    {fmtSecs(a.idle_secs ?? a.ready_secs)}
+                    {!!a.idle_dnd_secs && <span className="u-fg-danger"> · {fmtSecs(a.idle_dnd_secs)}</span>}
+                  </td>
                   <td className="num an-fg-on-call">{fmtSecs(a.on_call_secs)}</td>
                   <td className="num an-fg-wrap">{fmtSecs(a.wrap_secs)}</td>
                   <td
@@ -244,6 +280,10 @@ export function AnalyticsAdherence({ dateRange }: Props) {
                     {fmtSecs(a.not_ready_secs)}
                   </td>
                   <td className="num u-fg-danger">{fmtSecs(a.dnd_secs ?? 0)}</td>
+                  <td className="num" title={`${t('agent.adherence.outboundTalk', 'Talk')}: ${fmtSecs(a.outbound_talk_secs ?? 0)}`}>
+                    {a.outbound_calls ?? 0}
+                    {!!a.outbound_talk_secs && <span className="an-agent-ext"> · {fmtSecs(a.outbound_talk_secs)}</span>}
+                  </td>
                   <td>
                     <div className="an-sla-cell">
                       <Badge tone={a.occupancy_pct >= 70 ? 'success' : a.occupancy_pct >= 40 ? 'neutral' : 'danger'}>

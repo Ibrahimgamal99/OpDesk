@@ -69,8 +69,15 @@ beforeEach(() => {
 describe('/api/webrtc/config', () => {
   test('host from the request, plus the Nginx port when the Host header has none', async () => {
     process.env.NGINX_HTTPS_PORT = '8443';
-    mocked(dbm.getUserWebrtcCredentials).mockResolvedValue({ extension: '100' });
-    expect(await ctl.webrtcConfig(req())).toEqual({ server: 'wss://10.0.0.5:8443/sip-ws', extension: '100', extension_secret: 's3cret' });
+    mocked(dbm.getUserWebrtcCredentials).mockResolvedValue({ extension: '100', webrtc: true });
+    expect(await ctl.webrtcConfig(req())).toEqual({ server: 'wss://10.0.0.5:8443/sip-ws', extension: '100', extension_secret: 's3cret', webrtc: true });
+  });
+
+  test('WebRTC off for the user: no credentials, so the browser never registers', async () => {
+    process.env.NGINX_HTTPS_PORT = '8443';
+    mocked(dbm.getUserWebrtcCredentials).mockResolvedValue({ extension: '100', webrtc: false });
+    expect(await ctl.webrtcConfig(req())).toEqual({ server: 'wss://10.0.0.5:8443/sip-ws', extension: null, extension_secret: null, webrtc: false });
+    expect(dbm.getExtensionSecretFromDb).not.toHaveBeenCalled();
   });
 
   test('a bare IP becomes the configured domain; the legacy :8089 setting is ignored', async () => {
@@ -78,12 +85,12 @@ describe('/api/webrtc/config', () => {
     settings.WEBRTC_PBX_SERVER = 'wss://10.0.0.5:8089/ws';
     mocked(dbm.getUserWebrtcCredentials).mockResolvedValue(null);
     const r = req({}, { 'x-forwarded-host': '10.0.0.5:8443, proxy', host: 'ignored' });
-    expect(await ctl.webrtcConfig(r)).toEqual({ server: 'wss://pbx.example.com:8443/sip-ws', extension: null, extension_secret: null });
+    expect(await ctl.webrtcConfig(r)).toEqual({ server: 'wss://pbx.example.com:8443/sip-ws', extension: null, extension_secret: null, webrtc: false });
   });
 
   test('a stored URL wins', async () => {
     settings.WEBRTC_PBX_SERVER = 'wss://sip.example.com/custom';
-    mocked(dbm.getUserWebrtcCredentials).mockResolvedValue({ extension: null });
+    mocked(dbm.getUserWebrtcCredentials).mockResolvedValue({ extension: null, webrtc: true });
     expect((await ctl.webrtcConfig(req())).server).toBe('wss://sip.example.com/custom');
   });
 });

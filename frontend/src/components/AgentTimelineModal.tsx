@@ -1,8 +1,8 @@
 import type { CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import { History, LogIn, LogOut, UserCheck } from 'lucide-react';
-import type { AgentTimeline, AgentTimelineEntry } from '../types';
+import { Headset, History, LogIn, LogOut, MinusCircle, Smartphone, UserCheck } from 'lucide-react';
+import type { AgentTimeline, AgentTimelineEntry, AgentTimelineStretch } from '../types';
 import type { DateRange } from './analyticsUtils';
 import { fmtSecs, buildDateParams, analyticsGet, useAnalyticsFetch } from './analyticsUtils';
 import { AGENT_STATE_META, StatusBadge } from './statusBadge';
@@ -78,6 +78,11 @@ export function AgentTimelineModal({ agent, name, dateRange, onClose }: Props) {
   );
 
   const sessions = data?.sessions ?? [];
+  const stretchGroups: { key: string; Icon: typeof Headset; title: string; rows: AgentTimelineStretch[] }[] = [
+    { key: 'registration', Icon: Smartphone, title: t('agent.timeline.registered', 'Phone registered'), rows: data?.registration ?? [] },
+    { key: 'queue_login', Icon: Headset, title: t('agent.timeline.queueLogin', 'Queue login'), rows: data?.queue_login ?? [] },
+    { key: 'dnd', Icon: MinusCircle, title: t('agent.adherence.dnd', 'DND'), rows: data?.dnd ?? [] },
+  ].filter((g) => g.rows.length > 0);
   // The route answers 403 for an agent outside the caller's scope.
   const forbidden = !!error && /\b403\b/.test(error);
 
@@ -114,6 +119,36 @@ export function AgentTimelineModal({ agent, name, dateRange, onClose }: Props) {
             title={t('agent.timeline.empty', 'No activity for this period')}
             description={t('agent.timeline.emptyHint', 'This agent did not log in during the selected dates.')}
           />
+        )}
+
+        {!loading && !error && stretchGroups.length > 0 && (
+          <section className="an-tl-session">
+            {stretchGroups.map((g) => (
+              <div key={g.key} className="an-tl-stretches">
+                <div className="an-tl-session-head">
+                  <span className="an-tl-bound"><g.Icon size={14} aria-hidden /> {g.title}</span>
+                  <span className="an-tl-session-dur">
+                    <strong>{fmtSecs(g.rows.reduce((n, r) => n + r.duration_secs, 0))}</strong>
+                  </span>
+                </div>
+                <ol className="an-tl-list">
+                  {g.rows.map((r, i) => (
+                    <li className="an-tl-item" key={`${g.key}-${r.started_at}-${i}`}>
+                      <span className="an-tl-time">{fmtTime(r.started_at)}</span>
+                      <span className="an-tl-rail" />
+                      <span className="an-tl-state">
+                        {fmtDay(r.started_at)} · {fmtTime(r.started_at)} → {r.open ? t('agent.adherence.stillIn', 'In') : fmtTime(r.ended_at)}
+                      </span>
+                      <span className="an-tl-meta">
+                        {r.via === 'push' && <Badge tone="info">{t('agent.timeline.viaPush', 'asleep · push')}</Badge>}
+                      </span>
+                      <span className="an-tl-dur">{fmtSecs(r.duration_secs)}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ))}
+          </section>
         )}
 
         {!loading && !error && sessions.map((s, i) => (

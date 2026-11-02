@@ -82,7 +82,8 @@ export type AgentState =
   | 'on_call'
   | 'wrap_up'
   | 'dnd'
-  | 'available';  // non-agent presence (plain extension: reachable, no queue)
+  | 'available'       // legacy: plain-extension presence before availability tracking
+  | 'break_offline';  // history only: offline while on a break (timeline / report)
 
 /** One agent's live presence, pushed in the WebSocket state payload (`agent_states`).
  *  It carries the reason CODE only; the label is resolved client-side (usePauseReasons). */
@@ -90,14 +91,24 @@ export interface AgentStateInfo {
   extension: string;
   state: AgentState;
   reason_code: string | null;
-  /** ISO timestamp (with UTC offset) the state was entered, so a timer survives a reload. */
-  since: string;
+  /** ISO timestamp (with UTC offset) the state was entered, so a timer survives a reload. Null when offline. */
+  since: string | null;
   /** Seconds in the current state at snapshot time. */
   duration_secs: number;
   linkedid: string | null;
   queue: string | null;
-  /** False for a plain extension (Available/DND/Offline presence, no queue). */
+  /** False for a plain extension (no queues assigned). */
   is_agent?: boolean;
+  /** In its queues right now (queue login is independent of availability). */
+  queue_logged_in?: boolean;
+  /** Queues of the current queue session. */
+  queues?: string[];
+  /** How the phone is reachable: registered ('sip'), asleep but push-wakeable ('push'), or offline (null). */
+  reachable_via?: 'sip' | 'push' | null;
+  /** DND flag (blocks inbound calls; also takes the extension out of its queues). */
+  dnd?: boolean;
+  /** Offline on a break: the reason it resumes with when the phone is back. */
+  held_break?: string | null;
 }
 
 /** An admin-managed Not-Ready / pause reason code. MySQL TINYINTs arrive as 0/1. */
@@ -110,6 +121,8 @@ export interface PauseReason {
   sort_order: number;
   is_active: number | boolean;
   is_system: number | boolean;
+  /** Break window, seconds: offline time during this break counts as the break up to this long from its start. Null = none. */
+  max_break_secs?: number | null;
 }
 
 /** One row of the Agent Adherence report. */
@@ -130,6 +143,22 @@ export interface AgentAdherenceRow {
   break_secs?: number;
   dnd_secs?: number;
   productive_not_ready_secs: number;
+  /** False for a plain extension (no queues). */
+  is_agent?: boolean;
+  /** Time the phone was registered (or asleep but push-wakeable). */
+  registered_secs?: number;
+  /** ready + on call + wrap-up. */
+  available_secs?: number;
+  /** Ready with no call. */
+  idle_secs?: number;
+  /** The part of idle time spent with DND on. */
+  idle_dnd_secs?: number;
+  /** The part of break time that was spent offline, inside the reason's break window. */
+  break_offline_secs?: number;
+  /** Time logged into the queues. */
+  queue_login_secs?: number;
+  outbound_calls?: number;
+  outbound_talk_secs?: number;
   occupancy_pct: number;
   not_ready_breakdown: { code: string; label: string; productive: boolean; secs: number }[];
 }
@@ -159,10 +188,23 @@ export interface AgentTimelineSession {
   entries: AgentTimelineEntry[];
 }
 
+/** One registration / queue-login / DND stretch beside the availability trace. */
+export interface AgentTimelineStretch {
+  started_at: string;
+  ended_at: string | null;
+  open: boolean;
+  /** Registration only: 'sip' (registered) or 'push' (asleep, push-wakeable). */
+  via?: 'sip' | 'push' | null;
+  duration_secs: number;
+}
+
 export interface AgentTimeline {
   agent: string;
   name: string;
   sessions: AgentTimelineSession[];  // newest first
+  registration?: AgentTimelineStretch[];
+  queue_login?: AgentTimelineStretch[];
+  dnd?: AgentTimelineStretch[];
 }
 
 export interface AppState {
