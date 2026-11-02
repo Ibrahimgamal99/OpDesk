@@ -21,10 +21,11 @@ A real-time operator panel for **Asterisk PBX** (Issabel 5 / FreePBX 16 and 17),
 - **Dashboard**: active, waiting and ringing calls, longest wait, agent availability and today's KPIs.
 - **Supervision**: listen, whisper and barge, allowed per user.
 - **Three roles**: **Admin** (everything), **Supervisor** (their assigned agents and queues), **Agent** (their own call history; live view of their groups).
+- **Extensions page**: every extension as a card (or a row in List view) with its status, time in state, how much of its break window is used (amber from 80%, red past it), its queues and its live call. Supervisors and admins get a ⋯ menu on each card: set a break or Available, log in or out of queues, turn DND on or off, listen / whisper / barge, the agent's timeline and calls today, or call the extension. The agent sees a message saying who changed their status, and the change is in the audit log.
 - **Not-Ready codes**: agents pause with a reason. The reason is kept across device changes, wrap-up time is applied after calls, and adherence is reported per agent with a timeline.
 
 **Calling**
-- **Web softphone**: make and take calls in the browser over WebRTC, with hold, mute, transfer, queue login/logout, and Ready / Not Ready with a reason code.
+- **Web softphone**: make and take calls in the browser over WebRTC, with hold, mute, transfer, queue login/logout, DND, and Available / Break with a reason code. The same status controls are in the header profile menu, and the avatar there wears your status colour.
 - **Mobile softphone**: sign a phone in by scanning a QR code, and wake a closed app for incoming calls with **RFC 8599** push (FCM / APNs VoIP). Recommended app: [Medut Softphone](https://github.com/Ibrahimgamal99/medut-softphone). → [guide](docs/guides/mobile-push.md)
 - **Recording**: full-call and per-leg recordings, with recording policy per direction and extension, retention, storage stats, and automatic talk/silence analysis (Silero VAD).
 

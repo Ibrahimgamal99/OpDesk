@@ -674,7 +674,10 @@ the stored body was truncated when logged, `503` if no CRM connector is configur
 
 Who changed what. Every successful `POST`, `PUT`, `PATCH` and `DELETE` under `/api` is
 recorded — except sign-in, browser log relay, the log-capture toggles, the loopback
-hooks and device-token and push-subscription refreshes, which are noise. Request bodies
+hooks and device-token and push-subscription refreshes, which are noise. A supervisor or
+admin changing another extension's presence over the WebSocket (`agent_set_status`,
+`agent_login`, `agent_logout`, `agent_wrapup_done` with `agent`) is recorded too, as
+`update` on `agent_presence`, with the action in `detail`. Request bodies
 are never stored as they are: a route records what the change carried in `detail`, built
 from an explicit field list, with every secret-named field (`password`, `api_key`,
 `*_SECRET`, `*_PASS`, …) replaced by `"********"` — the row says a secret changed, never
@@ -683,7 +686,7 @@ what to.
 | Query | Notes |
 |---|---|
 | `action` | `create`, `update`, `delete`, … |
-| `entity_type` | What was changed: `user`, `group`, `settings`, `api_key`, … |
+| `entity_type` | What was changed: `user`, `group`, `settings`, `api_key`, `agent_presence`, … |
 | `actor` | The acting user's name, username or extension |
 | `from`, `to` | `YYYY-MM-DD`, inclusive |
 | `limit`, `cursor` | Cursor paging, newest first; pass the previous page's `next_cursor` |

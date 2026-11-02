@@ -255,6 +255,7 @@ Server frames:
 |---|---|
 | `initial_state`, `state_update` | `data`: `extensions`, `active_calls`, `queues`, `queue_members`, `queue_entries`, `stats` and `agent_states`, filtered by the connection's live scope |
 | `call_notification_new` | `extension` — a missed-call notification was recorded |
+| `presence_changed_by` | `extension`, `by`, `action`, `status`, `reason_code`, `enabled` — sent only to the agent's own connections when a supervisor or admin changed their presence (see below) |
 | `action_result` | `action`, `success`, `message` — the reply to a client action |
 | `error` | `message` |
 
@@ -283,12 +284,23 @@ and the agent-presence actions:
 |---|---|---|
 | `agent_login` | `agent`? | Log the agent into their queues |
 | `agent_logout` | `agent`? | Log the agent out of their queues |
-| `agent_set_status` | `status` (`ready`, `not_ready`, `dnd`, `available`), `reason_code` (required for `not_ready`), `agent`? | Change presence |
+| `agent_set_status` | `status` (`ready`, `not_ready`, `dnd`, `available`), `reason_code` (required for `not_ready`), `enabled` (for `dnd`: `false` turns it off, default `true`), `agent`? | Change presence |
 | `agent_wrapup_done` | `agent`? | End wrap-up early |
 
 `agent` defaults to the caller's own extension. An agent can act only on their own
 extension (`Not allowed to control this agent` otherwise), and the queue-member actions
-(`queue_pause`, `queue_unpause`, …) are refused for the agent role.
+(`queue_pause`, `queue_unpause`, …) are refused for the agent role. A supervisor can act on
+the agents of their groups, an admin on any extension.
+
+When the change is made for someone else, that agent's connections get a
+`presence_changed_by` frame (the web UI shows it as a message such as "sup set you on
+Break · Lunch"), the availability timeline records the change with source `supervisor`,
+and an audit-log row is written with entity type `agent_presence`:
+
+```json
+{ "type": "presence_changed_by", "extension": "1001", "by": "sup",
+  "action": "agent_set_status", "status": "not_ready", "reason_code": "LUNCH", "enabled": null }
+```
 
 ---
 
