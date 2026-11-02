@@ -1929,6 +1929,21 @@ select.form-input option:checked {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* The room for the floating softphone button (58px) lives inside the panel's own
+     scroll, so the last setting still scrolls clear of it. */
+  padding-block-end: calc(58px + var(--space-7));
+}
+/* .main-content keeps ~100px free at the bottom for that button. Settings is sized to
+   the window and scrolls inside itself, so that band showed as an empty gap under the
+   panel: here the page keeps only its normal edge. */
+.main-content:has(> .settings-panel-full) {
+  padding-block-end: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+@media (max-width: 768px) {
+  .main-content:has(> .settings-panel-full) { padding-block-end: calc(16px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (max-width: 480px) {
+  .main-content:has(> .settings-panel-full) { padding-block-end: calc(12px + env(safe-area-inset-bottom, 0px)); }
 }
 
 .up-form-row {
