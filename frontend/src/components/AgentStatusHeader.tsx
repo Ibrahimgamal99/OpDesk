@@ -1,13 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BellOff, Check, ChevronDown, Headset, HeadphoneOff, Play, RefreshCw, WifiOff,
+  BellOff, Check, ChevronDown, Headset, HeadphoneOff, Play, RefreshCw,
 } from 'lucide-react';
-import { useAgentPresence } from '../contexts/AgentPresenceContext';
-import { usePauseReasons } from '../hooks/usePauseReasons';
-import { AGENT_STATE_META, DEVICE_STATUS_META } from './statusBadge';
-import type { AgentState, AgentStateInfo } from '../types';
+import { usePresenceControls } from '../hooks/usePresenceControls';
 import { fmtTimer } from '../lib/format';
 import { Badge } from './ui';
 
@@ -35,17 +32,9 @@ import { Badge } from './ui';
  *
  * Presence is the backend's agent-state manager (`agent_states[myExt]`), so the timer
  * counts from the server's `since` and survives a reload. Going on a break always names a
- * reason: the menu offers only the active, non-system reasons.
+ * reason: the menu offers only the active, non-system reasons. The state and actions come
+ * from usePresenceControls, which the header profile menu shares, so the two agree.
  */
-
-/** Seconds since the state was entered: the server's `since` when it parses, else the
- *  snapshot's `duration_secs` (an older backend, or a clock it could not express). */
-function secondsInState(presence: AgentStateInfo | null, now: number): number {
-  if (!presence) return 0;
-  const since = presence.since ? Date.parse(presence.since) : NaN;
-  if (Number.isFinite(since)) return Math.max(0, (now - since) / 1000);
-  return presence.duration_secs ?? 0;
-}
 
 /**
  * The softphone's one sync icon, whose action follows the registration:
@@ -104,23 +93,13 @@ interface Props {
 
 export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, onRefresh, refreshDisabled, onReconnect }: Props) {
   const { t } = useTranslation();
-  const { myExt, isAgent, presence, dnd, onCall: extOnCall, sendAction } = useAgentPresence();
-  const { selectable, labelFor } = usePauseReasons();
+  const pc = usePresenceControls({ onCall, ringing });
+  const {
+    myExt, isAgent, presence, state, dState, online, busy, asleep, isDnd, queueOn,
+    meta, Icon: PillIcon, label: stateLabel, elapsed, selectable, breakWindow,
+  } = pc;
   const [menuOpen, setMenuOpen] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
-
-  // No presence row = offline (the phone is not registered).
-  const state: AgentState = presence?.state ?? 'logged_out';
-  const online = state !== 'logged_out';
-  const queueOn = !!presence?.queue_logged_in;
-
-  useEffect(() => {
-    // Every available state carries a count-up timer.
-    if (!online) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [online]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -135,8 +114,6 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
       document.removeEventListener('keydown', onKey);
     };
   }, [menuOpen]);
-
-  const elapsed = useMemo(() => secondsInState(presence, now), [presence, now]);
 
   // No extension at all: the classic title header.
   if (!myExt) {
@@ -158,24 +135,8 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
     );
   }
 
-  // DND is a flag beside availability (legacy 'dnd' presence rows still read as DND).
-  const isDnd = !!presence?.dnd || dnd || state === 'dnd';
-  const busy = !!onCall || extOnCall || state === 'on_call';
-  // A live call shows On Call, except during wrap-up (it already follows a call). DND
-  // overrides everything else: it is the status itself (the time counts as Idle).
-  const dState: AgentState = busy && state !== 'wrap_up'
-    ? 'on_call'
-    : isDnd ? 'dnd' : (state === 'available' ? 'ready' : state);
-  // An unanswered incoming call is busy (controls lock) but shows as Ringing.
-  const meta = ringing ? DEVICE_STATUS_META.ringing : AGENT_STATE_META[dState];
-  // Offline reads as "no connection" (wifi-off), not the generic logged-out glyph.
-  const PillIcon = !ringing && !online ? WifiOff : meta.Icon;
-  // On a break the pill names the reason (Lunch); its tooltip and colour say it is a break.
-  const stateLabel = (!ringing && dState === 'not_ready' && labelFor(presence?.reason_code)) || t(meta.key, meta.fallback);
-  const asleep = online && presence?.reachable_via === 'push';
   // The break menu exists only where a break can be picked (Available, or switching reason).
-  const showReasons = state === 'ready' || state === 'not_ready';
-  const menuable = !busy && online && showReasons;
+  const menuable = pc.canPickBreak;
 
   // What the pill means, beyond its label: its tooltip.
   const pillHint = busy
@@ -193,21 +154,14 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
     ? t('agent.extRegistered', 'Ext {{ext}} · Registered', { ext: myExt })
     : t('agent.extNotRegistered', 'Ext {{ext}} · Not registered', { ext: myExt });
 
-  const act = (action: Record<string, unknown> & { action: string }) => {
-    sendAction(action);
-    setMenuOpen(false);
-  };
-  const login = () => act({ action: 'agent_login' });
-  const logout = () => act({ action: 'agent_logout' });
-  const setReady = () => act({ action: 'agent_set_status', status: 'ready' });
-  const finishWrap = () => act({ action: 'agent_wrapup_done' });
-  const setNotReady = (code: string) => {
-    // A break without a valid reason is refused by the backend; never send one.
-    if (!selectable.some((r) => r.code === code)) return;
-    act({ action: 'agent_set_status', status: 'not_ready', reason_code: code });
-  };
-  const setDnd = () => act({ action: 'agent_set_status', status: 'dnd', enabled: true });
-  const clearDnd = () => act({ action: 'agent_set_status', status: 'dnd', enabled: false });
+  const done = (fn: () => void) => () => { fn(); setMenuOpen(false); };
+  const login = done(pc.actions.queueLogin);
+  const logout = done(pc.actions.queueLogout);
+  const setReady = done(pc.actions.setReady);
+  const finishWrap = done(pc.actions.finishWrap);
+  const setNotReady = (code: string) => { pc.actions.setNotReady(code); setMenuOpen(false); };
+  const setDnd = done(() => pc.actions.setDnd(true));
+  const clearDnd = done(() => pc.actions.setDnd(false));
 
   // The one-tap way back to Available, beside the pill: Resume on a break, Finish in wrap-up.
   const quick = busy || !online
@@ -236,7 +190,9 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
       >
         <PillIcon size={14} className="agent-pill-ic" />
         <span className="agent-pill-label">{stateLabel}</span>
-        {online && <span className="agent-pill-timer">{fmtTimer(elapsed)}</span>}
+        {online && (
+          <span className={`agent-pill-timer${breakWindow.pressure ? ` is-${breakWindow.pressure}` : ''}`}>{fmtTimer(elapsed)}</span>
+        )}
         {menuable && <ChevronDown size={14} className="agent-pill-caret" />}
       </button>
       {quick && (

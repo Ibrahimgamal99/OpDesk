@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, RefreshCw, Radio, Clock, Loader2, MinusCircle, CircleDot, List, LayoutGrid } from 'lucide-react';
+import {
+  Phone, PhoneIncoming, RefreshCw, Radio, Clock, List, LayoutGrid, Headset, HeadphoneOff, Pause, Smartphone,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import type { Extension, AgentStateInfo } from '../types';
+import type { ActionMessage, Extension, AgentStateInfo, PauseReason } from '../types';
 import { getUser } from '../auth';
 import { StatusBadge, AGENT_STATE_META, DEVICE_STATUS_META, resolveAgentMeta, type StatusMeta } from './statusBadge';
 import { usePauseReasons } from '../hooks/usePauseReasons';
+import { breakPressure, type BreakPressure } from '../hooks/usePresenceControls';
 import { SuperviseActions } from './SuperviseActions';
+import { ExtensionActionsMenu } from './ExtensionActionsMenu';
+import { AgentTimelineModal } from './AgentTimelineModal';
+import { AgentCallsModal } from './AgentCallsModal';
+import { todayStr } from './analyticsUtils';
 import { countBy, presentOptions, showFilter } from '../lib/filters';
-import { Badge, Dropdown, EmptyState, Page, SearchInput, Table, Toolbar } from './ui';
+import { Dropdown, EmptyState, Page, SearchInput, Toolbar } from './ui';
 import { fmtTimer } from '../lib/format';
-import type { Column, DropdownOption } from './ui';
+import type { DropdownOption } from './ui';
 import '../styles/live.css';
 
 /** Live queue presence for an extension (Ready / Not-Ready · reason code), derived from
@@ -26,11 +34,12 @@ interface ExtensionsPanelProps {
   memberPresence?: Record<string, MemberPresence>;
   onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
   onSync?: () => void;
-  /** Extension -> webrtc 'yes'|'no'; shown as a read-only badge (toggling now lives in Users → Create/Edit). */
+  /** Extension -> webrtc 'yes'|'no'; shown as a read-only chip (toggling lives in Users → Create/Edit). */
   webrtcMap?: Record<string, string>;
-  /** Extensions the current user is allowed to toggle DND for */
-  allowedDndExtensions?: Set<string>;
-  onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
+  /** The live socket's action channel: the ⋯ menu's state changes go through it with `agent`. */
+  sendAction: (action: ActionMessage) => void;
+  /** Put a number in the softphone and open it; absent when this user has no web phone. */
+  onCallExtension?: (ext: string) => void;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -152,6 +161,27 @@ function stateSince(extension: Extension, agentState: AgentStateInfo | undefined
   return undefined;
 }
 
+
+/** What a card needs beyond its status: its presence row and the break window it is in. */
+interface ExtensionRow {
+  ext: Extension;
+  status: ResolvedStatus;
+  agent?: AgentStateInfo;
+}
+
+/** The live wiring every card and row shares, so the two views cannot drift apart. */
+interface RowContext {
+  now: number;
+  reasons: PauseReason[];
+  canSupervise: boolean;
+  webrtcMap: Record<string, string>;
+  onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
+  sendAction: (action: ActionMessage) => void;
+  onOpenTimeline: (ext: string, name: string) => void;
+  onOpenCalls: (ext: string, name: string) => void;
+  onCallExtension?: (ext: string) => void;
+}
+
 export function ExtensionsPanel({
   extensions,
   agentStates = {},
@@ -159,13 +189,13 @@ export function ExtensionsPanel({
   onSupervisorAction,
   onSync,
   webrtcMap = {},
-  allowedDndExtensions = new Set(),
-  onDndToggle,
+  sendAction,
+  onCallExtension,
 }: ExtensionsPanelProps) {
   const { t } = useTranslation();
   // Resolved once here and passed down: a hook per card would mean one
   // /api/pause-reasons request per extension.
-  const { labelFor } = usePauseReasons();
+  const { labelFor, reasons, selectable } = usePauseReasons();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -173,16 +203,19 @@ export function ExtensionsPanel({
   const [view, setView] = useState<ViewMode>(() => {
     try { return localStorage.getItem(storageKey) === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
   });
+  const [timelineFor, setTimelineFor] = useState<{ ext: string; name: string } | null>(null);
+  const [callsFor, setCallsFor] = useState<{ ext: string; name: string } | null>(null);
 
   useEffect(() => {
     try { localStorage.setItem(storageKey, view); } catch { /* best-effort */ }
   }, [storageKey, view]);
 
-  const rows = useMemo(() => Object.values(extensions)
+  const rows = useMemo<ExtensionRow[]>(() => Object.values(extensions)
     .sort((a, b) => a.extension.localeCompare(b.extension, undefined, { numeric: true }))
     .map((ext) => {
-      const status = resolveStatus(ext, agentStates[ext.extension], memberPresence[ext.extension], t, labelFor);
-      return { ext, status: { ...status, since: stateSince(ext, agentStates[ext.extension], status) } };
+      const agent = agentStates[ext.extension];
+      const status = resolveStatus(ext, agent, memberPresence[ext.extension], t, labelFor);
+      return { ext, agent, status: { ...status, since: stateSince(ext, agent, status) } };
     }),
   [extensions, agentStates, memberPresence, t, labelFor]);
 
@@ -227,6 +260,23 @@ export function ExtensionsPanel({
     { value: 'webrtc', label: t('extensions.webrtcBadge') },
     { value: 'desk', label: t('extensions.filter.deskPhone', 'Desk phone') },
   ], typeCounts, typeFilter);
+
+  const ctx: RowContext = {
+    now,
+    reasons,
+    // Agents see the floor read-only; supervisors (their groups) and admins get the ⋯ menu.
+    canSupervise: getUser()?.role !== 'agent',
+    webrtcMap,
+    onSupervisorAction,
+    sendAction,
+    // The live state is already scoped to the viewer, and the server checks again.
+    onOpenTimeline: (ext, name) => setTimelineFor({ ext, name }),
+    onOpenCalls: (ext, name) => setCallsFor({ ext, name }),
+    onCallExtension,
+  };
+  // The menu offers only the reasons an agent could pick themselves.
+  const menuReasons = selectable;
+  const today = { from: todayStr(), to: todayStr() };
 
   return (
     <Page
@@ -318,45 +368,24 @@ export function ExtensionsPanel({
           action={<button type="button" className="btn" onClick={clearFilters}>{t('common.clearFilters', 'Clear filters')}</button>}
         />
       ) : view === 'list' ? (
-        <ExtensionsList
-          rows={filtered}
-          now={now}
-          onSupervisorAction={onSupervisorAction}
-          webrtcMap={webrtcMap}
-          allowedDndExtensions={allowedDndExtensions}
-          onDndToggle={onDndToggle}
-        />
+        <ExtensionsList rows={filtered} ctx={ctx} menuReasons={menuReasons} />
       ) : (
         <div className="extensions-grid">
           <AnimatePresence>
-            {filtered.map(({ ext, status }) => (
-              <ExtensionCard
-                key={ext.extension}
-                extension={ext}
-                status={status}
-                now={now}
-                onSupervisorAction={onSupervisorAction}
-                webrtcEnabled={webrtcMap[ext.extension] === 'yes'}
-                canToggleDnd={allowedDndExtensions.has(ext.extension)}
-                onDndToggle={onDndToggle}
-              />
+            {filtered.map((row) => (
+              <ExtensionCard key={row.ext.extension} row={row} ctx={ctx} menuReasons={menuReasons} />
             ))}
           </AnimatePresence>
         </div>
       )}
+      {timelineFor && (
+        <AgentTimelineModal agent={timelineFor.ext} name={timelineFor.name} dateRange={today} onClose={() => setTimelineFor(null)} />
+      )}
+      {callsFor && (
+        <AgentCallsModal agent={callsFor.ext} name={callsFor.name} dateRange={today} onClose={() => setCallsFor(null)} />
+      )}
     </Page>
   );
-}
-
-interface ExtensionCardProps {
-  extension: Extension;
-  status: ResolvedStatus;
-  /** Shared clock (epoch ms) for the time-in-state timer. */
-  now: number;
-  onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
-  webrtcEnabled: boolean;
-  canToggleDnd: boolean;
-  onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
 }
 
 /** Two-letter monogram from the display name, falling back to the extension digits. */
@@ -368,86 +397,93 @@ function monogram(name: string | undefined, ext: string): string {
   return src.slice(0, 2).toUpperCase();
 }
 
-function ExtensionCard({
-  extension, status, now, onSupervisorAction, webrtcEnabled, canToggleDnd, onDndToggle,
-}: ExtensionCardProps) {
+/** Where a break shown on the card stands against its reason's window. */
+function breakState(row: ExtensionRow, reasons: PauseReason[], now: number): { pressure: BreakPressure; ratio: number; window: number } {
+  const none = { pressure: '' as BreakPressure, ratio: 0, window: 0 };
+  if (row.status.bucket !== 'not_ready' || row.agent?.state !== 'not_ready' || row.status.since === undefined) return none;
+  const reason = reasons.find((r) => r.code === row.agent?.reason_code);
+  return breakPressure(reason, Math.max(0, now - row.status.since) / 1000);
+}
+
+/** The monogram with the status ring, and a mark for how the phone is reachable. */
+function ExtAvatar({ row, small }: { row: ExtensionRow; small?: boolean }) {
   const { t } = useTranslation();
-  const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
-  const isRinging = extension.status === 'ringing';
-  const { meta } = status;
-
+  const via = row.agent?.reachable_via;
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.9 }}
-      transition={{ duration: 0.2 }}
-      className={`extension-card status-${extension.status}`}
-      style={{
-        ['--ext-accent' as string]: `var(${meta.varName})`,
-        ['--ext-accent-bg' as string]: `var(${meta.bgVar})`,
-      }}
+    <span className={`ext-avatar${small ? ' ext-avatar-sm' : ''}`} aria-hidden="true">
+      {monogram(row.ext.name, row.ext.extension)}
+      {via === 'sip' && <span className="ext-reg" title={t('extCard.registered', 'Registered')}><i /></span>}
+      {via === 'push' && (
+        <span className="ext-reg" title={t('extCard.asleep', 'Asleep, wakes by push')}><Smartphone size={10} /></span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The queue side of the card: the queues it is in (blue), paused in on a break (amber), or
+ * why it is out (dashed): not logged in, or DND (restored when DND ends). A plain extension
+ * with no queues says so.
+ */
+function QueueChips({ row }: { row: ExtensionRow }) {
+  const { t } = useTranslation();
+  const a = row.agent;
+  if (!a || a.state === 'logged_out') return null;
+  if (a.is_agent === false) return <span className="ext-chip">{t('extCard.noQueues', 'No queues · outbound')}</span>;
+  if (!a.is_agent) return null;
+  if (a.dnd || row.ext.dnd || a.state === 'dnd') {
+    return (
+      <span className="ext-chip is-out" title={t('extActions.queuesDnd', 'Out while DND is on · restored after')}>
+        <HeadphoneOff size={12} />{t('extCard.outDnd', 'Out (DND)')}
+      </span>
+    );
+  }
+  if (!a.queue_logged_in) {
+    return <span className="ext-chip is-out"><HeadphoneOff size={12} />{t('extCard.notInQueues', 'Not in queues')}</span>;
+  }
+  const paused = a.state === 'not_ready';
+  const names = a.queues && a.queues.length > 0 ? a.queues : [t('extCard.inQueues', 'In queues')];
+  return (
+    <>
+      {names.map((q) => (
+        <span
+          key={q}
+          className={`ext-chip ${paused ? 'is-paused' : 'is-in'}`}
+          title={paused ? t('agent.pausedInQueues', 'Paused in queues') : undefined}
+        >
+          {paused ? <Pause size={12} /> : <Headset size={12} />}{q}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** The break window as a thin bar: amber from 80%, red past it. Only on a break with a window. */
+function BreakBar({ window: win, ratio, pressure }: { window: number; ratio: number; pressure: BreakPressure }) {
+  const { t } = useTranslation();
+  if (!win) return null;
+  return (
+    <span
+      className={`ext-winbar${pressure ? ` is-${pressure}` : ''}`}
+      role="meter"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(ratio * 100)}
+      aria-label={t('extCard.window', 'Break window {{min}} min', { min: Math.round(win / 60) })}
+      title={t('extCard.window', 'Break window {{min}} min', { min: Math.round(win / 60) })}
     >
-      <div className="ext-card-top">
-        <div className="ext-avatar" aria-hidden="true">
-          {monogram(extension.name, extension.extension)}
-        </div>
-        <div className="ext-identity">
-          <div className="ext-identity-head">
-            <div className="extension-number">{extension.extension}</div>
-            {webrtcEnabled && (
-              <Badge tone="info" icon={<Radio size={14} />} title={t('extensions.webrtcOn')}>
-                {t('extensions.webrtcBadge')}
-              </Badge>
-            )}
-          </div>
-          {extension.name && (
-            <div className="extension-name" title={extension.name}>{extension.name}</div>
-          )}
-        </div>
-      </div>
-
-      <div className="ext-badges">
-        <StatusBadge meta={meta} label={status.label} title={status.title} />
-        <StateTimer status={status} now={now} />
-        {canToggleDnd && onDndToggle && <DndToggle extension={extension} onDndToggle={onDndToggle} />}
-      </div>
-
-      {extension.call_info && (isInCall || isRinging) && (
-        <div className="extension-info">
-          {extension.call_info.talking_to && extension.call_info.talking_to !== 'Unknown' && (
-            <div className="extension-info-row">
-              <Phone size={14} />
-              {extension.call_info.contact_name
-                ? <>{extension.call_info.contact_name} <span className="u-fg-muted u-mono">({extension.call_info.talking_to})</span></>
-                : extension.call_info.talking_to}
-            </div>
-          )}
-          {extension.call_info.duration && (
-            <div className="extension-info-row u-fg-muted">
-              <Clock size={14} />
-              <span className="u-mono">{extension.call_info.duration}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {isInCall && getUser()?.role !== 'agent' && (
-        <div className="u-row-stretch u-gap-2 u-mt-4 u-justify-center">
-          <SuperviseActions target={extension.extension} onAction={onSupervisorAction} />
-        </div>
-      )}
-    </motion.div>
+      <i style={{ inlineSize: `${Math.round(ratio * 100)}%` }} />
+    </span>
   );
 }
 
 /** How long the extension has been in its shown status, when that is known. */
-function StateTimer({ status, now }: { status: ResolvedStatus; now: number }) {
+function StateTimer({ status, now, pressure }: { status: ResolvedStatus; now: number; pressure?: BreakPressure }) {
   const { t } = useTranslation();
   if (status.since === undefined) return null;
   return (
     <span
-      className="ext-state-timer u-mono"
+      className={`ext-state-timer u-mono${pressure ? ` is-${pressure}` : ''}`}
       title={t('extensions.timeInState', { status: status.label, defaultValue: 'Time in {{status}}' })}
     >
       <Clock size={12} />
@@ -456,127 +492,159 @@ function StateTimer({ status, now }: { status: ResolvedStatus; now: number }) {
   );
 }
 
-/** The DND switch of one extension; disabled while it is on a call. */
-function DndToggle({ extension, onDndToggle }: {
-  extension: Extension;
-  onDndToggle: (extension: string, enabled: boolean) => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const [saving, setSaving] = useState(false);
-  const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
-  const on = !!extension.dnd;
-  const title = on ? t('extensions.dndOn', 'Do Not Disturb: on') : t('extensions.dndOff', 'Do Not Disturb: off');
-
-  const handleClick = async () => {
-    if (saving || isInCall) return;
-    setSaving(true);
-    try {
-      await onDndToggle(extension.extension, !on);
-    } finally {
-      setSaving(false);
-    }
-  };
-
+/** The caller on a live or ringing call. */
+function CallLine({ ext }: { ext: Extension }) {
+  const call = ext.call_info;
+  if (!call?.talking_to || call.talking_to === 'Unknown') return null;
+  const Icon = ext.status === 'ringing' ? PhoneIncoming : Phone;
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      className={`agent-dnd-toggle ext-dnd-toggle${on ? ' on' : ''}`}
-      onClick={(e) => { e.stopPropagation(); handleClick(); }}
-      disabled={saving || isInCall}
-      title={title}
-      aria-label={title}
-    >
-      <span className="agent-dnd-toggle-track">
-        <span className="agent-dnd-toggle-knob">
-          {saving ? <Loader2 size={12} className="spinner" /> : on ? <MinusCircle size={12} /> : <CircleDot size={12} />}
-        </span>
-      </span>
-    </button>
+    <span className="ext-call-who">
+      <Icon size={13} aria-hidden />
+      {call.contact_name
+        ? <><b>{call.contact_name}</b><span className="u-mono u-fg-muted">{call.talking_to}</span></>
+        : <b className="u-mono">{call.talking_to}</b>}
+    </span>
   );
 }
 
-interface ExtensionRow {
-  ext: Extension;
-  status: ResolvedStatus;
+function ActionsMenu({ row, ctx, menuReasons }: { row: ExtensionRow; ctx: RowContext; menuReasons: PauseReason[] }) {
+  if (!ctx.canSupervise) return null;
+  return (
+    <ExtensionActionsMenu
+      extension={row.ext}
+      agentState={row.agent}
+      reasons={menuReasons}
+      sendAction={ctx.sendAction}
+      onSupervisorAction={ctx.onSupervisorAction}
+      onOpenTimeline={ctx.onOpenTimeline}
+      onOpenCalls={ctx.onOpenCalls}
+      onCallExtension={ctx.onCallExtension}
+    />
+  );
 }
 
-interface ExtensionsListProps {
-  rows: ExtensionRow[];
-  now: number;
-  onSupervisorAction: (mode: 'listen' | 'whisper' | 'barge', target: string) => void;
-  webrtcMap: Record<string, string>;
-  allowedDndExtensions: Set<string>;
-  onDndToggle?: (extension: string, enabled: boolean) => Promise<void>;
-}
+const accentStyle = (meta: StatusMeta) => ({
+  '--ext-accent': `var(${meta.varName})`,
+  '--ext-accent-bg': `var(${meta.bgVar})`,
+}) as CSSProperties;
 
-/** List View: the cards' content as one table row per extension. */
-function ExtensionsList({ rows, now, onSupervisorAction, webrtcMap, allowedDndExtensions, onDndToggle }: ExtensionsListProps) {
+/**
+ * Grid View card ("style A"): status stripe, the monogram with a status ring and a
+ * reachability mark, the number and name, the ⋯ menu; then the status badge with its timer
+ * (amber/red against the break window, with a bar), the queue and WebRTC chips, and the live
+ * call with listen/whisper/barge.
+ */
+function ExtensionCard({ row, ctx, menuReasons }: { row: ExtensionRow; ctx: RowContext; menuReasons: PauseReason[] }) {
   const { t } = useTranslation();
-  const canSupervise = getUser()?.role !== 'agent';
-  const inCall = (ext: Extension) => ext.status === 'in_call' || ext.status === 'dialing';
-  const anyDnd = Boolean(onDndToggle) && rows.some(({ ext }) => allowedDndExtensions.has(ext.extension));
-
-  const columns: Column<ExtensionRow>[] = [
-    {
-      key: 'extension', header: t('fields.extension'), primary: true,
-      cell: ({ ext }) => (
-        <span className="u-row u-gap-2">
-          <span className="u-mono u-semibold">{ext.extension}</span>
-          {ext.name && <span className="u-fg-muted">{ext.name}</span>}
-          {webrtcMap[ext.extension] === 'yes' && (
-            <Badge tone="info" icon={<Radio size={14} />} title={t('extensions.webrtcOn')}>
-              {t('extensions.webrtcBadge')}
-            </Badge>
-          )}
-        </span>
-      ),
-    },
-    {
-      key: 'status', header: t('common.status', 'Status'),
-      cell: ({ status }) => (
-        <span className="u-row u-gap-2">
-          <StatusBadge meta={status.meta} label={status.label} title={status.title} />
-          <StateTimer status={status} now={now} />
-        </span>
-      ),
-    },
-    {
-      key: 'talkingTo', header: t('activeCalls.table.talkingTo'),
-      cell: ({ ext }) => {
-        const call = ext.call_info;
-        if (!call?.talking_to || call.talking_to === 'Unknown') return <span className="u-fg-muted">—</span>;
-        return call.contact_name
-          ? <>{call.contact_name} <span className="u-fg-muted u-mono">({call.talking_to})</span></>
-          : <span className="u-mono">{call.talking_to}</span>;
-      },
-    },
-    {
-      key: 'duration', header: t('fields.duration'),
-      cell: ({ ext }) => <span className="u-mono">{ext.call_info?.duration || '—'}</span>,
-    },
-    ...(anyDnd && onDndToggle ? [{
-      key: 'dnd', header: t('extensions.status.dnd', 'Do Not Disturb'),
-      cell: ({ ext }: ExtensionRow) => (allowedDndExtensions.has(ext.extension)
-        ? <DndToggle extension={ext} onDndToggle={onDndToggle} />
-        : null),
-    }] : []),
-    ...(canSupervise ? [{
-      key: 'actions', header: t('common.actions'), label: '',
-      cell: ({ ext }: ExtensionRow) => (inCall(ext)
-        ? <SuperviseActions target={ext.extension} onAction={onSupervisorAction} />
-        : null),
-    }] : []),
-  ];
+  const { ext: extension, status } = row;
+  const isInCall = extension.status === 'in_call' || extension.status === 'dialing';
+  const isRinging = extension.status === 'ringing';
+  const brk = breakState(row, ctx.reasons, ctx.now);
 
   return (
-    <Table
-      columns={columns}
-      rows={rows}
-      rowKey={({ ext }) => ext.extension}
-      framed
-      className="extensions-list"
-    />
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ duration: 0.2 }}
+      className={`extension-card status-${extension.status}`}
+      style={accentStyle(status.meta)}
+    >
+      <div className="ext-card-top">
+        <ExtAvatar row={row} />
+        <div className="ext-identity">
+          <div className="extension-number">{extension.extension}</div>
+          {extension.name && <div className="extension-name" title={extension.name}>{extension.name}</div>}
+        </div>
+        <ActionsMenu row={row} ctx={ctx} menuReasons={menuReasons} />
+      </div>
+
+      <div className="ext-status-row">
+        <StatusBadge meta={status.meta} label={status.label} title={status.title} />
+        <StateTimer status={status} now={ctx.now} pressure={brk.pressure} />
+      </div>
+      <BreakBar {...brk} />
+
+      <div className="ext-chips">
+        <QueueChips row={row} />
+        {ctx.webrtcMap[extension.extension] === 'yes' && (
+          <span className="ext-chip is-rtc" title={t('extensions.webrtcOn')}><Radio size={12} />{t('extensions.webrtcBadge')}</span>
+        )}
+      </div>
+
+      {extension.call_info && (isInCall || isRinging) && (
+        <div className="extension-info">
+          <CallLine ext={extension} />
+          <div className="ext-call-row">
+            {extension.call_info.duration && (
+              <span className="u-row u-gap-1 u-fg-muted u-mono"><Clock size={13} />{extension.call_info.duration}</span>
+            )}
+            {isInCall && ctx.canSupervise && (
+              <span className="u-row u-gap-1 u-push-end">
+                <SuperviseActions target={extension.extension} onAction={ctx.onSupervisorAction} />
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+/**
+ * List View ("style C"): one row-card per extension with the card's content in columns:
+ * who, status + timer (+ break bar), queues, the call, actions. It stacks on a narrow screen.
+ */
+function ExtensionsList({ rows, ctx, menuReasons }: { rows: ExtensionRow[]; ctx: RowContext; menuReasons: PauseReason[] }) {
+  const { t } = useTranslation();
+  return (
+    <div className="ext-rows" role="list">
+      <div className="ext-rows-head" aria-hidden="true">
+        <span>{t('fields.extension')}</span>
+        <span>{t('common.status', 'Status')}</span>
+        <span>{t('nav.queues', 'Queues')}</span>
+        <span>{t('activeCalls.table.talkingTo')}</span>
+        <span />
+      </div>
+      {rows.map((row) => {
+        const { ext, status } = row;
+        const inCall = ext.status === 'in_call' || ext.status === 'dialing';
+        const brk = breakState(row, ctx.reasons, ctx.now);
+        return (
+          <div key={ext.extension} className="ext-row" role="listitem" style={accentStyle(status.meta)}>
+            <div className="ext-row-id">
+              <ExtAvatar row={row} small />
+              <span className="ext-row-who">
+                <span className="u-row u-gap-2">
+                  <span className="u-mono u-semibold">{ext.extension}</span>
+                  {ctx.webrtcMap[ext.extension] === 'yes' && (
+                    <span className="ext-chip is-rtc" title={t('extensions.webrtcOn')}><Radio size={12} />{t('extensions.webrtcBadge')}</span>
+                  )}
+                </span>
+                {ext.name && <span className="ext-row-name" title={ext.name}>{ext.name}</span>}
+              </span>
+            </div>
+            <div className="ext-row-status">
+              <span className="u-row u-gap-2">
+                <StatusBadge meta={status.meta} label={status.label} title={status.title} />
+                <StateTimer status={status} now={ctx.now} pressure={brk.pressure} />
+              </span>
+              <BreakBar {...brk} />
+            </div>
+            <div className="ext-chips"><QueueChips row={row} /></div>
+            <div className="ext-row-call">
+              {(inCall || ext.status === 'ringing') && <CallLine ext={ext} />}
+              {(inCall || ext.status === 'ringing') && ext.call_info?.duration && (
+                <span className="u-mono u-fg-muted">{ext.call_info.duration}</span>
+              )}
+            </div>
+            <div className="ext-row-actions">
+              {inCall && ctx.canSupervise && <SuperviseActions target={ext.extension} onAction={ctx.onSupervisorAction} />}
+              <ActionsMenu row={row} ctx={ctx} menuReasons={menuReasons} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }

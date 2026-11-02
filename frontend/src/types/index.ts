@@ -219,7 +219,8 @@ export interface AppState {
 }
 
 export interface WebSocketMessage {
-  type: 'state_update' | 'initial_state' | 'action_result' | 'error' | 'call_notification_new' | 'call_outcome';
+  type: 'state_update' | 'initial_state' | 'action_result' | 'error' | 'call_notification_new' | 'call_outcome'
+    | 'presence_changed_by';
   data?: AppState;
   timestamp?: string;
   action?: string;
@@ -228,8 +229,12 @@ export interface WebSocketMessage {
   // call_notification_new / call_outcome: the extension the frame is about.
   extension?: string;
   // call_outcome: the call's status (components/callStatus.ts), pushed at hangup.
-  status?: string;
+  status?: string | null;
   linkedid?: string;
+  // presence_changed_by: who (a supervisor's username) changed this user's presence, and how.
+  by?: string;
+  reason_code?: string | null;
+  enabled?: boolean | null;
 }
 
 export interface ActionMessage {

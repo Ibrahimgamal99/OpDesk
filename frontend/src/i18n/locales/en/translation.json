@@ -1407,7 +1407,8 @@
       "wrapUp": "Wrap-up",
       "queueLabel": "Queue: {{queue}}",
       "deviceAsleep": "Available, but the phone is asleep; it wakes on the next call",
-      "breakOffline": "Break (offline)"
+      "breakOffline": "Break (offline)",
+      "break": "Break"
     },
     "codes": {
       "deleteFailed": "Could not delete that reason code.",
@@ -1998,5 +1999,48 @@
       "empty": "No security events yet.",
       "files": "Files on the server:"
     }
+  },
+  "profileStatus": {
+    "title": "Status",
+    "window": "Break window {{min}} min",
+    "wrapSub": "Finish wrap-up to take calls",
+    "readySub": "Ready for calls",
+    "queuesOutDnd": "Out while DND is on · restored after",
+    "queuesOff": "Not taking queue calls",
+    "queuesPaused": "{{queues}} · paused (on break)",
+    "queuesOn": "Taking queue calls",
+    "turnsDndOff": "Turns DND off",
+    "switchBreak": "Switch break reason",
+    "pickReason": "Pick a reason",
+    "paid": "paid",
+    "dndSub": "Blocks inbound, leaves queues"
+  },
+  "extActions": {
+    "menu": "Actions for {{ext}}",
+    "lockedOnCall": "Break, queue and DND unlock when the call ends.",
+    "offline": "The phone is offline. Its status changes when it registers.",
+    "forceBreak": "Set a break",
+    "queuesDnd": "Out while DND is on · restored after",
+    "timeline": "Open timeline",
+    "calls": "Calls today",
+    "call": "Call {{ext}}"
+  },
+  "extCard": {
+    "registered": "Registered",
+    "asleep": "Asleep, wakes by push",
+    "noQueues": "No queues · outbound",
+    "outDnd": "Out (DND)",
+    "notInQueues": "Not in queues",
+    "inQueues": "In queues",
+    "window": "Break window {{min}} min"
+  },
+  "presenceToast": {
+    "queueIn": "logged you in to your queues",
+    "queueOut": "logged you out of your queues",
+    "wrapDone": "finished your wrap-up",
+    "break": "set you on Break · {{reason}}",
+    "available": "set you Available",
+    "dndOff": "turned your DND off",
+    "dndOn": "turned on Do Not Disturb for you"
   }
 }

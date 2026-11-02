@@ -12,7 +12,8 @@
  *
  * Server -> client frames: initial_state, state_update, action_result {action, success,
  * message?}, error {message}, call_notification_new {extension}, call_outcome
- * {extension, status, linkedid}.
+ * {extension, status, linkedid}, presence_changed_by {extension, by, action, status,
+ * reason_code, enabled} (to the agent whose presence a supervisor just changed).
  */
 
 import type { IncomingMessage, Server as HttpServer } from 'http';
@@ -684,4 +685,34 @@ async function handleAgentAction(action: string, m: Record<string, unknown>, sco
   }
   await send(actionResult(action, result[0], result[1]));
   if (result[0]) await broadcastNow();
+  if (result[0] && src === 'supervisor') noteSupervisorChange(action, m, scope, target);
+}
+
+/**
+ * A supervisor changed someone else's presence: tell that agent's screens (a toast) and
+ * write an audit row (the HTTP audit middleware never sees a WebSocket action). Both are
+ * best-effort and never fail the action that already succeeded.
+ */
+function noteSupervisorChange(action: string, m: Record<string, unknown>, scope: LiveScope, target: string): void {
+  const status = pyStr(get(m, 'status', '') ?? '').trim() || null;
+  const reasonCode = pyStr(get(m, 'reason_code', '') ?? '').trim() || null;
+  const rawEnabled = get(m, 'enabled', undefined);
+  const enabled = status === 'dnd' ? (rawEnabled === undefined || rawEnabled === null ? true : truthy(rawEnabled)) : null;
+  const by = pyStr(scope.username ?? '') || String(scope.extension || '') || 'supervisor';
+  const frame = { type: 'presence_changed_by', extension: target, by, action, status, reason_code: reasonCode, enabled };
+  createTask((async () => {
+    for (const ws of [...runtime.manager.activeConnections]) {
+      const s = runtime.manager.getScope(ws) as LiveScope;
+      if (String(s.extension || '').trim() === target) await runtime.manager.sendPersonal(ws, frame);
+    }
+  })());
+  createTask(
+    dbm.insertAuditLog('update', 'agent_presence', {
+      actorExt: scope.extension ? String(scope.extension) : by,
+      actorUserId: typeof scope.user_id === 'number' ? scope.user_id : null,
+      entityId: target,
+      summary: `WS ${action}${status ? ` ${status}` : ''} for ${target}`,
+      detail: JSON.stringify({ action, status, reason_code: reasonCode, enabled }),
+    }).then((ok) => { if (!ok) log.error('audit log write failed for %s on %s (audit record lost)', action, target); }),
+  );
 }
