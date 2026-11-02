@@ -55,7 +55,7 @@ describe('schema.sql', () => {
       new Set([
         'OpDesk_settings', 'users', 'user_monitor_modes', 'agents', 'queues', 'groups', 'user_groups', 'group_agents',
         'group_queues', 'call_notifications', 'call_vad', 'call_supervision', 'device_tokens', 'sip_push_bindings',
-        'pause_reasons', 'agent_activity', 'analytics_sla_settings', 'analytics_fcr_settings', 'analytics_hourly',
+        'pause_reasons', 'agent_activity', 'extension_registration', 'queue_login', 'extension_dnd', 'analytics_sla_settings', 'analytics_fcr_settings', 'analytics_hourly',
         'analytics_daily', 'analytics_agent_daily', 'api_keys', 'webhook_deliveries', 'contacts', 'audit_log',
       ]),
     );
@@ -113,6 +113,37 @@ describe('applyColumnGuards', () => {
 
     jest.resetAllMocks();
     schemaOf(current);
+    expect(await mig.applyColumnGuards()).toEqual([]);
+    expect(ex).not.toHaveBeenCalled();
+  });
+
+  it('adds pause_reasons.max_break_secs with the 30-min default, system reasons without a window', async () => {
+    schemaOf({ ...current, pause_reasons: { code: 'varchar(64)' } });
+    ex.mockResolvedValue({ affectedRows: 0 });
+    expect(await mig.applyColumnGuards()).toEqual([
+      'ALTER TABLE pause_reasons ADD COLUMN max_break_secs INT NULL DEFAULT 1800',
+      'UPDATE pause_reasons SET max_break_secs = NULL WHERE is_system = 1',
+    ]);
+    expect(fs.readFileSync(mig.SCHEMA_FILE, 'utf8')).toMatch(/max_break_secs INT NULL DEFAULT 1800/);
+  });
+
+  it('moves a no-default max_break_secs to 30 min once, filling breaks that had no window', async () => {
+    const withDefault = (dflt: string | null) => q1.mockImplementation(async (sql: string, params: string[]) => {
+      if (/information_schema.TABLES/.test(sql)) return (current as Record<string, unknown>)[params[0]] || params[0] === 'pause_reasons' ? { found: 1 } : null;
+      if (params[0] === 'pause_reasons') return { COLUMN_TYPE: 'int', IS_NULLABLE: 'YES', COLUMN_DEFAULT: dflt };
+      const type = (current as Record<string, Record<string, string>>)[params[0]]?.[params[1]];
+      return type === undefined ? null : { COLUMN_TYPE: type, IS_NULLABLE: 'NO', COLUMN_DEFAULT: null };
+    });
+    ex.mockResolvedValue({ affectedRows: 0 });
+    withDefault(null);
+    expect(await mig.applyColumnGuards()).toEqual([
+      'ALTER TABLE pause_reasons MODIFY max_break_secs INT NULL DEFAULT 1800',
+      'UPDATE pause_reasons SET max_break_secs = 1800 WHERE is_system = 0 AND max_break_secs IS NULL',
+    ]);
+
+    // MariaDB reports the default as a string; once it is 1800 nothing runs again.
+    jest.resetAllMocks();
+    withDefault('1800');
     expect(await mig.applyColumnGuards()).toEqual([]);
     expect(ex).not.toHaveBeenCalled();
   });

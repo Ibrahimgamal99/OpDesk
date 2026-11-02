@@ -83,8 +83,7 @@ export function Softphone() {
     backspace,
     clearLogs,
     refetchConfig,
-    connect,
-    disconnect,
+    reloadAndReconnect,
     remoteAudioRef,
     localStream,
     remoteStream,
@@ -111,13 +110,6 @@ export function Softphone() {
     return () => window.clearTimeout(timer);
   }, [outcome]);
   const outcomeNotice = outcome && outcome.seq !== expiredOutcomeSeq ? outcome.status : null;
-
-  // Force a fresh registration: drop the current (possibly stuck) WebPhone first so
-  // connect()'s "already connecting" guard doesn't swallow the attempt.
-  const reconnect = () => {
-    disconnect('reconnect');
-    connect();
-  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -166,7 +158,7 @@ export function Softphone() {
       onCall={hasActiveCall}
       ringing={!!incomingCall}
       {...(withConfigActions
-        ? { onRefresh: refetchConfig, refreshDisabled: configLoading, onReconnect: reconnect }
+        ? { onRefresh: refetchConfig, refreshDisabled: configLoading, onReconnect: reloadAndReconnect }
         : {})}
     />
   );
@@ -440,7 +432,12 @@ export function Softphone() {
           {t('softphone.adminServerHint.before', 'Admin: set')} <strong>WEBRTC_PBX_SERVER</strong> {t('softphone.adminServerHint.after', 'in Settings.')}
         </p>
       )}
-      {config?.server?.trim() && (!config?.extension?.trim() || !config?.extension_secret?.trim()) && !configLoading && (
+      {config?.webrtc === false && !configLoading && (
+        <p className="softphone-hint">
+          {t('softphone.webrtcOffHint', 'The browser phone is off for your user. Use your desk or mobile phone; your status, breaks and DND still work here.')}
+        </p>
+      )}
+      {config?.webrtc !== false && config?.server?.trim() && (!config?.extension?.trim() || !config?.extension_secret?.trim()) && !configLoading && (
         <p className="softphone-hint">
           {t('softphone.credentialsHint.setYour', 'Set your')} <strong>{t('softphone.credentialsHint.extension', 'extension')}</strong> {t('softphone.credentialsHint.and', 'and')} <strong>{t('softphone.credentialsHint.secret', 'extension secret')}</strong> {t('softphone.credentialsHint.byAdmin', '(configured by an administrator).')}
         </p>

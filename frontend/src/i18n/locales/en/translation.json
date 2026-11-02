@@ -196,7 +196,14 @@
     "setReady": "Set Ready",
     "setNotReady": "Set Not Ready",
     "logoutTitle": "Log {{agent}} out?",
-    "logoutConfirm": "{{agent}} leaves every queue and stops receiving queue calls."
+    "logoutConfirm": "{{agent}} leaves every queue and stops receiving queue calls.",
+    "filterAll": "All",
+    "filterAgents": "Queue agents",
+    "filterExtensions": "Extensions",
+    "inQueues": "In queues",
+    "setAvailable": "Set Available",
+    "setBreak": "Set Break",
+    "offlineOnBreak": "Offline · {{reason}}"
   },
   "callLog": {
     "viewManage": "View and manage call records",
@@ -382,6 +389,8 @@
     "quality_jitter": "Jitter",
     "quality_loss": "Loss",
     "reconnect": "Reconnect",
+    "reconnectHint": "Not registered: reload settings and reconnect",
+    "refreshHint": "Reload phone settings",
     "adminServerHint": {
       "after": "in Settings.",
       "before": "Admin: set"
@@ -410,7 +419,8 @@
     },
     "levelMic": "Microphone (your voice)",
     "levelSpeaker": "Speaker (incoming volume)",
-    "lastCall": "Last call"
+    "lastCall": "Last call",
+    "webrtcOffHint": "The browser phone is off for your user. Use your desk or mobile phone; your status, breaks and DND still work here."
   },
   "users": {
     "title": "All users",
@@ -1293,13 +1303,13 @@
   "agent": {
     "adherence": {
       "title": "Agent adherence",
-      "subtitle": "Login, ready, on-call and break time per agent for the selected period.",
+      "subtitle": "Registered, available, idle, on-call, break and queue time per extension for the selected period.",
       "login": "Login",
       "logout": "Logout",
       "loggedIn": "Logged in",
       "occupancy": "Occupancy",
       "stillIn": "In",
-      "empty": "No agent activity for this period",
+      "empty": "No activity for this period",
       "exportCsv": "CSV",
       "exportXlsx": "Excel",
       "sessions": "Sessions",
@@ -1307,44 +1317,82 @@
       "dnd": "DND",
       "tip": {
         "source": {
-          "text": "Based on the status agents set themselves, not on their phones."
+          "text": "Availability follows the phone registration; breaks are the status agents set themselves."
         },
         "login": {
-          "text": "When the agent first logged in during the period."
+          "text": "When the extension first became available during the period."
         },
         "logout": {
-          "text": "When the agent last logged out. \"In\" while still signed in."
+          "text": "When the extension last went offline. \"In\" while still available."
         },
         "sessions": {
-          "text": "How many times the agent logged in. A logout, or the daily shift reset, ends a session."
+          "text": "How many times the extension became available. The phone going offline, or the daily shift reset, ends a session."
         },
         "loggedInTotal": {
-          "text": "Total time the agent was signed in.",
-          "formula": "ready + on call + wrap-up + not ready + DND"
+          "text": "Total time the extension was available or on a break.",
+          "formula": "available + not ready"
         },
         "ready": {
           "text": "Available: signed in and waiting for a call."
         },
         "onCall": {
-          "text": "On a call."
+          "text": "On any answered call: inbound, outbound or internal."
         },
         "wrapUp": {
-          "text": "Finishing up after a call."
+          "text": "Finishing up after a queue call."
         },
         "break": {
           "text": "The unpaid part of Not Ready: reasons not marked productive, such as lunch. Hover the number for the reasons."
         },
         "notReady": {
-          "text": "Paused with any reason, productive or not. Hover the number for the reasons."
+          "text": "On a break with any reason, productive or not. Hover the number for the reasons."
         },
         "dnd": {
-          "text": "Signed in but on Do Not Disturb: no queue or direct calls reach the agent."
+          "text": "Do Not Disturb was on: inbound calls blocked, out of the queues, any break ended. Counts as Idle while registered. Outbound calls still work."
         },
         "occupancy": {
           "text": "Of the time they were available, how much was spent working. Over 85% for long is a burnout sign.",
-          "formula": "(on call + wrap-up) ÷ (on call + wrap-up + ready)"
+          "formula": "(on call + wrap-up) ÷ (on call + wrap-up + idle)"
+        },
+        "registered": {
+          "text": "Time online: the phone was registered, or asleep but able to be woken by push."
+        },
+        "available": {
+          "text": "Ready to work: idle, on a call, or wrapping up.",
+          "formula": "idle + on call + wrap-up"
+        },
+        "idle": {
+          "text": "Available with no call. Hover the number for the part spent with DND on."
+        },
+        "queueLogin": {
+          "text": "Time logged into the queues. Separate from availability."
+        },
+        "outbound": {
+          "text": "Outbound calls placed, with the talk time of the answered ones."
+        },
+        "loggedInQueue": {
+          "text": "Time logged into the queues. Separate from being online; plain extensions have none."
+        },
+        "firstOnline": {
+          "text": "When the phone first came online in the period."
+        },
+        "lastOffline": {
+          "text": "When the phone last went offline. \"Online\" while it still is."
         }
-      }
+      },
+      "registered": "Registered",
+      "available": "Available",
+      "idle": "Idle",
+      "idleOnDnd": "Idle on DND",
+      "queueLogin": "Queue login",
+      "outbound": "Outbound",
+      "outboundTalk": "Talk",
+      "extensionTag": "extension",
+      "typeFilter": "Show",
+      "firstOnline": "First online",
+      "lastOffline": "Last offline",
+      "onlineNow": "Online",
+      "loggedInQueue": "Logged in"
     },
     "noReasons": "No reason codes",
     "unpaid": "break",
@@ -1358,7 +1406,8 @@
       "loggedOut": "Offline",
       "wrapUp": "Wrap-up",
       "queueLabel": "Queue: {{queue}}",
-      "deviceAsleep": "Ready, but the phone is asleep; it wakes on the next call"
+      "deviceAsleep": "Available, but the phone is asleep; it wakes on the next call",
+      "breakOffline": "Break (offline)"
     },
     "codes": {
       "deleteFailed": "Could not delete that reason code.",
@@ -1382,8 +1431,25 @@
       "source": {
         "ami": "phone",
         "supervisor": "supervisor"
-      }
-    }
+      },
+      "registered": "Phone registered",
+      "queueLogin": "Queue login",
+      "viaPush": "asleep · push"
+    },
+    "offlineHint": "Offline: availability starts when the phone registers",
+    "asleepHint": "The app is asleep; calls wake it by push",
+    "dndOff": "Turn DND off",
+    "queueLogin": "Log in to queues",
+    "queueLogout": "Log out of queues",
+    "pickBreak": "Break, with a reason",
+    "pickBreakEndsDnd": "Break, with a reason (turns DND off)",
+    "resume": "Resume",
+    "dndOn": "Turn on Do Not Disturb",
+    "dndSub": "Inbound blocked · outbound still works",
+    "pausedInQueues": "Paused in queues",
+    "lockedOnCall": "Controls unlock when the call ends",
+    "extRegistered": "Ext {{ext}} · Registered",
+    "extNotRegistered": "Ext {{ext}} · Not registered"
   },
   "logs": {
     "tabs": {
@@ -1492,7 +1558,12 @@
     "productiveHint": "Counts as paid work (e.g. Meeting, Training) rather than a break in adherence.",
     "activeHint": "Inactive codes are hidden from the agent picker.",
     "systemHint": "Used by OpDesk itself; it cannot be edited or deleted.",
-    "reservedCode": "Codes starting with __ are reserved for the system."
+    "reservedCode": "Codes starting with __ are reserved for the system.",
+    "window": "Break window",
+    "windowMinutes": "{{count}} min",
+    "windowLabel": "Break window (minutes)",
+    "windowNone": "No window",
+    "windowHint": "If the phone goes offline during this break (laptop closed, internet drop), the offline time still counts as this break up to this many minutes from the break start; after that it counts as offline. Leave empty to count no offline time."
   },
   "contacts": {
     "loading": "Loading contacts…",

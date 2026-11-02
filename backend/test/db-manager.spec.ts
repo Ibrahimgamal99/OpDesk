@@ -661,10 +661,19 @@ describe('pause reasons', () => {
   it('pauseReasonCreate takes Python positional args or a fields object, always non-system', async () => {
     route([[/^INSERT INTO pause_reasons/, () => ({ insertId: 8, affectedRows: 1 })]]);
     expect(await ops.pauseReasonCreate(' coffee ', 'Coffee', true, '#fff', '15', false)).toBe(8);
-    expect(ex.mock.calls[0][1]).toEqual(['coffee', 'Coffee', 1, '#fff', 15, 0]);
+    expect(ex.mock.calls[0][1]).toEqual(['coffee', 'Coffee', 1, '#fff', 15, 0, 1800]);
     expect(await ops.pauseReasonCreate({ code: 'tea', label: 'Tea' })).toBe(8);
-    expect(ex.mock.calls[1][1]).toEqual(['tea', 'Tea', 0, null, 100, 1]);
-    expect(ex.mock.calls[1][0]).toMatch(/VALUES \(\?, \?, \?, \?, \?, \?, 0\)$/);
+    expect(ex.mock.calls[1][1]).toEqual(['tea', 'Tea', 0, null, 100, 1, 1800]); // no window given: 30 min
+    expect(ex.mock.calls[1][0]).toMatch(/VALUES \(\?, \?, \?, \?, \?, \?, 0, \?\)$/);
+    // The break window: seconds, blank/0 = none, out of range refused.
+    expect(await ops.pauseReasonCreate({ code: 'lunch2', label: 'Lunch', max_break_secs: '3600' })).toBe(8);
+    expect(ex.mock.calls[2][1][6]).toBe(3600);
+    expect(await ops.pauseReasonCreate({ code: 'x', label: 'X', max_break_secs: 0 })).toBe(8);
+    expect(ex.mock.calls[3][1][6]).toBeNull();
+    expect(await ops.pauseReasonCreate({ code: 'n', label: 'N', max_break_secs: null })).toBe(8);
+    expect(ex.mock.calls[4][1][6]).toBeNull(); // an explicit null is "no window", not the default
+    expect(await ops.pauseReasonCreate({ code: 'y', label: 'Y', max_break_secs: 90000 })).toBeNull();
+    expect(await ops.pauseReasonCreate({ code: 'z', label: 'Z', max_break_secs: 'abc' })).toBeNull();
     expect(await ops.pauseReasonCreate('', 'x')).toBeNull();
   });
 });
@@ -684,6 +693,43 @@ describe('agentActivityTransition', () => {
     route([[/^UPDATE agent_activity/, () => ({ affectedRows: 1 })]]);
     expect(await ops.agentActivityTransition('1001', null)).toBeNull();
     expect(ex).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('side segment tables (queue_login / extension_dnd / extension_registration)', () => {
+  it('two concurrent opens for one extension insert ONE row (the login + its QueueMemberAdded race)', async () => {
+    const open: string[] = [];
+    route([
+      // The read yields before answering, as a real round-trip does: without serialisation
+      // both openers see "none open" and both insert.
+      [/^SELECT id FROM queue_login/, async (p) => {
+        // Answer from what was committed when the read was sent (a consistent read).
+        const seen = open.filter((e) => e === p[0]).map(() => ({ id: 1 }));
+        await new Promise((r) => setTimeout(r, 5));
+        return seen;
+      }],
+      [/^INSERT INTO queue_login/, (p) => { open.push(String(p[0])); return { insertId: open.length, affectedRows: 1 }; }],
+    ]);
+    const results = await Promise.all([ops.queueLoginOpen('100', 'ui'), ops.queueLoginOpen('100', 'ami')]);
+    expect(open).toEqual(['100']);
+    expect(results.sort()).toEqual([false, true]);
+  });
+
+  it('registration rows carry how the phone is reachable', async () => {
+    route([
+      [/^SELECT id FROM extension_registration/, () => []],
+      [/^INSERT INTO extension_registration/, () => ({ insertId: 1, affectedRows: 1 })],
+    ]);
+    expect(await ops.registrationOpen(' 100 ', 'push', 'ami')).toBe(true);
+    const ins = ex.mock.calls.find((c) => /^INSERT INTO extension_registration/.test(String(c[0])))!;
+    expect(String(ins[0])).toContain('(ext, source, via)');
+    expect(ins[1]).toEqual(['100', 'ami', 'push']);
+  });
+
+  it('close stamps the end and duration of the open row only', async () => {
+    route([[/^UPDATE extension_dnd SET ended_at = NOW\(\)/, () => ({ affectedRows: 1 })]]);
+    expect(await ops.dndClose('100')).toBe(true);
+    expect(String(ex.mock.calls[0][0])).toContain('WHERE ext = ? AND ended_at IS NULL');
   });
 });
 

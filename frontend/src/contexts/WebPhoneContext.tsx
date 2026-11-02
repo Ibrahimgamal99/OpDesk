@@ -22,7 +22,7 @@ export interface WebPhoneContextValue {
   hasActiveCall: boolean;
   isCallAnswered: boolean;
   isOutgoingRinging: boolean;
-  connect: () => Promise<void>;
+  connect: (opts?: { force?: boolean; config?: WebRtcConfig | null }) => Promise<void>;
   disconnect: (reason?: string) => void;
   makeCall: () => void;
   hangup: () => void;
@@ -30,7 +30,9 @@ export interface WebPhoneContextValue {
   clearNumber: () => void;
   backspace: () => void;
   clearLogs: () => void;
-  refetchConfig: () => Promise<void>;
+  refetchConfig: () => Promise<WebRtcConfig | null>;
+  /** Reload the config and register again with it (the header's action while unregistered). */
+  reloadAndReconnect: () => Promise<void>;
   remoteAudioRef: React.RefObject<HTMLAudioElement>;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;

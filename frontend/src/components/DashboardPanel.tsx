@@ -77,7 +77,9 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
     const agents = Object.values(state?.agent_states ?? {}).filter((a) => a.is_agent !== false);
     if (agents.length > 0) {
       const byState = (...wanted: string[]) => agents.filter((a) => wanted.includes(a.state)).length;
-      const ready = byState('ready');
+      // Available for a queue call = Available AND in the queues (queue login is separate
+      // from availability) AND not on DND (which takes them out of the queues).
+      const ready = agents.filter((a) => a.state === 'ready' && a.queue_logged_in !== false && !a.dnd).length;
       return {
         ...base,
         // Ringing is a device fact, not a presence: the agent being offered a call is still
@@ -86,7 +88,7 @@ export function DashboardPanel({ state, connected, lastUpdate }: DashboardPanelP
         onCall: byState('on_call'),
         wrapUp: byState('wrap_up'),
         notReady: byState('not_ready'),
-        dnd: byState('dnd'),
+        dnd: agents.filter((a) => a.dnd || a.state === 'dnd').length,
         offline: byState('logged_out'),
         total: agents.length,
         fromPresence: true,

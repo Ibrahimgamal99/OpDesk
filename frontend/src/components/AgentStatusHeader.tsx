@@ -2,10 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronDown, Play, RefreshCw, RotateCw, MinusCircle, CircleDot, CheckCircle2,
-  Headset, HeadphoneOff, LogOut,
+  BellOff, Check, ChevronDown, Headset, HeadphoneOff, Play, RefreshCw, WifiOff,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { useAgentPresence } from '../contexts/AgentPresenceContext';
 import { usePauseReasons } from '../hooks/usePauseReasons';
 import { AGENT_STATE_META, DEVICE_STATUS_META } from './statusBadge';
@@ -14,24 +12,30 @@ import { fmtTimer } from '../lib/format';
 import { Badge } from './ui';
 
 /**
- * The softphone header: a contact-center-style status control.
+ * The softphone header: availability + queue login + DND, as three independent controls.
  *
- * The live status is a *selector*: a state icon + label (+ a count-up timer while in the
- * queue) that opens a menu of the transitions valid for the current state (Not-Ready
- * reasons / Ready / Finish wrap-up / Do Not Disturb / Log out). The only always-on
- * controls beside it are one switch and the registration signal glyph:
- *   - a queue agent gets the **headset toggle** (in/out of the queue); DND is in the menu;
- *   - a plain extension gets a **DND toggle** (Available / DND) and no menu.
+ * One row (design A, "status pill"):
  *
- * Out of the queue an agent is treated like a plain extension: logged out reads as
- * **Available** (direct calls ring) and DND blocks them. Going Available from DND logs the
- * agent out rather than rejoining the queue.
+ *   ( ✓ Available 12:04 ▾ ) [▶]        ● 1001  [🎧] [🔕]  ↻
+ *
+ *   - **Availability** (the pill, every extension): the state's icon, label and a count-up
+ *     timer; ▾ opens the break-reason menu. On a break a quick ▶ Resume sits beside it (the
+ *     menu still switches reason); in wrap-up a quick ✓ Finish wrap-up. Offline (wifi-off)
+ *     means the phone is not registered — there is no "go offline" item.
+ *   - **Extension** with a registration dot.
+ *   - **Queues** (headset icon, queue agents only): in / out of the queues, blue when in. It
+ *     never changes availability. On a break the agent joins paused with the break's reason.
+ *   - **DND** (bell-off icon, everyone): red when on. It overrides everything — it ends a
+ *     break and becomes the status (the time counts as Idle), blocks inbound calls and takes
+ *     the agent out of the queues; turning it off returns to Available and rejoins them.
+ *     Picking a break turns DND off. Outbound calls still work.
+ *   - **Sync** (see SyncButton): reload settings, or reconnect when not registered.
+ *
+ * Every control locks during a call.
  *
  * Presence is the backend's agent-state manager (`agent_states[myExt]`), so the timer
- * counts from the server's `since` and survives a reload. Transitions go back over the
- * same socket (`agent_login`, `agent_logout`, `agent_set_status`, `agent_wrapup_done`);
- * the next state broadcast flips the header. Going Not-Ready always names a reason: the
- * menu offers only the active, non-system reasons, and the backend refuses anything else.
+ * counts from the server's `since` and survives a reload. Going on a break always names a
+ * reason: the menu offers only the active, non-system reasons.
  */
 
 /** Seconds since the state was entered: the server's `since` when it parses, else the
@@ -43,6 +47,45 @@ function secondsInState(presence: AgentStateInfo | null, now: number): number {
   return presence.duration_secs ?? 0;
 }
 
+/**
+ * The softphone's one sync icon, whose action follows the registration:
+ *   - registered     -> reload the WebRTC config (an admin changed the server or extension);
+ *   - not registered -> reload the config AND register again with it (tinted, so it shows).
+ * It spins and locks while the action runs, so a double click is one attempt.
+ */
+function SyncButton({ className, isConnected, onRefresh, onReconnect, refreshDisabled }: {
+  className: string;
+  isConnected: boolean;
+  onRefresh?: () => unknown;
+  onReconnect?: () => unknown;
+  refreshDisabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const reconnect = !isConnected && !!onReconnect;
+  const action = reconnect ? onReconnect : onRefresh;
+  if (!action) return null;
+  const label = reconnect
+    ? t('softphone.reconnectHint', 'Not registered: reload settings and reconnect')
+    : t('softphone.refreshHint', 'Reload phone settings');
+  const run = async () => {
+    setBusy(true);
+    try { await action(); } finally { setBusy(false); }
+  };
+  return (
+    <button
+      type="button"
+      className={`${className} sync-btn${reconnect ? ' is-reconnect' : ''}${busy ? ' is-busy' : ''}`}
+      onClick={() => { void run(); }}
+      disabled={busy || (!reconnect && refreshDisabled)}
+      title={label}
+      aria-label={label}
+    >
+      <RefreshCw size={14} />
+    </button>
+  );
+}
+
 interface Props {
   /** Fallback title when the user has no extension. */
   title: string;
@@ -52,10 +95,11 @@ interface Props {
   onCall?: boolean;
   /** A call is ringing in on this device (not answered yet): shows Ringing, not On Call. */
   ringing?: boolean;
-  onRefresh?: () => void;
+  /** Reload the WebRTC config (the sync icon while registered). */
+  onRefresh?: () => unknown;
   refreshDisabled?: boolean;
-  /** Force a fresh softphone registration attempt. */
-  onReconnect?: () => void;
+  /** Reload the config and register again (the sync icon while not registered). */
+  onReconnect?: () => unknown;
 }
 
 export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, onRefresh, refreshDisabled, onReconnect }: Props) {
@@ -66,17 +110,17 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // No presence row for a queue agent = not logged in to any queue.
+  // No presence row = offline (the phone is not registered).
   const state: AgentState = presence?.state ?? 'logged_out';
-  // In the queue = the ACD states; everything else is the out-of-queue Available/DND control.
-  const queueOn = isAgent && (state === 'ready' || state === 'not_ready' || state === 'wrap_up' || state === 'on_call');
+  const online = state !== 'logged_out';
+  const queueOn = !!presence?.queue_logged_in;
 
   useEffect(() => {
-    // Only the in-queue states carry a count-up timer.
-    if (!queueOn) return;
+    // Every available state carries a count-up timer.
+    if (!online) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [queueOn]);
+  }, [online]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -102,48 +146,52 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
         <span className="softphone-header-title">{title}</span>
         <div className="softphone-header-right">
           <span className={`softphone-status-dot ${isConnected ? 'registered' : ''}`} />
-          {!isConnected && onReconnect && (
-            <button
-              type="button"
-              className="softphone-header-btn"
-              onClick={onReconnect}
-              title={t('softphone.reconnect', 'Reconnect')}
-            >
-              <RotateCw size={14} />
-            </button>
-          )}
-          {onRefresh && (
-            <button
-              type="button"
-              className="softphone-header-btn"
-              onClick={onRefresh}
-              disabled={refreshDisabled}
-              title={t('common.refresh', 'Refresh')}
-            >
-              <RefreshCw size={14} />
-            </button>
-          )}
+          <SyncButton
+            className="softphone-header-btn"
+            isConnected={isConnected}
+            onRefresh={onRefresh}
+            onReconnect={onReconnect}
+            refreshDisabled={refreshDisabled}
+          />
         </div>
       </div>
     );
   }
 
-  // DND: the presence state when the manager reports it, else the extension's own flag.
-  const isDnd = state === 'dnd' || (!queueOn && dnd);
+  // DND is a flag beside availability (legacy 'dnd' presence rows still read as DND).
+  const isDnd = !!presence?.dnd || dnd || state === 'dnd';
   const busy = !!onCall || extOnCall || state === 'on_call';
-  // Display state: in the queue shows the ACD state (a live call shows On Call, except
-  // during wrap-up, which already follows a call); out of it Available / DND / On Call.
-  const dState: AgentState = queueOn
-    ? (busy && state !== 'wrap_up' ? 'on_call' : state)
-    : (busy ? 'on_call' : isDnd ? 'dnd' : 'available');
+  // A live call shows On Call, except during wrap-up (it already follows a call). DND
+  // overrides everything else: it is the status itself (the time counts as Idle).
+  const dState: AgentState = busy && state !== 'wrap_up'
+    ? 'on_call'
+    : isDnd ? 'dnd' : (state === 'available' ? 'ready' : state);
   // An unanswered incoming call is busy (controls lock) but shows as Ringing.
   const meta = ringing ? DEVICE_STATUS_META.ringing : AGENT_STATE_META[dState];
-  const StateIcon = meta.Icon;
+  // Offline reads as "no connection" (wifi-off), not the generic logged-out glyph.
+  const PillIcon = !ringing && !online ? WifiOff : meta.Icon;
+  // On a break the pill names the reason (Lunch); its tooltip and colour say it is a break.
   const stateLabel = (!ringing && dState === 'not_ready' && labelFor(presence?.reason_code)) || t(meta.key, meta.fallback);
-  // A plain extension only toggles Available / DND, so it gets an inline switch instead of
-  // the menu. Agents keep the menu (queue states + reasons).
-  const plainToggle = !isAgent;
-  const menuable = !busy && !plainToggle;
+  const asleep = online && presence?.reachable_via === 'push';
+  // The break menu exists only where a break can be picked (Available, or switching reason).
+  const showReasons = state === 'ready' || state === 'not_ready';
+  const menuable = !busy && online && showReasons;
+
+  // What the pill means, beyond its label: its tooltip.
+  const pillHint = busy
+    ? t('agent.lockedOnCall', 'Controls unlock when the call ends')
+    : !online
+      ? t('agent.offlineHint', 'Offline — availability starts when the phone registers')
+      : asleep
+        ? t('agent.asleepHint', 'The app is asleep; calls wake it by push')
+        : dState === 'dnd'
+          ? t('agent.dndSub', 'Inbound blocked · outbound still works')
+          : dState === 'not_ready' && isAgent && queueOn
+            ? t('agent.pausedInQueues', 'Paused in queues')
+            : '';
+  const extHint = isConnected
+    ? t('agent.extRegistered', 'Ext {{ext}} · Registered', { ext: myExt })
+    : t('agent.extNotRegistered', 'Ext {{ext}} · Not registered', { ext: myExt });
 
   const act = (action: Record<string, unknown> & { action: string }) => {
     sendAction(action);
@@ -154,164 +202,125 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
   const setReady = () => act({ action: 'agent_set_status', status: 'ready' });
   const finishWrap = () => act({ action: 'agent_wrapup_done' });
   const setNotReady = (code: string) => {
-    // A Not-Ready without a valid reason is refused by the backend; never send one.
+    // A break without a valid reason is refused by the backend; never send one.
     if (!selectable.some((r) => r.code === code)) return;
     act({ action: 'agent_set_status', status: 'not_ready', reason_code: code });
   };
-  const setDnd = () => act({ action: 'agent_set_status', status: 'dnd' });
-  // Go Available from DND: an agent logs out (set_available would rejoin the queue);
-  // a plain extension just clears DND.
-  const goAvailable = () => act(isAgent ? { action: 'agent_logout' } : { action: 'agent_set_status', status: 'available' });
+  const setDnd = () => act({ action: 'agent_set_status', status: 'dnd', enabled: true });
+  const clearDnd = () => act({ action: 'agent_set_status', status: 'dnd', enabled: false });
 
-  const showReasons = state === 'ready' || state === 'not_ready';
-  const showDnd = !isDnd && (state === 'ready' || state === 'not_ready' || state === 'wrap_up' || !queueOn);
-  // Whether any item precedes DND in the menu (so the divider is never the first row).
-  const hasAbove = showReasons || state === 'wrap_up' || !queueOn;
-
-  const mItem = (Ic: LucideIcon, label: string, onClick: () => void, danger = false) => (
-    <button
-      type="button"
-      role="menuitem"
-      className={`agent-bar-menu-item${danger ? ' agent-header-menu-danger' : ''}`}
-      onClick={onClick}
-    >
-      <Ic size={14} /> <span>{label}</span>
-    </button>
-  );
+  // The one-tap way back to Available, beside the pill: Resume on a break, Finish in wrap-up.
+  const quick = busy || !online
+    ? null
+    : state === 'not_ready'
+      ? { Icon: Play, label: t('agent.resume', 'Resume'), onClick: setReady }
+      : state === 'wrap_up'
+        ? { Icon: Check, label: t('agent.finishWrap', 'Finish wrap-up'), onClick: finishWrap }
+        : null;
 
   return (
     <div
       ref={rootRef}
-      className={`agent-header agent-header-${ringing ? 'ringing' : dState}`}
+      className={`agent-header agent-header-${ringing ? 'ringing' : online ? dState : 'logged_out'}`}
       style={{ ['--ah-color' as string]: `var(${meta.varName})`, ['--ah-bg' as string]: `var(${meta.bgVar})` }}
     >
-      {/* Status selector: opens the transition menu (locked while on a call). For a plain
-          extension it is a static label; the DND toggle lives on the right. */}
+      {/* The state pill: icon, label, timer; opens the break menu (locked on a call or offline). */}
       <button
         type="button"
-        className="agent-header-main"
+        className="agent-pill"
         onClick={() => { if (menuable) setMenuOpen((o) => !o); }}
         disabled={!menuable}
         aria-haspopup={menuable ? 'menu' : undefined}
         aria-expanded={menuable ? menuOpen : undefined}
-        title={myExt}
+        title={pillHint || undefined}
       >
-        <span className="agent-header-ic"><StateIcon size={15} /></span>
-        <span className="agent-header-state">{stateLabel}</span>
-        {queueOn && <span className="agent-header-timer">{fmtTimer(elapsed)}</span>}
-        {menuable && <ChevronDown size={15} className="agent-header-caret" />}
+        <PillIcon size={14} className="agent-pill-ic" />
+        <span className="agent-pill-label">{stateLabel}</span>
+        {online && <span className="agent-pill-timer">{fmtTimer(elapsed)}</span>}
+        {menuable && <ChevronDown size={14} className="agent-pill-caret" />}
       </button>
+      {quick && (
+        <button
+          type="button"
+          className="agent-quick"
+          onClick={quick.onClick}
+          title={quick.label}
+          aria-label={quick.label}
+        >
+          <quick.Icon size={15} />
+        </button>
+      )}
 
-      <div className="agent-header-right">
-        {plainToggle && (
-          /* Do-Not-Disturb toggle, the plain-extension status control.
-             On = DND (calls blocked); off = Available. Locked mid-call. */
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isDnd}
-            className={`agent-dnd-toggle ${isDnd ? 'on' : ''}`}
-            onClick={() => { if (busy) return; if (isDnd) goAvailable(); else setDnd(); }}
-            disabled={busy}
-            title={isDnd ? t('agent.state.available', 'Available') : t('agent.state.dnd', 'Do Not Disturb')}
-            aria-label={t('agent.state.dnd', 'Do Not Disturb')}
-          >
-            <span className="agent-dnd-toggle-track">
-              <span className="agent-dnd-toggle-knob">
-                {isDnd ? <MinusCircle size={14} /> : <CircleDot size={14} />}
-              </span>
-            </span>
-          </button>
-        )}
-        {isAgent && (
-          /* Queue login/logout: headset (in queue) / headset-off (out). Locked mid-call. */
-          <button
-            type="button"
-            role="switch"
-            aria-checked={queueOn}
-            className={`agent-queue-toggle ${queueOn ? 'on' : ''}`}
-            onClick={() => { if (busy) return; if (queueOn) logout(); else login(); }}
-            disabled={busy}
-            title={queueOn ? t('agent.logout', 'Log out') : t('common.logIn', 'Log in')}
-            aria-label={queueOn ? t('agent.logout', 'Log out') : t('common.logIn', 'Log in')}
-          >
-            <span className="agent-queue-toggle-track">
-              <span className="agent-queue-toggle-knob">
-                {queueOn ? <Headset size={14} /> : <HeadphoneOff size={14} />}
-              </span>
-            </span>
-          </button>
-        )}
-        {!isConnected && onReconnect && (
-          <button
-            type="button"
-            className="agent-header-refresh"
-            onClick={onReconnect}
-            title={t('softphone.reconnect', 'Reconnect')}
-          >
-            <RotateCw size={14} />
-          </button>
-        )}
-        {onRefresh && (
-          <button type="button" className="agent-header-refresh" onClick={onRefresh} disabled={refreshDisabled} title={t('common.refresh', 'Refresh')}>
-            <RefreshCw size={14} />
-          </button>
-        )}
-      </div>
+      <span className="agent-header-spacer" />
+
+      <span className="agent-ext" title={extHint}>
+        <span className={`agent-ext-dot${isConnected ? ' is-on' : ''}`} />
+        {myExt}
+      </span>
+      {isAgent && (
+        /* Queue login/logout. Locked mid-call. */
+        <button
+          type="button"
+          role="switch"
+          aria-checked={queueOn}
+          className={`agent-icon-btn agent-icon-queue${queueOn ? ' on' : ''}`}
+          onClick={() => { if (busy) return; if (queueOn) logout(); else login(); }}
+          disabled={busy}
+          title={queueOn ? t('agent.queueLogout', 'Log out of queues') : t('agent.queueLogin', 'Log in to queues')}
+          aria-label={queueOn ? t('agent.queueLogout', 'Log out of queues') : t('agent.queueLogin', 'Log in to queues')}
+        >
+          {queueOn ? <Headset size={17} /> : <HeadphoneOff size={17} />}
+        </button>
+      )}
+      {/* DND: blocks inbound calls (and leaves the queues). Locked mid-call. */}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={isDnd}
+        className={`agent-icon-btn agent-icon-dnd${isDnd ? ' on' : ''}`}
+        onClick={() => { if (busy) return; if (isDnd) clearDnd(); else setDnd(); }}
+        disabled={busy}
+        title={isDnd ? t('agent.dndOff', 'Turn DND off') : t('agent.dndOn', 'Turn on Do Not Disturb')}
+        aria-label={t('agent.state.dnd', 'Do Not Disturb')}
+      >
+        <BellOff size={17} />
+      </button>
+      <SyncButton
+        className="agent-header-refresh"
+        isConnected={isConnected}
+        onRefresh={onRefresh}
+        onReconnect={onReconnect}
+        refreshDisabled={refreshDisabled}
+      />
 
       {menuOpen && menuable && (
         <div className="agent-header-menu" role="menu">
-          {/* Return-to-ready / come-online transitions */}
-          {state === 'not_ready' && mItem(Play, t('agent.state.ready', 'Ready'), setReady)}
-          {state === 'wrap_up' && mItem(CheckCircle2, t('agent.finishWrap', 'Finish wrap-up'), finishWrap)}
-          {!queueOn && mItem(Play, t('agent.state.ready', 'Ready'), login)}
-
-          {/* Not-Ready reasons (only meaningful in the queue). A reason is required, so
-              there is no reasonless "Not Ready" item. */}
-          {showReasons && (
-            <>
-              <div className="agent-header-menu-label">{t('agent.pickReason', 'Not ready, with a reason')}</div>
-              {selectable.length === 0 && (
-                <div className="agent-bar-menu-empty">{t('agent.noReasons', 'No reason codes')}</div>
+          {/* Break reasons. A reason is required, so there is no reasonless item. */}
+          <div className="agent-header-menu-label">
+            {isDnd ? t('agent.pickBreakEndsDnd', 'Break, with a reason (turns DND off)') : t('agent.pickBreak', 'Break, with a reason')}
+          </div>
+          {selectable.length === 0 && (
+            <div className="agent-bar-menu-empty">{t('agent.noReasons', 'No reason codes')}</div>
+          )}
+          {selectable.map((r) => (
+            <button
+              key={r.code}
+              type="button"
+              role="menuitem"
+              className="agent-bar-menu-item"
+              onClick={() => setNotReady(r.code)}
+              aria-current={state === 'not_ready' && presence?.reason_code === r.code ? 'true' : undefined}
+            >
+              <span
+                className="agent-header-menu-swatch u-bg-var"
+                style={{ '--u-color': r.color || 'var(--text-muted)' } as CSSProperties}
+              />
+              <span>{r.label}</span>
+              {!(r.productive === true || r.productive === 1) && (
+                <Badge tone="neutral" className="u-push-end">{t('agent.unpaid', 'break')}</Badge>
               )}
-              {selectable.map((r) => (
-                <button
-                  key={r.code}
-                  type="button"
-                  role="menuitem"
-                  className="agent-bar-menu-item"
-                  onClick={() => setNotReady(r.code)}
-                  aria-current={state === 'not_ready' && presence?.reason_code === r.code ? 'true' : undefined}
-                >
-                  <span
-                    className="agent-header-menu-swatch u-bg-var"
-                    style={{ '--u-color': r.color || 'var(--text-muted)' } as CSSProperties}
-                  />
-                  <span>{r.label}</span>
-                  {!(r.productive === true || r.productive === 1) && (
-                    <Badge tone="neutral" className="u-push-end">{t('agent.unpaid', 'break')}</Badge>
-                  )}
-                </button>
-              ))}
-            </>
-          )}
-
-          {/* Do Not Disturb (from any online / idle state) or, when in DND, go Available */}
-          {showDnd && (
-            <>
-              {hasAbove && <div className="agent-header-menu-sep" />}
-              {mItem(MinusCircle, t('agent.state.dnd', 'Do Not Disturb'), setDnd)}
-            </>
-          )}
-          {isDnd && mItem(CircleDot, t('agent.state.available', 'Available'), goAvailable)}
-
-          {/* Log out (leaves the queue). Out of the queue the headset toggle logs in. */}
-          {queueOn && (
-            <>
-              <div className="agent-header-menu-sep" />
-              {mItem(LogOut, t('agent.logout', 'Log out'), logout, true)}
-            </>
-          )}
+            </button>
+          ))}
         </div>
       )}
     </div>

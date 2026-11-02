@@ -114,8 +114,10 @@ export class AgentsController {
       color: body.color ?? null,
       sort_order: body.sort_order ?? 100,
       is_active: body.is_active === undefined ? true : truthy(body.is_active),
+      // Omitted -> the 30-min default; null / '' / 0 -> no window.
+      max_break_secs: body.max_break_secs,
     });
-    if (!rid) throw new HttpError(400, 'Invalid or duplicate pause reason (code + label required)');
+    if (!rid) throw new HttpError(400, 'Invalid or duplicate pause reason (code + label required; break window 0-86400 s)');
     await runtime.agentState?.reloadReasons();
     setRedactedAuditDetail(req, {
       id: rid,
@@ -127,7 +129,7 @@ export class AgentsController {
     return { ok: true, id: rid };
   }
 
-  /** R42. Only label/productive/color/sort_order/is_active; system rows are refused. */
+  /** R42. Only label/productive/color/sort_order/is_active/max_break_secs; system rows are refused. */
   @Patch('/api/pause-reasons/:reason_id')
   @Auth('admin')
   async updatePauseReason(@Req() req: Request) {
@@ -139,7 +141,7 @@ export class AgentsController {
     await runtime.agentState?.reloadReasons();
     // Only the columns the update writes (see pauseReasonUpdate), never the raw body.
     const changed = Object.fromEntries(
-      ['label', 'productive', 'color', 'sort_order', 'is_active'].filter((k) => k in fields).map((k) => [k, fields[k]]),
+      ['label', 'productive', 'color', 'sort_order', 'is_active', 'max_break_secs'].filter((k) => k in fields).map((k) => [k, fields[k]]),
     );
     setRedactedAuditDetail(req, { changed });
     return { ok: true };
@@ -177,14 +179,14 @@ export class AgentsController {
     const reasonCode = String(body.reason_code ?? '').trim();
     if (!ready && !(await agentState.validNotReadyReason(reasonCode))) throw new HttpError(400, NOT_READY_REASON_ERROR);
 
-    let [ok] = await agentState.login(ext, 'ui', { queues });
+    let [ok] = await agentState.queueLogin(ext, 'ui', { queues });
     if (ok && !ready) [ok] = await agentState.setNotReady(ext, reasonCode, 'ui');
     await broadcastStateNow();
     setRedactedAuditDetail(req, { extension: ext, queues, ready, reason_code: ready ? null : reasonCode, ok });
-    return { ok, extension: ext, queues: agentState.states.get(ext)?.queues ?? queues, ready };
+    return { ok, extension: ext, queues: agentState.queueIn.get(ext) ?? queues, ready };
   }
 
-  /** R45. Leaves every queue the agent is actually in (else the assigned ones); clears DND. */
+  /** R45. Leaves every queue the agent is actually in (else the assigned ones). Availability is unchanged. */
   @Post('/api/agent/logout')
   @Auth('user')
   async agentLogout(@Req() req: Request) {
@@ -195,7 +197,7 @@ export class AgentsController {
     if (!queues.length) queues = await loginQueues(user, ext);
     // ok = at least one member was actually removed (the Python's any(queue_remove)).
     const before = runtime.monitor!.memberInterfacesFor(ext).length;
-    await agentState.logout(ext, 'ui');
+    await agentState.queueLogout(ext, 'ui');
     const ok = before > 0 && runtime.monitor!.memberInterfacesFor(ext).length < before;
     await broadcastStateNow();
     setRedactedAuditDetail(req, { extension: ext, queues, ok });

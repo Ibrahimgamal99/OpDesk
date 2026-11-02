@@ -518,6 +518,22 @@ export function bindingsFor(extension: string): Row[] {
   return [...(bindings.get(extension) ?? [])];
 }
 
+/**
+ * Can a call to this (unregistered) extension still reach it by waking the phone with a
+ * push? The same test wake() runs before the dialplan holds a call. Availability tracking
+ * uses it: an asleep mobile softphone that push can wake is still "reachable".
+ */
+export async function canWakeExtension(extension: string): Promise<boolean> {
+  if (!settings.enabled) return false;
+  try {
+    const legacy = (await dbm.getDeviceTokensForExtension(extension)) as pushService.DeviceTokenRow[];
+    return pushService.canWake(bindingsFor(extension), legacy);
+  } catch (e) {
+    log.warning('canWakeExtension(%s): %s', extension, e);
+    return false;
+  }
+}
+
 /** The "call" push payload. */
 export function callData(extension: string, caller: string, callerName: string, host: string): Record<string, string> {
   return {

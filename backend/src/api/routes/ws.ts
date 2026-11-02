@@ -659,9 +659,10 @@ async function handleAgentAction(action: string, m: Record<string, unknown>, sco
   const src = target !== String(scope.extension || '') ? 'supervisor' : 'ui';
   let result: [boolean, string];
   if (action === 'agent_login') {
-    result = await agentState.login(target, src);
+    // Queue login only: availability follows the phone and is never changed here.
+    result = await agentState.queueLogin(target, src);
   } else if (action === 'agent_logout') {
-    result = await agentState.logout(target, src);
+    result = await agentState.queueLogout(target, src);
   } else if (action === 'agent_wrapup_done') {
     result = await agentState.finishWrapup(target, src);
   } else {
@@ -670,10 +671,16 @@ async function handleAgentAction(action: string, m: Record<string, unknown>, sco
     else if (status === 'not_ready') {
       const code = pyStr(get(m, 'reason_code', '') ?? '').trim();
       result = code ? await agentState.setNotReady(target, code, src) : [false, NOT_READY_REASON_ERROR];
-    } else if (status === 'dnd') result = await agentState.setDnd(target, src);
-    else if (status === 'available') result = await agentState.setAvailable(target, src);
-    else if (status === 'offline') result = await agentState.setOffline(target, src);
-    else result = [false, 'Unknown status'];
+    } else if (status === 'dnd') {
+      // {enabled: false} turns it off; on is the default.
+      const raw = get(m, 'enabled', true);
+      result = await agentState.setDnd(target, raw === undefined || raw === null ? true : truthy(raw), src);
+    } else if (status === 'dnd_off' || status === 'available') {
+      // 'available' is the old "clear DND" of a plain extension.
+      result = await agentState.setDnd(target, false, src);
+    } else if (status === 'offline') {
+      result = [false, 'Availability follows the phone: close the softphone (unregister) to go offline'];
+    } else result = [false, 'Unknown status'];
   }
   await send(actionResult(action, result[0], result[1]));
   if (result[0]) await broadcastNow();

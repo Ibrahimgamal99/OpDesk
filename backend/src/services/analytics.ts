@@ -2144,11 +2144,11 @@ export async function startAggregationLoop(): Promise<void> {
 export const ACTIVE_STATES = ['ready', 'on_call', 'wrap_up', 'not_ready'] as const;
 
 /**
- * Seconds between two segments before they count as two separate logins. A transition
- * closes one segment and opens the next on one connection, so a same-session gap is 0-1s
- * of clock; anything longer is a real logout the agent came back from.
+ * Seconds between two segments before they count as two separate sessions. The same as the
+ * default queue grace period: a phone that drops and comes back within a minute (Wi-Fi
+ * blip, browser reload) is the same session; the gap itself is still counted nowhere.
  */
-export const SESSION_GAP_SECS = 5;
+export const SESSION_GAP_SECS = 60;
 
 /**
  * Ceiling on one adherence read. Segments are totalled here, so they all cross the wire; a
@@ -2432,6 +2432,131 @@ export function clampedSecs(seg: Segment, winStart: Date, winEnd: Date, now: Dat
   return Math.max(0, Math.trunc(wallDiffSecs(end, start)));
 }
 
+/** The open/close segment tables that sit beside agent_activity. */
+export type SideTable = 'extension_registration' | 'queue_login' | 'extension_dnd';
+
+/** A plain [start, end) interval of one side table, raw (unclamped). */
+export interface SideSegment {
+  ext: string;
+  started_at: Date;
+  ended_at: Date | null;
+  via?: string | null;
+}
+
+/**
+ * Rows of a side table overlapping the window, by extension. Unlike segmentRows a failure
+ * is logged and read as "no rows": these columns enrich the report, they must not take
+ * the whole adherence page down on an install whose migration has not run yet.
+ */
+export async function sideSegments(
+  table: SideTable,
+  windowStart: string,
+  windowEnd: string,
+  opts: { allowedAgents?: Scope; agentExt?: string | null } = {},
+): Promise<Map<string, SideSegment[]>> {
+  const out = new Map<string, SideSegment[]>();
+  let cond: string;
+  let params: Params;
+  if (opts.agentExt) [cond, params] = ['AND ext = ?', [opts.agentExt]];
+  else [cond, params] = scopeAgentCondition(opts.allowedAgents ?? null, 'ext');
+  const viaCol = table === 'extension_registration' ? ', via' : '';
+  try {
+    const rows = await query(
+      `SELECT ext, started_at, ended_at${viaCol}
+         FROM ${table}
+        WHERE started_at <= ? AND (ended_at IS NULL OR ended_at >= ?)
+        ${cond}
+        ORDER BY started_at DESC
+        ${SEGMENT_LIMIT_SQL}`,
+      [windowEnd, windowStart, ...params],
+    );
+    for (const r of rows.reverse()) {
+      pushTo(out, pyStr(r.ext), {
+        ext: pyStr(r.ext),
+        started_at: r.started_at as Date,
+        ended_at: (r.ended_at as Date | null) ?? null,
+        via: (r.via as string | undefined) ?? null,
+      });
+    }
+  } catch (e) {
+    log.warning('adherence %s: %s', table, e);
+  }
+  return out;
+}
+
+/** Extensions that are queue agents (in a group that has queues). Empty on error. */
+export async function agentsWithQueues(): Promise<Set<string>> {
+  try {
+    const rows = await query(
+      `SELECT DISTINCT ga.agent_ext
+         FROM group_agents ga
+         JOIN group_queues gq ON gq.group_id = ga.group_id
+         JOIN queues q ON q.extension = gq.queue_extension`,
+    );
+    return new Set(rows.map((r) => pyStr(r.agent_ext)).filter(Boolean));
+  } catch (e) {
+    log.warning('adherence agents_with_queues: %s', e);
+    return new Set();
+  }
+}
+
+/** Clamp a [start, end) to the window; null when nothing of it is inside. */
+function clampInterval(start: Date, end: Date | null, winStart: Date, winEnd: Date, now: Date): [Date, Date] | null {
+  const s0 = maxDt(start, winStart);
+  const e0 = minDt(end || now, winEnd);
+  return wall(e0) > wall(s0) ? [s0, e0] : null;
+}
+
+/** Seconds of the side segments inside the window. */
+export function sideSecs(segs: SideSegment[] | undefined, winStart: Date, winEnd: Date, now: Date): number {
+  let total = 0;
+  for (const s of segs ?? []) {
+    const iv = clampInterval(s.started_at, s.ended_at, winStart, winEnd, now);
+    if (iv) total += Math.max(0, Math.trunc(wallDiffSecs(iv[1], iv[0])));
+  }
+  return total;
+}
+
+/** Seconds where `seg` (clamped) overlaps any of `others` (clamped). */
+export function overlapSecs(seg: Segment, others: SideSegment[] | undefined, winStart: Date, winEnd: Date, now: Date): number {
+  if (!others || !others.length) return 0;
+  const a = clampInterval(seg.started_at, seg.ended_at, winStart, winEnd, now);
+  if (!a) return 0;
+  let total = 0;
+  for (const o of others) {
+    const b = clampInterval(o.started_at, o.ended_at, winStart, winEnd, now);
+    if (!b) continue;
+    const s0 = maxDt(a[0], b[0]);
+    const e0 = minDt(a[1], b[1]);
+    if (wall(e0) > wall(s0)) total += Math.trunc(wallDiffSecs(e0, s0));
+  }
+  return total;
+}
+
+/**
+ * Outbound calls and their talk time per extension for the window, from the call log (one
+ * read for everyone). Answered outbound calls only count toward talk. A CDR failure reads
+ * as no figures, never as a failed report.
+ */
+export async function outboundByExtension(df: string, dt: string, allowedAgents: Scope): Promise<Map<string, { calls: number; talk_secs: number }>> {
+  const out = new Map<string, { calls: number; talk_secs: number }>();
+  try {
+    const inScope = allowedAgents === null || allowedAgents === undefined ? null : new Set(allowedAgents.map(String));
+    for (const r of await periodCallLogRows(df, dt, null, allowedAgents ?? null)) {
+      const ext = sgetOr(r, 'extension');
+      if (!ext || !isDigits(ext) || (inScope && !inScope.has(ext))) continue;
+      if (dget<unknown>(r, 'call_type', '') !== 'OUT') continue;
+      let o = out.get(ext);
+      if (!o) out.set(ext, (o = { calls: 0, talk_secs: 0 }));
+      o.calls += 1;
+      if (rowAnswered(r)) o.talk_secs += intOr0(dget(r, 'talk', null));
+    }
+  } catch (e) {
+    log.warning('adherence outbound figures: %s', e);
+  }
+  return out;
+}
+
 /** 'YYYY-MM-DD' + 'HH:MM:SS' as a naive local datetime (the window bounds). */
 function windowDt(dateStr: string, time: string): Date {
   const [y, mo, d] = ymdParts(dateStr);
@@ -2472,7 +2597,7 @@ export async function computeAgentAdherence(
   // Reason metadata for the productive split + labels.
   const reasonMeta = new Map<string, Row>();
   try {
-    for (const r of await query('SELECT code, label, productive, color, is_system FROM pause_reasons')) {
+    for (const r of await query('SELECT code, label, productive, color, is_system, max_break_secs FROM pause_reasons')) {
       reasonMeta.set(r.code, r);
     }
   } catch (e) {
@@ -2486,6 +2611,14 @@ export async function computeAgentAdherence(
     pushTo(byAgent, pyStr(s.agent_ext), s);
   }
 
+  const [registration, queueLogins, dndFlags, outbound, agentQueues] = await Promise.all([
+    sideSegments('extension_registration', windowStart, windowEnd, { allowedAgents }),
+    sideSegments('queue_login', windowStart, windowEnd, { allowedAgents }),
+    sideSegments('extension_dnd', windowStart, windowEnd, { allowedAgents }),
+    outboundByExtension(df, dt, allowedAgents),
+    agentsWithQueues(),
+  ]);
+
   const result: Row[] = [];
   for (const [ext, segs] of byAgent) {
     const sessions = splitSessions(segs, winStartDt, winEndDt, now, boundary);
@@ -2495,12 +2628,47 @@ export async function computeAgentAdherence(
       ready_secs: 0, on_call_secs: 0, wrap_secs: 0, not_ready_secs: 0,
       break_secs: 0, dnd_secs: 0, productive_not_ready_secs: 0,
     };
+    let idleDnd = 0;
+    let breakOfflineCounted = 0;
+    const dndIntervals = dndFlags.get(ext);
     const breakdown = new Map<string, { code: string; label: unknown; productive: boolean; secs: number }>();
     for (const session of sessions) {
+      // A break and its offline stretches form one chain (same reason, back to back); the
+      // reason's window is measured from the chain's start.
+      let chainStart: Date | null = null;
+      let chainReason: string | null = null;
+      let chainEnd: Date | null = null;
       for (const seg of session.segments) {
-        const secs = clampedSecs(seg, winStartDt, winEndDt, now);
-        const state = seg.state;
-        if (state === 'ready') a.ready_secs += secs;
+        let secs = clampedSecs(seg, winStartDt, winEndDt, now);
+        let state = seg.state;
+        if (state === 'not_ready' || state === 'break_offline') {
+          const r = seg.reason_code || 'unknown';
+          const joined = chainStart !== null && chainReason === r && chainEnd !== null
+            && wallDiffSecs(seg.started_at, chainEnd) <= SESSION_GAP_SECS;
+          if (!joined) chainStart = seg.started_at;
+          chainReason = r;
+          chainEnd = seg.ended_at || now;
+        } else {
+          chainStart = null;
+          chainReason = null;
+          chainEnd = null;
+        }
+        if (state === 'break_offline') {
+          // Offline on a break: counts as that break up to its window from the break's
+          // start; beyond (or with no window) it is offline and counts as nothing.
+          const window = intOr0(dget((reasonMeta.get(seg.reason_code || '') ?? {}) as Row, 'max_break_secs', null));
+          const allowedEnd = window > 0 && chainStart ? wallAdd(chainStart, window) : null;
+          const segEnd = seg.ended_at || now;
+          secs = allowedEnd && wall(allowedEnd) > wall(seg.started_at)
+            ? clampedSecs({ ...seg, ended_at: minDt(segEnd, allowedEnd) }, winStartDt, winEndDt, now)
+            : 0;
+          breakOfflineCounted += secs;
+          state = 'not_ready';
+        }
+        if (state === 'ready') {
+          a.ready_secs += secs;
+          idleDnd += overlapSecs(seg, dndIntervals, winStartDt, winEndDt, now);
+        }
         else if (state === 'on_call') a.on_call_secs += secs;
         else if (state === 'wrap_up') a.wrap_secs += secs;
         else if (state === 'dnd') a.dnd_secs += secs;
@@ -2527,26 +2695,40 @@ export async function computeAgentAdherence(
       }
     }
 
+    // Legacy presence DND rows (DND was a state) count as logged-in time, as they did;
+    // DND is a flag now, reported as its own total beside availability.
     const loggedIn = a.ready_secs + a.on_call_secs + a.wrap_secs + a.not_ready_secs + a.dnd_secs;
     const handling = a.on_call_secs + a.wrap_secs;
     const avail = handling + a.ready_secs;
     const last = sessions[sessions.length - 1];
     const stillIn = last.open;
+    const ob = outbound.get(ext);
     result.push({
       agent: ext,
       name: dget(agentNames, ext, ''),
+      is_agent: agentQueues.has(ext) || queueLogins.has(ext),
       login: isoformat(sessions[0].login),
       logout: stillIn ? null : isoformat(last.logout as Date),
       logged_in: stillIn,
       sessions: sessions.length,
       logged_in_secs: loggedIn,
       ...a,
+      dnd_secs: a.dnd_secs + sideSecs(dndIntervals, winStartDt, winEndDt, now),
+      available_secs: avail,
+      idle_secs: a.ready_secs,
+      idle_dnd_secs: idleDnd,
+      break_offline_secs: breakOfflineCounted,
+      registered_secs: sideSecs(registration.get(ext), winStartDt, winEndDt, now),
+      queue_login_secs: sideSecs(queueLogins.get(ext), winStartDt, winEndDt, now),
+      outbound_calls: ob?.calls ?? 0,
+      outbound_talk_secs: ob?.talk_secs ?? 0,
       occupancy_pct: avail > 0 ? pyRound((handling / avail) * 100, 1) : 0.0,
       not_ready_breakdown: [...breakdown.values()].sort((x, y) => y.secs - x.secs),
     });
   }
 
   result.sort((x, y) => {
+    if (x.registered_secs !== y.registered_secs) return y.registered_secs - x.registered_secs;
     if (x.logged_in_secs !== y.logged_in_secs) return y.logged_in_secs - x.logged_in_secs;
     return x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0;
   });
@@ -2619,5 +2801,19 @@ export async function computeAgentTimeline(
   }
 
   sessions.reverse(); // newest session first: the one a supervisor opens the row to see
-  return { agent: ext, name, sessions };
+
+  // Registration and queue-login stretches beside the availability trace.
+  const marks = async (table: SideTable) => ((await sideSegments(table, windowStart, windowEnd, { agentExt: ext })).get(ext) ?? [])
+    .map((sg) => ({
+      started_at: isoformat(sg.started_at),
+      ended_at: sg.ended_at ? isoformat(sg.ended_at) : null,
+      open: sg.ended_at === null,
+      via: sg.via ?? null,
+      duration_secs: sideSecs([sg], winStartDt, winEndDt, now),
+    }))
+    .reverse();
+  const [registration, queueLogin, dnd] = await Promise.all([
+    marks('extension_registration'), marks('queue_login'), marks('extension_dnd'),
+  ]);
+  return { agent: ext, name, sessions, registration, queue_login: queueLogin, dnd };
 }

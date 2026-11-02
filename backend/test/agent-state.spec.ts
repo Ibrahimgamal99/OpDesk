@@ -1,7 +1,8 @@
 /**
- * Agent presence (services/agent-state): transitions, Not-Ready reason validation, acting
- * on the members the agent actually has (any interface form), wrap-up, DND, the daily
- * shift reset, AMI reconciliation and startup hydration.
+ * Presence (services/agent-state): availability (reachability-driven, every extension:
+ * Available / On Call / Break / Wrap-up) and queue login as independent layers; DND as a
+ * call-blocking flag that leaves and later rejoins the queues; the daily shift reset; AMI
+ * reconciliation and startup hydration.
  *
  * The monitor is the real AMIExtensionsMonitor with its AMI round-trip stubbed: every
  * action answers Success (or what a test scripts) and is recorded.
@@ -15,6 +16,8 @@ const mockReasons: Record<string, Record<string, unknown>> = {
   __WRAPUP: { code: '__WRAPUP', label: 'Wrap-up', is_active: 1, is_system: 1 },
 };
 const mockSettings: Record<string, string> = {};
+const mockRows: string[][] = [];
+const mockSavedBreaks: Record<string, string> = {};
 
 jest.mock('../src/db/db-manager', () => ({
   getAgentLoginQueues: jest.fn(async (ext: string) => mockLoginQueues[ext] ?? []),
@@ -28,14 +31,22 @@ jest.mock('../src/db/db-manager', () => ({
     return 1;
   }),
   agentActivityCloseAllOpen: jest.fn(async () => 0),
+  agentActivityOpenBreaks: jest.fn(async () => new Map(Object.entries(mockSavedBreaks))),
+  queueLoginOpen: jest.fn(async (ext: string) => { mockRows.push(['queue_login', 'open', ext]); return true; }),
+  queueLoginClose: jest.fn(async (ext: string) => { mockRows.push(['queue_login', 'close', ext]); return true; }),
+  queueLoginCloseAllOpen: jest.fn(async () => 0),
+  dndOpen: jest.fn(async (ext: string) => { mockRows.push(['dnd', 'open', ext]); return true; }),
+  dndClose: jest.fn(async (ext: string) => { mockRows.push(['dnd', 'close', ext]); return true; }),
+  dndCloseAllOpen: jest.fn(async () => 0),
   getSetting: jest.fn(async (k: string, d: string | null) => mockSettings[k] ?? d),
   insertCallNotification: jest.fn(async () => 1),
 }));
 jest.mock('../src/services/vad-runner', () => ({ schedule: jest.fn() }));
 
-import { AgentStateManager, NOT_READY_REASON_ERROR, shiftDayStart, parseShiftResetTime, formatShiftResetTime, SHIFT_RESET_OFF } from '../src/services/agent-state';
+import { AgentStateManager, NOT_READY_REASON_ERROR, OFFLINE_ERROR, shiftDayStart, parseShiftResetTime, formatShiftResetTime, SHIFT_RESET_OFF } from '../src/services/agent-state';
 import { AMIExtensionsMonitor } from '../src/services/ami';
 import { ShiftResetClock } from '../src/services/background';
+import type { ReachVia } from '../src/services/registration';
 
 const raw = (h: Record<string, string>) => Object.entries(h).map(([k, v]) => `${k}: ${v}\r\n`).join('') + '\r\n';
 
@@ -52,130 +63,351 @@ function setup() {
     return 'Response: Success\r\nMessage: ok';
   }) as never;
   const mgr = new AgentStateManager(monitor);
-  return { monitor, mgr, actions, fail };
+  const reach = new Map<string, ReachVia>();
+  mgr.registration = { viaOf: (e: string) => reach.get(e) ?? null };
+  /** The phone registers (or, with via='push', is asleep but wakeable). */
+  const online = async (ext: string, via: ReachVia = 'sip') => {
+    reach.set(ext, via);
+    await mgr.onReachability(ext, via);
+  };
+  const offline = async (ext: string) => {
+    reach.delete(ext);
+    await mgr.onReachability(ext, null);
+  };
+  /** The device answers / hangs up a call (real channel, as monitor.answeredCh holds it). */
+  const answer = async (ext: string, linkedid = '9.9') => {
+    const ch = `PJSIP/${ext}-0000000${ext.slice(-1)}`;
+    monitor.answeredCh.set(ch, ext);
+    monitor.ch2linkedid.set(ch, linkedid);
+    await mgr.handleAmiEvent({ Event: 'Newstate', Channel: ch, ChannelStateDesc: 'Up' });
+  };
+  const hangup = async (ext: string) => {
+    const ch = `PJSIP/${ext}-0000000${ext.slice(-1)}`;
+    monitor.answeredCh.delete(ch);
+    await mgr.handleAmiEvent({ Event: 'Hangup', Channel: ch });
+  };
+  return { monitor, mgr, actions, fail, reach, online, offline, answer, hangup };
 }
 
 beforeEach(() => {
   mockSegments.length = 0;
+  mockRows.length = 0;
   for (const k of Object.keys(mockSettings)) delete mockSettings[k];
+  for (const k of Object.keys(mockSavedBreaks)) delete mockSavedBreaks[k];
 });
 
-describe('login / logout', () => {
-  it('login joins the assigned queues with the device driver and goes Ready', async () => {
-    const { monitor, mgr, actions } = setup();
-    monitor.techByExt.set('100', 'SIP');
-    expect(await mgr.login('100')).toEqual([true, 'Logged in to 2 queue(s)']);
-    expect(actions.filter((a) => a.Action === 'QueueAdd').map((a) => [a.Queue, a.Interface])).toEqual([
-      ['800', 'SIP/100'],
-      ['801', 'SIP/100'],
-    ]);
-    expect(mgr.stateOf('100')).toBe('ready');
-    expect(mockSegments).toEqual([['100', 'ready', null, 'ui']]);
-    // DND was cleared on the way in.
-    expect(actions[0]).toMatchObject({ Action: 'DBDel', Family: 'DND', Key: '100' });
+describe('availability follows reachability', () => {
+  it('a plain extension registers -> Available, unregisters -> offline, persisted', async () => {
+    const { mgr, online, offline } = setup();
+    await online('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'ready', is_agent: false, queue_logged_in: false, reachable_via: 'sip' });
+    await offline('102');
+    expect(mgr.stateOf('102')).toBe('logged_out');
+    expect(mockSegments).toEqual([['102', 'ready', null, 'ami'], ['102', null, null, 'ami']]);
   });
 
-  it('reuses an existing member (feature-code login) instead of adding a duplicate', async () => {
-    const { monitor, mgr, actions } = setup();
-    await monitor.dispatchAsync(raw({ Event: 'QueueMemberAdded', Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '1', PausedReason: 'lunch' }));
-    await mgr.login('100');
-    const adds = actions.filter((a) => a.Action === 'QueueAdd').map((a) => a.Queue);
-    expect(adds).toEqual(['801']);
-    expect(actions.find((a) => a.Action === 'QueuePause')).toMatchObject({ Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '0' });
+  it('any answered call is On Call, hang-up is Available again', async () => {
+    const { mgr, online, answer, hangup } = setup();
+    await online('102');
+    await answer('102', '5.5');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'on_call', linkedid: '5.5' });
+    await hangup('102');
+    expect(mgr.stateOf('102')).toBe('ready');
   });
 
-  it('logout removes every live member in any form and closes the segment', async () => {
-    const { monitor, mgr, actions } = setup();
-    await mgr.login('100');
-    await monitor.dispatchAsync(raw({ Event: 'QueueMemberAdded', Queue: '802', Interface: 'Local/100@from-internal', Paused: '0' }));
-    actions.length = 0;
-    expect(await mgr.logout('100')).toEqual([true, 'Logged out']);
-    expect(actions.filter((a) => a.Action === 'QueueRemove').map((a) => [a.Queue, a.Interface]).sort()).toEqual([
-      ['800', 'PJSIP/100'],
-      ['801', 'PJSIP/100'],
-      ['802', 'Local/100@from-internal'],
-    ]);
-    expect(mgr.stateOf('100')).toBe('logged_out');
-    expect(mockSegments[mockSegments.length - 1]).toEqual(['100', null, null, 'ui']);
+  it('a Busy hint with no channel (Custom:DND from *78) is not a call', async () => {
+    const { monitor, mgr, online } = setup();
+    await online('102');
+    await monitor.dispatchAsync(raw({ Event: 'ExtensionStatus', Exten: '102', Status: '2' }));
+    await mgr.handleAmiEvent({ Event: 'ExtensionStatus', Exten: '102', Status: '2' });
+    expect(mgr.stateOf('102')).toBe('ready');
   });
 
-  it('login fails without assigned queues', async () => {
-    const { mgr } = setup();
-    expect((await mgr.login('102'))[0]).toBe(false);
+  it('registering while already on a call opens On Call', async () => {
+    const { monitor, mgr, online } = setup();
+    monitor.answeredCh.set('PJSIP/102-00000002', '102');
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('on_call');
   });
 });
 
-describe('Not Ready', () => {
+describe('break (Not Ready) for every extension', () => {
   it('requires an active, non-system reason', async () => {
-    const { mgr } = setup();
-    await mgr.login('101');
+    const { mgr, online } = setup();
+    await online('101');
     for (const code of ['', 'nope', 'old', '__WRAPUP']) {
       expect(await mgr.setNotReady('101', code)).toEqual([false, NOT_READY_REASON_ERROR]);
     }
     expect(mgr.stateOf('101')).toBe('ready');
   });
 
-  it('pauses the live members with the code and records it', async () => {
-    const { monitor, mgr, actions } = setup();
-    await mgr.login('101');
+  it('offline during a break: the break is held (break_offline row) and resumes however long it was away', async () => {
+    jest.useFakeTimers();
+    try {
+      const { mgr, online, offline } = setup();
+      await online('102');
+      await mgr.setNotReady('102', 'lunch');
+      await offline('102');
+      expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'break_offline', 'lunch', 'ami']);
+      expect(mgr.snapshot()['102']).toMatchObject({ state: 'logged_out', held_break: 'lunch' });
+      await jest.advanceTimersByTimeAsync(2 * 3600_000); // laptop closed for two hours
+      await online('102');
+      expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', held_break: null });
+      expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'not_ready', 'lunch', 'ami']);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('Available while offline on a break ends the hold (a supervisor can end it)', async () => {
+    const { mgr, online, offline } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await offline('102');
+    expect(await mgr.setReady('102', 'supervisor')).toEqual([true, 'Break ended (the phone is offline)']);
+    expect(mockSegments[mockSegments.length - 1]).toEqual(['102', null, null, 'supervisor']);
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('ready');
+  });
+
+  it('DND while offline on a break ends the hold too', async () => {
+    const { mgr, online, offline } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await offline('102');
+    await mgr.setDnd('102', true);
+    expect(mgr.snapshot()['102']).toMatchObject({ held_break: null, dnd: true });
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('ready');
+  });
+
+  it('going offline while Available holds nothing', async () => {
+    const { mgr, online, offline } = setup();
+    await online('102');
+    await offline('102');
+    expect(mockSegments[mockSegments.length - 1]).toEqual(['102', null, null, 'ami']);
+    expect(mgr.snapshot()['102']).toBeUndefined();
+  });
+
+  it('a restart while offline on a break keeps holding it', async () => {
+    const { mgr } = setup();
+    mockSavedBreaks['102'] = 'lunch';
+    await mgr.hydrate();
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'logged_out', held_break: 'lunch' });
+    expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'break_offline', 'lunch', 'system']);
+  });
+
+  it('an offline extension cannot take a break', async () => {
+    const { mgr } = setup();
+    expect(await mgr.setNotReady('102', 'lunch')).toEqual([false, OFFLINE_ERROR]);
+  });
+
+  it('a plain extension takes a break without any queue action, and calls do not end it', async () => {
+    const { mgr, actions, online, answer, hangup } = setup();
+    await online('102');
+    actions.length = 0;
+    expect(await mgr.setNotReady('102', 'lunch')).toEqual([true, 'Not Ready — Lunch']);
+    expect(actions).toEqual([]);
+    expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'not_ready', 'lunch', 'ui']);
+    await answer('102');
+    await hangup('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch' });
+    expect(await mgr.setReady('102')).toEqual([true, 'Available']);
+    expect(mgr.stateOf('102')).toBe('ready');
+  });
+
+  it('in the queues, a break pauses the live members with the code; Available unpauses', async () => {
+    const { monitor, mgr, actions, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
     actions.length = 0;
     expect(await mgr.setNotReady('101', 'lunch')).toEqual([true, 'Not Ready — Lunch']);
     expect(actions).toEqual([{ Action: 'QueuePause', Queue: '800', Interface: 'PJSIP/101', Paused: '1', Reason: 'lunch' }]);
     expect(monitor.queueMembers.get('800:PJSIP/101')).toMatchObject({ paused: true, pause_reason: 'lunch' });
-    expect(mgr.snapshot()['101']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', is_agent: true });
-    expect(mockSegments[mockSegments.length - 1]).toEqual(['101', 'not_ready', 'lunch', 'ui']);
+    expect(await mgr.setReady('101')).toEqual([true, 'Available']);
+    expect(monitor.queueMembers.get('800:PJSIP/101')!.paused).toBe(false);
+  });
+
+  it.each(['echo first', 'echo second'])('Available + the PBX Unpause echo write ONE row (%s)', async (order) => {
+    const { monitor, mgr, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
+    await mgr.setNotReady('101', 'lunch');
+    const echo = () => mgr.handleAmiEvent({ Event: 'QueueMemberUnpause', Queue: '800', Interface: 'PJSIP/101', Paused: '0' });
+    const send = monitor.sendAsync as (a: string, p: Record<string, unknown> | null) => Promise<string>;
+    let pending: Promise<void> | null = null;
+    monitor.sendAsync = (async (action: string, params: Record<string, unknown> | null) => {
+      const r = await send(action, params);
+      if (action === 'QueuePause' && params?.Paused === '0' && order === 'echo first') {
+        // The member is already unpaused locally when the echo lands mid-setReady.
+        monitor.queueMembers.get('800:PJSIP/101')!.paused = false;
+        pending = echo();
+      }
+      return r;
+    }) as never;
+    const before = mockSegments.length;
+    await mgr.setReady('101');
+    if (order === 'echo second') await echo();
+    if (pending) await pending;
+    const rows = mockSegments.slice(before);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].slice(0, 3)).toEqual(['101', 'ready', null]);
   });
 
   it('reports failure (and keeps the state) when no member could be paused', async () => {
-    const { mgr, fail } = setup();
-    await mgr.login('101');
+    const { mgr, fail, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
     fail.add('QueuePause');
     expect((await mgr.setNotReady('101', 'lunch'))[0]).toBe(false);
     expect(mgr.stateOf('101')).toBe('ready');
   });
 
-  it('back to Ready unpauses and clears the reason', async () => {
-    const { monitor, mgr } = setup();
-    await mgr.login('101');
-    await mgr.setNotReady('101', 'lunch');
-    expect(await mgr.setReady('101')).toEqual([true, 'Ready']);
-    expect(monitor.queueMembers.get('800:PJSIP/101')!.pause_reason).toBeUndefined();
-    expect(mgr.snapshot()['101'].reason_code).toBeNull();
-  });
-
   it('a reasonless pause reflected from AMI keeps the known reason', async () => {
-    const { monitor, mgr } = setup();
-    await mgr.login('101');
+    const { mgr, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
     await mgr.setNotReady('101', 'lunch');
     const before = mockSegments.length;
     await mgr.handleAmiEvent({ Event: 'QueueMemberPause', Queue: '800', Interface: 'PJSIP/101', Paused: '1' });
     expect(mgr.snapshot()['101'].reason_code).toBe('lunch');
     expect(mockSegments.length).toBe(before);
-    void monitor;
   });
 });
 
-describe('AMI reconciliation', () => {
-  it('AgentConnect without a session is ignored (no phantom adherence)', async () => {
+describe('queue login is independent of availability', () => {
+  it('login joins the assigned queues with the device driver; availability unchanged', async () => {
+    const { monitor, mgr, actions, online } = setup();
+    monitor.techByExt.set('100', 'SIP');
+    await online('100');
+    const segs = mockSegments.length;
+    expect(await mgr.queueLogin('100')).toEqual([true, 'Logged in to 2 queue(s)']);
+    expect(actions.filter((a) => a.Action === 'QueueAdd').map((a) => [a.Queue, a.Interface])).toEqual([
+      ['800', 'SIP/100'],
+      ['801', 'SIP/100'],
+    ]);
+    expect(mgr.snapshot()['100']).toMatchObject({ state: 'ready', queue_logged_in: true, queues: ['800', '801'] });
+    expect(mockSegments.length).toBe(segs);
+    expect(mockRows).toEqual([['queue_login', 'open', '100']]);
+  });
+
+  it('logging in on a break joins paused with the break reason', async () => {
+    const { mgr, actions, online } = setup();
+    await online('101');
+    await mgr.setNotReady('101', 'lunch');
+    actions.length = 0;
+    await mgr.queueLogin('101');
+    expect(actions.map((a) => [a.Action, a.Paused ?? '', a.Reason ?? ''])).toEqual([
+      ['QueueAdd', '1', ''],
+      ['QueuePause', '1', 'lunch'],
+    ]);
+  });
+
+  it('reuses an existing member (feature-code login) instead of adding a duplicate', async () => {
+    const { monitor, mgr, actions } = setup();
+    await monitor.dispatchAsync(raw({ Event: 'QueueMemberAdded', Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '1', PausedReason: 'lunch' }));
+    await mgr.queueLogin('100');
+    const adds = actions.filter((a) => a.Action === 'QueueAdd').map((a) => a.Queue);
+    expect(adds).toEqual(['801']);
+    expect(actions.find((a) => a.Action === 'QueuePause')).toMatchObject({ Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '0' });
+  });
+
+  it('logout removes every live member in any form; availability stays', async () => {
+    const { monitor, mgr, actions, online } = setup();
+    await online('100');
+    await mgr.queueLogin('100');
+    await monitor.dispatchAsync(raw({ Event: 'QueueMemberAdded', Queue: '802', Interface: 'Local/100@from-internal', Paused: '0' }));
+    actions.length = 0;
+    expect((await mgr.queueLogout('100'))[0]).toBe(true);
+    expect(actions.filter((a) => a.Action === 'QueueRemove').map((a) => [a.Queue, a.Interface]).sort()).toEqual([
+      ['800', 'PJSIP/100'],
+      ['801', 'PJSIP/100'],
+      ['802', 'Local/100@from-internal'],
+    ]);
+    expect(mgr.snapshot()['100']).toMatchObject({ state: 'ready', queue_logged_in: false });
+    expect(mockRows[mockRows.length - 1]).toEqual(['queue_login', 'close', '100']);
+  });
+
+  it('login fails without assigned queues', async () => {
+    const { mgr } = setup();
+    expect((await mgr.queueLogin('102'))[0]).toBe(false);
+  });
+
+  it('a feature-code login opens a queue session; removal from every queue ends it', async () => {
+    const { monitor, mgr, online } = setup();
+    await online('100');
+    await monitor.dispatchAsync(raw({ Event: 'QueueMemberAdded', Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '1', PausedReason: 'lunch' }));
+    await mgr.handleAmiEvent({ Event: 'QueueMemberAdded', Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '1', PausedReason: 'lunch' });
+    expect(mgr.snapshot()['100']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', queue_logged_in: true });
+    await monitor.dispatchAsync(raw({ Event: 'QueueMemberRemoved', Queue: '800', Interface: 'Local/100@from-queue/n' }));
+    await mgr.handleAmiEvent({ Event: 'QueueMemberRemoved', Queue: '800', Interface: 'Local/100@from-queue/n' });
+    expect(mgr.snapshot()['100']).toMatchObject({ state: 'not_ready', queue_logged_in: false });
+  });
+
+  it('unreachable without push: offline, then out of the queues after the grace period', async () => {
+    jest.useFakeTimers();
+    try {
+      const { mgr, online, offline } = setup();
+      mockSettings.QUEUE_UNREGISTER_GRACE_SECS = '60';
+      await online('101');
+      await mgr.queueLogin('101');
+      await offline('101');
+      expect(mgr.snapshot()['101']).toMatchObject({ state: 'logged_out', queue_logged_in: true });
+      await jest.advanceTimersByTimeAsync(59_000);
+      expect(mgr.isQueueLoggedIn('101')).toBe(true);
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(mgr.isQueueLoggedIn('101')).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('coming back within the grace period keeps the queue login', async () => {
+    jest.useFakeTimers();
+    try {
+      const { mgr, online, offline } = setup();
+      await online('101');
+      await mgr.queueLogin('101');
+      await offline('101');
+      await jest.advanceTimersByTimeAsync(30_000);
+      await online('101');
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', queue_logged_in: true });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('asleep but push-wakeable: still Available and in the queues', async () => {
+    const { mgr, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
+    await online('101', 'push'); // the hint went Unavailable; the tracker says push
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', queue_logged_in: true, reachable_via: 'push' });
+  });
+});
+
+describe('ACD calls', () => {
+  it('AgentConnect while offline is ignored (no phantom adherence)', async () => {
     const { mgr } = setup();
     await mgr.handleAmiEvent({ Event: 'AgentConnect', Queue: '800', Interface: 'PJSIP/100', Linkedid: '1.1' });
     expect(mgr.stateOf('100')).toBe('logged_out');
     expect(mockSegments).toEqual([]);
   });
 
-  it('a call goes on_call, then wrap-up (__WRAPUP pause), then auto-Ready at the max', async () => {
+  it('a call goes on_call, then wrap-up (__WRAPUP pause), then auto-Available at the max', async () => {
     jest.useFakeTimers();
     try {
-      const { mgr, actions } = setup();
+      const { mgr, actions, online } = setup();
       mockSettings.WRAPUP_MAX_SECS = '30';
-      await mgr.login('101');
+      await online('101');
+      await mgr.queueLogin('101');
       await mgr.handleAmiEvent({ Event: 'AgentConnect', Queue: '800', Interface: 'PJSIP/101', Linkedid: '1.1' });
       expect(mgr.snapshot()['101']).toMatchObject({ state: 'on_call', linkedid: '1.1' });
       actions.length = 0;
       await mgr.handleAmiEvent({ Event: 'AgentComplete', Queue: '800', Interface: 'PJSIP/101', Linkedid: '1.1' });
       expect(mgr.snapshot()['101']).toMatchObject({ state: 'wrap_up', reason_code: '__WRAPUP' });
       expect(actions).toEqual([{ Action: 'QueuePause', Queue: '800', Interface: 'PJSIP/101', Paused: '1', Reason: '__WRAPUP' }]);
-      // Our own pause repeating back must not open a second segment.
       const n = mockSegments.length;
       await mgr.handleAmiEvent({ Event: 'QueueMemberPause', Queue: '800', Interface: 'PJSIP/101', Paused: '1', PausedReason: '__WRAPUP' });
       expect(mockSegments.length).toBe(n);
@@ -186,71 +418,173 @@ describe('AMI reconciliation', () => {
     }
   });
 
-  it('finishWrapup returns to Ready; only valid in wrap-up', async () => {
-    const { mgr } = setup();
+  it('the device call and the ACD call are one On Call segment; hang-up waits for AgentComplete', async () => {
+    const { mgr, online, answer, hangup } = setup();
     mockSettings.WRAPUP_MAX_SECS = '0';
-    await mgr.login('101');
-    expect((await mgr.finishWrapup('101'))[0]).toBe(false);
-    await mgr.enterWrapup('101', { linkedid: '2.2' });
-    expect(await mgr.finishWrapup('101')).toEqual([true, 'Ready']);
+    await online('101');
+    await mgr.queueLogin('101');
+    await answer('101', '7.7');
+    const n = mockSegments.length;
+    await mgr.handleAmiEvent({ Event: 'AgentConnect', Queue: '800', Interface: 'PJSIP/101', Linkedid: '7.7' });
+    expect(mockSegments.length).toBe(n);
+    await hangup('101');
+    expect(mgr.stateOf('101')).toBe('on_call');
+    await mgr.handleAmiEvent({ Event: 'AgentComplete', Queue: '800', Interface: 'PJSIP/101', Linkedid: '7.7' });
+    expect(mgr.stateOf('101')).toBe('wrap_up');
   });
 
-  it('a feature-code login starts a session; removal from every queue ends it', async () => {
-    const { monitor, mgr } = setup();
-    await monitor.dispatchAsync(raw({ Event: 'QueueMemberAdded', Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '1', PausedReason: 'lunch' }));
-    await mgr.handleAmiEvent({ Event: 'QueueMemberAdded', Queue: '800', Interface: 'Local/100@from-queue/n', Paused: '1', PausedReason: 'lunch' });
-    expect(mgr.snapshot()['100']).toMatchObject({ state: 'not_ready', reason_code: 'lunch' });
-    await monitor.dispatchAsync(raw({ Event: 'QueueMemberRemoved', Queue: '800', Interface: 'Local/100@from-queue/n' }));
-    await mgr.handleAmiEvent({ Event: 'QueueMemberRemoved', Queue: '800', Interface: 'Local/100@from-queue/n' });
-    expect(mgr.stateOf('100')).toBe('logged_out');
+  it('finishWrapup returns to Available; only valid in wrap-up', async () => {
+    const { mgr, online } = setup();
+    mockSettings.WRAPUP_MAX_SECS = '0';
+    await online('101');
+    await mgr.queueLogin('101');
+    expect((await mgr.finishWrapup('101'))[0]).toBe(false);
+    await mgr.enterWrapup('101', { linkedid: '2.2' });
+    expect(await mgr.finishWrapup('101')).toEqual([true, 'Available']);
   });
 });
 
-describe('DND, hydrate, shift reset', () => {
-  it('DND leaves the queues and sets the AstDB flag; plain extensions are not persisted', async () => {
-    const { monitor, mgr, actions } = setup();
-    await mgr.login('101');
+describe('DND', () => {
+  it('DND on leaves the queues (remembered), DND off rejoins them; availability untouched', async () => {
+    const { monitor, mgr, actions, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
     actions.length = 0;
-    expect(await mgr.setDnd('101')).toEqual([true, 'Do Not Disturb']);
-    expect(actions.map((a) => a.Action)).toEqual(['QueueRemove', 'DBPut']);
+    expect(await mgr.setDnd('101', true)).toEqual([true, 'Do Not Disturb']);
+    expect(actions.map((a) => [a.Action, a.Family ?? a.Queue])).toEqual([
+      ['DBPut', 'DND'],
+      ['DBPut', 'OPDESK_DNDQ'],
+      ['QueueRemove', '800'],
+    ]);
     expect(monitor.dnd.has('101')).toBe(true);
-    const n = mockSegments.length;
-    await mgr.setAvailable('102'); // not an agent: presence only
-    expect(mgr.stateOf('102')).toBe('available');
-    expect(mockSegments.length).toBe(n);
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', dnd: true, queue_logged_in: false });
+    actions.length = 0;
+    expect((await mgr.setDnd('101', false))[0]).toBe(true);
+    expect(actions.map((a) => [a.Action, a.Family ?? a.Queue])).toEqual([
+      ['DBDel', 'DND'],
+      ['DBDel', 'OPDESK_DNDQ'],
+      ['QueueAdd', '800'],
+    ]);
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', dnd: false, queue_logged_in: true });
+    expect(mockRows.filter((r) => r[0] === 'dnd')).toEqual([['dnd', 'open', '101'], ['dnd', 'close', '101']]);
   });
 
-  it('hydrate restores Not Ready with its reason, wrap-up, Ready and DND', async () => {
-    const { monitor, mgr } = setup();
+  it('on DND an outbound call is still On Call, then Available', async () => {
+    const { mgr, online, answer, hangup } = setup();
+    await online('102');
+    await mgr.setDnd('102', true);
+    await answer('102');
+    expect(mgr.stateOf('102')).toBe('on_call');
+    await hangup('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'ready', dnd: true });
+  });
+
+  it('a *78 found by the reconcile sweep applies the same side effects', async () => {
+    const { monitor, mgr, actions, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
+    monitor.dbGetFamily = (async () => ({ '101': 'YES' })) as never;
+    actions.length = 0;
+    await mgr.reconcileDnd();
+    expect(actions.map((a) => a.Action)).toEqual(['DBPut', 'QueueRemove']);
+    expect(mgr.snapshot()['101']).toMatchObject({ dnd: true, queue_logged_in: false });
+  });
+
+  it('DND overrides a break: the break ends and the state is Available (Idle on DND)', async () => {
+    const { mgr, online } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await mgr.setDnd('102', true);
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'ready', reason_code: null, dnd: true });
+    expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'ready', null, 'ui']);
+    await mgr.setDnd('102', false);
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'ready', dnd: false });
+  });
+
+  it('DND overrides wrap-up too', async () => {
+    const { mgr, online } = setup();
+    mockSettings.WRAPUP_MAX_SECS = '0';
+    await online('101');
+    await mgr.queueLogin('101');
+    await mgr.enterWrapup('101', { linkedid: '4.4' });
+    await mgr.setDnd('101', true);
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', dnd: true, queue_logged_in: false });
+  });
+
+  it('taking a break turns DND off (and rejoins the queues, paused with the reason)', async () => {
+    const { monitor, mgr, online } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
+    await mgr.setDnd('101', true);
+    expect(await mgr.setNotReady('101', 'lunch')).toEqual([true, 'Not Ready — Lunch']);
+    expect(monitor.dnd.has('101')).toBe(false);
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', dnd: false, queue_logged_in: true });
+    expect(monitor.queueMembers.get('800:PJSIP/101')).toMatchObject({ paused: true, pause_reason: 'lunch' });
+  });
+
+  it('a short drop while on DND does not bring back an old break', async () => {
+    const { mgr, online, offline } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await mgr.setDnd('102', true);
+    await offline('102');
+    await online('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'ready', dnd: true });
+  });
+
+  it('queue login clears DND', async () => {
+    const { monitor, mgr, online } = setup();
+    await online('101');
+    await mgr.setDnd('101', true);
+    await mgr.queueLogin('101');
+    expect(monitor.dnd.has('101')).toBe(false);
+    expect(mgr.snapshot()['101']).toMatchObject({ dnd: false, queue_logged_in: true });
+  });
+});
+
+describe('hydrate, shift reset', () => {
+  it('hydrate restores breaks (queue reason or saved), wrap-up, Available, queue sessions and DND', async () => {
+    const { monitor, mgr, reach } = setup();
     monitor.queues.set('800', { members: {}, calls_waiting: 0 });
     monitor.addQueueMember({ queue: '800', interface: 'PJSIP/100', membership: 'dynamic', status: '1', paused: true, pause_reason: 'lunch' });
     monitor.addQueueMember({ queue: '800', interface: 'SIP/101', membership: 'dynamic', status: '1', paused: true, pause_reason: '__WRAPUP' });
-    monitor.addQueueMember({ queue: '800', interface: 'PJSIP/102', membership: 'static', status: '1', paused: false });
     monitor.dnd = new Set(['102']);
+    mockSavedBreaks['102'] = 'lunch';
+    for (const e of ['100', '101', '102']) reach.set(e, 'sip');
     mockSettings.WRAPUP_MAX_SECS = '0';
     await mgr.hydrate();
     const snap = mgr.snapshot();
-    expect(snap['100']).toMatchObject({ state: 'not_ready', reason_code: 'lunch' });
-    expect(snap['101']).toMatchObject({ state: 'wrap_up', reason_code: '__WRAPUP' });
-    expect(snap['102']).toMatchObject({ state: 'dnd' });
+    expect(snap['100']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', queue_logged_in: true });
+    expect(snap['101']).toMatchObject({ state: 'wrap_up', reason_code: '__WRAPUP', queue_logged_in: true });
+    // DND overrides the saved break: Available (Idle on DND).
+    expect(snap['102']).toMatchObject({ state: 'ready', reason_code: null, dnd: true, queue_logged_in: false });
     expect(snap['100'].since).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?[+-]\d\d:\d\d$/);
   });
 
-  it('daily reset logs out, defers on-call agents and leaves DND alone', async () => {
+  it('hydrate leaves unreachable extensions offline', async () => {
     const { mgr } = setup();
-    await mgr.login('100');
-    await mgr.login('101');
+    await mgr.hydrate();
+    expect(mgr.snapshot()).toEqual({});
+  });
+
+  it('daily reset logs out of the queues, defers on-call agents; availability stays', async () => {
+    const { mgr, online } = setup();
+    await online('100');
+    await online('101');
+    await mgr.queueLogin('100');
+    await mgr.queueLogin('101');
     await mgr.handleAmiEvent({ Event: 'AgentConnect', Queue: '800', Interface: 'PJSIP/101', Linkedid: '3.3' });
     const out = await mgr.dailyReset();
     expect(out).toEqual({ logged_out: ['100'], deferred: ['101'], skipped_dnd: [] });
+    expect(mgr.snapshot()['100']).toMatchObject({ state: 'ready', queue_logged_in: false });
     await mgr.handleAmiEvent({ Event: 'AgentComplete', Queue: '800', Interface: 'PJSIP/101', Linkedid: '3.3' });
-    expect(mgr.stateOf('101')).toBe('logged_out');
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', queue_logged_in: false });
   });
 
   it('snapshot filters by extension list', async () => {
-    const { mgr } = setup();
-    await mgr.login('100');
-    await mgr.login('101');
+    const { mgr, online } = setup();
+    await online('100');
+    await online('101');
     expect(Object.keys(mgr.snapshot(['101']))).toEqual(['101']);
   });
 

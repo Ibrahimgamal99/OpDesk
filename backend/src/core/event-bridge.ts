@@ -244,6 +244,12 @@ export class AMIEventBridge {
       else if (statusCode === '4' || statusCode === '-1') status = 'unavailable';
       else if (statusCode === '16' || statusCode === '32') status = 'on_hold';
       else status = 'idle';
+      // The hint ORs the phone with Custom:DND<ext>: once DND has been toggled, an
+      // unregistered phone reads Idle (or Busy) there. With no live call, trust the
+      // phone's own registration (registration.ts) over the hint.
+      if (!callLive && status !== 'unavailable' && runtime.registration && !runtime.registration.registered(ext)) {
+        status = 'unavailable';
+      }
 
       const dnd = monitor.dnd.has(ext);
       const key = `${status}|${dnd ? 'dnd' : ''}`;

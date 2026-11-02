@@ -340,12 +340,15 @@ export async function setUserMonitorModes(userId: number | null | undefined, mod
   }
 }
 
-/** {extension} of a user (WebRTC softphone), or null when the user does not exist. */
-export async function getUserWebrtcCredentials(userId: number): Promise<{ extension: string | null } | null> {
+/**
+ * {extension, webrtc} of a user (WebRTC softphone), or null when the user does not exist.
+ * `webrtc` is users.webrtc = 'yes': whether the browser softphone may register at all.
+ */
+export async function getUserWebrtcCredentials(userId: number): Promise<{ extension: string | null; webrtc: boolean } | null> {
   try {
-    const row = await queryOne('SELECT extension FROM users WHERE id = ?', [userId]);
+    const row = await queryOne('SELECT extension, webrtc FROM users WHERE id = ?', [userId]);
     if (!row) return null;
-    return { extension: row.extension ?? null };
+    return { extension: row.extension ?? null, webrtc: pyStr(row.webrtc ?? '').trim().toLowerCase() === 'yes' };
   } catch (e) {
     log.warning('⚠️  Database error get_user_webrtc_credentials: %s', e);
     return null;

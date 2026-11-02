@@ -235,13 +235,15 @@ describe('exports', () => {
     agents: [{
       agent: '201', name: 'Mona', login: '2026-10-05T08:00:00', logout: '2026-10-05T17:00:00', logged_in: false,
       sessions: 2, logged_in_secs: 32400, ready_secs: 3600, on_call_secs: 7200, wrap_secs: 600, break_secs: 1800,
-      not_ready_secs: 2700, dnd_secs: 300, occupancy_pct: 85.0,
+      not_ready_secs: 2700, dnd_secs: 300, occupancy_pct: 85.0, is_agent: true,
+      registered_secs: 36000, available_secs: 11400, idle_secs: 3600, idle_dnd_secs: 120, queue_login_secs: 30000,
+      outbound_calls: 7, outbound_talk_secs: 1500,
       not_ready_breakdown: [{ code: 'lunch', label: 'Lunch', secs: 1800 }, { code: 'meeting', label: 'Meet "A"', secs: 900 }],
     }],
     reasons: [],
   };
 
-  test('adherence CSV gains Sessions, Break and DND', async () => {
+  test('adherence CSV: first online / last offline, registered, Logged In = queue login, outbound', async () => {
     a('computeAgentAdherence').mockResolvedValue(ADHERENCE);
     const r = await ctl.analyticsAgentAdherenceExport(req(SUP, { date_from: '2026-10-05', date_to: '2026-10-05' }));
     expect(a('computeAgentAdherence')).toHaveBeenCalledWith('2026-10-05', '2026-10-05', ['201', '202']);
@@ -251,10 +253,18 @@ describe('exports', () => {
     expect(lines.slice(1, 6)).toEqual([
       '"Period: 2026-10-05 to 2026-10-05"',
       '',
-      '"Agent","Name","Login","Logout","Still Logged In","Sessions","Logged In","Ready","On Call","Wrap-up","Break","Not Ready","DND","Occupancy %","Not Ready Breakdown"',
-      '"201","Mona","2026-10-05T08:00:00","2026-10-05T17:00:00","No","2","09:00:00","01:00:00","02:00:00","00:10:00","00:30:00","00:45:00","00:05:00","85.0","Lunch: 00:30:00; Meet ""A"": 00:15:00"',
+      '"Agent","Name","Type","First Online","Last Offline","Online Now","Sessions","Registered","Logged In (Queue)","Available","Idle","Idle on DND","On Call","Wrap-up","Break","Not Ready","DND","Outbound Calls","Outbound Talk","Occupancy %","Not Ready Breakdown"',
+      '"201","Mona","Agent","2026-10-05T08:00:00","2026-10-05T17:00:00","No","2","10:00:00","08:20:00","03:10:00","01:00:00","00:02:00","02:00:00","00:10:00","00:30:00","00:45:00","00:05:00","7","00:25:00","85.0","Lunch: 00:30:00; Meet ""A"": 00:15:00"',
       '',
     ]);
+  });
+
+  test('adherence CSV: a plain extension has no queue login (blank, not 00:00:00)', async () => {
+    a('computeAgentAdherence').mockResolvedValue({ agents: [{ ...ADHERENCE.agents[0], is_agent: false, queue_login_secs: 0 }], reasons: [] });
+    const r = await ctl.analyticsAgentAdherenceExport(req(ADMIN, {}));
+    const row = (await bodyOf(r)).toString('utf8').split('\r\n')[4];
+    expect(row.split('","')[2]).toBe('Extension');
+    expect(row.split('","')[8]).toBe('');
   });
 
   test('adherence XLSX keeps the preamble and the numbers', async () => {
@@ -265,8 +275,10 @@ describe('exports', () => {
     await wb.xlsx.load(await bodyOf(r) as never);
     const ws = wb.getWorksheet('Agent Adherence')!;
     expect(String(ws.getRow(2).getCell(1).value)).toBe('Period: all to all');
-    expect(ws.getRow(4).getCell(6).value).toBe('Sessions');
-    expect(ws.getRow(5).getCell(14).value).toBe(85);
+    expect(ws.getRow(4).getCell(7).value).toBe('Sessions');
+    expect(ws.getRow(4).getCell(9).value).toBe('Logged In (Queue)');
+    expect(ws.getRow(5).getCell(18).value).toBe(7);
+    expect(ws.getRow(5).getCell(20).value).toBe(85);
   });
 
   test('HH:MM:SS zero-padded like the report, blank on garbage', () => {
