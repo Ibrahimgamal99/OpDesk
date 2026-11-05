@@ -125,6 +125,26 @@ function sameBox(a: AnchorBox, b: AnchorBox): boolean {
     && a.flipped === b.flipped;
 }
 
+
+/**
+ * A layer's content height: the cap comes off, the height is read, the cap goes back, with
+ * no paint in between. Uncapped, nothing overflows, so the browser clamps scrollTop to 0:
+ * every scroll position is put back too, or a menu re-placed while open jumps to the top.
+ */
+export function measureNaturalHeight(layer: HTMLElement): number {
+  const scrolled: Array<[Element, number]> = [];
+  if (layer.scrollTop) scrolled.push([layer, layer.scrollTop]);
+  layer.querySelectorAll('*').forEach((el) => {
+    if (el.scrollTop) scrolled.push([el, el.scrollTop]);
+  });
+  const capped = layer.style.maxBlockSize;
+  layer.style.maxBlockSize = 'none';
+  const natural = layer.scrollHeight;
+  layer.style.maxBlockSize = capped;
+  for (const [el, top] of scrolled) el.scrollTop = top;
+  return natural;
+}
+
 /**
  * Position an open layer against its anchor, and keep it there while the page
  * scrolls or resizes. Returns null while closed.
@@ -153,12 +173,7 @@ export function useAnchorBox({
    */
   const measureNatural = useCallback((): number | null => {
     const layer = layerRef.current;
-    if (!layer) return null;
-    const capped = layer.style.maxBlockSize;
-    layer.style.maxBlockSize = 'none';
-    const natural = layer.scrollHeight;
-    layer.style.maxBlockSize = capped;
-    return natural;
+    return layer ? measureNaturalHeight(layer) : null;
   }, [layerRef]);
 
   const place = useCallback(() => {

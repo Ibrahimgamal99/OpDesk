@@ -109,6 +109,8 @@ export interface AgentStateInfo {
   dnd?: boolean;
   /** Offline on a break: the reason it resumes with when the phone is back. */
   held_break?: string | null;
+  /** Signed off by the daily reset while idle: offline until Available, a call or a queue login. */
+  signed_off?: boolean;
 }
 
 /** An admin-managed Not-Ready / pause reason code. MySQL TINYINTs arrive as 0/1. */

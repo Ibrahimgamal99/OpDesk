@@ -88,8 +88,8 @@ export function ContactCenterSettings({ isAdmin, onWrapUpChange }: {
       setShiftMessage({
         type: 'success',
         text: v
-          ? t('settings.contactCenter.shiftResetSaved', { defaultValue: 'Agents are logged out of their queues at {{time}} each day.', time: v })
-          : t('settings.contactCenter.shiftResetOffSaved', 'Daily shift reset turned off: agents stay logged in until they log out.'),
+          ? t('settings.contactCenter.shiftResetSaved', { defaultValue: 'The day restarts at {{time}}.', time: v })
+          : t('settings.contactCenter.shiftResetOffSaved', 'Daily shift reset turned off: status timers keep running.'),
       });
     } catch (e) {
       setShiftMessage({ type: 'error', text: messageOf(e, t('settings.contactCenter.shiftResetSaveFailed', 'Could not save the shift reset time.')) });
@@ -139,7 +139,7 @@ export function ContactCenterSettings({ isAdmin, onWrapUpChange }: {
         <FormField
           label={t('settings.contactCenter.shiftResetLabel', 'Daily shift reset')}
           htmlFor="shift-reset"
-          hint={t('settings.contactCenter.shiftResetHelp', 'At this time each day every signed-in agent is logged out of their queues, so a shift left open does not run into the next one and Agent Adherence reports one shift per day. An agent on a call is logged out when the call ends; an agent on Do Not Disturb is left alone. Clear the field to turn the reset off.')}
+          hint={t('settings.contactCenter.shiftResetHelp', 'At this time each day status timers restart and reports split here. Nobody is logged out of their queues. Anyone left idle in Available is signed off until they come back.')}
         >
           <input
             id="shift-reset"

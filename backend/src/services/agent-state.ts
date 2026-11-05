@@ -15,9 +15,12 @@
  * a *78 DND sets Custom:DND<ext> BUSY in the hint, which would read as a call.
  *
  * Queue login (queueLogin / queueLogout, *45 / *46) joins and leaves the queues and is its
- * own segment table (queue_login); it never changes availability. A phone that goes
- * unreachable WITHOUT push wake-up is taken out of its queues after a grace period
- * (QUEUE_UNREGISTER_GRACE_SECS); a push-wakeable one stays.
+ * own segment table (queue_login); it never changes availability. Only a logout, DND or
+ * the agent's own feature code ends it: an offline phone stays in its queues.
+ *
+ * A phone that registers again (offline or push-only -> sip) is Available, whatever it was
+ * left in. Not after a network blip (REREGISTER_GRACE_SECS), a call-wake push
+ * (WAKE_REGISTER_SECS) or during a live call. DND and queue login are untouched.
  *
  * DND (AstDB DND flag) blocks inbound calls and OVERRIDES a break: turning it on ends any
  * break or wrap-up (the time is Idle — "Idle on DND" — while registered) and logs the
@@ -63,7 +66,7 @@
  */
 
 import { getLogger, pyStr } from '../core/logger';
-import { AsyncLock, createTask, isoformat, pyInt, truthy } from '../core/py';
+import { AsyncLock, createTask, isoformat, monotonic, pyInt, truthy } from '../core/py';
 import * as dbm from '../db/db-manager';
 import type { Row } from '../db/pool';
 import { AMIExtensionsMonitor, extFromChannel, extFromInterface } from './ami';
@@ -110,8 +113,8 @@ export async function wrapupMaxSecs(): Promise<number> {
   return clampWrapupMaxSecs(await dbm.getSetting(WRAPUP_MAX_SETTING, String(DEFAULT_WRAPUP_MAX_SECS)));
 }
 
-// Daily shift reset: at this local time each day the floor is logged out, so a shift left
-// open does not run into the next one. "HH:MM"; blank turns it off.
+// Daily shift reset: the day boundary. Status timers restart and idle Available extensions
+// sign off; nobody leaves a queue. "HH:MM"; blank turns it off.
 export const SHIFT_RESET_SETTING = 'SHIFT_RESET_TIME';
 export const DEFAULT_SHIFT_RESET_TIME = '00:00';
 /**
@@ -139,23 +142,15 @@ export function formatShiftResetTime(minutes: number | null | undefined): string
   return `${p2(Math.floor(minutes / 60))}:${p2(minutes % 60)}`;
 }
 
-// Grace before an unreachable (non-push) extension is taken out of its queues.
-export const QUEUE_GRACE_SETTING = 'QUEUE_UNREGISTER_GRACE_SECS';
-export const DEFAULT_QUEUE_GRACE_SECS = 60;
-export const QUEUE_GRACE_SECS_MAX = 3600;
-
-export function clampQueueGraceSecs(value: unknown): number {
-  const n = pyInt(value);
-  if (n === null) return DEFAULT_QUEUE_GRACE_SECS;
-  return Math.max(0, Math.min(n, QUEUE_GRACE_SECS_MAX));
-}
-
-export async function queueGraceSecs(): Promise<number> {
-  return clampQueueGraceSecs(await dbm.getSetting(QUEUE_GRACE_SETTING, String(DEFAULT_QUEUE_GRACE_SECS)));
-}
-
 /** AstDB family holding the queues to rejoin when DND goes off: OPDESK_DNDQ/<ext> = "800,801". */
 export const DND_RESTORE_FAMILY = 'OPDESK_DNDQ';
+/** AstDB family of extensions the daily reset signed off, so a restart keeps them off. */
+export const SIGNED_OFF_FAMILY = 'OPDESK_SIGNOFF';
+
+/** A registration this soon after a call-wake push is the phone answering it, not the user. */
+export const WAKE_REGISTER_SECS = 60;
+/** Registered again within this long of losing it is a network blip, not a return. */
+export const REREGISTER_GRACE_SECS = 120;
 
 export async function shiftResetMinutes(): Promise<number | null> {
   return parseShiftResetTime(await dbm.getSetting(SHIFT_RESET_SETTING, DEFAULT_SHIFT_RESET_TIME));
@@ -194,6 +189,8 @@ export interface AgentSnapshotEntry {
   dnd: boolean;
   /** Offline on a break: the reason it resumes with when the phone is back. */
   held_break: string | null;
+  /** Signed off by the daily reset while idle: offline until an action or a call. */
+  signed_off: boolean;
 }
 
 export interface ApplyOptions {
@@ -257,17 +254,25 @@ export class AgentStateManager {
   /** Reachability (registration.ts); null in tests that drive availability directly. */
   registration: ReachabilitySource | null = null;
   wrapTimers: Map<string, WrapTimer> = new Map();
-  graceTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** Seconds on a monotonic clock (injectable for tests). */
+  clock: () => number = monotonic;
+  /** ext -> clock() when it stopped being registered, for REREGISTER_GRACE_SECS. */
+  sipLostAt: Map<string, number> = new Map();
+  /** monotonic() of the last call-wake push to an extension; null = none. */
+  wokenAt: (ext: string) => number | null = () => null;
   /**
-   * A break held while the phone is offline: ext -> {reason, when}. The break resumes when
-   * the phone comes back, however long it was away, until the user picks Available (a
-   * browser reload or a laptop closed at lunch never silently ends a break). Mirrored by an
-   * open BREAK_OFFLINE row, so it survives a restart.
+   * A break held while the phone is offline: ext -> {reason, when}. A real registration
+   * ends it; it resumes only when the phone comes back push-wakeable. Mirrored by an open
+   * BREAK_OFFLINE row, so it survives a restart.
    */
   heldBreaks: Map<string, { reason: string; at: number }> = new Map();
   reasonLabels: Record<string, string> = {};
-  /** On a call when the daily reset ran: out of the queues as soon as the call ends. */
-  pendingReset: Set<string> = new Set();
+  /** Signed off by the daily reset while idle (mirrored in AstDB SIGNED_OFF_FAMILY). */
+  signedOff: Set<string> = new Set();
+  /** On a call when the daily reset ran: signed off when that call ends. */
+  pendingSignOff: Set<string> = new Set();
+  /** The break or wrap-up a call interrupted: where to go back at hang-up. */
+  resumeAfterCall: Map<string, { state: string; reasonCode: string | null; linkedid: string | null; queue: string | null }> = new Map();
   /** Serialises user actions (login/logout/status/DND). */
   lock = new AsyncLock();
   /** Serialises transitions (separate from `lock`: AsyncLock is not reentrant). */
@@ -460,46 +465,84 @@ export class AgentStateManager {
     if (t) t.cancel();
   }
 
-  cancelGrace(agentExt: string): void {
-    const t = this.graceTimers.get(agentExt);
-    this.graceTimers.delete(agentExt);
-    if (t) clearTimeout(t);
+  /** (Re)start the wrap-up max timer (none when the max is 0). */
+  async armWrapTimer(agentExt: string): Promise<void> {
+    this.cancelWrap(agentExt);
+    const maxSecs = await wrapupMaxSecs();
+    if (maxSecs > 0) this.wrapTimers.set(agentExt, this.wrapTimeout(agentExt, maxSecs));
   }
 
   // ------------------------------------------------------------------
   // Availability (reachability-driven)
   // ------------------------------------------------------------------
   /**
-   * The tracker saw `ext` become reachable (via sip / push) or unreachable (null).
-   * Reachable -> Available (a break still held on its queue members is restored);
-   * unreachable -> offline, and out of its queues after the grace period.
+   * The tracker saw `ext` become reachable (sip / push) or unreachable (null). `prev` is how
+   * it was reachable before. A fresh sip registration is Available (backOnRegister); push
+   * restores a held break; unreachable -> offline, holding a break. Queue login stays.
    */
-  async onReachability(agentExt: string, via: ReachVia | null, source = 'ami'): Promise<void> {
+  async onReachability(agentExt: string, via: ReachVia | null, source = 'ami', prev: ReachVia | null = null): Promise<void> {
     const ext = String(agentExt).trim();
     if (!ext) return;
     await this.lock.run(async () => {
+      const lostAt = this.sipLostAt.get(ext);
+      if (via === 'sip') this.sipLostAt.delete(ext);
+      else if (prev === 'sip') this.sipLostAt.set(ext, this.clock());
+      // Back soon after losing it: Wi-Fi <-> LTE or a reconnect, not the user returning.
+      const blip = lostAt !== undefined && this.clock() - lostAt < REREGISTER_GRACE_SECS;
       if (via) {
-        this.cancelGrace(ext);
+        if (via === 'sip' && prev !== 'sip' && !blip && !this.wokenForCall(ext)) {
+          await this.backOnRegister(ext, source);
+          return;
+        }
+        // sip <-> push flaps (an app backgrounding) do not end a sign-off.
+        if (this.signedOff.has(ext)) return;
         const held = this.heldBreaks.get(ext);
         this.heldBreaks.delete(ext);
         const resume = held && !this.dndOn.has(ext) ? held.reason : null;
         if (!this.states.has(ext)) await this.startAvailability(ext, source, resume);
         return;
       }
+      // Really offline: the next registration starts fresh.
+      await this.clearSignOff(ext);
+      this.pendingSignOff.delete(ext);
       this.cancelWrap(ext);
       const cur = this.states.get(ext);
-      if (cur && cur.state === NOT_READY && cur.reason_code && !this.dndOn.has(ext)) {
-        // Hold the break while offline: the not_ready row closes, a BREAK_OFFLINE row opens.
-        this.heldBreaks.set(ext, { reason: cur.reason_code, at: Date.now() });
+      const back = this.resumeAfterCall.get(ext);
+      this.resumeAfterCall.delete(ext);
+      // A break, or a break a call interrupted.
+      const breakReason = cur?.state === NOT_READY ? cur.reason_code
+        : cur?.state === ON_CALL && back?.state === NOT_READY ? back.reasonCode : null;
+      if (cur && breakReason && !this.dndOn.has(ext)) {
+        // Hold the break while offline: the open row closes, a BREAK_OFFLINE row opens.
+        this.heldBreaks.set(ext, { reason: breakReason, at: Date.now() });
         await this.applyLock.run(async () => {
-          await this.persist(ext, BREAK_OFFLINE, { reasonCode: cur.reason_code, source });
+          await this.persist(ext, BREAK_OFFLINE, { reasonCode: breakReason, source });
           this.states.delete(ext);
         });
-      } else if (cur) {
+      } else {
         await this.apply(ext, null, { source, force: true });
       }
-      if (this.isQueueLoggedIn(ext)) await this.armGrace(ext);
     });
+  }
+
+  /** Did a call-wake push go out to `ext` recently (its registration answers that push)? */
+  private wokenForCall(ext: string): boolean {
+    const at = this.wokenAt(ext);
+    return at !== null && this.clock() - at < WAKE_REGISTER_SECS;
+  }
+
+  /** A fresh registration: Available, unless on a live call. Caller holds `lock`. */
+  private async backOnRegister(ext: string, source: string): Promise<void> {
+    if (this.states.get(ext)?.state === ON_CALL) return;
+    await this.clearSignOff(ext);
+    this.pendingSignOff.delete(ext);
+    this.heldBreaks.delete(ext);
+    this.resumeAfterCall.delete(ext);
+    this.cancelWrap(ext);
+    for (const m of this.monitor.memberInterfacesFor(ext).filter((x) => x.paused)) {
+      await this.monitor.queueUnpause(m.queue, m.interface);
+    }
+    await this.applyAvailable(ext, source, true);
   }
 
   /** Open availability for a reachable extension: a held break, wrap-up, or Available. */
@@ -507,11 +550,10 @@ export class AgentStateManager {
     const held = this.memberPauseReason(ext);
     if (held === WRAPUP_REASON) {
       await this.apply(ext, WRAP_UP, { reasonCode: WRAPUP_REASON, source, force: true });
-      const maxSecs = await wrapupMaxSecs();
-      if (maxSecs > 0) this.wrapTimers.set(ext, this.wrapTimeout(ext, maxSecs));
+      await this.armWrapTimer(ext);
       return;
     }
-    if (held !== null) {
+    if (held !== null && !this.dndOn.has(ext)) {
       await this.apply(ext, NOT_READY, { reasonCode: held || savedBreak || null, source, force: true });
       return;
     }
@@ -522,37 +564,51 @@ export class AgentStateManager {
     await this.applyAvailable(ext, source);
   }
 
-  /** After the grace period, a still-unreachable extension leaves its queues. */
-  private async armGrace(ext: string): Promise<void> {
-    this.cancelGrace(ext);
-    const secs = await queueGraceSecs();
-    const fire = () => {
-      this.graceTimers.delete(ext);
-      if (this.viaOf(ext)) return;
-      log.info('%s unreachable for %ss -> logged out of its queues', ext, secs);
-      createTask(this.queueLogout(ext, 'system'), (e) => log.error('grace logout failed: %s', errText(e)));
-    };
-    const t = setTimeout(fire, secs * 1000);
-    t.unref?.();
-    this.graceTimers.set(ext, t);
-  }
-
-  /** A device channel changed: Available <-> On Call. Breaks and wrap-up are left alone. */
+  /** A device channel changed: a call is On Call time, even on a break or in wrap-up. */
   private async onCallActivity(p: Row): Promise<void> {
     const ext = extFromChannel(evGet(p, 'Channel', ''));
     if (!ext || !this.monitor.monitored.has(ext)) return;
     const st = this.states.get(ext);
-    if (!st) return;
+    if (!st) {
+      // Signed off at the shift reset: answering a call is coming back.
+      if (this.signedOff.has(ext) && this.deviceCall(ext)) {
+        await this.lock.run(() => this.resumeSignedOff(ext, 'ami'));
+      }
+      return;
+    }
     const call = this.deviceCall(ext);
-    if (st.state === READY && call) {
+    if (call && (st.state === READY || st.state === NOT_READY || st.state === WRAP_UP)) {
+      if (st.state !== READY) {
+        // The break / wrap-up resumes at hang-up.
+        this.resumeAfterCall.set(ext, { state: st.state, reasonCode: st.reason_code, linkedid: st.linkedid, queue: st.queue });
+        this.cancelWrap(ext);
+      }
       await this.apply(ext, ON_CALL, { linkedid: call.linkedid, source: 'ami' });
     } else if (st.state === ON_CALL && !call && !st.queue) {
-      if (this.pendingReset.has(ext)) {
-        this.pendingReset.delete(ext);
-        await this.queueLogout(ext, 'system');
-      }
-      await this.apply(ext, READY, { source: 'ami' });
+      await this.afterCall(ext, 'ami');
     }
+  }
+
+  /** A non-queue call hung up: back to its break or wrap-up, signed off, or Available. */
+  private async afterCall(ext: string, source: string): Promise<void> {
+    const back = this.resumeAfterCall.get(ext);
+    this.resumeAfterCall.delete(ext);
+    const inQueues = this.isQueueLoggedIn(ext);
+    if (back?.state === NOT_READY && back.reasonCode && (!inQueues || this.anyMemberPaused(ext))) {
+      this.pendingSignOff.delete(ext); // a break goes on through the reset
+      await this.apply(ext, NOT_READY, { reasonCode: back.reasonCode, source, force: true });
+      return;
+    }
+    if (this.pendingSignOff.delete(ext)) {
+      await this.lock.run(() => this.signOff(ext, 'system'));
+      return;
+    }
+    if (back?.state === WRAP_UP && this.memberPauseReason(ext) === WRAPUP_REASON) {
+      await this.apply(ext, WRAP_UP, { reasonCode: WRAPUP_REASON, linkedid: back.linkedid, queue: back.queue, source, force: true });
+      await this.armWrapTimer(ext);
+      return;
+    }
+    await this.apply(ext, READY, { source });
   }
 
   // ------------------------------------------------------------------
@@ -561,6 +617,8 @@ export class AgentStateManager {
   /** Back to Available: unpause every live member. Also ends a break or wrap-up early. */
   async setReady(agentExt: string, source = 'ui'): Promise<ActionResult> {
     const ext = String(agentExt).trim();
+    if (this.signedOff.has(ext)) await this.lock.run(() => this.resumeSignedOff(ext, source));
+    this.resumeAfterCall.delete(ext); // also ends the break / wrap-up a call interrupted
     if (!this.states.has(ext) && this.heldBreaks.has(ext)) {
       // Offline on a break (e.g. a supervisor ends it): drop the hold; it comes back Available.
       return this.lock.run(async (): Promise<ActionResult> => {
@@ -585,7 +643,9 @@ export class AgentStateManager {
     const ext = String(agentExt).trim();
     const reason = await this.validNotReadyReason(reasonCode);
     if (!reason) return [false, NOT_READY_REASON_ERROR];
+    if (this.signedOff.has(ext)) await this.lock.run(() => this.resumeSignedOff(ext, source));
     if (!this.states.has(ext)) return [false, OFFLINE_ERROR];
+    this.resumeAfterCall.delete(ext);
     const code = String(reason.code ?? reasonCode).trim();
     return this.lock.run(async (): Promise<ActionResult> => {
       // DND overrides a break, so taking a break ends DND (the queues it took away come back,
@@ -639,6 +699,7 @@ export class AgentStateManager {
     source: string,
     opts: { queues: string[] | null; keepDndRestore: boolean },
   ): Promise<ActionResult> {
+    await this.resumeSignedOff(ext, source);
     const queues = opts.queues && opts.queues.length ? opts.queues : await dbm.getAgentLoginQueues(ext);
     if (!queues.length) return [false, 'No queues are assigned to this agent (add them to a group)'];
     if (!opts.keepDndRestore && (this.dndOn.has(ext) || this.monitor.dnd.has(ext))) {
@@ -669,7 +730,6 @@ export class AgentStateManager {
       if (ok) joined.push(q);
     }
     if (!joined.length) return [false, 'Failed to add agent to any queue'];
-    this.pendingReset.delete(ext);
     this.queueIn.set(ext, joined);
     await dbm.queueLoginOpen(ext, source);
     if (st) st.queues = [...joined];
@@ -687,7 +747,6 @@ export class AgentStateManager {
   private async queueLogoutUnlocked(ext: string, source: string): Promise<ActionResult> {
     const [queues, anyOk] = await this.leaveQueues(ext);
     this.endQueueSession(ext);
-    this.pendingReset.delete(ext);
     const st = this.states.get(ext);
     if (st && st.state === WRAP_UP) {
       this.cancelWrap(ext);
@@ -697,7 +756,6 @@ export class AgentStateManager {
   }
 
   private endQueueSession(ext: string): void {
-    this.cancelGrace(ext);
     const had = this.queueIn.delete(ext);
     const st = this.states.get(ext);
     if (st) st.queues = [];
@@ -772,6 +830,7 @@ export class AgentStateManager {
       const st = this.states.get(ext);
       if (!st) await this.endHeldBreak(ext, source);
       this.heldBreaks.delete(ext);
+      this.resumeAfterCall.delete(ext);
       if (st && (st.state === NOT_READY || st.state === WRAP_UP)) {
         this.cancelWrap(ext);
         await this.applyAvailable(ext, source);
@@ -779,6 +838,7 @@ export class AgentStateManager {
       return [true, 'Do Not Disturb'];
     }
     if (this.dndOn.delete(ext)) await dbm.dndClose(ext);
+    await this.resumeSignedOff(ext, source);
     const restore = this.dndRestore.get(ext);
     if (restore) {
       this.dndRestore.delete(ext);
@@ -815,32 +875,62 @@ export class AgentStateManager {
   // Daily shift reset
   // ------------------------------------------------------------------
   /**
-   * Log the floor out of its queues at the shift boundary. On a call -> deferred to the
-   * call's end. Availability is untouched (it follows the phone); the report splits time
-   * at the same boundary. `skipped_dnd` is kept for the log line's shape: an extension on
-   * DND is out of its queues already.
+   * The shift boundary. Nobody leaves a queue. Idle in Available -> signed off; on a call ->
+   * signed off when it ends; anyone else (break, wrap-up, DND) -> the same state restarts
+   * here, so its timer starts from 0 and its agent_activity row splits.
    */
-  async dailyReset(source = 'system'): Promise<{ logged_out: string[]; deferred: string[]; skipped_dnd: string[] }> {
-    const out = { logged_out: [] as string[], deferred: [] as string[], skipped_dnd: [] as string[] };
-    const exts = new Set<string>(this.queueIn.keys());
-    for (const m of this.monitor.queueMembers.values()) {
-      if (!m.dynamic) continue;
-      const ext = extFromInterface(m.interface);
-      if (ext && this.monitor.monitored.has(ext)) exts.add(ext);
-    }
-    for (const ext of exts) {
-      if (this.states.get(ext)?.state === ON_CALL) {
-        this.pendingReset.add(ext);
-        out.deferred.push(ext);
-        continue;
+  async dailyReset(source = 'system'): Promise<{ counters_reset: string[]; signed_off: string[]; sign_off_after_call: string[] }> {
+    const out = { counters_reset: [] as string[], signed_off: [] as string[], sign_off_after_call: [] as string[] };
+    await this.lock.run(async () => {
+      this.pendingSignOff.clear();
+      for (const [ext, st] of [...this.states]) {
+        const dnd = this.dndOn.has(ext);
+        if (!dnd && st.state === READY && !this.deviceCall(ext)) {
+          await this.signOff(ext, source);
+          out.signed_off.push(ext);
+          continue;
+        }
+        if (!dnd && st.state === ON_CALL) {
+          this.pendingSignOff.add(ext);
+          out.sign_off_after_call.push(ext);
+        }
+        await this.apply(ext, st.state, { reasonCode: st.reason_code, linkedid: st.linkedid, queue: st.queue, source, force: true });
+        out.counters_reset.push(ext);
       }
-      const [ok] = await this.queueLogout(ext, source);
-      if (ok) out.logged_out.push(ext);
-    }
-    if (out.logged_out.length || out.deferred.length) {
-      log.info('Daily shift reset: %d logged out of queues, %d deferred (on a call)', out.logged_out.length, out.deferred.length);
+    });
+    if (out.counters_reset.length || out.signed_off.length) {
+      log.info('Daily shift reset: %d counter(s) restarted, %d idle signed off, %d to sign off after their call',
+        out.counters_reset.length, out.signed_off.length, out.sign_off_after_call.length);
     }
     return out;
+  }
+
+  /** Close the idle Available stretch and hold the extension signed off. Caller holds `lock`. */
+  private async signOff(ext: string, source: string): Promise<void> {
+    await this.apply(ext, null, { source, force: true });
+    this.signedOff.add(ext);
+    try {
+      await this.monitor.dbPut(SIGNED_OFF_FAMILY, ext, String(Math.floor(Date.now() / 1000)));
+    } catch (e) {
+      log.warning('sign-off flag for %s: %s', ext, errText(e));
+    }
+  }
+
+  /** Forget a sign-off; true when there was one. */
+  private async clearSignOff(ext: string): Promise<boolean> {
+    if (!this.signedOff.delete(ext)) return false;
+    try {
+      await this.monitor.dbDel(SIGNED_OFF_FAMILY, ext);
+    } catch (e) {
+      log.warning('clear sign-off flag for %s: %s', ext, errText(e));
+    }
+    return true;
+  }
+
+  /** The user is back after a sign-off: availability reopens if the phone is reachable. Caller holds `lock`. */
+  private async resumeSignedOff(ext: string, source: string): Promise<void> {
+    if (!(await this.clearSignOff(ext))) return;
+    if (this.viaOf(ext) && !this.states.has(ext)) await this.startAvailability(ext, source, null);
   }
 
   // ------------------------------------------------------------------
@@ -865,6 +955,7 @@ export class AgentStateManager {
         const cur = this.states.get(ext);
         if (!cur) return;
         this.cancelWrap(ext);
+        this.resumeAfterCall.delete(ext); // a new queue call: its own wrap-up follows
         if (cur.state === ON_CALL && !cur.queue) {
           // The device call already opened the segment: it is this ACD call.
           cur.queue = queue;
@@ -877,10 +968,11 @@ export class AgentStateManager {
 
       if (ev === 'AgentComplete') {
         if (!this.states.has(ext)) return;
-        if (this.pendingReset.has(ext)) {
-          this.pendingReset.delete(ext);
-          await this.queueLogout(ext, 'system');
-          await this.applyAvailable(ext, 'system');
+        // The shift boundary passed during this call: the sign-off lands now, no wrap-up.
+        if (this.pendingSignOff.delete(ext)) {
+          this.resumeAfterCall.delete(ext);
+          if (!this.deviceCall(ext)) await this.lock.run(() => this.signOff(ext, 'system'));
+          else await this.applyAvailable(ext, 'system');
           return;
         }
         await this.enterWrapup(ext, { linkedid, queue, source: 'ami' });
@@ -903,7 +995,11 @@ export class AgentStateManager {
         if (st) {
           st.queues = [...queues];
           const paused = evGet(p, 'Paused', '0') === '1';
-          if (paused && reason && reason !== WRAPUP_REASON && st.state === READY) {
+          if (paused && reason === WRAPUP_REASON && st.state === READY) {
+            // Restored still paused for a wrap-up whose timer died: re-arm it or it never lifts.
+            await this.apply(ext, WRAP_UP, { reasonCode: WRAPUP_REASON, source: 'ami' });
+            await this.armWrapTimer(ext);
+          } else if (paused && reason && reason !== WRAPUP_REASON && st.state === READY) {
             await this.apply(ext, NOT_READY, { reasonCode: reason, source: 'ami' });
           }
         }
@@ -939,6 +1035,8 @@ export class AgentStateManager {
         // Our own wrap-up pause repeating back (no linkedid): keep the current segment.
         if (cur.state === WRAP_UP) return;
         await this.apply(ext, WRAP_UP, { reasonCode: WRAPUP_REASON, source: 'ami' });
+        // Not ours (enterWrapup arms its own): nothing else would release it.
+        if (!this.wrapTimers.has(ext)) await this.armWrapTimer(ext);
       } else {
         // Keep a known reason when the reflected event carries none.
         const code = reason || (cur.state === NOT_READY ? cur.reason_code : null);
@@ -972,9 +1070,7 @@ export class AgentStateManager {
       queue: opts.queue ?? '',
       source: opts.source ?? 'ami',
     });
-    this.cancelWrap(ext);
-    const maxSecs = await wrapupMaxSecs();
-    if (maxSecs > 0) this.wrapTimers.set(ext, this.wrapTimeout(ext, maxSecs));
+    await this.armWrapTimer(ext);
   }
 
   /** After `secs`, return a still-wrapping agent to Available. */
@@ -1022,6 +1118,15 @@ export class AgentStateManager {
     this.states.clear();
     this.queueIn.clear();
     this.dndOn.clear();
+    this.signedOff.clear();
+    this.pendingSignOff.clear();
+    this.resumeAfterCall.clear();
+    let signedOffSaved: Record<string, string> = {};
+    try {
+      signedOffSaved = (await this.monitor.dbGetFamily(SIGNED_OFF_FAMILY)) || {};
+    } catch (e) {
+      log.warning('hydrate sign-offs: %s', errText(e));
+    }
 
     // Queue sessions.
     for (const m of this.monitor.queueMembers.values()) {
@@ -1058,8 +1163,16 @@ export class AgentStateManager {
     let available = 0;
     this.heldBreaks.clear();
     for (const ext of this.monitor.monitored) {
+      if (Object.prototype.hasOwnProperty.call(signedOffSaved, ext)) {
+        delete signedOffSaved[ext];
+        // Still reachable and idle: the sign-off holds across the restart.
+        if (this.viaOf(ext) && !this.deviceCall(ext)) {
+          this.signedOff.add(ext);
+          continue;
+        }
+        await this.monitor.dbDel(SIGNED_OFF_FAMILY, ext).catch(() => false);
+      }
       if (!this.viaOf(ext)) {
-        if (this.queueIn.has(ext)) await this.armGrace(ext);
         // Offline on a break before the restart: keep holding it.
         const saved = savedBreaks.get(ext);
         if (saved && !this.dndOn.has(ext)) {
@@ -1072,7 +1185,10 @@ export class AgentStateManager {
       await this.startAvailability(ext, 'system', this.dndOn.has(ext) ? null : savedBreaks.get(ext) ?? null);
       available += 1;
     }
-    log.info('Presence hydrated: %d available, %d in queues, %d on DND', available, this.queueIn.size, this.dndOn.size);
+    // Extensions no longer monitored.
+    for (const ext of Object.keys(signedOffSaved)) await this.monitor.dbDel(SIGNED_OFF_FAMILY, ext).catch(() => false);
+    log.info('Presence hydrated: %d available, %d in queues, %d on DND, %d signed off',
+      available, this.queueIn.size, this.dndOn.size, this.signedOff.size);
   }
 
   // ------------------------------------------------------------------
@@ -1083,7 +1199,9 @@ export class AgentStateManager {
     const allow = allowExtensions === null || allowExtensions === undefined ? null : new Set([...allowExtensions].map((e) => pyStr(e)));
     const now = new Date();
     const out: Record<string, AgentSnapshotEntry> = {};
-    const exts = new Set<string>([...this.states.keys(), ...this.queueIn.keys(), ...this.dndOn, ...this.heldBreaks.keys()]);
+    const exts = new Set<string>([
+      ...this.states.keys(), ...this.queueIn.keys(), ...this.dndOn, ...this.heldBreaks.keys(), ...this.signedOff,
+    ]);
     for (const ext of exts) {
       if (allow !== null && !allow.has(ext)) continue;
       const st = this.states.get(ext);
@@ -1103,6 +1221,7 @@ export class AgentStateManager {
         reachable_via: this.viaOf(ext),
         dnd: this.dndOn.has(ext),
         held_break: st ? null : this.heldBreaks.get(ext)?.reason ?? null,
+        signed_off: !st && this.signedOff.has(ext),
       };
     }
     return out;

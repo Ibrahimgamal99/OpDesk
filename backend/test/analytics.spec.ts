@@ -807,10 +807,10 @@ describe('adherence sessions', () => {
       ];
     };
 
-    test('60-min window: 13:00-14:00 is Lunch, 14:00-14:30 offline (nothing), then Lunch again online', async () => {
+    test('60-min window: 13:00-14:00 is Lunch, 14:00-14:30 offline ends the session, then Lunch again online', async () => {
       const r = await run(3600, day());
       // online lunch 20 min + 40 min offline inside the window + 10 min online after = 70 min
-      expect(r).toMatchObject({ break_secs: 4200, not_ready_secs: 4200, break_offline_secs: 2400, sessions: 1 });
+      expect(r).toMatchObject({ break_secs: 4200, not_ready_secs: 4200, break_offline_secs: 2400, sessions: 2 });
       expect(r.not_ready_breakdown).toEqual([expect.objectContaining({ code: 'lunch', secs: 4200 })]);
       expect(r.logged_in_secs).toBe(2400 + 4200); // 40 min ready + 70 min lunch; 30 min offline uncounted
     });

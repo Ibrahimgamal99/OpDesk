@@ -577,7 +577,8 @@ function App({ onLogout }: AppProps) {
     }
     // Admin-only tabs. Without this a supervisor navigating to /logs gets a blank
     // <main> rather than being sent somewhere useful.
-    if (userRole !== 'admin' && ['logs', 'groups', 'users'].includes(activeTab)) {
+    // Teams: a supervisor gets Users (their agents), never Groups.
+    if (userRole !== 'admin' && (['logs', 'groups'].includes(activeTab) || (activeTab === 'users' && userRole !== 'supervisor'))) {
       navigate(`/${DEFAULT_TAB}`, { replace: true });
     }
   }, [userRole, activeTab, navigate]);
@@ -662,7 +663,7 @@ function App({ onLogout }: AppProps) {
       !isAgentRole && { tab: 'analytics', label: t('nav.analytics'), Icon: BarChart3 },
     ] },
     { key: 'admin', label: t('nav.admin', 'Admin'), items: [
-      isAdminRole && { tab: 'users', also: ['groups'], label: t('nav.teams', 'Teams'), Icon: Users },
+      (isAdminRole || role === 'supervisor') && { tab: 'users', also: isAdminRole ? ['groups'] : [], label: t('nav.teams', 'Teams'), Icon: Users },
       (isAdminRole || role === 'supervisor') && { tab: 'settings', label: t('header.settings', 'Settings'), Icon: Settings },
       isAdminRole && { tab: 'logs', label: t('nav.logs', 'Logs'), Icon: ScrollText },
     ] },
@@ -1014,7 +1015,7 @@ function App({ onLogout }: AppProps) {
           )}
           {activeTab === 'users' && (
             <UsersPanel
-              tabs={teamsTabs}
+              tabs={isAdminRole ? teamsTabs : undefined}
               pendingUserForm={pendingUserForm}
               onClearPendingUserForm={() => setPendingUserForm(null)}
               onOpenCreateGroup={(formSnapshot: PendingUserFormSnapshot, prefillGroupName?: string) => {

@@ -158,6 +158,32 @@ export async function setGroupAgents(groupId: number, agentExtensions: unknown[]
   }
 }
 
+/** Add an extension to these groups, keeping every other member. Transactional. */
+export async function addAgentToGroups(agentExt: string, groupIds: number[]): Promise<boolean> {
+  try {
+    await withTransaction(async (conn) => {
+      await execute('INSERT IGNORE INTO agents (extension, name) VALUES (?, ?)', [agentExt, agentExt], conn);
+      for (const gid of groupIds) {
+        await execute('INSERT IGNORE INTO group_agents (group_id, agent_ext) VALUES (?, ?)', [gid, agentExt], conn);
+      }
+    });
+    return true;
+  } catch (e) {
+    log.warning('⚠️  Database error add_agent_to_groups: %s', e);
+    return false;
+  }
+}
+
+/** extension -> the groups it is an agent of. */
+export async function getAgentGroupMap(): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  for (const r of await query('SELECT agent_ext, group_id FROM group_agents')) {
+    const ext = pyStr(r.agent_ext);
+    out.set(ext, [...(out.get(ext) ?? []), r.group_id as number]);
+  }
+  return out;
+}
+
 /** Replace a group's queues by extension, creating queue rows as needed ('default' skipped). Transactional. */
 export async function setGroupQueues(groupId: number, queueExtensions: unknown[] | null | undefined): Promise<boolean> {
   if (!groupId) return false;

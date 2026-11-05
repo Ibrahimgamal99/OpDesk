@@ -53,6 +53,8 @@ export interface Runtime {
    * phone gets one push per call.
    */
   preWoken: Map<string, number>;
+  /** Extension -> monotonic() of its last call-wake push; tells a woken phone from the user returning. */
+  wokenAt: Map<string, number>;
   /** Extension -> monotonic() of its last "registered and ready" report. */
   wakeReadyAt: Map<string, number>;
 }
@@ -69,5 +71,6 @@ export const runtime: Runtime = {
   sipPush: null,
   presence: null,
   preWoken: new Map(),
+  wokenAt: new Map(),
   wakeReadyAt: new Map(),
 };

@@ -2144,9 +2144,8 @@ export async function startAggregationLoop(): Promise<void> {
 export const ACTIVE_STATES = ['ready', 'on_call', 'wrap_up', 'not_ready'] as const;
 
 /**
- * Seconds between two segments before they count as two separate sessions. The same as the
- * default queue grace period: a phone that drops and comes back within a minute (Wi-Fi
- * blip, browser reload) is the same session; the gap itself is still counted nowhere.
+ * Seconds between two segments before they count as two separate sessions: a phone back
+ * within a minute (Wi-Fi blip, browser reload) is the same session; the gap counts nowhere.
  */
 export const SESSION_GAP_SECS = 60;
 
@@ -2170,6 +2169,8 @@ export interface Segment {
   source: string | null;
   started_at: Date;
   ended_at: Date | null;
+  /** A piece of idle time with DND on (overlayDnd): state 'dnd', but it counts as idle. */
+  idle_dnd?: boolean;
 }
 
 /**
@@ -2564,6 +2565,98 @@ function windowDt(dateStr: string, time: string): Date {
   return new Date(y, mo - 1, d, h, mi, s);
 }
 
+/** max_break_secs per reason code, for the reasons that have a window. */
+function breakWindows(reasons: Iterable<Row>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of reasons) {
+    const w = intOr0(dget(r, 'max_break_secs', null));
+    if (w > 0) out.set(pyStr(r.code), w);
+  }
+  return out;
+}
+
+/**
+ * Cap offline-on-a-break rows at the reason's window, measured from the break's start (a
+ * break and its offline stretches of one reason are one chain). Past the window it is
+ * offline: dropped, so a laptop closed on a break does not stretch the shift's logout.
+ */
+export function capBreakOffline(segments: Segment[], windows: Map<string, number>, now: Date): Segment[] {
+  const out: Segment[] = [];
+  let chainStart: Date | null = null;
+  let chainReason: string | null = null;
+  let chainEnd: Date | null = null;
+  for (const seg of segments) {
+    if (seg.state === 'not_ready' || seg.state === 'break_offline') {
+      const r = seg.reason_code || 'unknown';
+      const joined = chainStart !== null && chainReason === r && chainEnd !== null
+        && wallDiffSecs(seg.started_at, chainEnd) <= SESSION_GAP_SECS;
+      if (!joined) chainStart = seg.started_at;
+      chainReason = r;
+      chainEnd = seg.ended_at || now;
+    } else {
+      chainStart = null;
+      chainReason = null;
+      chainEnd = null;
+    }
+    if (seg.state !== 'break_offline') {
+      out.push(seg);
+      continue;
+    }
+    const window = windows.get(seg.reason_code || '') ?? 0;
+    if (!(window > 0) || chainStart === null) continue;
+    const allowedEnd = wallAdd(chainStart, window);
+    if (wall(allowedEnd) <= wall(seg.started_at)) continue;
+    const segEnd = seg.ended_at || now;
+    out.push(wall(segEnd) <= wall(allowedEnd) ? seg : { ...seg, ended_at: allowedEnd });
+  }
+  return out;
+}
+
+/**
+ * Cut idle time at the DND stretches: each overlap becomes a 'dnd' piece with `idle_dnd`,
+ * so a DND the agent never returns from ends the shift at the DND's start, and one they
+ * return from stays idle time. Other states pass through.
+ */
+export function overlayDnd(segments: Segment[], dnd: SideSegment[] | undefined, now: Date): Segment[] {
+  if (!dnd || !dnd.length) return segments;
+  const flags = [...dnd].sort((x, y) => wall(x.started_at) - wall(y.started_at));
+  const out: Segment[] = [];
+  for (const seg of segments) {
+    if (seg.state !== 'ready') {
+      out.push(seg);
+      continue;
+    }
+    const end = seg.ended_at;
+    const endW = wall(end || now);
+    let cur: Date | null = seg.started_at;
+    for (const f of flags) {
+      if (cur === null) break;
+      const fEndW = f.ended_at ? wall(f.ended_at) : Infinity;
+      if (fEndW <= wall(cur) || wall(f.started_at) >= endW) continue;
+      if (wall(f.started_at) > wall(cur)) {
+        out.push({ ...seg, started_at: cur, ended_at: f.started_at });
+        cur = f.started_at;
+      }
+      const pieceEnd: Date | null = f.ended_at && fEndW < endW ? f.ended_at : end;
+      out.push({ ...seg, state: 'dnd', idle_dnd: true, started_at: cur, ended_at: pieceEnd });
+      cur = pieceEnd === end ? null : pieceEnd;
+    }
+    if (cur !== null) out.push({ ...seg, started_at: cur, ended_at: end });
+  }
+  return out;
+}
+
+/** Raw rows -> what sessions are built from: split at the shift, breaks capped, DND overlaid. */
+function preparedSegments(
+  segs: Segment[],
+  boundary: number | null,
+  windows: Map<string, number>,
+  dnd: SideSegment[] | undefined,
+  now: Date,
+): Segment[] {
+  return overlayDnd(capBreakOffline(splitAtShiftBoundary(segs, boundary, now), windows, now), dnd, now);
+}
+
 /**
  * {agents: [row, ...], reasons: [catalog]} for the Agent Adherence report.
  *
@@ -2607,9 +2700,7 @@ export async function computeAgentAdherence(
   const boundary = await shiftBoundaryMinutes();
   // Map, not an object: extensions are numeric strings and must keep first-seen order.
   const byAgent = new Map<string, Segment[]>();
-  for (const s of splitAtShiftBoundary(await segmentRows(windowStart, windowEnd, { allowedAgents }), boundary, now)) {
-    pushTo(byAgent, pyStr(s.agent_ext), s);
-  }
+  for (const s of await segmentRows(windowStart, windowEnd, { allowedAgents })) pushTo(byAgent, pyStr(s.agent_ext), s);
 
   const [registration, queueLogins, dndFlags, outbound, agentQueues] = await Promise.all([
     sideSegments('extension_registration', windowStart, windowEnd, { allowedAgents }),
@@ -2619,8 +2710,11 @@ export async function computeAgentAdherence(
     agentsWithQueues(),
   ]);
 
+  const windows = breakWindows(reasonMeta.values());
   const result: Row[] = [];
-  for (const [ext, segs] of byAgent) {
+  for (const [ext, rawSegs] of byAgent) {
+    const dndIntervals = dndFlags.get(ext);
+    const segs = preparedSegments(rawSegs, boundary, windows, dndIntervals, now);
     const sessions = splitSessions(segs, winStartDt, winEndDt, now, boundary);
     if (!sessions.length) continue;
 
@@ -2628,50 +2722,31 @@ export async function computeAgentAdherence(
       ready_secs: 0, on_call_secs: 0, wrap_secs: 0, not_ready_secs: 0,
       break_secs: 0, dnd_secs: 0, productive_not_ready_secs: 0,
     };
+    let legacyDnd = 0;
     let idleDnd = 0;
+    let dndFlagSecs = 0;
     let breakOfflineCounted = 0;
-    const dndIntervals = dndFlags.get(ext);
     const breakdown = new Map<string, { code: string; label: unknown; productive: boolean; secs: number }>();
     for (const session of sessions) {
-      // A break and its offline stretches form one chain (same reason, back to back); the
-      // reason's window is measured from the chain's start.
-      let chainStart: Date | null = null;
-      let chainReason: string | null = null;
-      let chainEnd: Date | null = null;
       for (const seg of session.segments) {
-        let secs = clampedSecs(seg, winStartDt, winEndDt, now);
+        const secs = clampedSecs(seg, winStartDt, winEndDt, now);
         let state = seg.state;
-        if (state === 'not_ready' || state === 'break_offline') {
-          const r = seg.reason_code || 'unknown';
-          const joined = chainStart !== null && chainReason === r && chainEnd !== null
-            && wallDiffSecs(seg.started_at, chainEnd) <= SESSION_GAP_SECS;
-          if (!joined) chainStart = seg.started_at;
-          chainReason = r;
-          chainEnd = seg.ended_at || now;
-        } else {
-          chainStart = null;
-          chainReason = null;
-          chainEnd = null;
+        if (seg.idle_dnd) {
+          a.ready_secs += secs;
+          idleDnd += secs;
+          dndFlagSecs += secs;
+          continue;
         }
+        if (state !== 'dnd') dndFlagSecs += overlapSecs(seg, dndIntervals, winStartDt, winEndDt, now);
         if (state === 'break_offline') {
-          // Offline on a break: counts as that break up to its window from the break's
-          // start; beyond (or with no window) it is offline and counts as nothing.
-          const window = intOr0(dget((reasonMeta.get(seg.reason_code || '') ?? {}) as Row, 'max_break_secs', null));
-          const allowedEnd = window > 0 && chainStart ? wallAdd(chainStart, window) : null;
-          const segEnd = seg.ended_at || now;
-          secs = allowedEnd && wall(allowedEnd) > wall(seg.started_at)
-            ? clampedSecs({ ...seg, ended_at: minDt(segEnd, allowedEnd) }, winStartDt, winEndDt, now)
-            : 0;
+          // Already capped at the reason's window: it is that break.
           breakOfflineCounted += secs;
           state = 'not_ready';
         }
-        if (state === 'ready') {
-          a.ready_secs += secs;
-          idleDnd += overlapSecs(seg, dndIntervals, winStartDt, winEndDt, now);
-        }
+        if (state === 'ready') a.ready_secs += secs;
         else if (state === 'on_call') a.on_call_secs += secs;
         else if (state === 'wrap_up') a.wrap_secs += secs;
-        else if (state === 'dnd') a.dnd_secs += secs;
+        else if (state === 'dnd') legacyDnd += secs;
         else if (state === 'not_ready') {
           a.not_ready_secs += secs;
           const code = seg.reason_code || 'unknown';
@@ -2695,9 +2770,10 @@ export async function computeAgentAdherence(
       }
     }
 
-    // Legacy presence DND rows (DND was a state) count as logged-in time, as they did;
-    // DND is a flag now, reported as its own total beside availability.
-    const loggedIn = a.ready_secs + a.on_call_secs + a.wrap_secs + a.not_ready_secs + a.dnd_secs;
+    // Legacy DND rows count as logged-in time; the flag overlaps availability, so it is
+    // reported beside it, and only inside the shift.
+    a.dnd_secs = legacyDnd + dndFlagSecs;
+    const loggedIn = a.ready_secs + a.on_call_secs + a.wrap_secs + a.not_ready_secs + legacyDnd;
     const handling = a.on_call_secs + a.wrap_secs;
     const avail = handling + a.ready_secs;
     const last = sessions[sessions.length - 1];
@@ -2713,7 +2789,6 @@ export async function computeAgentAdherence(
       sessions: sessions.length,
       logged_in_secs: loggedIn,
       ...a,
-      dnd_secs: a.dnd_secs + sideSecs(dndIntervals, winStartDt, winEndDt, now),
       available_secs: avail,
       idle_secs: a.ready_secs,
       idle_dnd_secs: idleDnd,
@@ -2765,16 +2840,25 @@ export async function computeAgentTimeline(
 
   const labels = new Map<string, Row>();
   try {
-    for (const r of await query('SELECT code, label, productive, color FROM pause_reasons')) labels.set(r.code, r);
+    for (const r of await query('SELECT code, label, productive, color, max_break_secs FROM pause_reasons')) labels.set(r.code, r);
   } catch (e) {
     log.warning('timeline reason labels: %s', e);
   }
 
   const boundary = await shiftBoundaryMinutes();
-  const segs = splitAtShiftBoundary(await segmentRows(windowStart, windowEnd, { agentExt: ext }), boundary, now);
+  const dndRows = await sideSegments('extension_dnd', windowStart, windowEnd, { agentExt: ext });
+  const segs = preparedSegments(
+    await segmentRows(windowStart, windowEnd, { agentExt: ext }), boundary, breakWindows(labels.values()), dndRows.get(ext), now,
+  );
   const sessions: Row[] = [];
   for (const s of splitSessions(segs, winStartDt, winEndDt, now, boundary)) {
-    const entries: Row[] = mergeRuns(s.segments).map((seg) => {
+    // Idle on DND is idle: the trace shows it as Ready, beside the DND stretches.
+    const plain = s.segments.map((x): Segment => {
+      if (!x.idle_dnd) return x;
+      const { idle_dnd: _ignored, ...rest } = x; // eslint-disable-line @typescript-eslint/no-unused-vars
+      return { ...rest, state: 'ready' };
+    });
+    const entries: Row[] = mergeRuns(plain).map((seg) => {
       const code = seg.reason_code ?? null;
       const meta: Row = code ? labels.get(code) ?? {} : {};
       return {

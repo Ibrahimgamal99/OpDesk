@@ -602,7 +602,7 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                     {t('settings.crm.connectionSub', 'Where OpDesk reaches your CRM and how it authenticates.')}
                   </p>
                   <FormRow single>
-                    <FormField label={t('settings.crm.serverUrl')} htmlFor="crm-server-url">
+                    <FormField label={t('settings.crm.serverUrl')} htmlFor="crm-server-url" required>
                       <input
                         id="crm-server-url"
                         type="text"
@@ -635,7 +635,7 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
                   {config.auth_type === 'api_key' && (
                     <FormRow>
-                      <FormField label={t('settings.crm.apiKey')}>
+                      <FormField label={t('settings.crm.apiKey')} required>
                         <input {...secretProps('api_key', t('settings.crm.apiKeyPh', 'Your API key'))} />
                       </FormField>
                       <FormField label={t('settings.crm.apiKeyHeader')} hint={t('settings.crm.defaultApiKeyHeader')}>
@@ -647,11 +647,11 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
                   {config.auth_type === 'basic_auth' && (
                     <FormRow>
-                      <FormField label={t('settings.crm.username')}>
+                      <FormField label={t('settings.crm.username')} required>
                         <input type="text" className="form-input" placeholder={t('fields.username', 'Username')}
                           value={config.username || ''} onChange={(e) => updateConfig({ username: e.target.value })} />
                       </FormField>
-                      <FormField label={t('settings.crm.password')}>
+                      <FormField label={t('settings.crm.password')} required>
                         <input {...secretProps('password', t('fields.password', 'Password'))} />
                       </FormField>
                     </FormRow>
@@ -659,7 +659,7 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
 
                   {config.auth_type === 'bearer_token' && (
                     <FormRow single>
-                      <FormField label={t('settings.crm.bearerToken')}>
+                      <FormField label={t('settings.crm.bearerToken')} required>
                         <input {...secretProps('bearer_token', t('settings.crm.bearerTokenPh', 'Your bearer token'))} />
                       </FormField>
                     </FormRow>
@@ -668,11 +668,11 @@ export function CrmSettings({ card, onLoaded }: CrmSettingsProps) {
                   {config.auth_type === 'oauth2' && (
                     <>
                       <FormRow>
-                        <FormField label={t('settings.crm.clientId')}>
+                        <FormField label={t('settings.crm.clientId')} required>
                           <input type="text" className="form-input" placeholder={t('settings.crm.clientIdPh', 'OAuth2 Client ID')}
                             value={config.oauth2_client_id || ''} onChange={(e) => updateConfig({ oauth2_client_id: e.target.value })} />
                         </FormField>
-                        <FormField label={t('settings.crm.clientSecret')}>
+                        <FormField label={t('settings.crm.clientSecret')} required>
                           <input {...secretProps('oauth2_client_secret', t('settings.crm.clientSecretPh', 'OAuth2 Client Secret'))} />
                         </FormField>
                       </FormRow>

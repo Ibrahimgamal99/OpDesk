@@ -13,6 +13,8 @@ const bindingRows: Array<Record<string, unknown>> = [];
 const tokens: Record<string, Array<Record<string, string>>> = {};
 const runtimeMock = {
   preWoken: new Map<string, number>(),
+  wokenAt: new Map<string, number>(),
+  bridge: null as unknown,
   contactResolver: { resolveCached: jest.fn() } as unknown,
   monitor: { monitored: new Set(['100', '101']) } as unknown,
 };
@@ -24,6 +26,7 @@ jest.mock(
     listSipPushBindings: jest.fn(async () => bindingRows.map((r) => ({ ...r }))),
     upsertSipPushBinding: jest.fn(async () => true),
     getDeviceTokensForExtension: jest.fn(async (ext: string) => tokens[ext] ?? []),
+    deletePushTargetsForExtension: jest.fn(async () => 2),
     getCallNotificationsFromDb: jest.fn(async () => [{ caller_from: '0100', queue: 'sales', reason: 'UNANSWERED', call_id: 'L9' }]),
     addCrmContactIfNew: jest.fn(),
     getContactsForResolver: jest.fn(async () => []),
@@ -33,6 +36,7 @@ jest.mock('../src/integrations/push-service', () => ({
   canWake: jest.fn((b: unknown[], legacy: unknown[]) => b.length > 0 || legacy.length > 0),
   sendRfc8599: jest.fn(async () => 1),
   sendCallWake: jest.fn(async () => undefined),
+  rfc8599Sendable: jest.fn(() => true),
   sendAlert: jest.fn(async () => undefined),
 }));
 
@@ -239,7 +243,7 @@ describe('gateway over a fake AMI', () => {
     fake.contacts['200'] = [];
     expect(await sipPush.wake('200', 'uid-3', '0100', 'Alice', 10)).toBe(true);
     await flush();
-    expect(pushService.sendCallWake).toHaveBeenCalledWith('200', '0100', 'predial-200', 'Alice');
+    expect(pushService.sendCallWake).toHaveBeenCalledWith('200', '0100', 'predial-200', 'Alice', new Set());
     fake.contacts['200'] = [{ ID: 'z', URI: 'sip:200@10.0.0.1', UserAgent: 'Zoiper', RegExpire: '60' }];
     expect(await sipPush.ready('uid-3')).toBe(true);
   });
@@ -262,7 +266,7 @@ describe('call-time hooks', () => {
       '0100123456',
       new Set(['100', '101']),
     );
-    expect(pushService.sendCallWake).toHaveBeenCalledWith('100', '0100123456', 'L1', 'Alice');
+    expect(pushService.sendCallWake).toHaveBeenCalledWith('100', '0100123456', 'L1', 'Alice', expect.any(Set));
 
     mocked(pushService.sendCallWake).mockClear();
     sipPush.markPreWoken('100');
@@ -274,6 +278,61 @@ describe('call-time hooks', () => {
     sipPush.onIncomingCall('100', '0100123456', 'L3', '');
     await flush();
     expect(pushService.sendCallWake).toHaveBeenCalledTimes(1);
+  });
+
+  test('a placeholder caller or name never reaches the phone; the contact name does', async () => {
+    const resolver = runtimeMock.contactResolver as { resolveCached: jest.Mock };
+    resolver.resolveCached.mockReturnValue('Acme Ltd');
+    mocked(pushService.sendCallWake).mockClear();
+    sipPush.onIncomingCall('100', '0100', 'L4', 'Unknown');
+    await flush();
+    expect(pushService.sendCallWake).toHaveBeenCalledWith('100', '0100', 'L4', 'Acme Ltd', expect.any(Set));
+    resolver.resolveCached.mockReturnValue(null);
+    mocked(pushService.sendCallWake).mockClear();
+    sipPush.onIncomingCall('100', 'anonymous', 'L5', '<unknown>');
+    await flush();
+    expect(pushService.sendCallWake).toHaveBeenCalledWith('100', '', 'L5', null, expect.any(Set));
+    expect(runtimeMock.wokenAt.has('100')).toBe(true);
+  });
+
+  test('pushCallerName: a real name, else the extension name, else the contact', () => {
+    const resolver = runtimeMock.contactResolver as { resolveCached: jest.Mock };
+    resolver.resolveCached.mockReturnValue('Acme Ltd');
+    expect(sipPush.pushCallerName('0100', 'Alice')).toBe('Alice');
+    expect(sipPush.pushCallerName('0100', '0100')).toBe('Acme Ltd');
+    runtimeMock.bridge = { extensionNames: { 101: 'Bob' } };
+    expect(sipPush.pushCallerName('101', 'Unknown')).toBe('Bob');
+    runtimeMock.bridge = null;
+    resolver.resolveCached.mockReturnValue(null);
+    expect(sipPush.pushCallerName('', 'Unknown')).toBe('');
+  });
+
+  test('a token the binding already pushed is skipped: one push per phone', async () => {
+    const bound = { id: 1, extension: '300', pn_provider: 'fcm', pn_prid: 'tok1', pn_param: 'p', contact_uri: '', user_agent: '' };
+    bindingRows.push(bound);
+    await sipPush.reloadBindings();
+    mocked(pushService.sendCallWake).mockClear();
+    sipPush.onIncomingCall('300', '0100', 'L6', 'Al');
+    await flush();
+    expect(mocked(pushService.sendCallWake).mock.calls[0][4]).toEqual(new Set(['tok1']));
+    bindingRows.splice(bindingRows.indexOf(bound), 1);
+    await sipPush.reloadBindings();
+  });
+
+  test('forgetExtension signs the phones out and drops the push targets', async () => {
+    const raw = [
+      '/registrar/contact/100;@abc123 : {"endpoint":"100"}',
+      '/registrar/contact/1001;@def456 : {"endpoint":"1001"}',
+    ].join('\n');
+    expect(sipPush.registrarContactKeys(raw, '100')).toEqual(['contact/100;@abc123']);
+    const monitor = { registrarContactRows: jest.fn(async () => raw), dbDel: jest.fn(async () => true) };
+    expect(await sipPush.forgetExtension('100', monitor)).toEqual([]);
+    expect(monitor.dbDel).toHaveBeenCalledTimes(1);
+    expect(monitor.dbDel).toHaveBeenCalledWith('registrar', 'contact/100;@abc123');
+    expect(dbm.deletePushTargetsForExtension).toHaveBeenCalledWith('100');
+    expect(await sipPush.forgetExtension('100', null)).toEqual(['the phones registered on extension 100 could not be signed out']);
+    mocked(dbm.deletePushTargetsForExtension).mockResolvedValueOnce(null);
+    expect(await sipPush.forgetExtension('100', monitor)).toEqual(['the push devices of extension 100 could not be forgotten']);
   });
 
   test('dispatchMissedCallPush builds the banner from the latest notification', async () => {

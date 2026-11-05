@@ -141,15 +141,17 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
   // What the pill means, beyond its label: its tooltip.
   const pillHint = busy
     ? t('agent.lockedOnCall', 'Controls unlock when the call ends')
-    : !online
-      ? t('agent.offlineHint', 'Offline — availability starts when the phone registers')
-      : asleep
-        ? t('agent.asleepHint', 'The app is asleep; calls wake it by push')
-        : dState === 'dnd'
-          ? t('agent.dndSub', 'Inbound blocked · outbound still works')
-          : dState === 'not_ready' && isAgent && queueOn
-            ? t('agent.pausedInQueues', 'Paused in queues')
-            : '';
+    : pc.signedOff
+      ? t('agent.signedOffHint', 'Signed off at the shift reset: press Available to start')
+      : !online
+        ? t('agent.offlineHint', 'Offline — availability starts when the phone registers')
+        : asleep
+          ? t('agent.asleepHint', 'The app is asleep; calls wake it by push')
+          : dState === 'dnd'
+            ? t('agent.dndSub', 'Inbound blocked · outbound still works')
+            : dState === 'not_ready' && isAgent && queueOn
+              ? t('agent.pausedInQueues', 'Paused in queues')
+              : '';
   const extHint = isConnected
     ? t('agent.extRegistered', 'Ext {{ext}} · Registered', { ext: myExt })
     : t('agent.extNotRegistered', 'Ext {{ext}} · Not registered', { ext: myExt });
@@ -164,13 +166,17 @@ export function AgentStatusHeader({ title, icon, isConnected, onCall, ringing, o
   const clearDnd = done(() => pc.actions.setDnd(false));
 
   // The one-tap way back to Available, beside the pill: Resume on a break, Finish in wrap-up.
-  const quick = busy || !online
+  const quick = busy
     ? null
-    : state === 'not_ready'
-      ? { Icon: Play, label: t('agent.resume', 'Resume'), onClick: setReady }
-      : state === 'wrap_up'
-        ? { Icon: Check, label: t('agent.finishWrap', 'Finish wrap-up'), onClick: finishWrap }
-        : null;
+    : pc.signedOff
+      ? { Icon: Play, label: t('agent.startShift', 'Available'), onClick: setReady }
+      : !online
+        ? null
+        : state === 'not_ready'
+          ? { Icon: Play, label: t('agent.resume', 'Resume'), onClick: setReady }
+          : state === 'wrap_up'
+            ? { Icon: Check, label: t('agent.finishWrap', 'Finish wrap-up'), onClick: finishWrap }
+            : null;
 
   return (
     <div

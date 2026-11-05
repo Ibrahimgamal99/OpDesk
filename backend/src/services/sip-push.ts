@@ -526,12 +526,58 @@ export function bindingsFor(extension: string): Row[] {
 export async function canWakeExtension(extension: string): Promise<boolean> {
   if (!settings.enabled) return false;
   try {
-    const legacy = (await dbm.getDeviceTokensForExtension(extension)) as pushService.DeviceTokenRow[];
-    return pushService.canWake(bindingsFor(extension), legacy);
+    // Only a real device counts: a binding, or an app token seen lately. A web token or a
+    // token left by an uninstalled app would read the extension as online for ever.
+    if (pushService.canWake(bindingsFor(extension), [])) return true;
+    return await dbm.hasRecentAppToken(extension, PRESENCE_APP_SEEN_HOURS);
   } catch (e) {
     log.warning('canWakeExtension(%s): %s', extension, e);
     return false;
   }
+}
+
+/** How recently a mobile app must have refreshed its token for presence to trust it. */
+export const PRESENCE_APP_SEEN_HOURS = 24;
+
+/** What forgetExtension() needs from the AMI monitor. */
+export interface RegistrarStore {
+  registrarContactRows(): Promise<string | null>;
+  dbDel(family: string, key: string): Promise<boolean>;
+}
+
+/** The AstDB keys (family `registrar`) of `extension`'s contacts in `database show` output. */
+export function registrarContactKeys(raw: string | null | undefined, extension: string): string[] {
+  const keys: string[] = [];
+  for (const line of (raw || '').split(/\r\n|\r|\n/)) {
+    const m = /\/registrar\/(?<key>contact\/(?<aor>[^;\s]+);@[0-9A-Za-z]*)\s*:/.exec(line);
+    if (m?.groups && m.groups.aor === extension) keys.push(m.groups.key);
+  }
+  return keys;
+}
+
+/**
+ * The person lost `extension`: sign its phones out and drop their push targets, so a call
+ * to it no longer wakes the old phone. Returns what could not be done ([] when all was).
+ */
+export async function forgetExtension(extension: string, monitor: RegistrarStore | null): Promise<string[]> {
+  const problems: string[] = [];
+  const raw = monitor ? await monitor.registrarContactRows() : null;
+  if (!monitor || raw === null) {
+    problems.push(`the phones registered on extension ${extension} could not be signed out`);
+  } else {
+    for (const key of registrarContactKeys(raw, extension)) {
+      if (!(await monitor.dbDel('registrar', key))) {
+        problems.push(`a phone registered on extension ${extension} could not be signed out`);
+        break;
+      }
+    }
+  }
+  const deleted = await dbm.deletePushTargetsForExtension(extension);
+  if (deleted === null) problems.push(`the push devices of extension ${extension} could not be forgotten`);
+  else if (deleted) log.info('Forgot %d push target(s) of extension %s: its user no longer holds it', deleted, extension);
+  registeredAt.delete(extension);
+  await reloadBindings();
+  return problems;
 }
 
 /** The "call" push payload. */
@@ -542,6 +588,36 @@ export function callData(extension: string, caller: string, callerName: string, 
     caller_name: callerName || caller,
     aor: host ? `sip:${extension}@${host}` : extension,
   };
+}
+
+/** Asterisk's stand-ins for an unknown party: never a name to show on a phone. */
+const PLACEHOLDER_CIDS: ReadonlySet<string> = new Set([
+  'unknown', 'anonymous', 'unavailable', 'restricted', 'private', 'asterisk', '<unknown>', 'n/a',
+]);
+
+export function isPlaceholderCid(value: string | null | undefined): boolean {
+  return PLACEHOLDER_CIDS.has((value || '').trim().toLowerCase());
+}
+
+/** The name a call push carries: the real caller-ID name, an extension's name, a contact, or ''. */
+export function pushCallerName(caller: string, name: string | null = ''): string {
+  const n = (name || '').trim();
+  if (n && !isPlaceholderCid(n) && n !== caller) return n;
+  if (!caller) return '';
+  const names = runtime.bridge?.extensionNames as Map<string, string> | Record<string, string> | undefined;
+  const internal = names instanceof Map ? names.get(caller) : names?.[caller];
+  if (internal) return String(internal);
+  try {
+    return runtime.contactResolver?.resolveCached(caller, monitoredExtensions()) || '';
+  } catch (e) {
+    log.debug('contact lookup for a push failed: %s', e);
+    return '';
+  }
+}
+
+/** Tokens the bindings reach: the same phone's app token must not get a second push. */
+function boundTokens(rows: Row[]): Set<string> {
+  return new Set(rows.filter((b) => pushService.rfc8599Sendable(b as pushService.PushBindingRow)).map((b) => String(b.pn_prid ?? '').trim()));
 }
 
 /**
@@ -556,6 +632,7 @@ export async function wake(extension: string, uid: string, caller: string, calle
   const legacy = (await dbm.getDeviceTokensForExtension(extension)) as pushService.DeviceTokenRow[];
   if (!pushService.canWake(rows, legacy)) return false;
 
+  runtime.wokenAt.set(extension, monotonic());
   const contacts = await endpointContacts(extension);
   pending.set(uid || `${extension}-${monotonic()}`, {
     extension,
@@ -571,7 +648,7 @@ export async function wake(extension: string, uid: string, caller: string, calle
     createTask(pushService.sendRfc8599(rows, callData(extension, caller, callerName, host), holdSeconds, uid || null));
   }
   if (legacy.length) {
-    createTask(pushService.sendCallWake(extension, caller, `predial-${extension}`, callerName || null));
+    createTask(pushService.sendCallWake(extension, caller, `predial-${extension}`, callerName || null, boundTokens(rows)));
   }
   return true;
 }
@@ -643,16 +720,15 @@ export function markPreWoken(extension: string): void {
 }
 
 /**
- * The monitor's incoming-call callback (ring time): warm the contact-name cache, then —
- * unless the pre-dial hook already pushed this extension within PRE_WAKE_TTL — send the app
- * wake push and the RFC 8599 ring push. Two VoIP pushes would mean two CallKit UUIDs, the
- * end-call event landing on the wrong one, no SIP BYE, and a stuck caller.
+ * The monitor's incoming-call callback (ring time): warm the contact-name cache, then --
+ * unless the pre-dial hook already pushed this extension within PRE_WAKE_TTL -- send one
+ * push per phone. Two VoIP pushes would mean two CallKit UUIDs, the end-call event landing
+ * on the wrong one, no SIP BYE, and a stuck caller.
  */
-export function onIncomingCall(extension: string, caller: string, callId: string, displayName: string): void {
+export function onIncomingCall(extension: string, rawCaller: string, callId: string, displayName: string): void {
+  const caller = isPlaceholderCid(rawCaller) ? '' : rawCaller;
   try {
-    // Warm the CRM contact cache at first ring so the name is usually resolved by the
-    // time the softphone asks for it. Runs before the pre-wake dedup below — that guard is
-    // about VoIP pushes only.
+    // Before the dedup below: that guard is about VoIP pushes only.
     runtime.contactResolver?.resolveCached(caller, monitoredExtensions());
   } catch (e) {
     log.debug('contact warm-up failed: %s', e);
@@ -660,10 +736,13 @@ export function onIncomingCall(extension: string, caller: string, callId: string
   const wakeTime = runtime.preWoken.get(extension);
   runtime.preWoken.delete(extension);
   if (wakeTime !== undefined && monotonic() - wakeTime < PRE_WAKE_TTL) return;
-  createTask(pushService.sendCallWake(extension, caller, callId, displayName || null));
+  runtime.wokenAt.set(extension, monotonic());
+  const name = pushCallerName(caller, displayName);
+  const rows = isEnabled() ? bindingsFor(extension) : [];
+  createTask(pushService.sendCallWake(extension, caller, callId, name || null, boundTokens(rows)));
   // RFC 8599 bindings: this call skipped the pre-dial hook (or the hook is off), so push
   // now and let the app answer the INVITE already on its way.
-  createTask(ring(extension, caller, displayName));
+  createTask(ring(extension, caller, name));
 }
 
 /**

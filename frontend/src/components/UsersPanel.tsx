@@ -101,6 +101,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const { pendingUserForm = null, onClearPendingUserForm, onOpenCreateGroup, tabs } = props;
   const currentUser = getUser();
   const isAdmin = currentUser?.role === 'admin';
+  // A supervisor only adds agents: the rest of the form is an admin's.
+  const isSupervisor = currentUser?.role === 'supervisor';
+  const blankForm = useMemo(() => (isSupervisor ? { ...EMPTY_FORM, role: 'agent' as Role } : EMPTY_FORM), [isSupervisor]);
   const [users, setUsers] = useState<OpDeskUser[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
@@ -114,7 +117,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const [search, setSearch] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [newGroupNameForCreate, setNewGroupNameForCreate] = useState('');
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(blankForm);
 
   /**
    * Load the extension's PBX state into the form. An answer for an extension the form has
@@ -141,8 +144,15 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const handleExtensionSelect = useCallback(async (ext: string) => {
     // A SIP password typed for the previous extension is not carried to another one.
     setForm(f => ({ ...f, extension: ext, sipPassword: '', webrtc: null, multiDevice: null, loaded: { webrtc: null, multiDevice: null } }));
-    if (ext) await loadExtensionState(ext, !editingUser);
-  }, [editingUser, loadExtensionState]);
+    if (!ext) return;
+    if (isSupervisor) {
+      // No PBX details for a supervisor: the picker's own row fills the form.
+      const picked = agents.find(a => a.extension === ext);
+      setForm(f => ({ ...f, username: f.username || ext, name: f.name || (picked && picked.name !== ext ? picked.name : '') }));
+      return;
+    }
+    await loadExtensionState(ext, !editingUser);
+  }, [agents, editingUser, isSupervisor, loadExtensionState]);
 
   // Restore user form when returning from Groups tab (create new group flow)
   useEffect(() => {
@@ -173,20 +183,20 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     try {
       const [usersRes, groupsRes, agentsRes] = await Promise.all([
         fetchWithAuth('/api/settings/users'),
-        fetchWithAuth('/api/settings/groups'),
-        fetchWithAuth('/api/settings/agents'),
+        isSupervisor ? null : fetchWithAuth('/api/settings/groups'),
+        fetchWithAuth(isSupervisor ? '/api/settings/extensions/available' : '/api/settings/agents'),
       ]);
       if (usersRes.ok) {
         const d = await usersRes.json();
         setUsers(d.users || []);
       }
-      if (groupsRes.ok) {
+      if (groupsRes?.ok) {
         const d = await groupsRes.json();
         setGroups((d.groups || []).map((g: { id: number; name: string }) => ({ id: g.id, name: g.name })));
       }
       if (agentsRes.ok) {
         const d = await agentsRes.json();
-        setAgents(d.agents || []);
+        setAgents(d.agents || d.extensions || []);
       }
       if (!usersRes.ok && usersRes.status === 403) {
         setMessage({ type: 'error', text: t('users.adminRequired') });
@@ -197,7 +207,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isSupervisor]);
 
   useEffect(() => {
     loadData();
@@ -206,9 +216,9 @@ export function UsersPanel(props: UsersPanelProps = {}) {
   const resetForm = useCallback(() => {
     setEditingUser(null);
     setShowPassword(false);
-    setForm(EMPTY_FORM);
+    setForm(blankForm);
     setFormOpen(false);
-  }, []);
+  }, [blankForm]);
 
   const openCreate = () => {
     resetForm();
@@ -250,6 +260,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     }
     if (!editingUser && !form.password) {
       setMessage({ type: 'error', text: t('users.passwordRequired') });
+      return;
+    }
+    if (isSupervisor && !form.extension) {
+      setMessage({ type: 'error', text: t('users.extensionRequired', 'Choose an extension for the new agent.') });
       return;
     }
     if (form.extension && form.sipPassword && !isValidSipSecret(form.sipPassword)) {
@@ -411,7 +425,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
     ));
   }, [users, groups, search, t]);
 
-  if (!isAdmin) {
+  if (!isAdmin && !isSupervisor) {
     return (
       <Page icon={Users} title={t('nav.teams', 'Teams')} tabs={tabs}>
         <EmptyState icon={Shield} title={t('users.adminOnly')} />
@@ -533,9 +547,10 @@ export function UsersPanel(props: UsersPanelProps = {}) {
               );
             },
           },
-          {
-            key: 'actions', header: t('common.actions', 'Actions'), align: 'end',
-            cell: u => (
+          // A supervisor adds agents; changing or removing them stays an admin's.
+          ...(!isAdmin ? [] : [{
+            key: 'actions', header: t('common.actions', 'Actions'), align: 'end' as const,
+            cell: (u: OpDeskUser) => (
               <div className="u-row u-justify-end u-gap-1">
                 {u.extension && (
                   <button
@@ -570,7 +585,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 )}
               </div>
             ),
-          },
+          }]),
         ]}
       />
 
@@ -650,7 +665,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   placeholder={t('fields.fullName')}
                 />
               </FormField>
-              <FormField label={t('users.extension')}>
+              <FormField label={t('users.extension')} required={isSupervisor}>
                 <Dropdown
                   size="md"
                   value={form.extension ?? ''}
@@ -659,7 +674,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   ariaLabel={t('users.extension')}
                   searchPlaceholder={t('users.searchExtension', 'Search extension…')}
                   options={[
-                    { value: '', label: t('common.none', 'None') },
+                    ...(isSupervisor ? [] : [{ value: '', label: t('common.none', 'None') }]),
                     ...agents.map(a => ({
                       value: a.extension,
                       label: `${a.extension}${a.name !== a.extension ? ' — ' + a.name : ''}`,
@@ -671,7 +686,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 )}
               </FormField>
             </FormRow>
-            {form.extension && (
+            {form.extension && isAdmin && (
               <FormRow single>
                 <FormField
                   label={t('users.sipPassword', 'New SIP password')}
@@ -723,6 +738,11 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 />
               </FormRow>
             )}
+            {isSupervisor ? (
+              <p className="u-fg-muted u-text-sm">
+                {t('users.joinsYourGroups', 'The new agent joins your groups automatically.')}
+              </p>
+            ) : (
             <FormRow>
               <FormField
                 label={t('fields.role')}
@@ -758,6 +778,7 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                 </FormField>
               )}
             </FormRow>
+            )}
           </FormSection>
 
           {form.role !== 'agent' && (

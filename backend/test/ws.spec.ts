@@ -95,7 +95,8 @@ beforeAll(async () => {
   monitor.dnd.add('102');
   // Availability follows the phone: 101 and 102 are registered, then 101 joins its queue.
   await runtime.agentState.onReachability('101', 'sip');
-  await runtime.agentState.onReachability('102', 'sip');
+  // Already registered, not a fresh registration: its paused member keeps the break.
+  await runtime.agentState.onReachability('102', 'sip', 'ami', 'sip');
   await runtime.agentState.queueLogin('101');
 
   server = http.createServer();

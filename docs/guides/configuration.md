@@ -46,7 +46,7 @@ returned masked as `********`. Saving the form with the mask unchanged keeps the
 | **SIP TLS** | TLS transport for SIP endpoints. |
 | **Mobile Wake** | RFC 8599 wake-up (hold time, settle window, mobile client marker), the Firebase service account and APNs `.p8` key, the Web Push (VAPID) keys, and the registered devices. See [mobile-push.md](mobile-push.md). |
 | **Recording** | Turn recording on and pick the format: `wav`, `wav49`, `gsm`, `g722`, `ulaw`, `alaw` or `sln`. Set the recording root, which directions and extensions are recorded, and the retention period. Shows the storage used. |
-| **Not-Ready Codes** | The pause reasons agents choose from when they go Not Ready, the after-call wrap-up time, and the daily shift reset. |
+| **Not-Ready Codes** | The pause reasons agents choose from when they go Not Ready, the after-call wrap-up time, and the daily shift reset (timers restart and idle agents sign off; nobody leaves a queue). |
 | **Audit log** (admins) | Who changed what, and when: every create, update and delete made through the API, plus a supervisor or admin changing someone else's status (break, Available, queues, DND) from the Extensions page. Filterable by action, entity, user and date. |
 
 Settings changes apply **live**, with no restart.
@@ -56,7 +56,7 @@ Settings changes apply **live**, with no restart.
 | Role | Sees and does |
 |---|---|
 | **Admin** | Everything, including Users, Groups, Logs and API keys. |
-| **Supervisor** | The agents and queues in their assigned groups: live panels, queues, call log, recordings, analytics, settings, and listen / whisper / barge if allowed. |
+| **Supervisor** | The agents and queues in their assigned groups: live panels, queues, call log, recordings, analytics, settings, and listen / whisper / barge if allowed. Can add agents on free extensions under **Teams**; they join the supervisor's groups automatically. |
 | **Agent** | Live panels for their own extension plus the agents and queues of the groups they belong to. History (call log, recordings, call journey) is limited to their **own** extension. They also get the contacts phonebook and the softphone. |
 
 Admins create users under **Users** (link a user to an extension to give them a softphone)

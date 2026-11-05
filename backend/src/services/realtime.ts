@@ -23,7 +23,6 @@ import * as sipPush from './sip-push';
 const log = getLogger('services.realtime');
 
 /** A predial VoIP push suppresses the ring-time push for this long (seconds). */
-export const PRE_WAKE_TTL = 12.0;
 export const AMI_CONNECT_ATTEMPTS = 10;
 export const AMI_CONNECT_RETRY_SECONDS = 3;
 
@@ -101,7 +100,7 @@ export async function startRealtime(opts: StartRealtimeOptions = {}): Promise<bo
   // System Logs panel (buffer disabled by default: one attribute read per event).
   monitor.setRawEventSink((p) => amiEventBuffer.add(p));
   monitor.setIncomingCallCallback((ext, caller, callId, displayName) => {
-    createTask(onIncomingCall(ext, caller, callId, displayName));
+    sipPush.onIncomingCall(ext, caller, callId, displayName);
   });
 
   await monitor.startEvents();
@@ -115,6 +114,7 @@ export async function startRealtime(opts: StartRealtimeOptions = {}): Promise<bo
   const registration = new RegistrationTracker(monitor);
   const agentState = new AgentStateManager(monitor);
   agentState.registration = registration;
+  agentState.wokenAt = (ext) => runtime.wokenAt.get(ext) ?? null;
   registration.listener = agentState;
   runtime.agentState = agentState;
   runtime.registration = registration;
@@ -180,32 +180,6 @@ export async function sendToOwnExtension(ext: string, msg: Record<string, unknow
   for (const ws of [...manager.activeConnections]) {
     const scope = manager.getScope(ws) as LiveScope;
     if (String(scope.extension || '').trim() === target) await manager.sendPersonal(ws, msg);
-  }
-}
-
-/** A monitored extension started ringing: warm the contact cache, wake its mobile app. */
-export async function onIncomingCall(ext: string, caller: string, callId: string, displayName: string): Promise<void> {
-  try {
-    // Warm the CRM contact cache at first ring (before the pre-wake dedup below, which is
-    // only about VoIP pushes).
-    const resolver = runtime.contactResolver as { resolveCached?: (n: string, m?: Set<string> | null) => unknown } | null;
-    if (resolver && typeof resolver.resolveCached === 'function') {
-      try {
-        await resolver.resolveCached(caller, runtime.monitor?.monitored ?? null);
-      } catch (e) {
-        log.debug('contact warm-up failed: %s', e);
-      }
-    }
-    // A predial VoIP push already went out for this extension: a second one would create
-    // a second CallKit UUID, the end-call would land on the wrong one and no BYE is sent.
-    const wakeTime = runtime.preWoken.get(ext) ?? 0;
-    runtime.preWoken.delete(ext);
-    if (monotonic() - wakeTime < PRE_WAKE_TTL) return;
-    createTask(Promise.resolve(pushService.sendCallWake(ext, caller, callId, displayName)));
-    // RFC 8599 bindings: this call skipped the pre-dial hook (or the hook is off).
-    createTask(Promise.resolve(sipPush.ring(ext, caller, displayName)));
-  } catch (e) {
-    log.debug('incoming call handling failed for %s: %s', ext, e);
   }
 }
 

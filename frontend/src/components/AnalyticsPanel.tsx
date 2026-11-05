@@ -6,7 +6,7 @@ import '../styles/analytics.css';
 import { AnalyticsOverview } from './AnalyticsOverview';
 import { AnalyticsQueues } from './AnalyticsQueues';
 import { AnalyticsAgents } from './AnalyticsAgents';
-import { AnalyticsAdherence } from './AnalyticsAdherence';
+import { AdherenceTypeFilterDropdown, AnalyticsAdherence, type AdherenceTypeFilter } from './AnalyticsAdherence';
 import { AnalyticsDrilldown } from './AnalyticsDrilldown';
 import { PageRange } from './PageRange';
 import { type DateRange } from './analyticsUtils';
@@ -22,6 +22,7 @@ interface AnalyticsPanelProps {
 export function AnalyticsPanel({ dateRange, onDateRangeChange }: AnalyticsPanelProps) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<AnalyticsTab>('overview');
+  const [adherenceType, setAdherenceType] = useState<AdherenceTypeFilter>('all');
 
   const tabs = [
     { key: 'overview',  label: t('analytics.nav.overview'),  icon: <LayoutDashboard size={14} /> },
@@ -39,13 +40,18 @@ export function AnalyticsPanel({ dateRange, onDateRangeChange }: AnalyticsPanelP
       bodyClassName="an-tab-content"
       // The range is scope, not a filter: it is the question this page answers,
       // so it sits with the page's identity in the header.
-      scope={<PageRange value={dateRange} onChange={onDateRangeChange} />}
+      scope={
+        <>
+          {tab === 'adherence' && <AdherenceTypeFilterDropdown value={adherenceType} onChange={setAdherenceType} />}
+          <PageRange value={dateRange} onChange={onDateRangeChange} />
+        </>
+      }
       tabs={<Tabs tabs={tabs} active={tab} onChange={(k) => setTab(k as AnalyticsTab)} ariaLabel={t('nav.analytics')} />}
     >
       {tab === 'overview'  && <AnalyticsOverview  dateRange={dateRange} />}
       {tab === 'queues'    && <AnalyticsQueues    dateRange={dateRange} />}
       {tab === 'agents'    && <AnalyticsAgents    dateRange={dateRange} />}
-      {tab === 'adherence' && <AnalyticsAdherence dateRange={dateRange} />}
+      {tab === 'adherence' && <AnalyticsAdherence dateRange={dateRange} typeFilter={adherenceType} />}
       {tab === 'drilldown' && <AnalyticsDrilldown dateRange={dateRange} />}
     </Page>
   );
