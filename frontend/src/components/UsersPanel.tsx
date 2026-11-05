@@ -665,13 +665,14 @@ export function UsersPanel(props: UsersPanelProps = {}) {
                   placeholder={t('fields.fullName')}
                 />
               </FormField>
-              <FormField label={t('users.extension')} required={isSupervisor}>
+              <FormField label={isSupervisor ? t('fields.extension') : t('users.extension')} required={isSupervisor}>
                 <Dropdown
                   size="md"
                   value={form.extension ?? ''}
                   onChange={handleExtensionSelect}
                   icon={Phone}
                   ariaLabel={t('users.extension')}
+                  placeholder={isSupervisor ? t('users.extensionRequired', 'Choose an extension for the new agent.') : undefined}
                   searchPlaceholder={t('users.searchExtension', 'Search extension…')}
                   options={[
                     ...(isSupervisor ? [] : [{ value: '', label: t('common.none', 'None') }]),

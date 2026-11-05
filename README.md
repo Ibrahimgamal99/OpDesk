@@ -20,13 +20,14 @@ A real-time operator panel for **Asterisk PBX** (Issabel 5 / FreePBX 16 and 17),
 - **Real-time panel**: extension status, active calls, queues and call notifications pushed over a WebSocket, with no polling.
 - **Dashboard**: active, waiting and ringing calls, longest wait, agent availability and today's KPIs.
 - **Supervision**: listen, whisper and barge, allowed per user.
-- **Three roles**: **Admin** (everything), **Supervisor** (their assigned agents and queues), **Agent** (their own call history; live view of their groups).
+- **Three roles**: **Admin** (everything), **Supervisor** (their assigned agents and queues; can add agents, who join their groups automatically), **Agent** (their own call history; live view of their groups).
 - **Extensions page**: every extension as a card (or a row in List view) with its status, time in state, how much of its break window is used (amber from 80%, red past it), its queues and its live call. Supervisors and admins get a ⋯ menu on each card: set a break or Available, log in or out of queues, turn DND on or off, listen / whisper / barge, the agent's timeline and calls today, or call the extension. The agent sees a message saying who changed their status, and the change is in the audit log.
+- **Presence**: availability follows the phone. Queue login is separate and ends only on a logout or DND. A call during a break or wrap-up counts as On Call, and a daily shift reset restarts the timers and signs off idle agents.
 - **Not-Ready codes**: agents pause with a reason. The reason is kept across device changes, wrap-up time is applied after calls, and adherence is reported per agent with a timeline.
 
 **Calling**
 - **Web softphone**: make and take calls in the browser over WebRTC, with hold, mute, transfer, queue login/logout, DND, and Available / Break with a reason code. The same status controls are in the header profile menu, and the avatar there wears your status colour.
-- **Mobile softphone**: sign a phone in by scanning a QR code, and wake a closed app for incoming calls with **RFC 8599** push (FCM / APNs VoIP). Recommended app: [Medut Softphone](https://github.com/Ibrahimgamal99/medut-softphone). → [guide](docs/guides/mobile-push.md)
+- **Mobile softphone**: sign a phone in by scanning a QR code, and wake a closed app for incoming calls with **RFC 8599** push (FCM / APNs VoIP), one push per phone, showing the caller's name. Recommended app: [Medut Softphone](https://github.com/Ibrahimgamal99/medut-softphone). → [guide](docs/guides/mobile-push.md)
 - **Recording**: full-call and per-leg recordings, with recording policy per direction and extension, retention, storage stats, and automatic talk/silence analysis (Silero VAD).
 
 **History and analytics**
@@ -67,9 +68,9 @@ A real-time operator panel for **Asterisk PBX** (Issabel 5 / FreePBX 16 and 17),
 |---|---|---|
 | [![Softphone](screenshots/softphone.png)](screenshots/softphone.png) | [![Incoming call](screenshots/softphone_ringing.png)](screenshots/softphone_ringing.png) | [![Mobile app QR](screenshots/mobile_qr.png)](screenshots/mobile_qr.png) |
 
-| Mobile Wake settings |   |   |
+| Mobile Wake settings | Agent adherence | Supervisor adds an agent |
 |---|---|---|
-| [![Mobile Wake settings](screenshots/mobile_wake.png)](screenshots/mobile_wake.png) |   |   |
+| [![Mobile Wake settings](screenshots/mobile_wake.png)](screenshots/mobile_wake.png) | [![Agent adherence](screenshots/adherence.png)](screenshots/adherence.png) | [![Supervisor adds an agent](screenshots/supervisor_teams.png)](screenshots/supervisor_teams.png) |
 
 ---
 
