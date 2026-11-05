@@ -1,4 +1,4 @@
-/** Settings: user management (admin only), and the agent list the settings forms pick from. */
+/** Settings: user management (admin; a supervisor adds agents to their own groups), and the agent list the forms pick from. */
 
 import { Controller, Req } from '@nestjs/common';
 import type { Request } from 'express';
@@ -8,6 +8,7 @@ import { runtime } from '../../core/runtime';
 import * as dbm from '../../db/db-manager';
 import type { Row } from '../../db/pool';
 import { pbxApplyCommand, reloadAsteriskSip } from '../../services/dialplan';
+import * as sipPush from '../../services/sip-push';
 import { codes } from '../errors';
 import { HttpError } from '../http-error';
 import { Auth, Delete, Get, Post, Put, principal } from '../routing';
@@ -66,6 +67,10 @@ function assertLoginPassword(password: string | null | undefined): void {
 export async function userOut(user: Row): Promise<Row> {
   const [agents, queues] = await dbm.getUserAgentsAndQueues(user.id);
   const groupIds = await dbm.getUserGroupIds(user.id);
+  // An agent joins groups through their extension (group_agents), not their account.
+  if (user.role === 'agent' && user.extension) {
+    for (const g of await dbm.getGroupIdsForAgent(user.extension)) if (!groupIds.includes(g)) groupIds.push(g);
+  }
   const modes: string[] = Array.isArray(user.monitor_modes) ? user.monitor_modes : [];
   return {
     ...user,
@@ -74,6 +79,28 @@ export async function userOut(user: Row): Promise<Row> {
     queue_names: queues,
     group_ids: groupIds,
   };
+}
+
+/** A foreign group's extension is off limits: taking it would open its call history. */
+const outsideGroups = (extGroups: number[] | undefined, own: number[]) => (extGroups ?? []).some((g) => !own.includes(g));
+
+/** The caller's groups: a new agent joins all of them, so at least one is needed. */
+async function supervisorGroups(callerId: unknown): Promise<number[]> {
+  const groups = await dbm.getUserGroupIds(callerId as number);
+  if (!groups.length) throw new HttpError(409, 'You are not in a group yet. Ask an admin to add you to one first.');
+  return groups;
+}
+
+/** A supervisor's new agent needs a real, unassigned extension that is not another team's. */
+async function assertAssignable(extension: string, groups: number[]): Promise<void> {
+  if (!extension) throw new HttpError(400, 'Extension required');
+  const exists = await dbm.extensionExistsInPbx(extension);
+  if (exists === null) throw new HttpError(503, 'Cannot reach the PBX database');
+  if (!exists) throw new HttpError(400, `Extension ${extension} does not exist in the PBX`);
+  if (await dbm.getUserByExtension(extension)) throw new HttpError(409, CONFLICT);
+  if (outsideGroups(await dbm.getGroupIdsForAgent(extension), groups)) {
+    throw new HttpError(403, 'This extension belongs to another group');
+  }
 }
 
 /** monitor_modes as strings (the Python body took any list and filtered on write). */
@@ -123,6 +150,8 @@ async function applyToPbx(opts: { nameExt?: string | null; name?: string | null;
     const pbx = await pbxSetting();
     if (!(await reloadAsteriskSip(pbx))) problems.push(`the PBX reload failed (run '${pbxApplyCommand(pbx)}')`);
   }
+  // After the reload, so a phone signed out here cannot get back in with the old secret.
+  for (const ext of opts.retire ?? []) problems.push(...(await sipPush.forgetExtension(ext, runtime.monitor)));
   return problems;
 }
 
@@ -134,11 +163,16 @@ function pbxProblem(what: string, problems: string[]): HttpError {
 
 @Controller()
 export class UsersController {
-  /** List all users, ordered by username. */
+  /** List users, ordered by username. A supervisor sees only the agents of their groups. */
   @Get('/api/settings/users')
-  @Auth('admin')
-  async apiListUsers() {
-    const users = await dbm.getAllUsers();
+  @Auth('supervisor')
+  async apiListUsers(@Req() req: Request) {
+    const caller = principal(req);
+    let users = await dbm.getAllUsers();
+    if (caller.role === 'supervisor') {
+      const team = (caller.allowed_agent_extensions ?? []).map(String);
+      users = users.filter((u) => u.role === 'agent' && team.includes(String(u.extension ?? '')));
+    }
     const out: Row[] = [];
     for (const u of users) out.push(await userOut(u));
     return { users: out };
@@ -159,39 +193,57 @@ export class UsersController {
    * display name; the extension keeps its SIP secret (the password is for OpDesk only). A taken username or
    * extension is a 409 user.record.conflict (FastAPI answered 400 with the same code).
    * Answers 200, not 201, as before.
+   *
+   * A supervisor creates agents only: the groups sent are ignored and the agent's extension
+   * joins every group the supervisor is in.
    */
   @Post('/api/settings/users')
-  @Auth('admin')
+  @Auth('supervisor')
   async apiCreateUser(@Req() req: Request) {
     const body = parseBody(CreateUserBody, req.body);
     const username = (body.username || '').trim();
     if (!username) throw new HttpError(400, 'Username required');
     if (!(body.password || '').trim()) throw new HttpError(400, 'Password required');
-    const role = body.role || 'supervisor';
+    const caller = principal(req);
+    const bySupervisor = caller.role === 'supervisor';
+    // The raw body: the parsed one defaults a missing role to 'supervisor'.
+    const askedRole = (req.body as Row | undefined)?.role;
+    if (bySupervisor && askedRole && askedRole !== 'agent') throw new HttpError(403, 'Supervisors can only create agents');
+    const role = bySupervisor ? 'agent' : body.role || 'supervisor';
     let monitorModes = modeList(body.monitor_modes);
     if (monitorModes === null && body.monitor_mode) monitorModes = [body.monitor_mode];
     if (role === 'admin') monitorModes = [...ALL_MONITOR_MODES];
+    if (bySupervisor) monitorModes = [];
     assertLoginPassword(body.password);
+    const extension = (body.extension ?? '').trim();
+    const groupIds = bySupervisor ? await supervisorGroups(caller.id) : body.group_ids || [];
+    if (bySupervisor) await assertAssignable(extension, groupIds as number[]);
     const userId = await dbm.createUser(username, body.password, {
       name: body.name ?? null,
-      extension: body.extension ?? null,
+      extension: extension || null,
       role,
       monitorMode: body.monitor_mode || 'listen',
       monitorModes,
     });
     if (!userId) throw new HttpError(409, CONFLICT);
-    await dbm.setUserGroups(userId, body.group_ids || []);
-    const problems = await applyToPbx({ nameExt: (body.extension ?? '').trim(), name: body.name });
+    if (!bySupervisor) {
+      await dbm.setUserGroups(userId, groupIds);
+    } else if (!(await dbm.addAgentToGroups(extension, groupIds as number[]))) {
+      // Outside the team the supervisor could not even see the account they just made.
+      await dbm.deleteUser(userId);
+      throw new HttpError(500, 'Could not add the agent to your groups');
+    }
+    const problems = await applyToPbx({ nameExt: extension, name: body.name });
     await refreshLiveScopes();
     // `password` is masked by the redaction: the row says one was set, never what.
     setRedactedAuditDetail(req, {
       id: userId,
       username,
       name: body.name ?? null,
-      extension: body.extension ?? null,
+      extension: extension || null,
       role,
       monitor_modes: monitorModes,
-      group_ids: body.group_ids || [],
+      group_ids: groupIds,
       password: body.password,
     });
     if (problems.length) throw pbxProblem('User created', problems);
@@ -290,6 +342,25 @@ export class UsersController {
     });
     if (problems.length) throw pbxProblem('User deleted', problems);
     return { ok: true };
+  }
+
+  /**
+   * PBX extensions a new user can take: no user holds them and, for a supervisor, they are
+   * in no other group: {extensions: [{extension, name}]}.
+   */
+  @Get('/api/settings/extensions/available')
+  @Auth('supervisor')
+  async apiAvailableExtensions(@Req() req: Request) {
+    const caller = principal(req);
+    const pbx = await dbm.getExtensionsFromDb();
+    if (pbx === null) throw new HttpError(503, 'Cannot reach the PBX database');
+    const held = new Set((await dbm.getAllUsers()).map((u) => String(u.extension ?? '')));
+    const names = await dbm.getExtensionNamesFromDb();
+    const bySupervisor = caller.role === 'supervisor';
+    const own = bySupervisor ? await dbm.getUserGroupIds(caller.id as number) : [];
+    const groups = bySupervisor ? await dbm.getAgentGroupMap() : new Map<string, number[]>();
+    const free = pbx.map(String).filter((e) => !held.has(e) && !outsideGroups(groups.get(e), own));
+    return { extensions: free.map((extension) => ({ extension, name: names[extension] || extension })) };
   }
 
   /**

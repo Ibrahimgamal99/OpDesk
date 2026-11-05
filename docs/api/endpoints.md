@@ -447,7 +447,7 @@ Direction) up to 100,000; a cut file ends with a line saying so and carries an
 session's login and the last session's logout, `null` while still logged in, cut at the
 shift reset), `logged_in`, `sessions`, `logged_in_secs` (DND included), `ready_secs`,
 `on_call_secs`, `wrap_secs`, `not_ready_secs`, `productive_not_ready_secs`, `break_secs`,
-`dnd_secs`, `occupancy_pct` and a `not_ready_breakdown` per reason code. The export adds
+`dnd_secs` (inside the shift only), `occupancy_pct` and a `not_ready_breakdown` per reason code. The export adds
 Sessions, Break and DND columns.
 
 ### `GET /api/analytics/agent-adherence/timeline`
@@ -539,8 +539,10 @@ wrap-up after a call before returning to Ready (`0` = until they end it). POST
 ### `GET|POST /api/agents/shift-reset`
 **Auth:** GET any JWT, POST admin.
 
-`{"time": "04:00"}` — the time of day at which every signed-in agent is logged out of
-their queues, so a shift left open does not run into the next one. `""` turns it off.
+`{"time": "04:00"}` — the day boundary. Status timers restart and reports split here;
+nobody leaves a queue. Anyone idle in Available is signed off (`signed_off` in
+`agent_states`) until they act, answer a call or their phone registers again. `""` turns
+it off.
 `400` unless `HH:MM` (24-hour) or empty.
 
 ---
@@ -726,6 +728,7 @@ the admin role. None are key-reachable.
 
 | Area | Paths |
 |---|---|
+| Supervisor's team | `GET /api/settings/users` (the agents of their groups), `POST /api/settings/users` (role `agent` only; needs an unassigned PBX extension, which joins every group of the supervisor), `GET /api/settings/extensions/available` |
 | Users, groups, agents, queues | `/api/settings/users*`, `/api/settings/groups*`, `/api/settings/agents`, `/api/settings/queues`. A username, extension or group name already in use is `409`. A user's `password` (8+ characters) is the OpDesk sign-in password only and never changes the extension's SIP secret; that is `PUT /api/settings/extensions/{extension}/credentials`. Unlinking or moving a user off an extension, deactivating them, or deleting them gives that extension a fresh random SIP secret (its phones sign out), so the person can no longer register with the one they knew. A save that landed in OpDesk but not in the PBX (name, secret or reload) is a `502` that says what did not apply. |
 | Contacts phonebook | `GET /api/contacts?search=&limit=&cursor=`, `GET /api/contacts/{id}` (any role; key: `contacts:read`), `POST /api/contacts`, `POST /api/contacts/bulk` (admin; key: `contacts:write`, upsert with precedence manual > api > crm, max 500 per request), `PUT|DELETE /api/contacts/{id}` (admin) — see [contact-lookup.md](contact-lookup.md) |
 | Raw settings key/value store | `GET|POST /api/settings`, `GET /api/settings/{key}` — secrets read back as `"********"`, and posting the mask keeps the stored value |

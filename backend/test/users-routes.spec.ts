@@ -9,6 +9,10 @@ jest.mock(
     getUserByExtension: jest.fn(),
     getUserAgentsAndQueues: jest.fn(async () => [['100'], ['q1']]),
     getUserGroupIds: jest.fn(async () => [2]),
+    getGroupIdsForAgent: jest.fn(async () => []),
+    getAgentGroupMap: jest.fn(async () => new Map()),
+    addAgentToGroups: jest.fn(async () => true),
+    getExtensionsFromDb: jest.fn(async () => ['100', '101', '102']),
     createUser: jest.fn(),
     updateUser: jest.fn(),
     deleteUser: jest.fn(),
@@ -29,7 +33,10 @@ jest.mock('../src/services/dialplan', () => ({
   pbxApplyCommand: jest.fn(() => 'fwconsole reload'),
 }));
 
+jest.mock('../src/services/sip-push', () => ({ forgetExtension: jest.fn(async () => []) }));
+
 import * as dbm from '../src/db/db-manager';
+import * as sipPush from '../src/services/sip-push';
 import { runtime } from '../src/core/runtime';
 import { reloadAsteriskSip } from '../src/services/dialplan';
 import { AUTH_POLICY } from '../src/api/routing';
@@ -56,7 +63,7 @@ beforeEach(() => {
 
 test('rows carry monitor_mode (first of monitor_modes) next to the access lists', async () => {
   mocked(dbm.getAllUsers).mockResolvedValue([{ ...USER }, { ...USER, id: 8, monitor_modes: [] }]);
-  const { users } = await ctl.apiListUsers();
+  const { users } = await ctl.apiListUsers(req());
   expect(users[0]).toEqual({ ...USER, monitor_mode: 'whisper', agent_extensions: ['100'], queue_names: ['q1'], group_ids: [2] });
   expect(users[1].monitor_mode).toBe('listen');
 });
@@ -326,8 +333,132 @@ describe('agents', () => {
 
 test('auth policies', () => {
   const proto = UsersController.prototype as unknown as Record<string, object>;
-  for (const name of ['apiListUsers', 'apiGetUser', 'apiCreateUser', 'apiUpdateUser', 'apiDeleteUser']) {
+  for (const name of ['apiGetUser', 'apiUpdateUser', 'apiDeleteUser']) {
     expect(Reflect.getMetadata(AUTH_POLICY, proto[name])).toBe('admin');
   }
+  // A supervisor lists and adds agents; the handlers narrow it to their groups.
+  for (const name of ['apiListUsers', 'apiCreateUser', 'apiAvailableExtensions']) {
+    expect(Reflect.getMetadata(AUTH_POLICY, proto[name])).toBe('supervisor');
+  }
   expect(Reflect.getMetadata(AUTH_POLICY, proto.apiListAgents)).toBe('user');
+});
+
+describe('an extension the user loses', () => {
+  test('its phones are signed out and forgotten, after the PBX reload', async () => {
+    const order: string[] = [];
+    mocked(reloadAsteriskSip).mockImplementation(async () => { order.push('reload'); return true; });
+    mocked(sipPush.forgetExtension).mockImplementation(async () => { order.push('forget'); return []; });
+    await ctl.apiUpdateUser(req({ params: { user_id: '7' }, body: { extension: '' } }));
+    expect(sipPush.forgetExtension).toHaveBeenCalledWith('100', null);
+    expect(order).toEqual(['reload', 'forget']);
+  });
+
+  test('phones still signed in are a 502', async () => {
+    mocked(dbm.getUserById).mockResolvedValue({ ...USER });
+    mocked(dbm.deleteUser).mockResolvedValue(true);
+    mocked(sipPush.forgetExtension).mockResolvedValueOnce(['the phones registered on extension 100 could not be signed out']);
+    await expect(ctl.apiDeleteUser(req({ params: { user_id: '7' } }))).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe('a supervisor adding an agent', () => {
+  const SUP = { id: 5, username: 'sue', role: 'supervisor', extension: '200', allowed_agent_extensions: ['100'] };
+  const body = { username: 'new', password: 'pw123456', name: 'New', extension: '101' };
+  const sup = (over: Record<string, unknown> = {}) => req({ principal: SUP, body: { ...body, ...over } });
+
+  beforeEach(() => {
+    mocked(dbm.createUser).mockResolvedValue(9);
+    mocked(dbm.getUserGroupIds).mockResolvedValue([2, 3]);
+    mocked(dbm.getGroupIdsForAgent).mockResolvedValue([]);
+    mocked(dbm.addAgentToGroups).mockResolvedValue(true);
+    mocked(dbm.getUserById).mockResolvedValue({ ...USER, id: 9, role: 'agent', extension: '101' });
+  });
+
+  test('the agent joins every group of the supervisor, whatever the body asked', async () => {
+    const r = sup({ role: 'agent', group_ids: [99], monitor_modes: ['barge'] });
+    await ctl.apiCreateUser(r);
+    expect(mocked(dbm.createUser).mock.calls[0][2]).toMatchObject({ role: 'agent', monitorModes: [], extension: '101' });
+    expect(dbm.addAgentToGroups).toHaveBeenCalledWith('101', [2, 3]);
+    expect(dbm.setUserGroups).not.toHaveBeenCalled();
+    expect((r as { auditDetail?: { group_ids?: unknown } }).auditDetail?.group_ids).toEqual([2, 3]);
+  });
+
+  test.each(['admin', 'supervisor'])('cannot create role %s', async (role) => {
+    await expect(ctl.apiCreateUser(sup({ role }))).rejects.toMatchObject({ status: 403 });
+    expect(dbm.createUser).not.toHaveBeenCalled();
+  });
+
+  test('a supervisor in no group gets a 409, and nothing is created', async () => {
+    mocked(dbm.getUserGroupIds).mockResolvedValue([]);
+    await expect(ctl.apiCreateUser(sup())).rejects.toMatchObject({ status: 409 });
+    expect(dbm.createUser).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['no extension', { extension: '' }, null, 400],
+    ['an extension the PBX lacks', {}, false, 400],
+    ['an unreadable PBX', {}, null, 503],
+  ])('%s is refused', async (_n, over, exists, status) => {
+    mocked(dbm.extensionExistsInPbx).mockResolvedValue(exists as boolean);
+    await expect(ctl.apiCreateUser(sup(over))).rejects.toMatchObject({ status });
+    expect(dbm.createUser).not.toHaveBeenCalled();
+  });
+
+  test("an extension in use or in another group's is refused", async () => {
+    mocked(dbm.getUserByExtension).mockResolvedValueOnce({ ...USER });
+    await expect(ctl.apiCreateUser(sup())).rejects.toMatchObject({ status: 409 });
+    mocked(dbm.getGroupIdsForAgent).mockResolvedValueOnce([2, 7]);
+    await expect(ctl.apiCreateUser(sup())).rejects.toMatchObject({ status: 403 });
+    expect(dbm.createUser).not.toHaveBeenCalled();
+  });
+
+  test('an extension already in their own group is fine', async () => {
+    mocked(dbm.getGroupIdsForAgent).mockResolvedValue([3]);
+    await ctl.apiCreateUser(sup());
+    expect(dbm.addAgentToGroups).toHaveBeenCalled();
+  });
+
+  test('a failed group write removes the user again', async () => {
+    mocked(dbm.addAgentToGroups).mockResolvedValue(false);
+    await expect(ctl.apiCreateUser(sup())).rejects.toMatchObject({ status: 500 });
+    expect(dbm.deleteUser).toHaveBeenCalledWith(9);
+  });
+
+  test('an admin still sets groups by account', async () => {
+    await ctl.apiCreateUser(req({ body: { ...body, group_ids: [7] } }));
+    expect(dbm.setUserGroups).toHaveBeenCalledWith(9, [7]);
+    expect(dbm.addAgentToGroups).not.toHaveBeenCalled();
+  });
+
+  test('the list shows only the agents of their groups', async () => {
+    mocked(dbm.getAllUsers).mockResolvedValue([
+      { ...USER, id: 1, role: 'agent', extension: '100' },
+      { ...USER, id: 2, role: 'agent', extension: '101' },
+      { ...USER, id: 3, role: 'supervisor', extension: '100' },
+    ]);
+    const { users } = await ctl.apiListUsers(req({ principal: SUP }));
+    expect(users.map((u) => u.id)).toEqual([1]);
+  });
+
+  test('an agent row shows the groups of its extension', async () => {
+    mocked(dbm.getUserGroupIds).mockResolvedValue([]);
+    mocked(dbm.getGroupIdsForAgent).mockResolvedValue([4]);
+    mocked(dbm.getAllUsers).mockResolvedValue([{ ...USER, role: 'agent' }]);
+    const { users } = await ctl.apiListUsers(req());
+    expect(users[0].group_ids).toEqual([4]);
+  });
+
+  test('available extensions: no user holds them, none from another group', async () => {
+    mocked(dbm.getAllUsers).mockResolvedValue([{ ...USER, extension: '100' }]);
+    mocked(dbm.getAgentGroupMap).mockResolvedValue(new Map([['101', [2]], ['102', [7]]]));
+    const out = await ctl.apiAvailableExtensions(req({ principal: SUP }));
+    expect(out.extensions.map((e) => e.extension)).toEqual(['101']);
+    const all = await ctl.apiAvailableExtensions(req());
+    expect(all.extensions.map((e) => e.extension)).toEqual(['101', '102']);
+  });
+
+  test('available extensions: 503 when the PBX cannot be read', async () => {
+    mocked(dbm.getExtensionsFromDb).mockResolvedValueOnce(null);
+    await expect(ctl.apiAvailableExtensions(req({ principal: SUP }))).rejects.toMatchObject({ status: 503 });
+  });
 });

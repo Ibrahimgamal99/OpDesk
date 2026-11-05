@@ -12,7 +12,7 @@ import * as crypto from 'crypto';
 
 const settings: Record<string, string> = {};
 const tokens: Record<string, Array<Record<string, string>>> = {};
-const runtimeMock = { bridge: null as unknown, preWoken: new Map<string, number>(), contactResolver: null, monitor: null };
+const runtimeMock = { bridge: null as unknown, preWoken: new Map<string, number>(), wokenAt: new Map<string, number>(), contactResolver: null, monitor: null };
 
 jest.mock(
   '../src/db/db-manager',
@@ -69,6 +69,8 @@ jest.mock('../src/services/sip-push', () => ({
   cancel: jest.fn(async () => undefined),
   markPreWoken: jest.fn(),
   reloadBindings: jest.fn(async () => undefined),
+  isPlaceholderCid: (v: string) => v.toLowerCase() === 'unknown',
+  pushCallerName: jest.fn((caller: string, name: string) => (caller === '101' ? 'Bob' : name)),
 }));
 
 import * as dbm from '../src/db/db-manager';
@@ -220,7 +222,7 @@ describe('sends', () => {
       { token: 'a1', platform: 'android', token_type: 'alert' },
     ];
     await push.sendCallWake('100', '0100', 'L1', 'Alice');
-    const data = { type: 'incoming_call', extension: '100', caller: '0100', call_id: 'L1', display_name: 'Alice' };
+    const data = { type: 'incoming_call', extension: '100', caller: '0100', call_id: 'L1', display_name: 'Alice', caller_name: 'Alice' };
     const fcm = sent.filter((s) => s.kind === 'fcm');
     expect(fcm).toHaveLength(1);
     expect(fcm[0].url).toBe('https://fcm.googleapis.com/v1/projects/proj/messages:send');
@@ -242,7 +244,7 @@ describe('sends', () => {
     expect(Buffer.from(sig, 'base64url')).toHaveLength(64);
     const web = sent.filter((s) => s.kind === 'web');
     expect(web).toHaveLength(1);
-    expect(web[0].body).toEqual({ payload: data, opts: { vapidDetails: { subject: 'mailto:admin@opdesk.local', publicKey: 'pub', privateKey: 'priv' }, TTL: 30 } });
+    expect(web[0].body).toEqual({ payload: data, opts: { vapidDetails: { subject: 'mailto:admin@opdesk.local', publicKey: 'pub', privateKey: 'priv' }, TTL: 30, urgency: 'high' } });
     // one OAuth exchange for the service account, signed RS256
     const oauth = sent.filter((s) => s.kind === 'oauth');
     expect(oauth).toHaveLength(1);
@@ -282,6 +284,18 @@ describe('sends', () => {
     await push.sendCallWake('100', '0100', 'L1');
     const pruned = mocked(dbm.deleteDeviceToken).mock.calls.map((c) => c[0]).sort();
     expect(pruned).toEqual(['a1', 'i-voip', '{"endpoint": "https://push.example/x"}']);
+  });
+
+  test('a token already pushed through its binding is not pushed again', async () => {
+    await configure();
+    tokens['100'] = [
+      { token: 'a1', platform: 'android', token_type: 'alert' },
+      { token: 'a2', platform: 'android', token_type: 'alert' },
+    ];
+    await push.sendCallWake('100', '0100', 'L1', null, new Set(['a1']));
+    const fcm = sent.filter((s) => s.kind === 'fcm');
+    expect(fcm).toHaveLength(1);
+    expect(JSON.stringify(fcm[0].body)).toContain('a2');
   });
 
   test('INVALID_ARGUMENT is not a dead token', async () => {

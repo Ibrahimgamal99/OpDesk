@@ -67,13 +67,19 @@ function setup() {
   mgr.registration = { viaOf: (e: string) => reach.get(e) ?? null };
   /** The phone registers (or, with via='push', is asleep but wakeable). */
   const online = async (ext: string, via: ReachVia = 'sip') => {
+    const prev = reach.get(ext) ?? null;
     reach.set(ext, via);
-    await mgr.onReachability(ext, via);
+    await mgr.onReachability(ext, via, 'ami', prev);
   };
   const offline = async (ext: string) => {
+    const prev = reach.get(ext) ?? null;
     reach.delete(ext);
-    await mgr.onReachability(ext, null);
+    await mgr.onReachability(ext, null, 'ami', prev);
   };
+  /** Moves the presence clock forward, past (or inside) the blip and wake windows. */
+  let now = 1000;
+  mgr.clock = () => now;
+  const tick = (secs: number) => { now += secs; };
   /** The device answers / hangs up a call (real channel, as monitor.answeredCh holds it). */
   const answer = async (ext: string, linkedid = '9.9') => {
     const ch = `PJSIP/${ext}-0000000${ext.slice(-1)}`;
@@ -86,7 +92,7 @@ function setup() {
     monitor.answeredCh.delete(ch);
     await mgr.handleAmiEvent({ Event: 'Hangup', Channel: ch });
   };
-  return { monitor, mgr, actions, fail, reach, online, offline, answer, hangup };
+  return { monitor, mgr, actions, fail, reach, online, offline, answer, hangup, tick };
 }
 
 beforeEach(() => {
@@ -141,22 +147,26 @@ describe('break (Not Ready) for every extension', () => {
     expect(mgr.stateOf('101')).toBe('ready');
   });
 
-  it('offline during a break: the break is held (break_offline row) and resumes however long it was away', async () => {
-    jest.useFakeTimers();
-    try {
-      const { mgr, online, offline } = setup();
-      await online('102');
-      await mgr.setNotReady('102', 'lunch');
-      await offline('102');
-      expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'break_offline', 'lunch', 'ami']);
-      expect(mgr.snapshot()['102']).toMatchObject({ state: 'logged_out', held_break: 'lunch' });
-      await jest.advanceTimersByTimeAsync(2 * 3600_000); // laptop closed for two hours
-      await online('102');
-      expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', held_break: null });
-      expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'not_ready', 'lunch', 'ami']);
-    } finally {
-      jest.useRealTimers();
-    }
+  it('offline during a break: held (break_offline row); back push-only it resumes', async () => {
+    const { mgr, online, offline, tick } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await offline('102');
+    expect(mockSegments[mockSegments.length - 1]).toEqual(['102', 'break_offline', 'lunch', 'ami']);
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'logged_out', held_break: 'lunch' });
+    tick(2 * 3600); // laptop closed for two hours
+    await online('102', 'push');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', held_break: null });
+  });
+
+  it('registering again after a held break is Available (the break ends)', async () => {
+    const { mgr, online, offline, tick } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await offline('102');
+    tick(3600);
+    await online('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'ready', held_break: null });
   });
 
   it('Available while offline on a break ends the hold (a supervisor can end it)', async () => {
@@ -344,35 +354,15 @@ describe('queue login is independent of availability', () => {
     expect(mgr.snapshot()['100']).toMatchObject({ state: 'not_ready', queue_logged_in: false });
   });
 
-  it('unreachable without push: offline, then out of the queues after the grace period', async () => {
+  it('offline, however long: stays in the queues (only logout, DND or the reset end it)', async () => {
     jest.useFakeTimers();
     try {
       const { mgr, online, offline } = setup();
-      mockSettings.QUEUE_UNREGISTER_GRACE_SECS = '60';
       await online('101');
       await mgr.queueLogin('101');
       await offline('101');
+      await jest.advanceTimersByTimeAsync(3600_000);
       expect(mgr.snapshot()['101']).toMatchObject({ state: 'logged_out', queue_logged_in: true });
-      await jest.advanceTimersByTimeAsync(59_000);
-      expect(mgr.isQueueLoggedIn('101')).toBe(true);
-      await jest.advanceTimersByTimeAsync(2_000);
-      expect(mgr.isQueueLoggedIn('101')).toBe(false);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it('coming back within the grace period keeps the queue login', async () => {
-    jest.useFakeTimers();
-    try {
-      const { mgr, online, offline } = setup();
-      await online('101');
-      await mgr.queueLogin('101');
-      await offline('101');
-      await jest.advanceTimersByTimeAsync(30_000);
-      await online('101');
-      await jest.advanceTimersByTimeAsync(60_000);
-      expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', queue_logged_in: true });
     } finally {
       jest.useRealTimers();
     }
@@ -567,7 +557,7 @@ describe('hydrate, shift reset', () => {
     expect(mgr.snapshot()).toEqual({});
   });
 
-  it('daily reset logs out of the queues, defers on-call agents; availability stays', async () => {
+  it('daily reset: nobody leaves a queue; idle signs off, a call signs off when it ends', async () => {
     const { mgr, online } = setup();
     await online('100');
     await online('101');
@@ -575,10 +565,21 @@ describe('hydrate, shift reset', () => {
     await mgr.queueLogin('101');
     await mgr.handleAmiEvent({ Event: 'AgentConnect', Queue: '800', Interface: 'PJSIP/101', Linkedid: '3.3' });
     const out = await mgr.dailyReset();
-    expect(out).toEqual({ logged_out: ['100'], deferred: ['101'], skipped_dnd: [] });
-    expect(mgr.snapshot()['100']).toMatchObject({ state: 'ready', queue_logged_in: false });
+    expect(out).toEqual({ counters_reset: ['101'], signed_off: ['100'], sign_off_after_call: ['101'] });
+    expect(mgr.snapshot()['100']).toMatchObject({ state: 'logged_out', signed_off: true, queue_logged_in: true });
     await mgr.handleAmiEvent({ Event: 'AgentComplete', Queue: '800', Interface: 'PJSIP/101', Linkedid: '3.3' });
-    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', queue_logged_in: false });
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'logged_out', signed_off: true, queue_logged_in: true });
+  });
+
+  it('daily reset restarts a break timer and splits its row; the break goes on', async () => {
+    const { mgr, online } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    mockSegments.length = 0;
+    const out = await mgr.dailyReset();
+    expect(out).toEqual({ counters_reset: ['102'], signed_off: [], sign_off_after_call: [] });
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', signed_off: false });
+    expect(mockSegments).toEqual([['102', 'not_ready', 'lunch', 'system']]);
   });
 
   it('snapshot filters by extension list', async () => {
@@ -615,5 +616,167 @@ describe('hydrate, shift reset', () => {
 
   it("'off' is how the turned-off reset is stored and read", () => {
     expect(parseShiftResetTime(SHIFT_RESET_OFF)).toBeNull();
+  });
+});
+
+describe('a phone that registers', () => {
+  it('ends a break still on its queue members: unpaused, Available', async () => {
+    const { mgr, online, offline, actions, tick } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
+    await mgr.setNotReady('101', 'lunch');
+    await online('101', 'push');
+    await offline('101');
+    tick(600);
+    actions.length = 0;
+    await online('101');
+    expect(actions.some((a) => a.Action === 'QueuePause' && a.Paused === '0')).toBe(true);
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', queue_logged_in: true });
+  });
+
+  it('a network blip keeps a break, through push or through offline', async () => {
+    const { mgr, online, offline, tick } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await online('102', 'push');
+    tick(30);
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('not_ready');
+    await offline('102');
+    tick(30);
+    await online('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch' });
+  });
+
+  it('a mobile woken for a call keeps its break; a wake long ago does not count', async () => {
+    const { mgr, online, tick } = setup();
+    let woken: number | null = null;
+    mgr.wokenAt = () => woken;
+    await online('102', 'push');
+    await mgr.setNotReady('102', 'lunch');
+    woken = mgr.clock();
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('not_ready');
+    await online('102', 'push');
+    tick(300);
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('ready');
+  });
+
+  it('leaves DND on and a live call alone', async () => {
+    const { mgr, online, answer, tick } = setup();
+    await online('102', 'push');
+    await answer('102');
+    tick(300);
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('on_call');
+    await online('101', 'push');
+    await mgr.setDnd('101', true);
+    tick(300);
+    await online('101');
+    expect(mgr.snapshot()['101']).toMatchObject({ state: 'ready', dnd: true });
+  });
+});
+
+describe('shift-end sign-off', () => {
+  const signedOff = async () => {
+    const s = setup();
+    await s.online('102');
+    await s.mgr.dailyReset();
+    return s;
+  };
+
+  it('closes the idle row, shows signed_off and is kept in AstDB', async () => {
+    const { mgr, actions } = await signedOff();
+    expect(mockSegments[mockSegments.length - 1]).toEqual(['102', null, null, 'system']);
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'logged_out', signed_off: true, reachable_via: 'sip' });
+    expect(actions.some((a) => a.Action === 'DBPut' && a.Family === 'OPDESK_SIGNOFF' && a.Key === '102')).toBe(true);
+  });
+
+  it('a flap or a blip keeps it; a real registration ends it', async () => {
+    const { mgr, online, tick } = await signedOff();
+    await online('102', 'push');
+    tick(30);
+    await online('102');
+    expect(mgr.snapshot()['102'].signed_off).toBe(true);
+    await online('102', 'push');
+    tick(300);
+    await online('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'ready', signed_off: false });
+  });
+
+  it('Available, a break, DND off or an answered call bring it back', async () => {
+    const a = await signedOff();
+    await a.mgr.setReady('102');
+    expect(a.mgr.snapshot()['102']).toMatchObject({ state: 'ready', signed_off: false });
+    const b = await signedOff();
+    await b.mgr.setNotReady('102', 'lunch');
+    expect(b.mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', signed_off: false });
+    const c = await signedOff();
+    await c.mgr.setDnd('102', true);
+    await c.mgr.setDnd('102', false);
+    expect(c.mgr.snapshot()['102']).toMatchObject({ state: 'ready', signed_off: false });
+    const d = await signedOff();
+    await d.answer('102');
+    expect(d.mgr.snapshot()['102']).toMatchObject({ state: 'on_call', signed_off: false });
+  });
+
+  it('going really offline clears it', async () => {
+    const { mgr, offline, online, tick } = await signedOff();
+    await offline('102');
+    expect(mgr.snapshot()['102']).toBeUndefined();
+    tick(300);
+    await online('102');
+    expect(mgr.stateOf('102')).toBe('ready');
+  });
+
+  it('a break interrupted by a call at the boundary goes on', async () => {
+    const { mgr, online, answer, hangup } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await answer('102');
+    await mgr.dailyReset();
+    await hangup('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch', signed_off: false });
+  });
+
+  it('holds across a restart while reachable and idle', async () => {
+    const { monitor, mgr, reach } = setup();
+    reach.set('102', 'sip');
+    monitor.dbGetFamily = (async () => ({ 102: '1' })) as never;
+    await mgr.hydrate();
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'logged_out', signed_off: true });
+  });
+});
+
+describe('a call on a break or in wrap-up', () => {
+  it('on a break: On Call while talking, the same break after hang-up', async () => {
+    const { mgr, online, answer, hangup } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await answer('102');
+    expect(mgr.stateOf('102')).toBe('on_call');
+    await hangup('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'not_ready', reason_code: 'lunch' });
+  });
+
+  it('break ended elsewhere during the call: Available after hang-up', async () => {
+    const { monitor, mgr, online, answer, hangup } = setup();
+    await online('101');
+    await mgr.queueLogin('101');
+    await mgr.setNotReady('101', 'lunch');
+    await answer('101');
+    for (const m of monitor.memberInterfacesFor('101')) m.paused = false;
+    await hangup('101');
+    expect(mgr.stateOf('101')).toBe('ready');
+  });
+
+  it('going offline during that call still holds the break', async () => {
+    const { mgr, online, offline, answer } = setup();
+    await online('102');
+    await mgr.setNotReady('102', 'lunch');
+    await answer('102');
+    await offline('102');
+    expect(mgr.snapshot()['102']).toMatchObject({ state: 'logged_out', held_break: 'lunch' });
   });
 });

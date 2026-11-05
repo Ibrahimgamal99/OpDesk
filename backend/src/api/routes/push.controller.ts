@@ -348,17 +348,10 @@ export class PushController {
 
   private async internalMobileWake(req: Request): Promise<RawResponse> {
     const extension = pStr(req.params.extension);
-    const callerNum = q(req, 'caller').trim();
-    const name = q(req, 'name').trim();
-    // Enrich the wake with the caller's display name for internal callers, so the ring
-    // card shows "Alice (101)" instead of a bare number.
-    let displayName = name && name !== callerNum ? name : '';
-    if (callerNum && runtime.bridge) {
-      const names = (runtime.bridge as { extensionNames?: unknown }).extensionNames;
-      const known =
-        names instanceof Map ? names.get(callerNum) : names && typeof names === 'object' ? (names as Record<string, unknown>)[callerNum] : null;
-      if (known) displayName = String(known);
-    }
+    const rawCaller = q(req, 'caller').trim();
+    const callerNum = sipPush.isPlaceholderCid(rawCaller) ? '' : rawCaller;
+    // The only push this ring gets: it needs a name as good as the ring-time one.
+    const displayName = sipPush.pushCallerName(callerNum, q(req, 'name'));
     const hold = (await mobileWakeSettings()).hold_seconds;
     if (!(await sipPush.wake(extension, q(req, 'uid'), callerNum, displayName, hold))) return plain('');
     // One VoIP push per call: the DialBegin path skips its own push while this is fresh.

@@ -796,6 +796,11 @@ export class AMIExtensionsMonitor {
     this.dnd = new Set(Object.entries(family).filter(([, v]) => pyStr(v).trim()).map(([k]) => k));
   }
 
+  /** The registrar's contact rows as `database show` prints them; null when AMI is down. */
+  async registrarContactRows(): Promise<string | null> {
+    return this.sendAsync('Command', { Command: 'database show registrar/contact' });
+  }
+
   async dbPut(family: string, key: string, val: string): Promise<boolean> {
     const resp = await this.sendAsync('DBPut', { Family: family, Key: pyStr(key), Val: pyStr(val) });
     return !!(resp && resp.includes('Response: Success'));

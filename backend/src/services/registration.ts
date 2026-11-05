@@ -53,7 +53,7 @@ export const SWEEP_SECS = 30;
 
 /** What agent-state needs from a reachability source. */
 export interface ReachabilityListener {
-  onReachability(ext: string, via: ReachVia | null, source?: string): Promise<void>;
+  onReachability(ext: string, via: ReachVia | null, source?: string, prev?: ReachVia | null): Promise<void>;
   reconcileDnd?(): Promise<void>;
 }
 
@@ -174,7 +174,7 @@ export class RegistrationTracker {
       log.info('Reachability %s: %s -> %s', e, prev ?? 'offline', via ?? 'offline');
       if (this.listener) {
         try {
-          await this.listener.onReachability(e, via, source);
+          await this.listener.onReachability(e, via, source, prev);
         } catch (err) {
           log.warning('onReachability(%s) failed: %s', e, err);
         }

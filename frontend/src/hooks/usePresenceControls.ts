@@ -78,6 +78,7 @@ export function usePresenceControls({ onCall, ringing }: Options = {}) {
   // On a break the label names the reason (Lunch); its colour says it is a break.
   const label = (!ringing && reasonLabel) || t(meta.key, meta.fallback);
   const asleep = online && presence?.reachable_via === 'push';
+  const signedOff = !online && !!presence?.signed_off;
   // A break can be picked from Available, or to switch reason.
   const canPickBreak = !busy && online && (state === 'ready' || state === 'available' || state === 'not_ready');
   const reason = dState === 'not_ready' ? reasons.find((r) => r.code === presence?.reason_code) : undefined;
@@ -98,7 +99,7 @@ export function usePresenceControls({ onCall, ringing }: Options = {}) {
   };
 
   return {
-    myExt, isAgent, presence, state, dState, online, busy, ringing: !!ringing, asleep,
+    myExt, isAgent, presence, state, dState, online, busy, ringing: !!ringing, asleep, signedOff,
     isDnd, queueOn, queues: presence?.queues ?? [],
     meta, Icon, label, elapsed, canPickBreak,
     reasonCode: dState === 'not_ready' ? presence?.reason_code ?? null : null,

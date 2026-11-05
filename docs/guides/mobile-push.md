@@ -165,7 +165,7 @@ Asterisk. Every phone on the extension has to sign in again; the dialog offers t
 Clients that do not use RFC 8599 can still register tokens themselves with
 `POST /api/device-tokens` (iOS posts an `alert` token and a `voip` PushKit token) and remove
 them with `DELETE /api/device-tokens`. They are woken by the same pre-dial hook, with the
-legacy payload `{ type: "incoming_call", extension, caller, call_id, display_name }`, plus a
+legacy payload `{ type: "incoming_call", extension, caller, call_id, display_name, caller_name }` (`caller_name` is empty when the name is unknown), plus a
 push on `DialBegin` for calls that skip the hook. For them, any new or refreshed contact on
 the extension ends the hold.
 

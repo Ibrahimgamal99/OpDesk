@@ -423,7 +423,7 @@ export function webPushEnabled(): boolean {
  * Send one Web Push message to a stored browser subscription (JSON string). Returns true on
  * success. Deletes the stored token on a 404/410 (expired subscription).
  */
-export async function sendWebPush(subscriptionJson: string, payload: Json): Promise<boolean> {
+export async function sendWebPush(subscriptionJson: string, payload: Json, urgency: 'high' | null = null): Promise<boolean> {
   if (!webPushEnabled()) return false;
   let subscription: unknown;
   try {
@@ -437,6 +437,7 @@ export async function sendWebPush(subscriptionJson: string, payload: Json): Prom
     await lib.sendNotification(subscription, JSON.stringify(payload), {
       vapidDetails: { subject: c.vapid_subject, publicKey: c.vapid_public, privateKey: c.vapid_private },
       TTL: 30,
+      ...(urgency ? { urgency } : {}),
     });
     return true;
   } catch (e) {
@@ -682,6 +683,7 @@ export async function sendCallWake(
   caller: string | null,
   callId: string | null,
   displayName: string | null = null,
+  skipTokens: Set<string> | null = null, // already pushed through an RFC 8599 binding
 ): Promise<void> {
   if (!fcmEnabled() && !apnsEnabled() && !webPushEnabled()) return;
   const allTokens = (await dbm.getDeviceTokensForExtension(extension)) as DeviceTokenRow[];
@@ -693,6 +695,7 @@ export async function sendCallWake(
     caller: String(caller || ''),
     call_id: String(callId || ''),
     display_name: String(displayName || caller || ''),
+    caller_name: String(displayName || ''), // the raw name: empty when unknown
   };
   const bundleId = cfg().apns_bundle_id;
   const tasks: Promise<unknown>[] = [];
@@ -701,6 +704,7 @@ export async function sendCallWake(
     const token = row.token;
     if (!token || seen.has(token)) continue;
     seen.add(token);
+    if (skipTokens?.has(token)) continue;
     if (row.platform === 'android' && fcmEnabled()) {
       // TTL=0: discard if the device is offline — avoid a phantom incoming-call UI after hang-up.
       tasks.push(sendFcm(token, { data, android: { priority: 'high', ttl: '0s' } }));
@@ -709,7 +713,8 @@ export async function sendCallWake(
       tasks.push(sendApns(token, data, 'voip', `${bundleId}.voip`, { collapseId: callId }));
     } else if (row.platform === 'web' && webPushEnabled()) {
       // Browser Web Push (the `token` holds the JSON subscription).
-      tasks.push(sendWebPush(token, data));
+      // High urgency, so a dozing phone still gets it.
+      tasks.push(sendWebPush(token, data, 'high'));
     }
   }
   if (tasks.length) await Promise.allSettled(tasks);

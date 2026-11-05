@@ -1,20 +1,20 @@
 import { useState } from 'react';
 import type React from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronUp, ChevronDown, ClipboardCheck, Download, FileSpreadsheet } from 'lucide-react';
+import { ChevronUp, ChevronDown, ClipboardCheck, Download, FileSpreadsheet, Users } from 'lucide-react';
 import { downloadWithAuth } from '../lib/download';
 import { messageOf } from '../lib/api';
 import type { DateRange } from './analyticsUtils';
 import type { AgentAdherenceRow } from '../types';
 import { fmtSecs, fmtPct, slaProgressClass, buildDateParams, analyticsGet, useAnalyticsFetch, kpiTip } from './analyticsUtils';
 import { AgentTimelineModal } from './AgentTimelineModal';
-import { Alert, Badge, Card, EmptyState, Tooltip } from './ui';
+import { Alert, Badge, Card, Dropdown, EmptyState, Tooltip } from './ui';
 
 type SortKey = 'agent' | 'sessions' | 'registered_secs' | 'queue_login_secs' | 'available_secs' | 'idle_secs'
   | 'on_call_secs' | 'wrap_secs' | 'break_secs' | 'not_ready_secs' | 'dnd_secs'
   | 'outbound_calls' | 'occupancy_pct';
 type SortDir = 'asc' | 'desc';
-type TypeFilter = 'all' | 'agents' | 'extensions';
+export type AdherenceTypeFilter = 'all' | 'agents' | 'extensions';
 
 function sortRows(rows: AgentAdherenceRow[], key: SortKey, dir: SortDir): AgentAdherenceRow[] {
   return [...rows].sort((a, b) => {
@@ -33,7 +33,11 @@ function fmtClock(iso: string | null): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-interface Props { dateRange: DateRange }
+interface Props {
+  dateRange: DateRange;
+  /** Which extensions the report covers; set from the page header, beside the date range. */
+  typeFilter: AdherenceTypeFilter;
+}
 
 /**
  * Agent Adherence report, for queue agents AND plain/outbound extensions: First online,
@@ -48,14 +52,13 @@ interface Props { dateRange: DateRange }
  *
  * A row opens that extension's state-change trace (AgentTimelineModal).
  */
-export function AnalyticsAdherence({ dateRange }: Props) {
+export function AnalyticsAdherence({ dateRange, typeFilter }: Props) {
   const { t } = useTranslation();
   const [sortKey, setSortKey] = useState<SortKey>('registered_secs');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [exporting, setExporting] = useState<'csv' | 'xlsx' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [traceFor, setTraceFor] = useState<AgentAdherenceRow | null>(null);
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const { data, loading, error } = useAnalyticsFetch(
     () => {
       const params = buildDateParams(dateRange.from, dateRange.to);
@@ -153,20 +156,6 @@ export function AnalyticsAdherence({ dateRange }: Props) {
       description={`${t('agent.adherence.subtitle')} · ${agents.length} ${t('analytics.agents.agents', 'agents')}`}
       actions={(
         <>
-          <div className="u-row u-gap-1" role="tablist" aria-label={t('agent.adherence.typeFilter', 'Show')}>
-            {(['all', 'agents', 'extensions'] as TypeFilter[]).map((f) => (
-              <button
-                key={f}
-                type="button"
-                role="tab"
-                aria-selected={typeFilter === f}
-                className={`btn btn-sm${typeFilter === f ? '' : ' btn-ghost'}`}
-                onClick={() => setTypeFilter(f)}
-              >
-                {f === 'all' ? t('agentBoard.filterAll', 'All') : f === 'agents' ? t('agentBoard.filterAgents', 'Queue agents') : t('agentBoard.filterExtensions', 'Extensions')}
-              </button>
-            ))}
-          </div>
           <button
             type="button"
             className="btn"
@@ -312,5 +301,27 @@ export function AnalyticsAdherence({ dateRange }: Props) {
         />
       )}
     </Card>
+  );
+}
+
+/** It narrows the whole report, so it sits in the page header beside the date range. */
+export function AdherenceTypeFilterDropdown({ value, onChange }: {
+  value: AdherenceTypeFilter;
+  onChange: (v: AdherenceTypeFilter) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Dropdown
+      size="md"
+      icon={Users}
+      value={value}
+      onChange={(v) => onChange(v as AdherenceTypeFilter)}
+      ariaLabel={t('agent.adherence.typeFilter', 'Show')}
+      options={[
+        { value: 'all', label: t('agentBoard.filterAll', 'All') },
+        { value: 'agents', label: t('agentBoard.filterAgents', 'Queue agents') },
+        { value: 'extensions', label: t('agentBoard.filterExtensions', 'Extensions') },
+      ]}
+    />
   );
 }

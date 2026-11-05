@@ -6691,6 +6691,7 @@ select.form-input option:checked {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overscroll-behavior: contain; /* the end of a menu does not scroll the page behind it */
   padding: var(--space-2);
   background: var(--bg-card);
   border: 1px solid var(--border-accent);

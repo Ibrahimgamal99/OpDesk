@@ -164,6 +164,35 @@ export async function replaceWebPushSubscription(oldToken: string, newToken: str
   }
 }
 
+/** Delete an extension's push bindings and device tokens: rows removed, null on a DB error. */
+export async function deletePushTargetsForExtension(extension: string): Promise<number | null> {
+  if (!extension) return 0;
+  try {
+    const bindings = await execute('DELETE FROM sip_push_bindings WHERE extension = ?', [extension]);
+    const tokens = await execute('DELETE FROM device_tokens WHERE extension = ?', [extension]);
+    return bindings.affectedRows + tokens.affectedRows;
+  } catch (e) {
+    log.error('❌  Database error forgetting the push targets of extension %s: %s', extension, e);
+    return null;
+  }
+}
+
+/** A mobile app token (not web push) the app refreshed within `maxAgeHours`? False on a DB error. */
+export async function hasRecentAppToken(extension: string, maxAgeHours: number): Promise<boolean> {
+  if (!extension) return false;
+  try {
+    const rows = await query(
+      "SELECT 1 AS ok FROM device_tokens WHERE extension = ? AND platform IN ('android', 'ios') " +
+        'AND last_seen_at >= (NOW() - INTERVAL ? HOUR) LIMIT 1',
+      [extension, Math.max(1, Math.trunc(maxAgeHours))],
+    );
+    return rows.length > 0;
+  } catch (e) {
+    log.warning('⚠️  Database error checking recent app tokens: %s', e);
+    return false;
+  }
+}
+
 /** Tokens registered for an extension ({token, platform, token_type}), optionally of one type. */
 export async function getDeviceTokensForExtension(extension: string, tokenType: string | null = null): Promise<Row[]> {
   if (!extension) return [];
