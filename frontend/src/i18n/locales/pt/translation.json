@@ -1288,6 +1288,7 @@
     }
   },
   "agent": {
+    "dndShort": "Não perturbar",
     "signedOffHint": "Desconectado na redefinição do turno: toque em Disponível para começar",
     "startShift": "Disponível",
     "adherence": {
@@ -1640,6 +1641,7 @@
     "FAILURE": "Falhou",
     "ABANDONED": "Abandonada",
     "DROPPED": "Caiu",
+    "ANSWERED_BY_SYSTEM": "Atendida pelo sistema",
     "UNANSWERED": "Não atendida",
     "MISSED": "Perdida",
     "VOICEMAIL": "Correio de voz",
@@ -1802,8 +1804,9 @@
     "UNREACHABLE": "O telefone estava desligado, não registrado ou fora de serviço.",
     "FAILURE": "Não foi possível completar a chamada, por exemplo um número errado.",
     "NETWORK_ERROR": "A rota ou a operadora falhou: congestionamento ou sem circuito.",
-    "ABANDONED": "Quem ligou desligou enquanto esperava numa fila.",
-    "DROPPED": "A chamada foi atendida e depois caiu de forma anormal."
+    "ABANDONED": "Nenhum agente atendeu esta chamada da fila.",
+    "DROPPED": "A chamada foi atendida e depois caiu de forma anormal.",
+    "ANSWERED_BY_SYSTEM": "O PBX atendeu (URA, anúncio ou código de função), não uma pessoa."
   },
   "audit": {
     "loadError": "Não foi possível carregar o registro de auditoria.",
@@ -1834,5 +1837,8 @@
       "login": "Entrada",
       "logout": "Saída"
     }
+  },
+  "profileStatus": {
+    "availability": "Disponibilidade"
   }
 }

@@ -70,7 +70,8 @@ describe('getCallLogFromDb', () => {
     await getCallLogFromDb({});
     const sql: string = q.mock.calls[0][0];
     // A call answered by 1001 then blind-transferred to an unanswered 1002 is 1001's.
-    expect(sql).toContain("COALESCE(MAX(CASE WHEN billsec > 0 AND dstchannel <> '' THEN sequence END),");
+    expect(sql).toMatch(/COALESCE\(MAX\(CASE WHEN billsec > 0 AND dstchannel <> ''\s+AND disposition = 'ANSWERED' THEN sequence END\),/);
+    expect(sql).toContain("MAX(CASE WHEN billsec > 0 AND dstchannel <> '' AND disposition = 'ANSWERED' THEN 1 ELSE 0 END) AS party_answered");
     expect(sql).toContain('c.sequence = x.out_seq');
     expect(sql).toContain('TIMESTAMPDIFF(SECOND, first_leg.calldate, leg_count.ended_at)');
     expect(sql).toContain('leg_count.party_answered');

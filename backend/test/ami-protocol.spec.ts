@@ -315,3 +315,92 @@ describe('AmiClient', () => {
     await srv.close();
   });
 });
+
+describe('monitor: a booting Asterisk', () => {
+  /** A fake AMI whose QueueSummary errors while `loading` is true, as before app_queue loads. */
+  async function bootingAmi() {
+    const state = { loading: true, summaries: 0 };
+    const srv = await fakeAmi((a, sock) => {
+      const id = a.ActionID;
+      if (a.Action === 'QueueSummary') {
+        state.summaries += 1;
+        if (state.loading) {
+          sock.write(raw({ Response: 'Error', ActionID: id, Message: 'Invalid/unknown command' }));
+          return;
+        }
+        sock.write(raw({ Response: 'Success', ActionID: id, EventList: 'start' }));
+        sock.write(raw({ Event: 'QueueSummary', ActionID: id, Queue: '800', LoggedIn: '0', Available: '0', Callers: '0', HoldTime: '0', TalkTime: '0' }));
+        sock.write(raw({ Event: 'QueueSummaryComplete', ActionID: id, EventList: 'Complete' }));
+      } else if (a.Action === 'QueueStatus') {
+        sock.write(raw({ Response: 'Success', ActionID: id, EventList: 'start' }));
+        sock.write(raw({ Event: 'QueueStatusComplete', ActionID: id, EventList: 'Complete' }));
+      } else {
+        sock.write(raw({ Response: 'Success', ActionID: id }));
+      }
+    });
+    const mon = new AMIExtensionsMonitor({ host: '127.0.0.1', port: srv.port, username: 'u', secret: 'p' });
+    return { srv, mon, state };
+  }
+
+  it('an unanswered QueueSummary is a failed sync, not "no queues"', async () => {
+    const { srv, mon, state } = await bootingAmi();
+    expect(await mon.connect()).toBe(true);
+    expect(await mon.syncQueueStatus()).toBe(false);
+    expect(await mon.getQueueSummary()).toEqual({});
+    state.loading = false;
+    expect(await mon.syncQueueStatus()).toBe(true);
+    expect(mon.queues.has('800')).toBe(true);
+    await mon.disconnect();
+    await srv.close();
+  });
+
+  it('retries the sync until app_queue answers', async () => {
+    const { srv, mon, state } = await bootingAmi();
+    await mon.connect();
+    const before = state.summaries;
+    setTimeout(() => { state.loading = false; }, 30);
+    expect(await mon.syncQueuesWhenReady(50, 0.01)).toBe(true);
+    expect(state.summaries).toBeGreaterThan(before + 1);
+    expect(mon.queues.has('800')).toBe(true);
+    await mon.disconnect();
+    await srv.close();
+  });
+
+  it('gives up after its attempts, and stops at once when the monitor is stopped', async () => {
+    const { srv, mon, state } = await bootingAmi();
+    await mon.connect();
+    expect(await mon.syncQueuesWhenReady(2, 0.01)).toBe(false);
+    await mon.disconnect();
+    const asked = state.summaries;
+    expect(await mon.syncQueuesWhenReady(2, 0.01)).toBe(false);
+    expect(state.summaries).toBe(asked);
+    await srv.close();
+  });
+
+  it('logs in again when the booting Asterisk dropped the session', async () => {
+    const { srv, mon, state } = await bootingAmi();
+    state.loading = false;
+    await mon.connect();
+    srv.sockets[0].destroy();
+    for (let i = 0; i < 100 && mon.connected; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(mon.connected).toBe(false);
+    expect(await mon.syncQueuesWhenReady(5, 0.01)).toBe(true);
+    expect(srv.sockets.length).toBe(2);
+    await mon.disconnect();
+    await srv.close();
+  });
+
+  it('a close during the startup sync still ends in a reconnect', async () => {
+    const { srv, mon, state } = await bootingAmi();
+    state.loading = false;
+    await mon.connect();
+    srv.sockets[0].destroy();
+    for (let i = 0; i < 100 && mon.connected; i++) await new Promise((r) => setTimeout(r, 5));
+    const loop = jest.spyOn(mon, 'reconnectLoop').mockResolvedValue();
+    await mon.startEvents();
+    expect(mon.running).toBe(true);
+    expect(loop).toHaveBeenCalledTimes(1);
+    await mon.disconnect();
+    await srv.close();
+  });
+});

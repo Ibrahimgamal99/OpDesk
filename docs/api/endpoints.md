@@ -230,8 +230,12 @@ The outcome comes from the Asterisk hangup cause and dial status (read from CEL)
 only from the CDR disposition, so a caller who gave up (`MISSED`), an unregistered phone
 (`UNREACHABLE`) and a carrier fault (`NETWORK_ERROR`) are told apart. A call with several
 legs takes its outcome, talk time and agent from the last leg someone answered (a call
-answered and then transferred to nobody is still `ANSWERED`), and a queue caller who hung
-up while waiting is `ABANDONED`.
+answered and then transferred to nobody is still `ANSWERED`).
+
+`ANSWERED` means a person (agent or extension) picked up. The PBX answering on its own is not
+an answer: a queue caller no agent took is `ABANDONED` (even though FreePBX answered them for
+hold music, and whether or not members' phones rang), and an IVR / announcement, a feature code
+(`*43`, `*97`) or a supervisor's ChanSpy leg is `ANSWERED_BY_SYSTEM`. Neither carries talk time.
 
 ### `GET /api/call-log/export`
 **Auth:** JWT (any) · **Key:** `cdr:read`

@@ -1303,6 +1303,7 @@
     }
   },
   "agent": {
+    "dndShort": "DND",
     "adherence": {
       "title": "Agent adherence",
       "subtitle": "Registered, available, idle, on-call, break and queue time per extension for the selected period.",
@@ -1717,6 +1718,7 @@
     "FAILURE": "Failure",
     "ABANDONED": "Abandoned",
     "DROPPED": "Dropped",
+    "ANSWERED_BY_SYSTEM": "Answered by system",
     "UNANSWERED": "Unanswered",
     "MISSED": "Missed",
     "VOICEMAIL": "Voicemail",
@@ -1879,8 +1881,9 @@
     "UNREACHABLE": "The phone was switched off, unregistered or out of service.",
     "FAILURE": "The call could not be placed, for example a wrong number.",
     "NETWORK_ERROR": "The route or the carrier failed: congestion or no circuit.",
-    "ABANDONED": "The caller hung up while waiting in a queue.",
-    "DROPPED": "The call was answered, then cut off abnormally."
+    "ABANDONED": "No agent took this queue call.",
+    "DROPPED": "The call was answered, then cut off abnormally.",
+    "ANSWERED_BY_SYSTEM": "The PBX picked up (an IVR, announcement or feature code) but no person did."
   },
   "audit": {
     "loadError": "Could not load the audit log.",
@@ -2005,6 +2008,7 @@
     }
   },
   "profileStatus": {
+    "availability": "Availability",
     "title": "Status",
     "window": "Break window {{min}} min",
     "wrapSub": "Finish wrap-up to take calls",

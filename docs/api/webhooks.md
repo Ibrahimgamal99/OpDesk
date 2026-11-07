@@ -193,7 +193,7 @@ The **outcome** is always the live cause-derived value, never the CDR's. The CDR
 only a coarse disposition, so letting it win would erase `MISSED`, `UNREACHABLE`,
 `NETWORK_ERROR`, `VOICEMAIL`, `DROPPED` and `ABANDONED`. Call History derives the same
 value after the fact from the hangup facts Asterisk writes to CEL, so the CRM and the
-Call History page agree.
+Call History page agree, except on calls no person picked up (see below the table).
 
 ---
 
@@ -228,11 +228,17 @@ analytics drill-down and the WebSocket use, and `GET /api/crm/config` lists it a
 | `NETWORK_ERROR` | Number and phone are fine; the network failed | Cause 3, 34, 38, 41, 42, 44, 58; DialStatus `CONGESTION` |
 | `ABANDONED` | The caller left the queue before an agent answered | Queue abandon |
 | `DROPPED` | Answered, then torn down abnormally | Cause 38, 41, 44 after answer |
+| `ANSWERED_BY_SYSTEM` | The PBX picked up but no person did: IVR, announcement, feature code, ChanSpy | Finished CDR only: `ANSWERED` with talk time and nobody on the destination channel |
 
 Precedence: voicemail → answered (→ `DROPPED` if the cause says the call collapsed) →
 queue abandon → DialStatus → caller hung up (`MISSED` / `UNANSWERED` by direction) →
 hangup cause → CDR disposition → `FAILURE`. A hangup cause of `0` means Asterisk reported
 none, so it falls through to the disposition rather than reading as `BUSY`.
+
+Call History reads the finished CDR, so it decides calls no person picked up first: a queue
+caller no agent took is `ABANDONED` whoever ended the call, and anything else the PBX answered
+alone is `ANSWERED_BY_SYSTEM`. A push keeps its live status when it has one, so
+`ANSWERED_BY_SYSTEM` reaches a CRM only on a push with no live status.
 
 `MISSED` and `UNANSWERED` differ only in whose call it was. Who actually hung up is not
 part of the status: Call History and Call Journey report it separately as `ended_by`.

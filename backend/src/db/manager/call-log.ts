@@ -535,7 +535,7 @@ function firstLegSql(subWhere: string): string {
  *     first_leg.channel), the channel Dial() leaves DIALSTATUS on;
  *   * `recordingfile` is the call's recording from ANY leg;
  *   * `party_answered` / `queue_legs` say whether anyone answered at all and whether the
- *     call went through Queue() -- what call-log.queueAbandoned reads.
+ *     call went through Queue() -- what call-log.noAgentOutcome reads.
  */
 export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> {
   const limit = opts.limit ?? null;
@@ -582,9 +582,12 @@ export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> 
                     SELECT c.*
                     FROM cdr c
                     JOIN (
-                        -- The outcome leg: the last one a party answered, else the last.
+                        -- The outcome leg: the last one a party answered, else the last. A
+                        -- queue caller's per-member legs carry billsec AND the member's channel
+                        -- while that phone only rang, hence the disposition test.
                         SELECT linkedid,
-                               COALESCE(MAX(CASE WHEN billsec > 0 AND dstchannel <> '' THEN sequence END),
+                               COALESCE(MAX(CASE WHEN billsec > 0 AND dstchannel <> ''
+                                                  AND disposition = 'ANSWERED' THEN sequence END),
                                         MAX(sequence)) AS out_seq
                         FROM cdr
                         ${subWhere}
@@ -595,7 +598,7 @@ export async function getCallLogFromDb(opts: CallLogQuery = {}): Promise<Row[]> 
                 SELECT linkedid,
                        COUNT(*) AS total_legs,
                        MAX(DATE_ADD(calldate, INTERVAL duration SECOND)) AS ended_at,
-                       MAX(CASE WHEN billsec > 0 AND dstchannel <> '' THEN 1 ELSE 0 END) AS party_answered,
+                       MAX(CASE WHEN billsec > 0 AND dstchannel <> '' AND disposition = 'ANSWERED' THEN 1 ELSE 0 END) AS party_answered,
                        SUM(CASE WHEN lastapp = 'Queue' THEN 1 ELSE 0 END) AS queue_legs
                 FROM cdr
                 ${subWhere}

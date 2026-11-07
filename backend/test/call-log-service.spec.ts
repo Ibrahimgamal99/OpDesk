@@ -192,32 +192,64 @@ describe('queue abandons', () => {
   });
   const callerHungUp = { 'PJSIP/trunk1-00000001': { cause: '16', source: 'PJSIP/trunk1-00000001', dialstatus: '', seq: 3 } };
 
-  it('the caller hanging up while queued is ABANDONED', () => {
-    expect(cl.queueAbandoned(QUEUED, callerHungUp)).toBe(true);
-    expect(cl.outcomeFromCel(QUEUED, callerHungUp)).toBe('ABANDONED');
-  });
-
-  it('not when the queue or the dialplan ended it, an agent answered, or the call moved on', () => {
+  it('a queue caller no agent took is ABANDONED, whoever ended it', () => {
     const dialplan = { 'PJSIP/trunk1-00000001': { cause: '16', source: 'dialplan/builtin', dialstatus: '', seq: 3 } };
-    expect(cl.queueAbandoned(QUEUED, dialplan)).toBe(false);
-    expect(cl.queueAbandoned({ ...QUEUED, party_answered: 1 }, callerHungUp)).toBe(false);
-    expect(cl.queueAbandoned({ ...QUEUED, lastapp: 'VoiceMail' }, callerHungUp)).toBe(false); // queue failover
-    expect(cl.queueAbandoned({ ...QUEUED, lastapp: 'Dial' }, callerHungUp)).toBe(false);
+    expect(cl.noAgentOutcome(QUEUED)).toBe('ABANDONED');
+    expect(cl.outcomeFromCel(QUEUED, callerHungUp)).toBe('ABANDONED');
+    expect(cl.outcomeFromCel(QUEUED, dialplan)).toBe('ABANDONED');
+    expect(cl.outcomeFromCel(QUEUED, {})).toBe('ABANDONED');
   });
 
-  it('without CEL a call that ended inside Queue() with nobody answering is an abandon', () => {
-    expect(cl.queueAbandoned(QUEUED, {})).toBe(true);
-    // A row without the SQL flags (the CRM path) decides from its own leg.
+  it('a queue call that moved on with nobody answering is ABANDONED too; voicemail stays voicemail', () => {
+    expect(cl.noAgentOutcome({ ...QUEUED, lastapp: 'Dial' })).toBe('ABANDONED');
+    expect(cl.noAgentOutcome({ ...QUEUED, lastapp: 'VoiceMail' })).toBeNull();
+  });
+
+  it('a call through an IVR into a queue counts by its queue leg', () => {
+    expect(cl.noAgentOutcome({ ...QUEUED, dcontext: 'ivr-1', first_lastapp: 'BackGround', lastapp: 'Dial', call_app: 'ivr' })).toBe('ABANDONED');
+    expect(cl.noAgentOutcome({ ...QUEUED, dcontext: 'ivr-1', first_lastapp: 'BackGround', lastapp: 'Dial', call_app: 'ivr', queue_legs: 0, dstchannel: '' })).toBe('ANSWERED_BY_SYSTEM');
+  });
+
+  it('an agent answering on any leg leaves it to the normal rules', () => {
+    expect(cl.noAgentOutcome({ ...QUEUED, party_answered: 1 })).toBeNull();
+  });
+
+  it('a row without the SQL flags (the CRM path) decides from its own leg', () => {
     const { party_answered: _p, ...bare } = QUEUED;
-    expect(cl.queueAbandoned({ ...bare, billsec: 0 }, null)).toBe(true);
-    expect(cl.queueAbandoned({ ...bare, billsec: 30, dstchannel: 'Local/1001@from-queue-1;1' }, null)).toBe(false);
+    expect(cl.noAgentOutcome({ ...bare, billsec: 30, disposition: 'ANSWERED', dstchannel: 'PJSIP/1001-1' })).toBeNull();
+    // Rang only: billsec and the member's channel, but NO ANSWER.
+    expect(cl.noAgentOutcome({ ...bare, billsec: 30, disposition: 'NO ANSWER' })).toBe('ABANDONED');
   });
 
   it('reaches the row, and the journey still ends with the customer hanging up', async () => {
     mocked(dbm.getCallLogFromDb).mockResolvedValue([QUEUED]);
     mocked(dbm.celHangupsByLinkedid).mockResolvedValue({ '8.1': callerHungUp });
     const [r] = await cl.callLog({});
-    expect(r).toMatchObject({ status: 'ABANDONED', route: 'inbound_queue', ended_by: 'customer' });
+    expect(r).toMatchObject({ status: 'ABANDONED', route: 'inbound_queue', ended_by: 'customer', talk: 0 });
+  });
+});
+
+describe('answered by the system', () => {
+  const pbx = (over: Record<string, unknown>) => row({
+    dst: '*43', dcontext: 'from-internal', dstchannel: '', last_channel: 'PJSIP/1000-1', disposition: 'ANSWERED',
+    billsec: 7, duration: 7, party_answered: 0, queue_legs: 0, call_app: 'direct', linkedid: '9.1', ...over,
+  });
+
+  it.each([['BackGround'], ['Wait'], ['ChanSpy'], ['Playback']])('%s with nobody on the far side', (app) => {
+    expect(cl.noAgentOutcome(pbx({ lastapp: app, first_lastapp: app }))).toBe('ANSWERED_BY_SYSTEM');
+  });
+
+  it('carries no talk time on the row', async () => {
+    mocked(dbm.getCallLogFromDb).mockResolvedValue([pbx({ lastapp: 'BackGround', first_lastapp: 'BackGround' })]);
+    mocked(dbm.celHangupsByLinkedid).mockResolvedValue({});
+    const [r] = await cl.callLog({});
+    expect(r).toMatchObject({ status: 'ANSWERED_BY_SYSTEM', talk: 0 });
+  });
+
+  it('leaves voicemail, a person answering and a call nobody picked up alone', () => {
+    expect(cl.noAgentOutcome(pbx({ lastapp: 'VoiceMail' }))).toBeNull();
+    expect(cl.noAgentOutcome(pbx({ party_answered: 1, dstchannel: 'PJSIP/1001-2', lastapp: 'Dial' }))).toBeNull();
+    expect(cl.noAgentOutcome(pbx({ billsec: 0, disposition: 'NO ANSWER', lastapp: 'Dial' }))).toBeNull();
   });
 });
 

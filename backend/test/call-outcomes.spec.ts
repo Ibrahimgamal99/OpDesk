@@ -14,7 +14,7 @@ describe('vocabulary', () => {
   it('has exactly the ten statuses', () => {
     expect(CALL_OUTCOMES).toEqual([
       'ANSWERED', 'UNANSWERED', 'BUSY', 'MISSED', 'VOICEMAIL',
-      'UNREACHABLE', 'FAILURE', 'NETWORK_ERROR', 'ABANDONED', 'DROPPED',
+      'UNREACHABLE', 'FAILURE', 'NETWORK_ERROR', 'ABANDONED', 'DROPPED', 'ANSWERED_BY_SYSTEM',
     ]);
   });
 
@@ -106,12 +106,12 @@ describe('outcomeFromCel on live rows', () => {
     expect(callEndedBy(cdr.channel, cdr.dstchannel, BUSY_CALL, false)).toEqual({ ended_by: 'agent', ended_by_agent: '100' });
   });
 
-  it('1792251980.10: the *43 test call is ANSWERED, ended by agent 100', () => {
+  it('1792251980.10: the *43 test call is ANSWERED_BY_SYSTEM, ended by agent 100', () => {
     const cdr = {
       disposition: 'ANSWERED', billsec: 3, lastapp: 'BackGround', call_type: 'INTERNAL',
       channel: 'PJSIP/100-00000002', last_channel: 'PJSIP/100-00000002', dstchannel: '',
     };
-    expect(outcomeFromCel(cdr, FEATURE_CODE)).toBe('ANSWERED');
+    expect(outcomeFromCel(cdr, FEATURE_CODE)).toBe('ANSWERED_BY_SYSTEM');
     expect(callEndedBy(cdr.channel, cdr.dstchannel, FEATURE_CODE, true)).toEqual({ ended_by: 'agent', ended_by_agent: '100' });
   });
 
@@ -126,7 +126,7 @@ describe('outcomeFromCel on live rows', () => {
 
   it('falls back to the CDR disposition without CEL', () => {
     expect(outcomeFromCel({ disposition: 'NO ANSWER', billsec: 0 }, {})).toBe('UNANSWERED');
-    expect(outcomeFromCel({ disposition: 'ANSWERED', billsec: 12 }, {})).toBe('ANSWERED');
+    expect(outcomeFromCel({ disposition: 'ANSWERED', billsec: 12, dstchannel: 'PJSIP/100-1' }, {})).toBe('ANSWERED');
     expect(outcomeFromCel({ disposition: 'ANSWERED', billsec: 12, lastapp: 'VoiceMail' }, {})).toBe('VOICEMAIL');
   });
 

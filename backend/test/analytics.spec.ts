@@ -914,3 +914,25 @@ describe('adherence: an agent still logged in', () => {
     expect(r.agents[0].ready_secs).toBeGreaterThanOrEqual(3599);
   });
 });
+
+describe('queue answered rule: an agent, not the hold music', () => {
+  test('answered needs ANSWERED + talk time + someone on the destination channel', () => {
+    expect(A.ANSWERED_SQL).toBe(
+      "(last_leg.disposition = 'ANSWERED' AND last_leg.billsec > 0 AND COALESCE(last_leg.dstchannel, '') <> '')");
+    expect(A.QUEUE_ANSWERED_BARE_SQL).toBe(
+      "(disposition = 'ANSWERED' AND billsec > 0 AND COALESCE(dstchannel, '') <> '')");
+  });
+
+  test('the queue query reads the agent-answered leg and zeroes billsec without one', () => {
+    const sql = A.queueCdrSql();
+    expect(sql).toContain(`${A.OUTCOME_SEQ_SQL} AS max_seq`);
+    expect(sql).not.toContain('MAX(sequence) AS max_seq');
+    expect(sql).toContain(`${A.LAST_LEG_BILLSEC_SQL}         AS billsec`);
+    expect(sql).toContain(`${A.LAST_LEG_DISPOSITION_SQL}     AS disposition`);
+  });
+
+  test('a row the SQL hands back for a caller nobody took is not answered', () => {
+    expect(A.queueRowAnswered({ disposition: 'NO ANSWER', billsec: 0 })).toBe(false);
+    expect(A.queueRowAnswered({ disposition: 'ANSWERED', billsec: 42 })).toBe(true);
+  });
+});

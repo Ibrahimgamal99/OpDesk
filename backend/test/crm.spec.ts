@@ -856,7 +856,7 @@ describe('CRM routes', () => {
       active: false,
     });
     expect(cfg.call_outcomes).toEqual([
-      'ANSWERED', 'UNANSWERED', 'BUSY', 'MISSED', 'VOICEMAIL', 'UNREACHABLE', 'FAILURE', 'NETWORK_ERROR', 'ABANDONED', 'DROPPED',
+      'ANSWERED', 'UNANSWERED', 'BUSY', 'MISSED', 'VOICEMAIL', 'UNREACHABLE', 'FAILURE', 'NETWORK_ERROR', 'ABANDONED', 'DROPPED', 'ANSWERED_BY_SYSTEM',
     ]);
     expect((cfg.field_catalog as string[]).length).toBe(17);
   });

@@ -5,16 +5,17 @@ import type { TFunction } from 'i18next';
  *
  * ONE vocabulary for the whole product. Call History and its filters, the call journey,
  * the notification bell, the Analytics drill-down, the Outbound card's breakdown and the
- * CRM outcome mapping all receive the same ten UPPERCASE values from the backend
+ * CRM outcome mapping all receive the same eleven UPPERCASE values from the backend
  * (services/call-outcomes.ts CALL_OUTCOMES) and render them through this file, so a status
  * is the same word and the same colour on every screen. The backend projects every retired
  * spelling (NO_ANSWER, CANCELED, OUT_OF_REACH, the bell's old lowercase reasons) onto these
- * ten before it answers, so nothing here maps them.
+ * eleven before it answers, so nothing here maps them.
  *
  * Colours follow the scheme in styles/variables.css, so the warm band spreads by verdict
  * rather than crowding onto one red: rose = nobody took it (MISSED), red = picked up but
  * never reached a person (ABANDONED), burnt = the call could not be placed (FAILURE,
- * NETWORK_ERROR), amber = the callee did not take it (UNANSWERED, BUSY).
+ * NETWORK_ERROR), amber = the callee did not take it (UNANSWERED, BUSY). Blue = the PBX took
+ * it, no person did (ANSWERED_BY_SYSTEM): not a failure, and not the green of an answer.
  *
  * This is only the per-call STATUS vocabulary. Live channel states (ringing, in call) and
  * agent presence (statusBadge.tsx) are not call statuses and stay with the screens that
@@ -60,9 +61,11 @@ export const CALL_STATUS_META: Record<string, CallStatusMeta> = {
   NETWORK_ERROR: meta('NETWORK_ERROR', 'var(--accent-fault)', '--accent-fault-rgb', 'Network error',
     'The route or the carrier failed: congestion or no circuit.'),
   ABANDONED:     meta('ABANDONED', 'var(--accent-danger)', '--accent-danger-rgb', 'Abandoned',
-    'The caller hung up while waiting in a queue.'),
+    'No agent took this queue call.'),
   DROPPED:       meta('DROPPED', 'var(--status-dropped)', '--status-dropped-rgb', 'Dropped',
     'The call was answered, then cut off abnormally.'),
+  ANSWERED_BY_SYSTEM: meta('ANSWERED_BY_SYSTEM', 'var(--accent-primary)', '--accent-primary-rgb', 'Answered by system',
+    'The PBX picked up (an IVR, announcement or feature code) but no person did.'),
 };
 
 /** What anything outside the vocabulary wears: muted, and labelled with its own raw text. */
@@ -75,7 +78,7 @@ export const UNKNOWN_STATUS_STYLE = { color: 'var(--text-muted)', bg: 'rgb(var(-
  */
 export const CALL_STATUS_ORDER: string[] = [
   'ANSWERED', 'UNANSWERED', 'BUSY', 'MISSED', 'VOICEMAIL',
-  'UNREACHABLE', 'FAILURE', 'NETWORK_ERROR', 'ABANDONED', 'DROPPED',
+  'UNREACHABLE', 'FAILURE', 'NETWORK_ERROR', 'ABANDONED', 'DROPPED', 'ANSWERED_BY_SYSTEM',
 ];
 
 /** The status's meta, whatever case it arrives in, or undefined when it is not a call status. */
@@ -83,7 +86,7 @@ export function callStatusMeta(status: string | null | undefined): CallStatusMet
   return status ? CALL_STATUS_META[String(status).trim().toUpperCase()] : undefined;
 }
 
-/** Whether a value is one of the ten call statuses (as opposed to some other reason). */
+/** Whether a value is one of the eleven call statuses (as opposed to some other reason). */
 export function isCallStatus(status: string | null | undefined): boolean {
   return callStatusMeta(status) !== undefined;
 }
@@ -110,7 +113,7 @@ export function callStatusStyle(status: string): { color: string; bg: string } {
   return callStatusMeta(status) ?? UNKNOWN_STATUS_STYLE;
 }
 
-/** Rank of a status in CALL_STATUS_ORDER, anything unmapped after the ten. */
+/** Rank of a status in CALL_STATUS_ORDER, anything unmapped after the eleven. */
 export function callStatusRank(status: string): number {
   const i = CALL_STATUS_ORDER.indexOf(String(status).trim().toUpperCase());
   return i < 0 ? CALL_STATUS_ORDER.length : i;

@@ -83,10 +83,11 @@ export async function startRealtime(opts: StartRealtimeOptions = {}): Promise<bo
   }
   await monitor.loadDeviceTechs();
 
-  // Initial sync, before live events are processed.
+  // Initial sync, before live events are processed. Queues first: it also waits out a
+  // still-booting Asterisk, so the other syncs read a live PBX.
+  await monitor.syncQueuesWhenReady();
   await monitor.syncExtensionStatuses();
   await monitor.syncActiveCalls();
-  await monitor.syncQueueStatus();
   await monitor.syncDndState();
   logStartupSummary(monitor);
 
