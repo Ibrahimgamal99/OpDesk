@@ -965,7 +965,7 @@ export interface RecordingHookConflict {
  * [] when recording is wired, null when Asterisk could not be asked.
  *
  * Duplicate contexts are first-wins: a file #included before extensions_opdesk_record.conf
- * that defines the same hooks (another recorder, such as Echo) keeps them, Asterisk only
+ * that defines the same hooks (another recorder) keeps them, Asterisk only
  * logs "already in use", and every call goes unrecorded by OpDesk -- or recorded by the
  * other product under its own policy. Writing the file and reloading cannot tell; reading
  * back what was loaded can.

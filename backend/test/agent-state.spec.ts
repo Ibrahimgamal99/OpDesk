@@ -238,26 +238,26 @@ describe('break (Not Ready) for every extension', () => {
     expect(monitor.queueMembers.get('800:PJSIP/101')!.paused).toBe(false);
   });
 
-  it.each(['echo first', 'echo second'])('Available + the PBX Unpause echo write ONE row (%s)', async (order) => {
+  it.each(['event first', 'event second'])('Available + the PBX Unpause event write ONE row (%s)', async (order) => {
     const { monitor, mgr, online } = setup();
     await online('101');
     await mgr.queueLogin('101');
     await mgr.setNotReady('101', 'lunch');
-    const echo = () => mgr.handleAmiEvent({ Event: 'QueueMemberUnpause', Queue: '800', Interface: 'PJSIP/101', Paused: '0' });
+    const unpauseEvent = () => mgr.handleAmiEvent({ Event: 'QueueMemberUnpause', Queue: '800', Interface: 'PJSIP/101', Paused: '0' });
     const send = monitor.sendAsync as (a: string, p: Record<string, unknown> | null) => Promise<string>;
     let pending: Promise<void> | null = null;
     monitor.sendAsync = (async (action: string, params: Record<string, unknown> | null) => {
       const r = await send(action, params);
-      if (action === 'QueuePause' && params?.Paused === '0' && order === 'echo first') {
-        // The member is already unpaused locally when the echo lands mid-setReady.
+      if (action === 'QueuePause' && params?.Paused === '0' && order === 'event first') {
+        // The member is already unpaused locally when the event lands mid-setReady.
         monitor.queueMembers.get('800:PJSIP/101')!.paused = false;
-        pending = echo();
+        pending = unpauseEvent();
       }
       return r;
     }) as never;
     const before = mockSegments.length;
     await mgr.setReady('101');
-    if (order === 'echo second') await echo();
+    if (order === 'event second') await unpauseEvent();
     if (pending) await pending;
     const rows = mockSegments.slice(before);
     expect(rows).toHaveLength(1);

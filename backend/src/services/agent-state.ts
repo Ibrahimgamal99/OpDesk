@@ -450,7 +450,7 @@ export class AgentStateManager {
   /**
    * Available, idle or on a call depending on the device right now. Never forced: when the
    * extension already is in that state nothing is written. A user's "Available" and the
-   * PBX's Unpause echo of it race each other (either may land first); unforced, whichever
+   * PBX's Unpause event for it race each other (either may land first); unforced, whichever
    * is second is a no-op instead of a duplicate 0-second row.
    */
   private async applyAvailable(ext: string, source: string, force = false): Promise<void> {
