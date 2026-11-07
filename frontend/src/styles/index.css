@@ -4053,6 +4053,7 @@ select.form-input option:checked {
 }
 
 .header-profile-row {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4088,6 +4089,7 @@ select.form-input option:checked {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
+  white-space: nowrap;
   border: none;
   background: transparent;
   border-radius: var(--radius-sm);
@@ -4106,6 +4108,21 @@ select.form-input option:checked {
   background: var(--accent-primary);
   color: var(--text-on-accent);
   font-weight: 600;
+}
+
+.header-profile-seg:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.header-profile-seg:disabled:not(.active):hover {
+  color: var(--text-secondary);
+}
+
+.header-profile-identity-monitor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .header-profile-signout {
@@ -4157,25 +4174,8 @@ select.form-input option:checked {
 @media (max-width: 640px) {
   .header-profile-text { display: none; }
 }
-.header-profile-dropdown { min-width: 300px; }
+.header-profile-dropdown { min-width: 300px; max-inline-size: calc(100vw - 24px); }
 
-.profile-status-now {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 6px;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  color: var(--ring);
-  background: color-mix(in srgb, var(--ring) 9%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ring) 25%, transparent);
-}
-.profile-status-now-text { display: grid; flex: 1; min-width: 0; }
-.profile-status-now-label { font-size: var(--text-base); font-weight: 700; }
-.profile-status-now-sub { font-size: var(--text-sm); color: var(--text-secondary); }
-.profile-status-timer { font-size: var(--text-base); font-weight: 600; font-variant-numeric: tabular-nums; }
-.profile-status-timer.is-near { color: var(--warning); }
-.profile-status-timer.is-over { color: var(--danger); }
 .profile-status-lock {
   display: flex;
   align-items: center;

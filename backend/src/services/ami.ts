@@ -112,6 +112,9 @@ export const EVENT_TIMEOUT = 1.0;
 export const AMI_RECONNECT_MIN_DELAY = 3.0; // seconds, first backoff after an unexpected disconnect
 export const AMI_RECONNECT_MAX_DELAY = 30.0; // seconds, backoff ceiling
 export const QUEUE_RECONCILE_INTERVAL = 10.0; // seconds between waiting-caller reconciles
+// Queue sync retries: up to a minute for app_queue to load after an Asterisk start.
+export const QUEUE_SYNC_ATTEMPTS = 30;
+export const QUEUE_SYNC_RETRY_SECS = 2;
 export const SPY_RING_TIMEOUT = 30.0; // seconds the supervisor's phone rings for listen / whisper / barge
 
 /** OriginateResponse `Reason` (the dialled channel's last control frame), for the error log. */
@@ -467,8 +470,16 @@ export class AMIExtensionsMonitor {
   /** Start processing live events (the Python `running = True` + reader task). */
   async startEvents(): Promise<void> {
     this.stopRequested = false;
-    await this.sendAsync('Events', { EventMask: 'on' });
     this.running = true;
+    if (this.connected) {
+      await this.sendAsync('Events', { EventMask: 'on' });
+    } else {
+      // Lost during the startup sync (a booting Asterisk can drop a fresh session): the close
+      // came before `running`, so it started no reconnect. Start one now, or OpDesk stays
+      // without AMI until the next restart.
+      log.warning('AMI connection lost before live events started');
+      void this.reconnectLoop();
+    }
     this.ensureQueueReconcile();
   }
 
@@ -497,6 +508,8 @@ export class AMIExtensionsMonitor {
         if (await this.connect()) {
           log.info('AMI reconnected');
           try {
+            // Queues first: this also waits out a still-booting Asterisk.
+            await this.syncQueuesWhenReady();
             await this.syncExtensionStatuses();
             await this.syncActiveCalls();
             await this.syncDndState();
@@ -2539,14 +2552,23 @@ export class AMIExtensionsMonitor {
 
   /** {queue: {Available, LoggedIn, Callers, HoldTime, TalkTime, LongestHoldTime}} */
   async getQueueSummary(): Promise<Record<string, Record<string, string>>> {
+    return (await this.readQueueSummary()) ?? {};
+  }
+
+  /**
+   * Summary of all queues, or null when AMI gave no answer or an error. Right after Asterisk
+   * starts, app_queue may not be loaded yet and QueueSummary errors: that is "unknown", not
+   * "no queues".
+   */
+  async readQueueSummary(): Promise<Record<string, Record<string, string>> | null> {
     const msgs = await this.sendActionWithEvents('QueueSummary', null, 'QueueSummaryComplete');
     if (!msgs || !msgs.length) {
       log.warning('QueueSummary: No response from AMI');
-      return {};
+      return null;
     }
     if (!/Success/i.test(msgs[0]['Response'] || '')) {
       log.warning('QueueSummary: AMI returned error');
-      return {};
+      return null;
     }
     const out: Record<string, Record<string, string>> = {};
     for (const m of msgs.slice(1)) {
@@ -2678,9 +2700,34 @@ export class AMIExtensionsMonitor {
     return [...new Set(this.memberInterfacesFor(ext).map((m) => m.queue).filter(Boolean))].sort();
   }
 
-  /** Populate queues / queue_members / queue_entries from QueueSummary + QueueStatus. */
-  async syncQueueStatus(): Promise<void> {
-    const summary = await this.getQueueSummary();
+  /**
+   * The queue sync, retried (logging in again if need be) until Asterisk can answer it. When
+   * OpDesk and Asterisk start together, or Asterisk restarts under a running OpDesk, AMI
+   * accepts the login before app_queue has loaded and QueueSummary errors. Presence hydrates
+   * from this sync: run on an empty one, agents come up outside their queues, and a member
+   * Asterisk then restores paused for wrap-up stays paused with no timer to release it.
+   * False when it never answered, or the monitor was stopped meanwhile.
+   */
+  async syncQueuesWhenReady(attempts = QUEUE_SYNC_ATTEMPTS, retrySecs = QUEUE_SYNC_RETRY_SECS): Promise<boolean> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (this.stopRequested) return false;
+      // A booting Asterisk can also drop the fresh AMI session: log in again before asking.
+      if (!this.connected) await this.connect();
+      if (this.connected && (await this.syncQueueStatus())) return true;
+      log.warning('Queue sync attempt %d/%d failed (app_queue not loaded yet?) — retrying in %ds', attempt, attempts, retrySecs);
+      if (attempt < attempts) await sleep(retrySecs);
+    }
+    log.error('Queue sync failed after %d attempts: presence starts without queue members', attempts);
+    return false;
+  }
+
+  /**
+   * Populate queues / queue_members / queue_entries from QueueSummary + QueueStatus. False
+   * (and nothing changed) when Asterisk could not answer, e.g. app_queue still loading.
+   */
+  async syncQueueStatus(): Promise<boolean> {
+    const summary = await this.readQueueSummary();
+    if (summary === null) return false;
 
     // Prune queues the PBX no longer has (guarded: an empty read must not wipe everything).
     const names = Object.keys(summary);
@@ -2746,6 +2793,7 @@ export class AMIExtensionsMonitor {
       }
     }
     log.info(`Synced ${this.queues.size} queues, ${this.queueMembers.size} members, ${this.queueEntries.size} waiting callers`);
+    return true;
   }
 
   /** One QueueStatus `QueueMember` event -> the item addQueueMember takes. */

@@ -847,6 +847,13 @@ function App({ onLogout }: AppProps) {
                       <span className="header-profile-role">{t(`users.roles.${getUser()?.role}`, { defaultValue: getUser()?.role || '' })}</span>
                       {getUser()?.extension && <span className="header-profile-ext">· {t('header.ext')} {getUser()?.extension}</span>}
                     </div>
+                    {getUser()?.role !== 'agent' && (
+                      <div className="header-profile-identity-meta header-profile-identity-monitor">
+                        <Monitor size={13} aria-hidden />
+                        {t('header.monitor')}: {(getUser()?.monitor_modes?.length ? getUser()!.monitor_modes! : ['listen'])
+                          .map(m => t(`users.monitor.${m}`, { defaultValue: m })).join(', ')}
+                      </div>
+                    )}
                   </div>
                   <ChevronRight size={15} className="header-profile-identity-go" />
                 </button>
@@ -876,19 +883,6 @@ function App({ onLogout }: AppProps) {
                     </button>
                   </div>
                 </div>
-
-                {/* Monitor mode (non-agent only) */}
-                {getUser()?.role !== 'agent' && (() => {
-                  const modes = getUser()?.monitor_modes;
-                  const modesLabel = (modes && modes.length > 0 ? modes : ['listen'])
-                    .map(m => t(`users.monitor.${m}`, { defaultValue: m })).join(', ');
-                  return (
-                    <div className="header-profile-row">
-                      <span className="header-profile-row-label"><Monitor size={15} />{t('header.monitor')}</span>
-                      <span className="header-profile-row-value">{modesLabel}</span>
-                    </div>
-                  );
-                })()}
 
                 <div className="header-profile-divider" />
 

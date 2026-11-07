@@ -266,9 +266,10 @@ components:
         - UNREACHABLE: phone off, out of coverage or unregistered
         - FAILURE: wrong number, or nothing better is known
         - NETWORK_ERROR: congestion, no route, no circuit
-        - ABANDONED: the caller left a queue before an agent answered
+        - ABANDONED: no agent took a queue caller
         - DROPPED: answered, then torn down abnormally
-      enum: [ANSWERED, UNANSWERED, BUSY, MISSED, VOICEMAIL, UNREACHABLE, FAILURE, NETWORK_ERROR, ABANDONED, DROPPED]
+        - ANSWERED_BY_SYSTEM: the PBX picked up (IVR, announcement, feature code, ChanSpy), no person did
+      enum: [ANSWERED, UNANSWERED, BUSY, MISSED, VOICEMAIL, UNREACHABLE, FAILURE, NETWORK_ERROR, ABANDONED, DROPPED, ANSWERED_BY_SYSTEM]
 
     EndedBy:
       type: string

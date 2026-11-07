@@ -192,13 +192,29 @@ export function realQueueCond(leg = 'first_leg'): string {
   return REAL_QUEUE_LEG_SQL.split('{leg}').join(leg);
 }
 
-// The SQL twin of the answered rule queue rows use in code (queueRowAnswered): Asterisk can
-// mark a leg ANSWERED that carried no audio, and leave a real conversation under another
-// disposition, so either signal counts. Aggregations done in SQL ask the same question, or a
-// heatmap cell disagrees with the queue's abandoned total for the same period.
-export const ANSWERED_SQL = "(last_leg.disposition = 'ANSWERED' OR last_leg.billsec > 0)";
+// The SQL twin of the answered rule queue rows use in code (queueRowAnswered). Aggregations
+// done in SQL ask the same question, or a heatmap cell disagrees with the queue's abandoned
+// total for the same period.
+//
+// An AGENT answered only when a leg says ANSWERED, has talk time AND has someone on its
+// destination channel. FreePBX answers a queue caller itself for music on hold, so the
+// caller's leg carries billsec whether or not anyone picked up -- and each member that only
+// RANG leaves a caller leg with billsec, the member's channel and NO ANSWER / BUSY / FAILED.
+// call_log.partyAnsweredLeg is the twin.
+const ANSWERED_LEG = (leg: string): string =>
+  `(${leg}disposition = 'ANSWERED' AND ${leg}billsec > 0 AND COALESCE(${leg}dstchannel, '') <> '')`;
+export const ANSWERED_SQL = ANSWERED_LEG('last_leg.');
 // The same rule where there is no joined last_leg to name -- a single-table scan over cdr.
-export const QUEUE_ANSWERED_BARE_SQL = "disposition = 'ANSWERED' OR billsec > 0";
+export const QUEUE_ANSWERED_BARE_SQL = ANSWERED_LEG('');
+// Which leg is `last_leg`: the last one an agent answered, else the last one. A ringall queue
+// leaves a leg per member it rang, so the plain MAX(sequence) was often a member who did NOT
+// answer. Same as call-log's out_seq.
+export const OUTCOME_SEQ_SQL = `COALESCE(MAX(CASE WHEN ${ANSWERED_LEG('')} THEN sequence END), MAX(sequence))`;
+// last_leg's billsec and disposition as the KPIs must read them: no agent, no talk time, and
+// an ANSWERED that only the PBX gave (hold music) is not an answer.
+export const LAST_LEG_BILLSEC_SQL = `(CASE WHEN ${ANSWERED_SQL} THEN last_leg.billsec ELSE 0 END)`;
+export const LAST_LEG_DISPOSITION_SQL =
+  `(CASE WHEN ${ANSWERED_SQL} THEN 'ANSWERED' WHEN last_leg.disposition = 'ANSWERED' THEN 'NO ANSWER' ELSE last_leg.disposition END)`;
 
 /** A list of extensions/queues a caller may see; null = unrestricted (admin, API key). */
 export type Scope = readonly (string | number)[] | null | undefined;
@@ -427,10 +443,10 @@ export function queueCdrSql(extraSql = ''): string {
         first_leg.src,
         first_leg.dst                   AS queue_ext,
         first_leg.duration              AS total_dur,
-        last_leg.billsec                AS billsec,
-        last_leg.disposition            AS disposition,
+        ${LAST_LEG_BILLSEC_SQL}         AS billsec,
+        ${LAST_LEG_DISPOSITION_SQL}     AS disposition,
         GREATEST(CASE
-            WHEN last_leg.billsec > 0
+            WHEN ${ANSWERED_SQL}
             THEN first_leg.duration - last_leg.billsec
             ELSE first_leg.duration
         END, 0)                         AS wait_secs,
@@ -452,7 +468,7 @@ export function queueCdrSql(extraSql = ''): string {
             SELECT c.*
             FROM cdr c
             JOIN (
-                SELECT linkedid, MAX(sequence) AS max_seq
+                SELECT linkedid, ${OUTCOME_SEQ_SQL} AS max_seq
                 FROM cdr
                 WHERE calldate >= ?
                   AND calldate < DATE_ADD(?, INTERVAL 2 DAY)
@@ -504,10 +520,10 @@ export function allCdrSql(extraSql = ''): string {
         first_leg.src,
         first_leg.dst                   AS dst,
         first_leg.duration              AS total_dur,
-        last_leg.billsec                AS billsec,
-        last_leg.disposition            AS disposition,
+        ${LAST_LEG_BILLSEC_SQL}         AS billsec,
+        ${LAST_LEG_DISPOSITION_SQL}     AS disposition,
         GREATEST(CASE
-            WHEN first_leg.lastapp = 'Queue' AND last_leg.billsec > 0
+            WHEN first_leg.lastapp = 'Queue' AND ${ANSWERED_SQL}
             THEN first_leg.duration - last_leg.billsec
             WHEN first_leg.lastapp = 'Queue'
             THEN first_leg.duration
@@ -536,7 +552,7 @@ export function allCdrSql(extraSql = ''): string {
             SELECT c.*
             FROM cdr c
             JOIN (
-                SELECT linkedid, MAX(sequence) AS max_seq
+                SELECT linkedid, ${OUTCOME_SEQ_SQL} AS max_seq
                 FROM cdr
                 WHERE calldate >= ?
                   AND calldate < DATE_ADD(?, INTERVAL 2 DAY)
@@ -1625,7 +1641,7 @@ export async function computeHourlyHeatmap(
                 SELECT c.*
                 FROM cdr c
                 JOIN (
-                    SELECT linkedid, MAX(sequence) AS max_seq
+                    SELECT linkedid, ${OUTCOME_SEQ_SQL} AS max_seq
                     FROM cdr
                     WHERE calldate >= ?
                       AND calldate < DATE_ADD(?, INTERVAL 2 DAY)
@@ -1942,11 +1958,11 @@ export async function refreshHourlyBucket(
       `
         SELECT
             first_leg.dst            AS queue_ext,
-            last_leg.disposition,
-            GREATEST(CASE WHEN last_leg.billsec>0
+            ${LAST_LEG_DISPOSITION_SQL} AS disposition,
+            GREATEST(CASE WHEN ${ANSWERED_SQL}
                  THEN first_leg.duration - last_leg.billsec
                  ELSE first_leg.duration END, 0) AS wait_secs,
-            last_leg.billsec
+            ${LAST_LEG_BILLSEC_SQL} AS billsec
         FROM
             (SELECT c.* FROM cdr c
              JOIN (
@@ -1958,7 +1974,7 @@ export async function refreshHourlyBucket(
             ) first_leg
         JOIN (SELECT c.* FROM cdr c
               JOIN (
-                SELECT linkedid, MAX(sequence) AS ms
+                SELECT linkedid, ${OUTCOME_SEQ_SQL} AS ms
                 FROM cdr
                 WHERE calldate >= ? AND calldate < ?
                 GROUP BY linkedid

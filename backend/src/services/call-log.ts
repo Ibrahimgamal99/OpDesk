@@ -35,6 +35,7 @@ import {
   NETWORK_ERROR,
   DROPPED,
   ABANDONED,
+  ANSWERED_BY_SYSTEM,
 } from './call-outcomes';
 import { getRecordingPath } from './recording';
 
@@ -50,6 +51,7 @@ export {
   FAILURE,
   NETWORK_ERROR,
   ABANDONED,
+  ANSWERED_BY_SYSTEM,
   DROPPED,
   CALL_OUTCOMES,
   TALKED_OUTCOMES,
@@ -270,30 +272,34 @@ export function mapCallOutcome(opts: MapCallOutcomeOptions = {}): string {
 /** {channame: {cause, source, dialstatus, forwarded, seq}}: one call's CEL hangup facts. */
 export type CelFacts = Record<string, Row>;
 
+/** Did the call enter a queue? Read off the legs' apps and the first leg's context. */
+function enteredQueue(cdr: Row): boolean {
+  return dget(cdr, 'first_lastapp') === 'Queue' || dget(cdr, 'lastapp') === 'Queue'
+    || (Number(dget(cdr, 'queue_legs')) || 0) > 0 || dget(cdr, 'call_app') === 'queue'
+    || strOr(dget(cdr, 'dcontext')).toLowerCase().includes('queue');
+}
+
 /**
- * Did the caller give up while waiting in a queue (ABANDONED)?
+ * The outcome of a call the PBX picked up but no PERSON did, or null when a person did (or
+ * it reached voicemail, which has its own status).
  *
- * Queue() leaves no DIALSTATUS and the CDR has no QUEUESTATUS, so this is read off the
- * call's own legs and CEL:
- *   * the call went through Queue() and its final leg is still a Queue() leg -- a queue
- *     that times out moves the caller on to its failover destination, a later leg;
- *   * no party answered on any leg (billsec > 0 with a destination channel). A caller's own
- *     leg can carry billsec with no member at all: FreePBX answers the caller to play
- *     music on hold, so billsec alone does not mean an agent took the call;
- *   * the caller ended it: CEL names the caller's channel as the source of its own hangup.
- *     With no CEL for the call at all (a PBX without CEL, or the analytics scan that skips
- *     it), a call that ended inside Queue() with nobody answering is the caller leaving.
+ * Asterisk marks all of these ANSWERED with talk time, which is why they read as answered:
+ *   * a queue caller no agent took -- they waited on hold music and left, or the queue gave
+ *     up on them, whether or not the members' phones rang -> ABANDONED;
+ *   * anything else the system answered on its own: an IVR / announcement, a feature code
+ *     (*43, *97), a supervisor's ChanSpy leg -> ANSWERED_BY_SYSTEM.
+ *
+ * `cdr` is the call's row with the OUTCOME leg's dstchannel / disposition / billsec (see
+ * outcomeLeg and getCallLogFromDb's out_seq). `party_answered`, when the row has it, covers
+ * every leg of the call; a row without the SQL flags (the CRM path) decides from its own leg.
  */
-export function queueAbandoned(cdr: Row, celFacts: CelFacts | null | undefined): boolean {
-  if (strOr(dget(cdr, 'lastapp')) !== 'Queue') return false;
-  const partyAnswered = has(cdr, 'party_answered')
-    ? truthy(Number(dget(cdr, 'party_answered')))
-    : (Number(dget(cdr, 'billsec')) || 0) > 0 && truthy(dget(cdr, 'dstchannel'));
-  if (partyAnswered) return false;
-  if (!truthy(celFacts)) return true;
-  const callerCh = strOr(dget(cdr, 'channel'));
-  const caller: Row | null = callerCh ? dget(celFacts as CelFacts, callerCh) : null;
-  return truthy(caller) && dget(caller, 'source') === callerCh;
+export function noAgentOutcome(cdr: Row): string | null {
+  const answered = has(cdr, 'party_answered') ? truthy(Number(dget(cdr, 'party_answered'))) : partyAnsweredLeg(cdr);
+  if (answered) return null;
+  if (strOr(dget(cdr, 'lastapp')).trim().toLowerCase() === 'voicemail') return null;
+  if (enteredQueue(cdr)) return ABANDONED;
+  if ((Number(dget(cdr, 'billsec')) || 0) > 0 && !truthy(dget(cdr, 'dstchannel'))) return ANSWERED_BY_SYSTEM;
+  return null;
 }
 
 /**
@@ -305,11 +311,14 @@ export function queueAbandoned(cdr: Row, celFacts: CelFacts | null | undefined):
  *   * the CALLER's leg (the outcome leg's channel, `last_channel`) carries the DIALSTATUS
  *     Dial() left behind, and is the fallback cause when the callee's leg never existed.
  * A cause of 0 means "none reported" rather than a verdict, so it is skipped in favour of a
- * real one from the other leg, and failing that the CDR disposition still decides. A queue
- * caller who hung up while waiting is ABANDONED (queueAbandoned), whatever the legs say.
+ * real one from the other leg, and failing that the CDR disposition still decides. A call
+ * no person picked up is decided first (noAgentOutcome), whatever the legs say.
  */
 export function outcomeFromCel(cdr: Row, celFacts: CelFacts): string {
-  if (queueAbandoned(cdr, celFacts)) return ABANDONED;
+  // Picked up by the PBX, never by a person. Ahead of everything below, which reads the hold
+  // music's billsec as an answer.
+  const noAgent = noAgentOutcome(cdr);
+  if (noAgent) return noAgent;
   const factsFor = (ch: unknown): Row | null => {
     const k = truthy(ch) ? pyStr(ch) : '';
     const f = has(celFacts, k) ? celFacts[k] : null;
@@ -553,9 +562,16 @@ export function callEndedBy(
 // CRM identity
 // ===========================================================================
 
-/** A leg a party answered: it had talk time with someone on its destination channel. */
+/**
+ * A leg a party answered: it had talk time with someone on its destination channel, and the
+ * leg itself says it was answered. Talk time alone is not enough: FreePBX answers a queue
+ * caller for music on hold, so every one of the caller's per-member queue legs carries
+ * billsec (and the member's channel) even while the member's phone only rang -- those legs
+ * are NO ANSWER / BUSY / FAILED.
+ */
 function partyAnsweredLeg(leg: Row): boolean {
-  return (Number(dget(leg, 'billsec')) || 0) > 0 && truthy(dget(leg, 'dstchannel'));
+  return (Number(dget(leg, 'billsec')) || 0) > 0 && truthy(dget(leg, 'dstchannel'))
+    && pyStr(dgetOr(leg, 'disposition', '')).toUpperCase() === 'ANSWERED';
 }
 
 /**
@@ -613,6 +629,8 @@ export async function crmIdentityFromCdr(linkedid: string): Promise<Record<strin
     channel: dget(first, 'channel'),
     dstchannel: dget(last, 'dstchannel'),
     lastapp: dget(last, 'lastapp'),
+    first_lastapp: dget(first, 'lastapp'),
+    queue_legs: legs.filter((l) => dget(l, 'lastapp') === 'Queue').length,
     disposition: dget(last, 'disposition'),
     billsec: dget(last, 'billsec'),
     duration: callSpanSeconds(legs) ?? dget(last, 'duration'),
@@ -621,7 +639,8 @@ export async function crmIdentityFromCdr(linkedid: string): Promise<Record<strin
   const ext = convertChannelToExtension(cdr.dstchannel, cdr.channel);
 
   const dirmap: Record<string, string> = { IN: 'inbound', OUT: 'outbound', INTERNAL: 'internal' };
-  const outcome = mapCallOutcome({
+  const noAgent = noAgentOutcome(cdr);
+  const outcome = noAgent ?? mapCallOutcome({
     disposition: pyStr(dgetOr(cdr, 'disposition', '')).toUpperCase(),
     answered: truthy(cdr.billsec),
   });
@@ -640,7 +659,7 @@ export async function crmIdentityFromCdr(linkedid: string): Promise<Record<strin
     call_status: outcome,
     disposition: outcome,
     duration: hms(cdr.duration),
-    talk_time: hms(cdr.billsec),
+    talk_time: hms(noAgent ? 0 : cdr.billsec),
   };
   const cd = cdr.calldate;
   if (truthy(cd)) out.datetime = cd instanceof Date ? isoformat(cd) : pyStr(cd);
@@ -719,7 +738,8 @@ export function callLogRow(cdr: Row, facts: CelFacts | null | undefined): Row {
   // the analytics KPIs key off it.
   const disposition = pyStr(dgetOr(cdr, 'disposition', '')).toUpperCase();
   const status = outcomeFromCel(cdr, truthy(facts) ? (facts as CelFacts) : {});
-  const talk = dget(cdr, 'billsec');
+  // Hold music, an IVR prompt, a feature code: time on the line, but nobody talked to anyone.
+  const talk = status === ABANDONED || status === ANSWERED_BY_SYSTEM ? 0 : dget(cdr, 'billsec');
   // Who ended it, from the same CEL facts and the same two channels the journey's HANGUP
   // reads -- so the row and its journey cannot disagree. Absent without CEL.
   const endedBy = truthy(facts)

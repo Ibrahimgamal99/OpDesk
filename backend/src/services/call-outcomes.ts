@@ -54,16 +54,23 @@ export const FAILURE = 'FAILURE';
 /** number and phone are both fine; the network failed (congestion, no route, no circuit available) */
 export const NETWORK_ERROR = 'NETWORK_ERROR';
 /**
- * queue: the caller gave up before an agent answered. Kept apart from MISSED because the
- * abandon rate is computed from it (see analytics).
+ * queue: no agent took the caller, whether they hung up or the queue gave up on them. Kept
+ * apart from MISSED because the abandon rate is computed from it (see analytics).
  */
 export const ABANDONED = 'ABANDONED';
 /** answered, then torn down abnormally (network drop) */
 export const DROPPED = 'DROPPED';
+/**
+ * The PBX picked the call up but no person ever did: an IVR or announcement the caller hung
+ * up on, a feature code (*43, *97), a supervisor's ChanSpy leg. Asterisk marks every one of
+ * those ANSWERED with talk time, so they used to read as answered calls. A QUEUE caller
+ * nobody took is ABANDONED instead (the abandon rate counts it); this is everything else.
+ */
+export const ANSWERED_BY_SYSTEM = 'ANSWERED_BY_SYSTEM';
 
 export const CALL_OUTCOMES: readonly string[] = [
   ANSWERED, UNANSWERED, BUSY, MISSED, VOICEMAIL,
-  UNREACHABLE, FAILURE, NETWORK_ERROR, ABANDONED, DROPPED,
+  UNREACHABLE, FAILURE, NETWORK_ERROR, ABANDONED, DROPPED, ANSWERED_BY_SYSTEM,
 ];
 
 // The outcomes where the far end was really connected, so the call has real talk time.

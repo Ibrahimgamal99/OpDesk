@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BellOff, Check, ChevronDown, ChevronRight, Headset, Lock, User } from 'lucide-react';
+import { Bell, BellOff, Check, ChevronDown, ChevronRight, Headset, Lock, User } from 'lucide-react';
 import { usePresenceControls } from '../hooks/usePresenceControls';
 import { useWebPhoneContext } from '../contexts/WebPhoneContext';
 import { fmtTimer } from '../lib/format';
@@ -45,11 +45,12 @@ export function ProfileStatusButtonFace({ name }: { name: ReactNode }) {
 }
 
 /**
- * Status block of the header profile menu: Available / Break (with a reason) / DND / Queues,
- * the same controls as the softphone header and from the same hook, so the two never
- * disagree. The rules are the backend's (agent-state.ts): a break while in queues pauses the
- * member, DND leaves the queues and restores them when it ends, picking a break ends DND,
- * and everything locks during a call.
+ * Status block of the header profile menu: Available, a Break with a reason, and DND + Queues
+ * as one row of switches, the same controls as the softphone header and from the same hook,
+ * so the two never disagree. The current state and timer are on the header button itself
+ * (ProfileStatusButtonFace), not repeated here. The rules are the backend's (agent-state.ts):
+ * a break while in queues pauses the member, DND leaves the queues and restores them when it
+ * ends, picking a break ends DND, and everything locks during a call.
  */
 export function ProfileStatusSection() {
   const { t } = useTranslation();
@@ -57,23 +58,9 @@ export function ProfileStatusSection() {
   const [reasonsOpen, setReasonsOpen] = useState(false);
   if (!pc.myExt) return null;
 
-  const { Icon, actions } = pc;
+  const { actions } = pc;
   const lock = pc.busy;
   const locked = lock || !pc.online;
-  const color = `var(${pc.online || pc.ringing ? pc.meta.varName : '--status-unavailable'})`;
-  const sub = pc.busy
-    ? t('agent.lockedOnCall', 'Controls unlock when the call ends')
-    : !pc.online
-      ? t('agent.offlineHint', 'Offline — availability starts when the phone registers')
-      : pc.dState === 'dnd'
-        ? t('agent.dndSub', 'Inbound blocked · outbound still works')
-        : pc.dState === 'not_ready' && pc.breakWindow.window
-          ? t('profileStatus.window', 'Break window {{min}} min', { min: Math.round(pc.breakWindow.window / 60) })
-          : pc.dState === 'wrap_up'
-            ? t('profileStatus.wrapSub', 'Finish wrap-up to take calls')
-            : pc.asleep
-              ? t('agent.asleepHint', 'The app is asleep; calls wake it by push')
-              : t('profileStatus.readySub', 'Ready for calls');
 
   const queueNames = pc.queues.join(', ');
   const queueSub = pc.isDnd
@@ -90,19 +77,6 @@ export function ProfileStatusSection() {
   return (
     <div className="profile-status" role="group" aria-label={t('profileStatus.title', 'Status')}>
       <div className="header-profile-section-label">{t('profileStatus.title', 'Status')}</div>
-
-      <div className="profile-status-now" style={{ '--ring': color } as CSSProperties}>
-        <Icon size={16} aria-hidden />
-        <span className="profile-status-now-text">
-          <span className="profile-status-now-label">{pc.ringing ? pc.label : pc.dState === 'not_ready' ? `${t('agent.state.break', 'Break')} · ${pc.label}` : pc.label}</span>
-          <span className="profile-status-now-sub">{sub}</span>
-        </span>
-        {pc.online && (
-          <span className={`profile-status-timer u-mono${pc.breakWindow.pressure ? ` is-${pc.breakWindow.pressure}` : ''}`}>
-            {fmtTimer(pc.elapsed)}
-          </span>
-        )}
-      </div>
 
       {lock && (
         <div className="profile-status-lock"><Lock size={13} aria-hidden />{t('agent.lockedOnCall', 'Controls unlock when the call ends')}</div>
@@ -170,39 +144,34 @@ export function ProfileStatusSection() {
 
       <div className="header-profile-divider" />
 
-      <button
-        type="button"
-        role="switch"
-        aria-checked={pc.isDnd}
-        className="status-menu-item"
-        onClick={() => actions.setDnd(!pc.isDnd)}
-        disabled={lock}
-      >
-        <BellOff size={15} aria-hidden />
-        <span className="status-menu-text">
-          {t('agent.state.dnd', 'Do Not Disturb')}
-          <small>{t('profileStatus.dndSub', 'Blocks inbound, leaves queues')}</small>
-        </span>
-        <span className={`status-menu-switch is-dnd${pc.isDnd ? ' on' : ''}`} aria-hidden />
-      </button>
-
-      {pc.isAgent && (
-        <button
-          type="button"
-          role="switch"
-          aria-checked={pc.queueOn && !pc.isDnd}
-          className="status-menu-item"
-          onClick={pc.queueOn ? actions.queueLogout : actions.queueLogin}
-          disabled={lock || pc.isDnd}
-        >
-          <Headset size={15} aria-hidden />
-          <span className="status-menu-text">
-            {t('nav.queues', 'Queues')}
-            <small>{queueSub}</small>
-          </span>
-          <span className={`status-menu-switch${pc.queueOn && !pc.isDnd ? ' on' : ''}`} aria-hidden />
-        </button>
-      )}
+      {/* DND and Queues side by side, as on/off switches (their explanations are the tooltips). */}
+      <div className="header-profile-row">
+        <span className="header-profile-row-label"><Bell size={15} />{t('profileStatus.availability', 'Availability')}</span>
+        <div className="header-profile-segmented" role="group" aria-label={t('profileStatus.availability', 'Availability')}>
+          <button
+            type="button"
+            className={`header-profile-seg${pc.isDnd ? ' active' : ''}`}
+            aria-pressed={pc.isDnd}
+            title={t('profileStatus.dndSub', 'Blocks inbound, leaves queues')}
+            onClick={() => actions.setDnd(!pc.isDnd)}
+            disabled={lock}
+          >
+            <BellOff size={13} aria-hidden />{t('agent.dndShort', 'DND')}
+          </button>
+          {pc.isAgent && (
+            <button
+              type="button"
+              className={`header-profile-seg${pc.queueOn && !pc.isDnd ? ' active' : ''}`}
+              aria-pressed={pc.queueOn && !pc.isDnd}
+              title={queueSub}
+              onClick={pc.queueOn ? actions.queueLogout : actions.queueLogin}
+              disabled={lock || pc.isDnd}
+            >
+              <Headset size={13} aria-hidden />{t('nav.queues', 'Queues')}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

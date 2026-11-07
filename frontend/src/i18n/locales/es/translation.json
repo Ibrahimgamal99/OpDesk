@@ -1289,6 +1289,7 @@
     }
   },
   "agent": {
+    "dndShort": "No molestar",
     "signedOffHint": "Desconectado en el reinicio del turno: pulsa Disponible para empezar",
     "startShift": "Disponible",
     "adherence": {
@@ -1642,6 +1643,7 @@
     "FAILURE": "Fallida",
     "ABANDONED": "Abandonada",
     "DROPPED": "Cortada",
+    "ANSWERED_BY_SYSTEM": "Atendida por el sistema",
     "UNANSWERED": "No contestada",
     "MISSED": "Perdida",
     "VOICEMAIL": "Buzón de voz",
@@ -1804,8 +1806,9 @@
     "UNREACHABLE": "El teléfono estaba apagado, sin registrar o fuera de servicio.",
     "FAILURE": "No se pudo realizar la llamada, por ejemplo un número equivocado.",
     "NETWORK_ERROR": "Falló la ruta o el operador: congestión o sin circuito.",
-    "ABANDONED": "El llamante colgó mientras esperaba en una cola.",
-    "DROPPED": "La llamada se contestó y luego se cortó de forma anómala."
+    "ABANDONED": "Ningún agente atendió esta llamada de la cola.",
+    "DROPPED": "La llamada se contestó y luego se cortó de forma anómala.",
+    "ANSWERED_BY_SYSTEM": "Respondió la centralita (IVR, locución o código de función), no una persona."
   },
   "audit": {
     "loadError": "No se pudo cargar el registro de auditoría.",
@@ -1838,6 +1841,7 @@
     }
   },
   "profileStatus": {
+    "availability": "Disponibilidad",
     "title": "Estado",
     "window": "Ventana de pausa {{min}} min",
     "wrapSub": "Termina el post-llamada para recibir llamadas",
