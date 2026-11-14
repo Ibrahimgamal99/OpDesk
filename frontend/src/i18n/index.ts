@@ -6,8 +6,9 @@ import ar from './locales/ar/translation.json';
 import es from './locales/es/translation.json';
 import pt from './locales/pt/translation.json';
 import uk from './locales/uk/translation.json';
+import fa from './locales/fa/translation.json';
 
-const SUPPORTED_LANGUAGES = ['en', 'ar', 'es', 'pt', 'uk'] as const;
+const SUPPORTED_LANGUAGES = ['en', 'ar', 'es', 'pt', 'uk', 'fa'] as const;
 const storedLang = localStorage.getItem('opdesk-lang');
 const savedLang = SUPPORTED_LANGUAGES.includes(storedLang as (typeof SUPPORTED_LANGUAGES)[number])
   ? storedLang!
@@ -22,6 +23,7 @@ i18n
       es: { translation: es },
       pt: { translation: pt },
       uk: { translation: uk },
+      fa: { translation: fa },
     },
     lng: savedLang,
     fallbackLng: 'en',
@@ -35,11 +37,11 @@ export function setLanguage(lang: string) {
   i18n.changeLanguage(lang);
   localStorage.setItem('opdesk-lang', lang);
   document.documentElement.lang = lang;
-  document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  document.documentElement.dir = (lang === 'ar' || lang === 'fa') ? 'rtl' : 'ltr';
 }
 
 // Apply direction on load
 document.documentElement.lang = savedLang;
-document.documentElement.dir = savedLang === 'ar' ? 'rtl' : 'ltr';
+document.documentElement.dir = (savedLang === 'ar' || savedLang === 'fa') ? 'rtl' : 'ltr';
 
 export default i18n;
