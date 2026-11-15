@@ -31,7 +31,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 PROJECT_ROOT="${OPDESK_ROOT:-/opt/OpDesk}"
-REPO_URL="${OPDESK_REPO_URL:-https://github.com/Ibrahimgamal99/OpDesk.git}"
+REPO_URL="${OPDESK_REPO_URL:-https://github.com/Tommy11011/OpDesk.git}"
 NODE_MAJOR=24
 NVM_VERSION="v0.40.3"
 ENV_FILE="$PROJECT_ROOT/backend/.env"
@@ -1341,7 +1341,7 @@ step_systemd() {
     cat > "$new" <<EOF
 [Unit]
 Description=OpDesk - operator panel for Asterisk
-Documentation=https://github.com/Ibrahimgamal99/OpDesk
+Documentation=https://github.com/Tommy11011/OpDesk
 After=network-online.target mariadb.service mysqld.service mysql.service asterisk.service
 Wants=network-online.target
 
