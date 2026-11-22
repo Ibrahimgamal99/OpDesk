@@ -9,7 +9,7 @@ import { PasswordForm } from './ChangePasswordModal';
 import { MobileSetupBody } from './MobileSetupQR';
 import '../styles/account.css';
 
-const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt', 'uk'] as const;
+const LANGUAGE_OPTIONS = ['en', 'ar', 'es', 'pt', 'uk', 'fa'] as const;
 
 /**
  * My Profile — the current user's own account in one place: who they are, the UI
